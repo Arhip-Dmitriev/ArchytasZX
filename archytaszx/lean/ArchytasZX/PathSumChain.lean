@@ -8,8 +8,9 @@ import ArchytasZX.PathSumSupport
 # Step lists checked through checkpoints
 
 `run_cut` and `aruns_cut` split a step list after `k` steps at a stated intermediate value.
-The commands `run_chain` and `aruns_chain` compute the values after every `k` steps with
-compiled code, state each as a literal definition, prove each block of `k` steps by `decide` in
+The commands `run_chain` and `aruns_chain` compute the values after each block of steps (at most
+`k` steps, a step whose state sizes sum above `w` a block of its own) with compiled code, state each as
+a literal definition, prove each block by `decide` in
 its own declaration, and compose the blocks into `<n>_ok : runOK M sts s = true` and
 `<n>_eq : run M sts s = <n>` (and the same for `arunsOK` and `aruns`).
 -/
@@ -156,37 +157,55 @@ def decAData (e : Expr) : MetaM AData := do
   return ⟨← decData (e.getArg! 0), ← decList decNat (e.getArg! 1),
     ← decList (decPair decNat (decList (decList decNat))) (e.getArg! 2)⟩
 
-/-- The values after each block of `k` steps of `run M` from `s0`. -/
-unsafe def dataStatesImpl (M k : ℕ) (s0 sts : Expr) : MetaM (Array Expr) := do
+/-- The number of numerals in `d`. -/
+def Data.size (d : Data) : ℕ :=
+  d.path.length + (d.phase.map fun t => t.1.length + 1).sum +
+    ((d.cons ++ d.rows).map fun q => (q.map List.length).sum + q.length).sum
+
+/-- The number of numerals in `t`. -/
+def AData.size (t : AData) : ℕ :=
+  t.s.size + t.held.length + (t.atoms.map fun a => (a.2.map List.length).sum + a.2.length + 1).sum
+
+/-- The blocks of `l` from `s0`, each as the value after it and its step count: a step whose
+input and output sizes sum above `w` is a block of its own, the other steps form blocks of at
+most `k` consecutive steps. -/
+def blocks {α β : Type} (step : α → β → β) (size : β → ℕ) (k w : ℕ) (s0 : β) (l : List α) :
+    Array (β × ℕ) := Id.run do
+  let mut out := #[]
+  let mut cur := s0
+  let mut n := 0
+  for st in l do
+    let nxt := step st cur
+    if size cur + size nxt > w then
+      if n > 0 then out := out.push (cur, n)
+      out := out.push (nxt, 1)
+      n := 0
+    else
+      n := n + 1
+      if n == k then
+        out := out.push (nxt, n)
+        n := 0
+    cur := nxt
+  if n > 0 then out := out.push (cur, n)
+  return out
+
+/-- The blocks of `run M` from `s0` (see `blocks`), values as literals. -/
+unsafe def dataStatesImpl (M k w : ℕ) (s0 sts : Expr) : MetaM (Array (Expr × ℕ)) := do
   let s ← decData s0
   let l ← evalExpr (List Step) (mkApp (mkConst ``List [Level.zero]) (mkConst ``Step)) sts
-  let mut out := #[]
-  let mut cur := s
-  let mut rest := l
-  while !rest.isEmpty do
-    cur := run M (rest.take k) cur
-    out := out.push (dataE cur)
-    rest := rest.drop k
-  return out
+  return (blocks (fun st d => run M [st] d) Data.size k w s l).map fun (d, n) => (dataE d, n)
 
 @[implemented_by dataStatesImpl]
-def dataStates (_M _k : ℕ) (_s0 _sts : Expr) : MetaM (Array Expr) := pure #[]
+def dataStates (_M _k _w : ℕ) (_s0 _sts : Expr) : MetaM (Array (Expr × ℕ)) := pure #[]
 
-/-- The values after each block of `k` steps of `aruns M` from `t0`. -/
-unsafe def adataStatesImpl (M k : ℕ) (t0 sts : Expr) : MetaM (Array Expr) := do
+/-- The blocks of `aruns M` from `t0` (see `blocks`), values as literals. -/
+unsafe def adataStatesImpl (M k w : ℕ) (t0 sts : Expr) : MetaM (Array (Expr × ℕ)) := do
   let t ← decAData t0
   let l ← evalExpr (List AStep) (mkApp (mkConst ``List [Level.zero]) (mkConst ``AStep)) sts
-  let mut out := #[]
-  let mut cur := t
-  let mut rest := l
-  while !rest.isEmpty do
-    cur := aruns M (rest.take k) cur
-    out := out.push (adataE cur)
-    rest := rest.drop k
-  return out
+  return (blocks (fun st d => aruns M [st] d) AData.size k w t l).map fun (d, n) => (adataE d, n)
 
 @[implemented_by adataStatesImpl]
-def adataStates (_M _k : ℕ) (_t0 _sts : Expr) : MetaM (Array Expr) := pure #[]
+def adataStates (_M _k _w : ℕ) (_t0 _sts : Expr) : MetaM (Array (Expr × ℕ)) := pure #[]
 
 /-- The names of a step list's type, value type, checker, runner and cut lemma. -/
 structure ChainKind where
@@ -211,9 +230,10 @@ def addThm (n : Name) (type value : Expr) : MetaM Unit :=
   withOptions (fun o => o.setBool `Elab.async false) do
     addDecl (.thmDecl { name := n, levelParams := [], type, value })
 
-/-- The checkpoint declarations of `sts` from `start` in blocks of `k`, under the prefix `n`. -/
-def chain (kind : ChainKind) (states : ℕ → ℕ → Expr → Expr → MetaM (Array Expr)) (n : Name)
-    (ME stsE startE : Expr) (k : ℕ) : MetaM Unit := do
+/-- The checkpoint declarations of `sts` from `start` in the blocks of `blocks M k w`, under
+the prefix `n`. -/
+def chain (kind : ChainKind) (states : ℕ → ℕ → ℕ → Expr → Expr → MetaM (Array (Expr × ℕ)))
+    (n : Name) (ME stsE startE : Expr) (k w : ℕ) : MetaM Unit := do
   let some M ← evalNat ME | throwError "chain: {ME} is not a numeral"
   let name := fun (s : String) => n.appendAfter s
   let ty := mkConst kind.ty
@@ -221,27 +241,26 @@ def chain (kind : ChainKind) (states : ℕ → ℕ → Expr → Expr → MetaM (
   addLit (name "_s0") ty s0
   let e0T ← mkEq startE (mkConst (name "_s0"))
   addDecided (name "_e0") e0T
-  let vals ← states M k s0 stsE
-  let kE := mkNatLit k
+  let vals ← states M k w s0 stsE
   let stepTy := mkConst kind.step
-  let take := fun R => mkAppN (mkConst ``List.take [Level.zero]) #[stepTy, kE, R]
-  let drop := fun R => mkAppN (mkConst ``List.drop [Level.zero]) #[stepTy, kE, R]
   let okOf := fun R s => mkApp3 (mkConst kind.ok) ME R s
   let runOf := fun R s => mkApp3 (mkConst kind.run) ME R s
   let mut R := stsE
   let mut okC ← mkEqRefl (okOf stsE (mkConst (name "_s0")))
   let mut runC ← mkEqRefl (runOf stsE (mkConst (name "_s0")))
   for i in [0:vals.size] do
+    let (v, ki) := vals[i]!
+    let kE := mkNatLit ki
+    let tk := mkAppN (mkConst ``List.take [Level.zero]) #[stepTy, kE, R]
     let si := mkConst (name s!"_s{i}")
     let si1 := mkConst (name s!"_s{i + 1}")
-    addLit (name s!"_s{i + 1}") ty vals[i]!
-    let both := mkApp2 (mkConst ``and) (okOf (take R) si)
-      (← mkDecide (← mkEq (runOf (take R) si) si1))
+    addLit (name s!"_s{i + 1}") ty v
+    let both := mkApp2 (mkConst ``and) (okOf tk si) (← mkDecide (← mkEq (runOf tk si) si1))
     addDecided (name s!"_h{i}") (← mkEq both (mkConst ``Bool.true))
     let cut := mkAppN (mkConst kind.cut) #[ME, R, kE, si, si1, mkConst (name s!"_h{i}")]
     okC ← mkEqTrans okC (← mkAppM ``And.left #[cut])
     runC ← mkEqTrans runC (← mkAppM ``And.right #[cut])
-    R := drop R
+    R := mkAppN (mkConst ``List.drop [Level.zero]) #[stepTy, kE, R]
   let sn := mkConst (name s!"_s{vals.size}")
   addDecided (name "_hend") (← mkEq (okOf R sn) (mkConst ``Bool.true))
   addDecided (name "_qend") (← mkEq (runOf R sn) sn)
@@ -256,9 +275,10 @@ def chain (kind : ChainKind) (states : ℕ → ℕ → Expr → Expr → MetaM (
     (← mkEqTrans runC (mkConst (name "_qend")))
   addThm (name "_eq") runT runP
 
-/-- `n_ok : runOK M sts s = true` and `n_eq : run M sts s = n`, through checkpoints every `k`
-steps. -/
-elab "run_chain " n:ident M:term:max sts:term:max s:term:max k:num : command =>
+/-- `n_ok : runOK M sts s = true` and `n_eq : run M sts s = n`, through checkpoints after
+blocks of at most `k` steps, a step whose state sizes sum above `w` (default: none) a block
+of its own. -/
+elab "run_chain " n:ident M:term:max sts:term:max s:term:max k:num w:(num)? : command =>
   liftTermElabM do
     let ME ← Term.elabTerm M (some (mkConst ``Nat))
     let stsE ← Term.elabTerm sts (some (mkApp (mkConst ``List [Level.zero]) (mkConst ``Step)))
@@ -267,10 +287,12 @@ elab "run_chain " n:ident M:term:max sts:term:max s:term:max k:num : command =>
     let kind : ChainKind := ⟨``Step, ``Data, ``runOK, ``run, ``run_cut⟩
     chain kind dataStates ((← getCurrNamespace) ++ n.getId) (← instantiateMVars ME)
       (← instantiateMVars stsE) (← instantiateMVars sE) k.getNat
+      (w.map (·.getNat) |>.getD (2 ^ 62))
 
-/-- `n_ok : arunsOK M sts t = true` and `n_eq : aruns M sts t = n`, through checkpoints every
-`k` steps. -/
-elab "aruns_chain " n:ident M:term:max sts:term:max t:term:max k:num : command =>
+/-- `n_ok : arunsOK M sts t = true` and `n_eq : aruns M sts t = n`, through checkpoints after
+blocks of at most `k` steps, a step whose state sizes sum above `w` (default: none) a block
+of its own. -/
+elab "aruns_chain " n:ident M:term:max sts:term:max t:term:max k:num w:(num)? : command =>
   liftTermElabM do
     let ME ← Term.elabTerm M (some (mkConst ``Nat))
     let stsE ← Term.elabTerm sts (some (mkApp (mkConst ``List [Level.zero]) (mkConst ``AStep)))
@@ -279,6 +301,7 @@ elab "aruns_chain " n:ident M:term:max sts:term:max t:term:max k:num : command =
     let kind : ChainKind := ⟨``AStep, ``AData, ``arunsOK, ``aruns, ``aruns_cut⟩
     chain kind adataStates ((← getCurrNamespace) ++ n.getId) (← instantiateMVars ME)
       (← instantiateMVars stsE) (← instantiateMVars tE) k.getNat
+      (w.map (·.getNat) |>.getD (2 ^ 62))
 
 end PSem
 end ArchytasZX
