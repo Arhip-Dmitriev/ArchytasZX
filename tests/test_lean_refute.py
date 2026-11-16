@@ -62,7 +62,7 @@ def _mathlib() -> bool:
 def test_states_and_evaluates_the_refutation(name: str) -> None:
     source = _source(name)
     assert "theorem main :\n    ¬ " in source
-    assert "eval_cyc" in source and "cyc_ne" in source
+    assert "eval_W" in source and "eval_res" in source and "refute_res" in source
     assert "\naxiom " not in source and "sorry" not in source
 
 
@@ -74,7 +74,7 @@ def test_parameters_are_universally_quantified() -> None:
 def test_arity_refutation_compares_boundaries() -> None:
     source = _source("arity")
     assert "refute_bnd (by decide)" in source
-    assert "eval_cyc" not in source
+    assert "eval_W" not in source
 
 
 def test_a_point_without_values_falls_back_to_a_sample_point() -> None:
@@ -106,7 +106,7 @@ def test_kernel_reads_a_counterexample() -> None:
     left, right = (parse_diagram(t) for t in CASES["colour"])
     ref = K.refutation(decide_equal(left, right), left, right)
     assert ref.point == {"d": 2}
-    assert "cyc_ne" in K.lean(ref)
+    assert "refute_res" in K.lean(ref)
     with pytest.raises(K.KernelError, match="no counterexample"):
         K.refutation(decide_equal(left, left.copy()), left, left)
 
@@ -142,6 +142,11 @@ REFUTATIONS: dict[str, tuple[str, str]] = {
         "count n; a = Z(0 -> 2, d); box p x n ports a.out0",
         "count n; a = X(0 -> 2, d); box p x n ports a.out1",
     ),
+    "weighted": ("a = Z(0 -> 1, literal 2) weight{1: 1/sqrt(3)}", "a = Z(0 -> 1, literal 2)"),
+    "x_weighted": (
+        "a = X(1 -> 1, literal 3) weight{1: 1/2, 2: sqrt(2)}",
+        "a = X(1 -> 1, literal 3)",
+    ),
 }
 
 
@@ -156,7 +161,14 @@ def _refutation(name: str) -> str:
 
 
 def test_a_large_network_is_contracted() -> None:
-    assert "eval_ve_at " in _refutation("contracted")
+    assert "elimR " in _refutation("contracted")
+
+
+@pytest.mark.parametrize("name", ["weighted", "x_weighted"])
+def test_weighted_spiders_have_coefficient_tables(name: str) -> None:
+    source = _refutation(name)
+    assert "have hC : CoefOK E " in source and (".ZW" in source or ".XW" in source)
+    assert "def Qt (i : ℕ) : ℕ := ((([] :" not in source
 
 
 def test_square_roots_are_gauss_sums() -> None:

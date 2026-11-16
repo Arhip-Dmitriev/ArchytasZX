@@ -89,6 +89,7 @@ class _NumRefuter(_Refuter):
     refutation by balls."""
 
     prefix: str
+    weights_ok = False
 
     def __init__(
         self,
