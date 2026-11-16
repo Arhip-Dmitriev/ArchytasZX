@@ -75,6 +75,8 @@ def export_refutation(
 
     if any(box.is_extended for d in (left, right) for box in d.bang_boxes.values()):
         return _instantiated_refutation(left, right, point, name, describe)
+    if _mult_phases(left) or _mult_phases(right):
+        return _instantiated_refutation(left, right, point, name, describe)
     if _interfaces_differ(left, right) and (
         left.bang_boxes
         or right.bang_boxes
@@ -243,7 +245,9 @@ def _instantiated_refutation(
             left_over = {m: int(cand[m]) for m in mults if m in _carried_names(d)}
             if left_over:
                 d = d.substitute(left_over)
-            pair.append(expand_concrete_boxes(d))
+            d = expand_concrete_boxes(d)
+            _close_scalar(d)
+            pair.append(d)
         if pair[0].bang_boxes or pair[1].bang_boxes:
             continue
         rest = {k: v for k, v in cand.items() if k not in mults}
@@ -266,6 +270,37 @@ def _carried_names(diagram: Diagram) -> set[str]:
         if node.phase is not None:
             names |= node.phase.free_symbols
     return names
+
+
+def _close_scalar(diagram: Diagram) -> None:
+    """Replaces a closed scalar holding ``exp`` by its form over cosines, simplified, when that
+    form holds no ``exp``."""
+    from archytaszx.algebra.scalar import Scalar
+
+    e = diagram.scalar.to_sympy()
+    if e.free_symbols or not e.has(sp.exp):
+        return
+    with contextlib.suppress(Exception):
+        c = sp.simplify(e.rewrite(sp.cos))
+        if not c.has(sp.exp) and not c.has(sp.cos) and (c - e).equals(0) is True:
+            diagram.set_scalar(Scalar(c))
+
+
+def _weighted(kind: Any) -> bool:
+    """Mirror of `!Kind.noZW`."""
+    h = _head(kind)
+    return h in ("ZW", "XW") or (h == "Bun" and _weighted(kind[2]))
+
+
+def _mult_phases(diagram: Diagram) -> bool:
+    """True when some node phase of ``diagram`` holds one of its bang-box multiplicities."""
+    from archytaszx.diagram.bangbox import free_mult_symbols
+
+    mults = free_mult_symbols(diagram)
+    return bool(mults) and any(
+        node.phase is not None and node.phase.free_symbols & mults
+        for node in diagram.nodes.values()
+    )
 
 
 def _lean_name(raw: str) -> str:
@@ -354,6 +389,8 @@ class _Refuter:
         return int(v)
 
     def setup_env(self) -> None:
+        if any(_weighted(n.kind) for lab in (self.a, self.b) for n in lab.net.nodes):
+            raise NetUnsupported("a coefficient spider has no cyclotomic entry")
         out = self.out
         self.ks = [self.nat(e) for e in out.mult_exprs] if out.family else []
         base = [self.nat(e) for e in out.dim_exprs]
@@ -544,10 +581,12 @@ class _Refuter:
         gs: str,
         keys: str,
         nets: Sequence[tuple[str, LNet, Any, Any]],
+        at: Mapping[int, int],
         sigma: str = "σ0",
     ) -> tuple[str, str, list[str]]:
-        """The `rw` terms for each network's entry, the `show` terms for its constant and
-        groups, and the declarations of its contraction."""
+        """The `rw` terms for each network's entry at the boundary assignment ``at`` (named
+        ``sigma``), the `show` terms for its constant and groups, and the declarations of its
+        contraction."""
         M = self.M
         evals, shows, decls = [], [], []
         for name, net, sq, g in nets:
@@ -555,10 +594,10 @@ class _Refuter:
                 f"show sqL {_paren(env)}.shape {name} = {_list_pairs(sq)} from by decide +kernel"
             )
             if self.use_plan(net):
-                decls += self.plan_decls(name, self.plan_of(net))
+                decls += self.plan_decls(name, self.plan(net, at), f"{_paren(env)}.shape.dim")
                 evals.append(
-                    f"eval_ve {_paren(env)} {M} {gs} Pt {keys} {name} (by norm_num) "
-                    f"{K} hP L{name} {K} {K} ST{name} FN{name} {K} {K} {K} {sigma} {K}"
+                    f"eval_ve_at {_paren(env)} {M} {gs} Pt {keys} {name} (by norm_num) "
+                    f"{K} hP {sigma} L{name} {K} {K} ST{name} FN{name} {K} CH{name} {K} {K} {K}"
                 )
                 evals.append(
                     f"eval_ve_groups {_paren(env)} {M} {gs} (by norm_num) FN{name} {sigma}"
@@ -600,7 +639,7 @@ class _Refuter:
             out.setdefault(ks, [0] * self.M)[e] += c
         return {k: v for k, v in sorted(out.items()) if any(v)}
 
-    # contraction, a mirror of `leafOK`, `elimOK` and `chainOK`
+    # contraction, a mirror of `leafOK`, `leafAt`, `elimNew` and `chainNew`
 
     def table(self, scope: Sequence[int], entry: Callable[[dict[int, int]], Vec]) -> list[Vec]:
         dims = [self.labdim(x) for x in scope]
@@ -630,17 +669,21 @@ class _Refuter:
             mul *= self.labdim(x)
         return tab[i] if i < len(tab) else {}
 
-    def plan(self, net: LNet) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
-        """Leaves, elimination steps and final factors of ``net``."""
+    def plan(
+        self, net: LNet, at: Mapping[int, int] | None = None
+    ) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
+        """Leaves, elimination steps and final factors of ``net``; with ``at``, the leaves read
+        the boundary labels from ``at`` and leave them out of their scopes."""
+        pinned = dict(at or {})
 
         def leaf_of(n: LNode) -> Callable[[dict[int, int]], Vec]:
-            return lambda tau: self.node(n, tau)
+            return lambda tau: self.node(n, {**tau, **pinned})
 
         self.__dict__["_vec_terms"] = 0
 
         leaves = []
         for n in net.nodes:
-            scope = tuple(dict.fromkeys((*n.outs, *n.ins)))
+            scope = tuple(x for x in dict.fromkeys((*n.outs, *n.ins)) if x not in pinned)
             leaves.append((scope, self.table(scope, leaf_of(n))))
         facs = list(leaves)
         steps = []
@@ -695,17 +738,60 @@ class _Refuter:
     def use_plan(self, net: LNet) -> bool:
         return math.prod(self.labdim(x) for x in dict.fromkeys(net.summed)) > BRUTE_LIMIT
 
-    def plan_decls(self, tag: str, plan: tuple[list[Any], list[Any], list[Any]]) -> list[str]:
-        leaves, steps, final = plan
-        steps_t = ", ".join(f"({l}, {_facs(fs)})" for l, fs in steps)
-        return [
-            f"/-- The leaves of {tag}. -/\ndef L{tag} : List Fac := {_facs(leaves)}",
-            (
-                f"/-- The eliminations of {tag}. -/\ndef ST{tag} : List (ℕ × List Fac) := "
-                f"[{steps_t}]"
-            ),
-            f"/-- The final factors of {tag}. -/\ndef FN{tag} : List Fac := {_facs(final)}",
-        ]
+    def plan_decls(
+        self, tag: str, plan: tuple[list[Any], list[Any], list[Any]], dim: str
+    ) -> list[str]:
+        """Each factor a definition, each factor list between steps the list of their names,
+        each step's `elimNew` a `decide +kernel` theorem of its own and `CH{tag}` the chain
+        through `chainNew_step`."""
+        leaves, steps, _final = plan
+        out: list[str] = []
+        scopes: dict[str, tuple[int, ...]] = {}
+
+        def fac(name: str, f: Any) -> str:
+            scopes[name] = tuple(f[0])
+            out.append(f"def {name} : Fac := {_fac(f, self.labdim)}")
+            return name
+
+        state = [fac(f"{tag}a{i}", f) for i, f in enumerate(leaves)]
+        lists = [state]
+        news = []
+        for k, (l, fs) in enumerate(steps):
+            new = fac(f"{tag}b{k}", fs[-1])
+            news.append((l, new))
+            state = [x for x in state if l not in scopes[x]] + [new]
+            assert [scopes[x] for x in state] == [tuple(f[0]) for f in fs]
+            lists.append(state)
+        for k, st in enumerate(lists):
+            body = "[" + ", ".join(st) + "]" if st else "([] : List Fac)"
+            out.append(f"def {tag}F{k} : List Fac := {body}")
+        n = len(news)
+        out.append(f"def {tag}S{n} : List (ℕ × Fac) := []")
+        for k in range(n - 1, -1, -1):
+            l, new = news[k]
+            out.append(f"def {tag}S{k} : List (ℕ × Fac) := ({l}, {new}) :: {tag}S{k + 1}")
+        out.append(
+            f"theorem {tag}C{n} : chainNew {self.M} {dim} {tag}F{n} {tag}S{n} {tag}F{n} = true :="
+        )
+        out[-1] += f"\n  chainNew_nil {self.M} {dim} {tag}F{n}"
+        for k in range(n - 1, -1, -1):
+            l, new = news[k]
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}E{k} : "
+                f"elimNew {self.M} {dim} {l} {tag}F{k} {new} = true := by decide +kernel"
+            )
+            head = f"chainNew {self.M} {dim} {tag}F{k} {tag}S{k} {tag}F{n} = true"
+            out.append(
+                f"theorem {tag}C{k} : {head} :=\n  chainNew_step {self.M} {dim} {l} {tag}F{k} "
+                f"{tag}F{k + 1} {new} {tag}S{k + 1} {tag}F{n} {tag}E{k} rfl {tag}C{k + 1}"
+            )
+        out.append(f"/-- The leaves of {tag}. -/\ndef L{tag} : List Fac := {tag}F0")
+        out.append(f"/-- The eliminations of {tag}. -/\ndef ST{tag} : List (ℕ × Fac) := {tag}S0")
+        out.append(f"/-- The final factors of {tag}. -/\ndef FN{tag} : List Fac := {tag}F{n}")
+        out.append(
+            f"theorem CH{tag} : chainNew {self.M} {dim} L{tag} ST{tag} FN{tag} = true := {tag}C0"
+        )
+        return out
 
     # the order of ζ
 
@@ -1207,7 +1293,7 @@ class _Refuter:
         nets = [(self.a.name, self.a.net, sq0, {(): c0} if any(c0) else {})]
         if self.b.name != self.a.name:
             nets.append((self.b.name, self.b.net, sq1, {(): c1} if any(c1) else {}))
-        evals, shows, pdecls = self.eval_rewrites(env, "[]", keys, nets)
+        evals, shows, pdecls = self.eval_rewrites(env, "[]", keys, nets, sigma)
         decls += pdecls
         body = [
             "  intro h",
@@ -1402,10 +1488,19 @@ def _terms(v: Vec) -> str:
     return "[" + ", ".join(items) + "]" if items else "([] : Terms)"
 
 
-def _facs(fs: Sequence[Any]) -> str:
-    """Factors as a Lean list."""
-    out = [f"⟨{_ints_nat(list(sc))}, [{', '.join(_terms(v) for v in tab)}]⟩" for sc, tab in fs]
-    return "[" + ", ".join(out) + "]" if out else "([] : List Fac)"
+def _fac(f: Any, dim: Callable[[int], int]) -> str:
+    """A factor as a Lean `Fac`: its flat table, first label least significant, nested one
+    level per label with the first label outermost."""
+    scope, tab = f
+
+    def nest(rest: Sequence[int], base: int, stride: int) -> str:
+        if not rest:
+            return f"FT.leaf {_paren(_terms(tab[base]) if base < len(tab) else '([] : Terms)')}"
+        d = dim(rest[0])
+        kids = ", ".join(nest(rest[1:], base + v * stride, stride * d) for v in range(d))
+        return f"FT.node [{kids}]"
+
+    return f"⟨{_ints_nat(list(scope))}, {nest(list(scope), 0, 1)}⟩"
 
 
 def _ints_nat(xs: Sequence[int]) -> str:

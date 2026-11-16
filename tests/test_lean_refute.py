@@ -156,7 +156,7 @@ def _refutation(name: str) -> str:
 
 
 def test_a_large_network_is_contracted() -> None:
-    assert "eval_ve " in _refutation("contracted")
+    assert "eval_ve_at " in _refutation("contracted")
 
 
 def test_square_roots_are_gauss_sums() -> None:

@@ -736,7 +736,7 @@ class _NumRefuter(_Refuter):
         nets = [(self.a.name, self.a.net, sq0, g0)]
         if self.b.name != self.a.name:
             nets.append((self.b.name, self.b.net, sq1, g1))
-        evals, shows, pdecls = self.eval_rewrites(env, gs, keys, nets)
+        evals, shows, pdecls = self.eval_rewrites(env, gs, keys, nets, sigma)
         decls = [
             *pdecls,
             (

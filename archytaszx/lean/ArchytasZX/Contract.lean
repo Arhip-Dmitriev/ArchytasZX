@@ -7,7 +7,8 @@ import ArchytasZX.Refute
 /-!
 # Exact evaluation by contraction
 
-A factor is a scope of labels and a table of formal sums, one per assignment of the scope.
+A factor is a scope of labels and a table of formal sums, one per assignment of the scope,
+nested one level per label.
 `leafOK` checks a node's factor against `valT`; `elimOK` checks that summing one label out
 of the factors containing it gives a new factor; `eval_ve` proves that a checked chain of
 eliminations, in an order permuting the summed labels, gives the network's entry.
@@ -17,19 +18,37 @@ namespace ArchytasZX
 
 open Complex Finset
 
-/-- A scope of labels and one formal sum per assignment of it. -/
-structure Fac where
-  scope : List ℕ
-  table : List Terms
+/-- A table of formal sums: a sum at a leaf; the subtables of a level as a chain of `cons`
+cells ending in `nil`, one per value of its label. -/
+inductive FT where
+  | leaf : Terms → FT
+  | nil : FT
+  | cons : FT → FT → FT
   deriving DecidableEq, Repr
 
-/-- The index of an assignment of `ls` in mixed radix, the first label least significant. -/
-def idx (D : ℕ → ℕ) : List ℕ → (ℕ → ℕ) → ℕ
-  | [], _ => 0
-  | l :: ls, σ => σ l + D l * idx D ls σ
+/-- The level of subtables `cs`. -/
+def FT.node (cs : List FT) : FT := cs.foldr FT.cons FT.nil
+
+/-- The `k`-th subtable of a level. -/
+def FT.child : FT → ℕ → FT
+  | .cons h _, 0 => h
+  | .cons _ t, k + 1 => FT.child t k
+  | _, _ => .leaf []
+
+/-- The entry of a table at `σ`, its levels read at the labels `ls` in order. -/
+def FT.get (σ : ℕ → ℕ) : List ℕ → FT → Terms
+  | [], .leaf t => t
+  | [], _ => []
+  | l :: ls, T => FT.get σ ls (T.child (σ l))
+
+/-- A scope of labels and a table with one level per label of it. -/
+structure Fac where
+  scope : List ℕ
+  table : FT
+  deriving DecidableEq, Repr
 
 /-- A factor's entry at an assignment. -/
-def Fac.at (D : ℕ → ℕ) (F : Fac) (σ : ℕ → ℕ) : Terms := F.table.getD (idx D F.scope σ) []
+def Fac.at (_D : ℕ → ℕ) (F : Fac) (σ : ℕ → ℕ) : Terms := F.table.get σ F.scope
 
 /-- A factor's value. -/
 noncomputable def fv (z : ℂ) (xs : List ℂ) (D : ℕ → ℕ) (F : Fac) (σ : ℕ → ℕ) : ℂ :=
@@ -43,17 +62,20 @@ noncomputable def fprod (z : ℂ) (xs : List ℂ) (D : ℕ → ℕ) (Fs : List F
 def ffold (D : ℕ → ℕ) (Fs : List Fac) (σ : ℕ → ℕ) : Terms :=
   Fs.foldr (fun F acc => tmul (F.at D σ) acc) (tc 1)
 
-theorem idx_congr (D : ℕ → ℕ) (ls : List ℕ) (σ τ : ℕ → ℕ) (h : ∀ l ∈ ls, σ l = τ l) :
-    idx D ls σ = idx D ls τ := by
+theorem FT.get_congr (σ τ : ℕ → ℕ) : ∀ (ls : List ℕ) (T : FT), (∀ l ∈ ls, σ l = τ l) →
+    T.get σ ls = T.get τ ls := by
+  intro ls
   induction ls with
-  | nil => rfl
+  | nil => intro T _; cases T <;> rfl
   | cons l ls ih =>
-    simp only [idx, h l List.mem_cons_self, ih fun x hx => h x (List.mem_cons_of_mem _ hx)]
+    intro T h
+    simp only [FT.get, h l List.mem_cons_self]
+    exact ih _ fun x hx => h x (List.mem_cons_of_mem _ hx)
 
 theorem fv_reads (z : ℂ) (xs : List ℂ) (D : ℕ → ℕ) (F : Fac) :
     Reads F.scope (fv z xs D F) := by
   intro σ τ h
-  simp only [fv, Fac.at, idx_congr D F.scope σ τ h]
+  simp only [fv, Fac.at, FT.get_congr σ τ F.scope F.table h]
 
 theorem fprod_reads (z : ℂ) (xs : List ℂ) (D : ℕ → ℕ) (Fs : List Fac) (σ τ : ℕ → ℕ)
     (h : ∀ F ∈ Fs, ∀ l ∈ F.scope, σ l = τ l) : fprod z xs D Fs σ = fprod z xs D Fs τ := by
@@ -302,6 +324,174 @@ theorem eval_ve (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × 
     · exact hr x hm
     · rw [hτ x hm]; exact hσ x hb
   · exact hr x (by simpa using hs)
+
+/-- Summing `l` out of the factors of `Fs` containing it gives `new`. -/
+def elimNew (M : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List Fac) (new : Fac) : Bool :=
+  let ins := Fs.filter fun F => F.scope.contains l
+  !new.scope.contains l &&
+    (new.scope.all fun x => ins.any fun F => F.scope.contains x) &&
+    (ins.all fun F => F.scope.all fun x => x == l || new.scope.contains x) &&
+    (assigns D new.scope).all fun τ => new.at D τ ==
+      compact M ((List.range (D l)).flatMap fun j => ffold D ins (Function.update τ l j))
+
+/-- The factors of `Fs` without `l`, then `new`. -/
+def elimStep (l : ℕ) (Fs : List Fac) (new : Fac) : List Fac :=
+  Fs.filter (fun F => !F.scope.contains l) ++ [new]
+
+theorem elimOK_step (M : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List Fac) (new : Fac)
+    (h : elimNew M D l Fs new = true) : elimOK M D l Fs (elimStep l Fs new) = true := by
+  unfold elimOK elimStep
+  simp only [List.reverse_append, List.reverse_cons, List.reverse_nil, List.nil_append,
+    List.cons_append, List.reverse_reverse, beq_self_eq_true, Bool.true_and]
+  simpa only [elimNew, Bool.and_assoc] using h
+
+/-- The factor lists of a chain given by each step's label and new factor. -/
+def expand : List Fac → List (ℕ × Fac) → List (ℕ × List Fac)
+  | _, [] => []
+  | Fs, (l, new) :: st => (l, elimStep l Fs new) :: expand (elimStep l Fs new) st
+
+/-- A chain of eliminations from `Fs` ending at `final`, each step its label and new factor. -/
+def chainNew (M : ℕ) (D : ℕ → ℕ) : List Fac → List (ℕ × Fac) → List Fac → Bool
+  | Fs, [], final => Fs == final
+  | Fs, (l, new) :: st, final =>
+    elimNew M D l Fs new && chainNew M D (elimStep l Fs new) st final
+
+theorem chainNew_nil (M : ℕ) (D : ℕ → ℕ) (Fs : List Fac) : chainNew M D Fs [] Fs = true := by
+  simp [chainNew]
+
+theorem chainNew_step (M : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs Fs' : List Fac) (new : Fac)
+    (st : List (ℕ × Fac)) (final : List Fac) (h1 : elimNew M D l Fs new = true)
+    (hs : elimStep l Fs new = Fs') (h2 : chainNew M D Fs' st final = true) :
+    chainNew M D Fs ((l, new) :: st) final = true := by
+  subst hs
+  simp only [chainNew, h1, h2, Bool.and_self]
+
+theorem chainOK_expand (M : ℕ) (D : ℕ → ℕ) : ∀ (st : List (ℕ × Fac)) (Fs final : List Fac),
+    chainNew M D Fs st final = true → chainOK M D Fs (expand Fs st) final = true := by
+  intro st
+  induction st with
+  | nil => intro Fs final h; simpa [chainNew, chainOK, expand] using h
+  | cons s st ih =>
+    obtain ⟨l, new⟩ := s
+    intro Fs final h
+    simp only [chainNew, Bool.and_eq_true] at h
+    simp only [expand, chainOK, Bool.and_eq_true]
+    exact ⟨elimOK_step M D l Fs new h.1, ih _ final h.2⟩
+
+theorem expand_fst : ∀ (st : List (ℕ × Fac)) (Fs : List Fac),
+    (expand Fs st).map Prod.fst = st.map Prod.fst := by
+  intro st
+  induction st with
+  | nil => intro Fs; rfl
+  | cons s st ih => obtain ⟨l, new⟩ := s; intro Fs; simp [expand, ih]
+
+/-- A network's entry by a checked contraction whose steps give only their new factors. -/
+theorem eval_ve_new (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
+    (keys : List (ℕ × ℕ)) (N : Net) (hM : 0 < M)
+    (hok : N.nodes.all (nodeOK E.shape M keys) = true) (hph : PhOK E M gs P keys)
+    (leaves : List Fac) (hlen : leaves.length = N.nodes.length)
+    (hleaf : (N.nodes.zip leaves).all (fun p => leafOK E.shape M P p.1 p.2) = true)
+    (steps : List (ℕ × Fac)) (final : List Fac)
+    (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainNew M E.shape.dim leaves steps final = true)
+    (hscope : scopesOK N.bnd leaves (expand leaves steps) = true) (σ : ℕ → ℕ)
+    (hσ : ∀ x ∈ N.bnd, σ x < E.shape.dim x) :
+    eval E N σ = sqK E.shape N * fprod (om M) (gs.map ex) E.shape.dim final σ :=
+  eval_ve E M gs P keys N hM hok hph leaves hlen hleaf (expand leaves steps) final
+    (by rw [expand_fst]; exact hperm) (chainOK_expand M E.shape.dim steps leaves final hchain)
+    hscope σ hσ
+
+/-- `τ` with the values of `σ` on `U`. -/
+def pin (U : List ℕ) (σ τ : ℕ → ℕ) (x : ℕ) : ℕ := if U.contains x then σ x else τ x
+
+/-- A node's factor holds its entries with its labels in `U` read from `σ`, and covers its
+other labels. -/
+def leafAt (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (U : List ℕ) (σ : ℕ → ℕ) (n : Node)
+    (F : Fac) : Bool :=
+  (n.outs ++ n.ins).all (fun x => F.scope.contains x || U.contains x) &&
+    (assigns S.dim F.scope).all fun τ => F.at S.dim τ == compact M (valT S M P (pin U σ τ) n)
+
+theorem leaf_val_at (S : Shape) (M : ℕ) (hM : 0 < M) (xs : List ℂ) (P : ℕ → ℕ → ℕ × List ℤ)
+    (U : List ℕ) (σ : ℕ → ℕ) (n : Node) (F : Fac) (h : leafAt S M P U σ n F = true)
+    (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l) (hU : ∀ l ∈ U, τ l = σ l) :
+    tv (om M) xs (valT S M P τ n) = fv (om M) xs S.dim F τ := by
+  simp only [leafAt, Bool.and_eq_true, List.all_eq_true, List.contains_iff_mem,
+    beq_iff_eq, Bool.or_eq_true] at h
+  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim F.scope τ hτ
+  have e1 : fv (om M) xs S.dim F τ = fv (om M) xs S.dim F ρ :=
+    fv_reads _ _ _ F τ ρ fun l hl => (hρτ l hl).symm
+  rw [e1, fv, h.2 ρ hρ, tv_compact M hM]
+  congr 1
+  refine valT_congr S M P n τ (pin U σ ρ) fun l hl => ?_
+  unfold pin
+  by_cases hu : l ∈ U
+  · simp [hu, hU l hu]
+  · have hF : l ∈ F.scope := (h.1 l hl).resolve_right hu
+    simp [hu, hρτ l hF]
+
+theorem prodVal_leaves_at (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
+    (keys : List (ℕ × ℕ)) (hM : 0 < M) (hph : PhOK E M gs P keys) (U : List ℕ) (σ : ℕ → ℕ) :
+    ∀ (ns : List Node) (leaves : List Fac), leaves.length = ns.length →
+      ns.all (nodeOK E.shape M keys) = true →
+      (ns.zip leaves).all (fun p => leafAt E.shape M P U σ p.1 p.2) = true →
+      ∀ τ, (∀ F ∈ leaves, ∀ x ∈ F.scope, τ x < E.shape.dim x) → (∀ x ∈ U, τ x = σ x) →
+        prodVal E ns τ = (ns.map fun n => (rt (E.dimv n.dim))⁻¹ ^ sqN E.shape n).prod *
+          fprod (om M) (gs.map ex) E.shape.dim leaves τ := by
+  intro ns
+  induction ns with
+  | nil => intro leaves hlen _ _ τ _ _; cases leaves <;> simp_all [prodVal, fprod]
+  | cons n ns ih =>
+    intro leaves hlen hok hleaf τ hτ hU
+    cases leaves with
+    | nil => simp at hlen
+    | cons F Fs =>
+      simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hleaf hok
+      have h1 := ih Fs (by simpa using hlen) hok.2 hleaf.2 τ (fun F hF => hτ F (by simp [hF])) hU
+      simp only [prodVal, fprod, List.map_cons, List.prod_cons] at h1 ⊢
+      rw [h1, val_cyc E M gs P keys hM hph τ n hok.1,
+        leaf_val_at E.shape M hM (gs.map ex) P U σ n F hleaf.1 τ (hτ F (by simp)) hU]
+      simp only [Env.shape]
+      ring
+
+/-- A network's entry at `σ` by a checked contraction whose leaves read the boundary labels
+from `σ` and whose steps give only their new factors. -/
+theorem eval_ve_at (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
+    (keys : List (ℕ × ℕ)) (N : Net) (hM : 0 < M)
+    (hok : N.nodes.all (nodeOK E.shape M keys) = true) (hph : PhOK E M gs P keys)
+    (σ : ℕ → ℕ) (leaves : List Fac) (hlen : leaves.length = N.nodes.length)
+    (hleaf : (N.nodes.zip leaves).all (fun p => leafAt E.shape M P N.bnd σ p.1 p.2) = true)
+    (steps : List (ℕ × Fac)) (final : List Fac)
+    (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainNew M E.shape.dim leaves steps final = true)
+    (hscope : scopesOK N.bnd leaves (expand leaves steps) = true)
+    (hdis : N.bnd.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hσ : ∀ x ∈ N.bnd, σ x < E.shape.dim x) :
+    eval E N σ = sqK E.shape N * fprod (om M) (gs.map ex) E.shape.dim final σ := by
+  have hD : labDim E = E.shape.dim := rfl
+  have hK : sqK E.shape N = (N.nodes.map fun n => (rt (E.dimv n.dim))⁻¹ ^ sqN E.shape n).prod := by
+    simp only [sqK, sqL, List.map_map]; rfl
+  have hperm' : N.int.Perm ((expand leaves steps).map Prod.fst).reverse := by
+    rw [expand_fst]; exact hperm
+  simp only [List.all_eq_true, Bool.not_eq_true'] at hdis
+  unfold eval
+  rw [sumOver_perm _ hperm', hD, hK]
+  have := chain_val M hM (gs.map ex) (ex_atoms_ne gs) E.shape.dim N.bnd (expand leaves steps)
+    leaves final (chainOK_expand M E.shape.dim steps leaves final hchain) hscope σ hσ
+  rw [← this, mul_sumOver]
+  apply sumOver_congr
+  intro τ hτ hr
+  refine prodVal_leaves_at E M gs P keys hM hph N.bnd σ N.nodes leaves hlen hok hleaf τ ?_ ?_
+  · intro F hF x hxF
+    rcases scopesOK_leaves N.bnd leaves (expand leaves steps) hscope F hF x hxF with hb | hs
+    · by_cases hm : x ∈ ((expand leaves steps).map Prod.fst).reverse
+      · exact hr x hm
+      · rw [hτ x hm]; exact hσ x hb
+    · exact hr x (by simpa using hs)
+  · intro x hx
+    apply hτ x
+    have := hdis x hx
+    rw [expand_fst]
+    simpa using this
 
 /-- A network's entry as groups from its final factors. -/
 theorem eval_ve_groups (E : Env) (M : ℕ) (gs : List ℝ) (hM : 0 < M) (final : List Fac)
