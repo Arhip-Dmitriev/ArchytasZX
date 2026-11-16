@@ -61,6 +61,8 @@ FULL_TERMS = 4096
 BS_NODES = False
 """Whether the translation writes binder and splitter nodes (``bsTerm``)."""
 CHUNK_TEXT = 200_000
+PRE_LITERAL = 32
+"""Every how many nodes the labels before a node are written as a literal list."""
 NORM_TERMS = 1 << 14
 """The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
 
@@ -3075,10 +3077,16 @@ class _SymExport:
             for k in range(m - 1, -1, -1):
                 out.append(f"def {tag}D{k} : List Node := {tag}n{k} :: {tag}D{k + 1}")
             out.append(f"def {tag}P0 : List ℕ := []")
+            pre: list[int] = []
             for k in range(m):
-                out.append(
-                    f"def {tag}P{k + 1} : List ℕ := {tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
-                )
+                pre += [*nodes[k][1], *nodes[k][2]]
+                if (k + 1) % PRE_LITERAL == 0:
+                    out.append(f"def {tag}P{k + 1} : List ℕ := {pre}")
+                else:
+                    out.append(
+                        f"def {tag}P{k + 1} : List ℕ := "
+                        f"{tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
+                    )
             texts = [_lean_ex(x) for x in st]
             per = max(1, -(-sum(map(len, texts)) // CHUNK_TEXT))
             marks = sorted({*range(0, m, per), m})
