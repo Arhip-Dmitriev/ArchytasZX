@@ -30,6 +30,7 @@ import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
+import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.phase import INDEX
@@ -734,14 +735,13 @@ class _Refuter:
         steps = []
         left: list[int] = list(dict.fromkeys(net.summed))
         while left:
+            near: dict[int, set[int]] = {}
+            for f in facs:
+                for x in f[0]:
+                    near.setdefault(x, set()).update(f[0])
 
-            def cost(l: int, facs: list[Any] = facs) -> int:
-                sc: set[int] = set()
-                for f in facs:
-                    if l in f[0]:
-                        sc |= set(f[0])
-                sc.discard(l)
-                return math.prod(self.labdim(x) for x in sc)
+            def cost(l: int, near: dict[int, set[int]] = near) -> int:
+                return math.prod(self.labdim(x) for x in near.get(l, set()) if x != l)
 
             l = min(left, key=lambda x: (cost(x), x))
             left.remove(l)
@@ -1614,13 +1614,17 @@ class _Refuter:
             f"mono_nil_left] <;> (try push_cast) <;> {cert}"
         )
 
-    def res_table(self, scope: Sequence[int], entry: Callable[[dict[int, int]], int]) -> list[int]:
-        dims = [self.labdim(x) for x in scope]
-        size = math.prod(dims)
+    def res_count(self, size: int) -> None:
+        """Counts ``size`` residue entries against `MAX_TERMS` and `MAX_RES_ENTRIES`."""
         total = self.__dict__.get("_res_entries", 0) + size
         if size > MAX_TERMS or total > MAX_RES_ENTRIES:
             raise NetUnsupported("a residue table is too large at the counterexample")
         self.__dict__["_res_entries"] = total
+
+    def res_table(self, scope: Sequence[int], entry: Callable[[dict[int, int]], int]) -> list[int]:
+        dims = [self.labdim(x) for x in scope]
+        size = math.prod(dims)
+        self.res_count(size)
         out = []
         for i in range(size):
             tau, rest = {}, i
@@ -1628,6 +1632,26 @@ class _Refuter:
                 tau[x], rest = rest % d, rest // d
             out.append(entry(tau))
         return out
+
+    def res_sum(self, scope: Sequence[int], l: int, ins: Sequence[Any]) -> list[int]:
+        """The table over ``scope`` of the sum over ``l`` of the product of ``ins`` mod p, first
+        label least significant, by broadcasting `numpy` arrays."""
+        dims = [self.labdim(x) for x in scope]
+        self.res_count(math.prod(dims))
+        axes = [*scope, l]
+        full = [*dims, self.labdim(l)]
+        dt: Any = np.int64 if self.p < 2**31 else object
+        acc = np.ones([1] * len(axes), dtype=dt)
+        for fs, tab in ins:
+            fd = [self.labdim(x) for x in fs]
+            arr = np.asarray(tab, dtype=dt).reshape(fd, order="F")
+            have = [x for x in axes if x in fs]
+            if fs:
+                arr = arr.transpose([list(fs).index(x) for x in have])
+            arr = arr.reshape([full[i] if x in fs else 1 for i, x in enumerate(axes)])
+            acc = acc * arr % self.p
+        acc = np.broadcast_to(acc, full).sum(axis=-1) % self.p
+        return [int(v) for v in np.asarray(acc).reshape(-1, order="F")]
 
     MAX_TABLE = MAX_TERMS
 
@@ -1639,13 +1663,20 @@ class _Refuter:
         pinned = dict(at)
         self.__dict__["_res_entries"] = 0
         leaves = []
+        cache = self.__dict__.setdefault("_res_leaves", {})
         for n in net.nodes:
-            scope = tuple(x for x in dict.fromkeys((*n.outs, *n.ins)) if x not in pinned)
+            legs = tuple(dict.fromkeys((*n.outs, *n.ins)))
+            scope = tuple(x for x in legs if x not in pinned)
+            key = (id(n), tuple((x, pinned[x]) for x in legs if x in pinned))
 
             def leaf(tau: dict[int, int], n: LNode = n) -> int:
                 return self.res(self.node(n, {**tau, **pinned}))
 
-            leaves.append((scope, self.res_table(scope, leaf)))
+            if key in cache:
+                self.res_count(math.prod(self.labdim(x) for x in scope))
+            else:
+                cache[key] = self.res_table(scope, leaf)
+            leaves.append((scope, cache[key]))
         return self.res_eliminate(leaves, list(dict.fromkeys(net.summed)))
 
     def res_eliminate(
@@ -1653,39 +1684,42 @@ class _Refuter:
     ) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
         """The elimination of ``labels`` from the residue factors ``leaves``, a mirror of
         `elimR`."""
-        p = self.p
-        facs = list(leaves)
+        facd: dict[int, Any] = dict(enumerate(leaves))
+        nid = len(facd)
+        idx: dict[int, set[int]] = {}
+        for i, f in facd.items():
+            for x in f[0]:
+                idx.setdefault(x, set()).add(i)
+
+        def cost(l: int) -> int:
+            sc: set[int] = set()
+            for i in idx.get(l, ()):
+                sc.update(facd[i][0])
+            return math.prod(self.labdim(x) for x in sc if x != l)
+
         steps = []
         left: list[int] = list(labels)
+        costs = {x: cost(x) for x in left}
         while left:
-
-            def cost(l: int, facs: list[Any] = facs) -> int:
-                sc: set[int] = set()
-                for f in facs:
-                    if l in f[0]:
-                        sc |= set(f[0])
-                sc.discard(l)
-                return math.prod(self.labdim(x) for x in sc)
-
-            l = min(left, key=lambda x: (cost(x), x))
+            l = min(left, key=lambda x: (costs[x], x))
             left.remove(l)
-            ins = [f for f in facs if l in f[0]]
-            outs = [f for f in facs if l not in f[0]]
+            hit = idx.pop(l, set())
+            ins = [f for i, f in facd.items() if i in hit]
             scope = tuple(dict.fromkeys(x for f in ins for x in f[0] if x != l))
-
-            def entry(tau: dict[int, int], ins: list[Any] = ins, l: int = l) -> int:
-                total = 0
-                for j in range(self.labdim(l)):
-                    t2 = {**tau, l: j}
-                    acc = 1
-                    for f in reversed(ins):
-                        acc = self.res_at(f, t2) * acc % p
-                    total += acc
-                return total % p
-
-            new = (scope, self.res_table(scope, entry))
-            facs = outs + [new]
-            steps.append((l, list(facs)))
+            new = (scope, self.res_sum(scope, l, ins))
+            for i in hit:
+                for x in facd.pop(i)[0]:
+                    if x != l:
+                        idx[x].discard(i)
+            facd[nid] = new
+            for x in scope:
+                idx.setdefault(x, set()).add(nid)
+            nid += 1
+            for x in scope:
+                if x in costs:
+                    costs[x] = cost(x)
+            steps.append((l, list(facd.values())))
+        facs = list(facd.values())
         return leaves, steps, facs
 
     def env_at(self) -> str:

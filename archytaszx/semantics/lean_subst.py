@@ -189,15 +189,20 @@ class State:
     ns: list[int] = field(default_factory=list)
     cs: list[tuple[int, Ex]] = field(default_factory=list)
     c: int = 1
+    ix: dict[int, Ex] | None = field(default=None, repr=False, compare=False)
+
+    def index(self) -> dict[int, Ex]:
+        if self.ix is None:
+            self.ix = {}
+            for a, e in self.bs:
+                self.ix.setdefault(a, e)
+        return self.ix
 
     def texpr(self, x: int) -> Ex:
-        for a, e in self.bs:
-            if a == x:
-                return e
-        return ("v", x)
+        return self.index().get(x, ("v", x))
 
     def bound(self, x: int) -> bool:
-        return any(a == x for a, _ in self.bs)
+        return x in self.index()
 
 
 @dataclass
@@ -299,12 +304,10 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     bnd = list(net.bnd)
     st = State(ns=list(range(len(net.nodes))))
     free = list(dict.fromkeys(net.summed))
+    fset, bset = set(free), set(bnd)
     states: list[State] = [st]
     frees: list[list[int]] = [list(free)]
     steps: list[tuple[Any, ...]] = []
-
-    def men(s: State, i: int, l: int) -> bool:
-        return any(l in vars_(s.texpr(x)) for x in _legs(net, i))
 
     def dcands(s: State) -> Any:
         for i in s.ns:
@@ -323,12 +326,12 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             yield ("cn", q)
 
     def dok(s: State, l: int, src: tuple[Any, ...]) -> Ex | None:
-        if l not in free or s.bound(l):
+        if l not in fset or s.bound(l):
             return None
         e = _solve(s, net, dimv, d, l, src)
         if e is None or l in vars_(e):
             return None
-        if any(x not in free and x not in bnd for x in vars_(e)):
+        if any(x not in fset and x not in bset for x in vars_(e)):
             return None
         if ub(e, d) >= d(l):
             return None
@@ -340,9 +343,9 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             if e[0] != "add":
                 return None
             for a in (e[1], e[2]):
-                if a[0] == "v" and a[1] in free:
+                if a[0] == "v" and a[1] in fset:
                     return int(a[1])
-                if a[0] == "neg" and a[1][0] == "v" and a[1][1] in free:
+                if a[0] == "neg" and a[1][0] == "v" and a[1][1] in fset:
                     return int(a[1][1])
             return None
         pr = _spair(s, net, dimv, src)
@@ -365,17 +368,22 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             e = dok(s, l, src)
             if e is None:
                 continue
-            if closed and any(x in free for x in vars_(e)):
+            if closed and any(x in fset for x in vars_(e)):
                 continue
             return ("D", l, src, e)
         return None
 
     def geom(s: State) -> tuple[Any, ...] | None:
+        mens: dict[int, list[int]] = {}
+        for i in s.ns:
+            for v in dict.fromkeys(v for x in _legs(net, i) for v in vars_(s.texpr(x))):
+                mens.setdefault(v, []).append(i)
+        cvars = {v for q in s.cs for v in vars_(q[1])}
         for l in free:
             if s.bound(l):
                 continue
-            ms = [i for i in s.ns if men(s, i, l)]
-            if len(ms) != 2 or any(l in vars_(q[1]) for q in s.cs):
+            ms = mens.get(l, [])
+            if len(ms) != 2 or l in cvars:
                 continue
             n = d(l)
             if n <= 0 or m % n:
@@ -405,6 +413,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             _, _, _, _, rest, x, z = step
             st = State(list(st.bs), list(rest), [*st.cs, (d(l), ("add", x, z))], st.c * d(l) % p)
         free.remove(l)
+        fset.discard(l)
         steps.append(step)
         states.append(st)
         frees.append(list(free))
