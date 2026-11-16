@@ -228,4 +228,56 @@ theorem trStepS_eq (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ �
     trStepS fl dt pt rl labs int pre i n b = trStepB fl dt pt rl labs int pre i n b := by
   simp only [trStepS, trStepB, nfGo_eq, nfEx]
 
+/-! ## Blocks of nodes -/
+
+/-- The labels before a node list, after `xs`. -/
+def blockPre : List ℕ → List Node → List ℕ
+  | pre, [] => pre
+  | pre, n :: ns => blockPre (pre ++ (n.outs ++ n.ins)) ns
+
+/-- `trNodesB` on the nodes `xs` with the tail's expression `b0`, each step strict. -/
+def trBlockS (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (int : List ℕ) (b0 : List STm) : List ℕ → ℕ → List Node →
+    Option (List STm)
+  | _, _, [] => some b0
+  | pre, i, n :: ns =>
+    match trBlockS fl dt pt rl labs int b0 (pre ++ (n.outs ++ n.ins)) (i + 1) ns with
+    | some b => fL fTm b fun b => trStepS fl dt pt rl labs int pre i n b
+    | none => none
+
+theorem trNodesB_cons' (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int pre : List ℕ) (i : ℕ) (n : Node)
+    (ns : List Node) :
+    trNodesB fl dt pt rl labs int pre i (n :: ns) =
+      match trNodesB fl dt pt rl labs int (pre ++ (n.outs ++ n.ins)) (i + 1) ns with
+      | some b => trStepB fl dt pt rl labs int pre i n b
+      | none => none := by
+  cases h : trNodesB fl dt pt rl labs int (pre ++ (n.outs ++ n.ins)) (i + 1) ns with
+  | none =>
+    unfold trNodesB
+    rw [h]
+    cases trNode dt pt rl (OFF + i) n <;> rfl
+  | some b => exact trNodesB_cons fl dt pt rl labs int pre i n ns b h
+
+theorem trNodesB_block (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ) (b : List STm) :
+    ∀ (xs ys : List Node) (pre : List ℕ) (i : ℕ),
+    trNodesB fl dt pt rl labs int (blockPre pre xs) (i + xs.length) ys = some b →
+    trNodesB fl dt pt rl labs int pre i (xs ++ ys) = trBlockS fl dt pt rl labs int b pre i xs := by
+  intro xs
+  induction xs with
+  | nil => intro ys pre i h; simpa [blockPre, trBlockS] using h
+  | cons n xs ih =>
+    intro ys pre i h
+    have h' : trNodesB fl dt pt rl labs int (blockPre (pre ++ (n.outs ++ n.ins)) xs)
+        (i + 1 + xs.length) ys = some b := by
+      have e : i + (n :: xs).length = i + 1 + xs.length := by simp [List.length_cons]; omega
+      rw [← e]
+      exact h
+    rw [List.cons_append, trNodesB_cons', ih ys _ _ h']
+    simp only [trBlockS]
+    cases trBlockS fl dt pt rl labs int b (pre ++ (n.outs ++ n.ins)) (i + 1) xs with
+    | none => rfl
+    | some c => simp [fL_eq _ (fun a k => fTm_eq a k), trStepS_eq]
+
 end ArchytasZX.Sym

@@ -29,6 +29,7 @@ and a term ``(CMon, sums, dels, phs)``.
 from __future__ import annotations
 
 import functools
+import itertools
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -57,6 +58,7 @@ STm = tuple[CMon, tuple[tuple[int, DMon], ...], tuple[Fac, ...], tuple[Fac, ...]
 OFF = 1000000
 ROUNDS = 3
 FULL_TERMS = 4096
+CHUNK_TEXT = 200_000
 NORM_TERMS = 1 << 14
 """The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
 
@@ -2928,23 +2930,25 @@ class _SymExport:
                 out.append(
                     f"def {tag}P{k + 1} : List ℕ := {tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
                 )
-            for k in range(m + 1):
-                out.append(f"def {tag}E{k} : List STm := {_lean_ex(st[k])}")
+            texts = [_lean_ex(x) for x in st]
+            per = max(1, -(-sum(map(len, texts)) // CHUNK_TEXT))
+            marks = sorted({*range(0, m, per), m})
+            for k in marks:
+                out.append(f"def {tag}E{k} : List STm := {texts[k]}")
             out.append(
                 f"theorem {tag}B{m} : trNodesB {args} {nt}.int {tag}P{m} {m} {tag}D{m} = "
                 f"some {tag}E{m} := by decide +kernel"
             )
-            for k in range(m - 1, -1, -1):
+            for k, k2 in reversed(list(itertools.pairwise(marks))):
+                xs = "[" + ", ".join(f"{tag}n{j}" for j in range(k, k2)) + "]"
                 out.append(
-                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trStepS {args} {nt}.int "
-                    f"{tag}P{k} {k} {tag}n{k} {tag}E{k + 1} = some {tag}E{k} := by decide +kernel"
+                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trBlockS {args} {nt}.int "
+                    f"{tag}E{k2} {tag}P{k} {k} {xs} = some {tag}E{k} := by decide +kernel"
                 )
                 out.append(
                     f"theorem {tag}B{k} : trNodesB {args} {nt}.int {tag}P{k} {k} {tag}D{k} = "
-                    f"some {tag}E{k} :=\n  (trNodesB_cons {args} {nt}.int {tag}P{k} {k} "
-                    f"{tag}n{k} {tag}D{k + 1} {tag}E{k + 1} {tag}B{k + 1}).trans\n    "
-                    f"((trStepS_eq {args} {nt}.int {tag}P{k} {k} {tag}n{k} {tag}E{k + 1})"
-                    f".symm.trans {tag}T{k})"
+                    f"some {tag}E{k} :=\n  (trNodesB_block {args} {nt}.int {tag}E{k2} {xs} "
+                    f"{tag}D{k2} {tag}P{k} {k} {tag}B{k2}).trans {tag}T{k}"
                 )
             out.append(
                 f"theorem {tag}R : trNet {args} {nt} = some (exSums (labSums DT labs "
