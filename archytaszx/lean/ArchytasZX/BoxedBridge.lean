@@ -306,7 +306,7 @@ theorem bridgeD_facts (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (
   simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.all_eq_true] at h
   obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hoff, hinc⟩, hP⟩, hpos⟩, hnd⟩, hW⟩, hcnt⟩, -⟩, -⟩, -⟩, hlen⟩,
     hnodes⟩ := h
-  have hid := incrL_ok _ hinc
+  have hid := (nodupB_ok _ 0 hinc).1
   have hnd' : (ends D).Nodup := List.Nodup.of_map (pkey P) (nodupB_ok _ 0 hnd).1
   have hpos' : ∀ p ∈ ends D, p.pos < P ∧ pkey P p < 2 ^ K := fun p hp => hpos p hp
   have hnode : ∀ i (hi : i < D.nodes.length),

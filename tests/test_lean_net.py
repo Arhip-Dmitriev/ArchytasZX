@@ -306,6 +306,39 @@ def test_deferred_dimensions_are_identified() -> None:
     assert "dimensions assumed equal are one dimension here: d**q = d**p" in source
 
 
+def _algebraic_family() -> K.Theorem:
+    from archytaszx.algebra.scalar import Scalar
+    from archytaszx.semantics.prove import prove
+
+    from .test_phase15_oracle import PROVED
+
+    a, b = PROVED["boxed_fusion"]()
+    for d in (a, b):
+        d.set_scalar(Scalar(d.scalar.to_sympy() * (sp.Integer(2) ** sp.Rational(1, 3) + 1)))
+    outcome = prove(a, b)
+    assert outcome.certificate is not None
+    return K.check(outcome.certificate)
+
+
+def test_an_algebraic_family_passes_fpos_only_positivity() -> None:
+    source = L.export(_algebraic_family())
+    assert "theorem Fpos (θ : ℝ) (d : ℕ) (h_d : 0 < d)" in source
+    assert "(Fpos θ d h_d)" in source and "(Fpos θ d h_d _)" in source
+    assert "Fpos θ d h_d hθ" not in source
+    assert source.index("\ndef Δ (θ : ℝ)") < source.index("theorem Δpos")
+
+
+def test_the_bridge_plan_takes_node_ids_in_any_order() -> None:
+    d = cap_diagram(3)
+    a = L._Export(lambda _: "")
+    lab = a.labelled(d)
+    net, ids, off = lab.net, list(lab.order), len(lab.net.bnd)
+    legs = [([a.labs[x] for x in n.outs], [a.labs[x] for x in n.ins]) for n in net.nodes]
+    assert L._bridge_plan(d, net, off, legs, a.labs, ids) is not None
+    rev = L.LNet(tuple(reversed(net.nodes)), net.summed, net.bnd)
+    assert L._bridge_plan(d, rev, off, legs[::-1], a.labs, ids[::-1]) is not None
+
+
 def test_nested_multiplicities_export_without_axioms() -> None:
     source = L.export(_family("two_index_fusion"))
     assert "\naxiom " not in source

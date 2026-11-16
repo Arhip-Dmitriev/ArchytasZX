@@ -11,7 +11,7 @@ import ArchytasZX.Diagram
 is `(2 node + [input]) P + pos`; the wires are packed as one number `WB` holding each wire's two
 keys in `2K` bits; every boundary port and wire end is a distinct key, so a leg found at its
 stated label (a boundary slot or a wire of `WB`) is located there by `Diagram.locate`. The
-node ids increase, the legs are as many as the boundary ports and wire ends, so every wire end
+node ids are distinct, the legs are as many as the boundary ports and wire ends, so every wire end
 and boundary port is a leg; each leg's dimension index is entry `l` of the table `T` of
 `b`-bit entries at its label `l`, and `L` lists the labels in increasing order, giving every
 boundary slot and wire label its entry of `T`. `bridgeD_ok` reads `D.check L off` and
@@ -334,7 +334,7 @@ def nodeOKD (P K b off WB T : ℕ) (D : Diagram) (n : DNode) (m : Node) : Bool :
 
 /-- `N` is `D.toNet off` and `D.check L off` holds. -/
 def bridgeD (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (ℕ × ℕ)) : Bool :=
-  decide (D.bnd.length ≤ off) && incrL (D.nodes.map (·.id)) &&
+  decide (D.bnd.length ≤ off) && nodupB (D.nodes.map (·.id)) 0 &&
     D.nodes.all (fun n => decide (n.outs.length ≤ P) && decide (n.ins.length ≤ P)) &&
     (ends D).all (fun p => decide (p.pos < P) && decide (pkey P p < 2 ^ K)) &&
     nodupB ((ends D).map (pkey P)) 0 && packW P K D.wires == WB &&
@@ -351,7 +351,7 @@ theorem bridgeD_ok (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (ℕ
   simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.all_eq_true] at h
   obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hoff, hinc⟩, hP⟩, hpos⟩, hnd⟩, hW⟩, hcnt⟩, hlabs⟩, hint⟩, hbnd⟩, hlen⟩,
     hnodes⟩ := h
-  have hid := incrL_ok _ hinc
+  have hid := (nodupB_ok _ 0 hinc).1
   have hnd' : (ends D).Nodup := List.Nodup.of_map (pkey P) (nodupB_ok _ 0 hnd).1
   have hpos' : ∀ p ∈ ends D, p.pos < P ∧ pkey P p < 2 ^ K := fun p hp => hpos p hp
   have hnode : ∀ i (hi : i < D.nodes.length),

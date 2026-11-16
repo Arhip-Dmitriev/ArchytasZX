@@ -722,9 +722,14 @@ class _Export:
         """The scalar definitions to unfold in a scalar proof."""
         return ", ".join(self.scalar_defs)
 
+    def fpos(self) -> str:
+        """``Fpos`` applied to the family's parameters and their ``0 < n`` hypotheses."""
+        hyps = [h for h in self.sp_hyp_args.split() if h.startswith("h_")]
+        return _join("Fpos", self.sp_args, *hyps)
+
     def bund_pos(self, vals: Sequence[str]) -> str:
         """A proof that every bundle base is positive."""
-        return f"(fun _ _ _ => Fam.dimv_pos _ _ _ (Fpos {_join(self.sp_args, self.sp_hyp_args)} _))"
+        return f"(fun _ _ _ => Fam.dimv_pos _ _ _ ({self.fpos()} _))"
 
     def translate(
         self,
@@ -1386,7 +1391,7 @@ class _Export:
             f"(ksOf [{', '.join(self.ks_vals)}])",
             self.env,
             self.fam_text(),
-            _join("Fpos", self.sp_args, self.sp_hyp_args),
+            self.fpos(),
             sl,
             a,
             sr,
@@ -3287,13 +3292,14 @@ class _Export:
                 f"/-- Weight vectors. -/\nnoncomputable def Ψ {binders} : ℕ → ℕ → ℂ\n"
                 f"{weights}\n  | _ => fun _ => 1",
             )
+        delta = tables[0]
         if self.alg_cert is not None:
             tables = self.field_tables() + tables
         if self.family:
             nats = [n for n, ty in params if ty == "ℕ" and not n.startswith("table_")]
             hyps = " ".join(f"(h_{n} : 0 < {n})" for n in nats)
             tables.insert(
-                1,
+                tables.index(delta) + 1,
                 (
                     f"/-- Every dimension value is positive. -/\n"
                     f"theorem Δpos {_join(binders, hyps)} :"
@@ -3378,9 +3384,7 @@ class _Export:
             "",
             *_macros(
                 self.unfold,
-                f"exact Fam.env_dimv_pos _ _ _ (Fpos {_join(self.sp_args, self.sp_hyp_args)} _)"
-                if self.family
-                else "",
+                f"exact Fam.env_dimv_pos _ _ _ ({self.fpos()} _)" if self.family else "",
             ),
         ]
         return "\n".join(
@@ -8196,7 +8200,7 @@ def _bridge_plan(
     ids = [int(n) for n in (sorted(d.nodes) if order is None else order)]
     if (
         nb > off
-        or any(a >= b for a, b in pairwise(ids))
+        or len(set(ids)) != len(ids)
         or net.summed != tuple(range(off, off + nw))
         or net.bnd != tuple(range(nb))
         or len(net.nodes) != len(ids)
