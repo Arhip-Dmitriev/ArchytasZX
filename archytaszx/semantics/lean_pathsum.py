@@ -1342,17 +1342,17 @@ def _weights_text(side: _NetSide) -> str:
 
 
 def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
-    """The digit tables, the network, its fragments and the NetPSD facts of one side."""
-    pairs = ", ".join(f"({n}, {f})" for n, f in zip(side.nodes, side.frags, strict=True))
-    cases = " | ".join("rfl" for _ in side.nodes)
+    """The digit tables, the network, its fragments and the NetPSD facts of one side: each
+    node's fact its own theorem, the fragment list in chunks of NODE_CHUNK, each chunk's facts
+    one theorem."""
     own = [(x, (lab, j)) for lab in side.labels for j, x in enumerate(side.dig[lab])]
     dig_tbl = [(lab, side.dig[lab]) for lab in side.labels]
     proofs = [
         p.replace("ownL", f"own{tag}").replace("labsL", f"labs{tag}").replace("digL", f"dig{tag}")
         for p in side.proofs
     ]
-    frags = pairs.replace("digL", f"dig{tag}")
-    return [
+    hyp = f"(∀ l ∈ labs{tag}, σ l < 2 ^ (dig{tag} l).length)"
+    out = [
         f"def own{tag} : Own := {own}",
         f"def labs{tag} : List ℕ := {side.labels}",
         f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
@@ -1364,33 +1364,79 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
             f"{list(range(side.boundary))}⟩"
         ),
         "",
-        f"noncomputable def ps{tag} : List (Node × Frag) := [{frags}]",
-        "",
+    ]
+    names = []
+    for i, (n, f, pr) in enumerate(zip(side.nodes, side.frags, proofs, strict=True)):
+        q = f"q{tag}{i}"
+        names.append(q)
+        out += [
+            f"noncomputable def {q} : Node × Frag := ({n}, {f.replace('digL', f'dig{tag}')})",
+            "",
+            f"theorem nd{tag}{i} (σ : ℕ → ℕ) (hσ : {hyp}) :",
+            f"    ArchytasZX.val E σ {q}.1 = fval {m} {q}.2 (dbits own{tag} σ) := by",
+            f"  have hown := own{tag}OK",
+            f"  exact {pr}",
+            "",
+        ]
+    chunks = [names[k : k + NODE_CHUNK] for k in range(0, len(names), NODE_CHUNK)] or [[]]
+    for j, ch in enumerate(chunks):
+        body = "[" + ", ".join(ch) + "]" if ch else "([] : List (Node × Frag))"
+        out += [f"noncomputable def ps{tag}c{j} : List (Node × Frag) := {body}", ""]
+        first = names.index(ch[0]) if ch else 0
+        out += [
+            f"theorem ch{tag}{j} : ∀ p ∈ ps{tag}c{j}, ∀ σ, {hyp} →",
+            f"    ArchytasZX.val E σ p.1 = fval {m} p.2 (dbits own{tag} σ) := by",
+            "  intro p hp",
+            f"  simp only [ps{tag}c{j}, List.mem_cons, List.not_mem_nil, or_false] at hp",
+        ]
+        if ch:
+            out += [
+                f"  rcases hp with {' | '.join('rfl' for _ in ch)}",
+                f"  exacts [{', '.join(f'nd{tag}{first + k}' for k in range(len(ch)))}]",
+            ]
+        out.append("")
+    parts = [f"ps{tag}c{j}" for j in range(len(chunks))]
+    joined = parts[-1]
+    for part in reversed(parts[:-1]):
+        joined = f"{part} ++ ({joined})"
+    out += [f"noncomputable def ps{tag} : List (Node × Frag) := {joined}", ""]
+    node = ["  node := by", "    intro p hp"]
+    if len(parts) > 1:
+        node += [
+            f"    simp only [ps{tag}, List.mem_append] at hp",
+            f"    rcases hp with {' | '.join('h' for _ in parts)}",
+            f"    exacts [{', '.join(f'ch{tag}{j} p h' for j in range(len(parts)))}]",
+        ]
+    else:
+        node += [f"    exact ch{tag}0 p hp"]
+    unfold = ", ".join([f"ps{tag}", *parts, *names])
+    out += [
         f"theorem net{tag} : NetPSD E N{tag} {m} own{tag} labs{tag} dig{tag} ps{tag} where",
         f"  ownok := own{tag}OK",
         "  nodes := rfl",
-        "  node := by",
-        "    intro p hp σ hσ",
-        f"    have hown := own{tag}OK",
-        f"    simp only [ps{tag}, List.mem_cons, List.not_mem_nil, or_false] at hp",
-        f"    rcases hp with {cases}",
-        *(f"    · exact {pr}" for pr in proofs),
-        "  disj := by decide",
+        *node,
+        "  disj := by decide +kernel",
         "  dims := by decide",
-        "  cover := by decide",
-        "  sub := by decide",
+        "  cover := by decide +kernel",
+        "  sub := by decide +kernel",
         "",
         (
             f"theorem c{tag} : (joinAll (ps{tag}.map Prod.snd)).c = "
             f"{_weights_text(side)}(rt 2)⁻¹ ^ {side.sqrt2_inv} := by"
         ),
         (
-            f"  simp only [ps{tag}, List.map_cons, List.map_nil, joinAll, Frag.join, Frag.unit, "
-            "zFragD, xFragD, fFragD, bFrag, wFrag, Frag.scale, List.length_cons, List.length_nil]"
+            f"  simp only [{unfold}, List.cons_append, List.nil_append, List.map_cons, "
+            "List.map_nil, joinAll, Frag.join, Frag.unit, zFragD, xFragD, fFragD, bFrag, wFrag, "
+            "Frag.scale, List.length_cons, List.length_nil]"
         ),
         "  ring",
         "",
     ]
+    return out
+
+
+NODE_CHUNK = 25
+"""Nodes per chunk theorem of a NetPSD node fact."""
 
 
 @dataclass
