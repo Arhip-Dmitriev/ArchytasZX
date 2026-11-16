@@ -58,6 +58,8 @@ STm = tuple[CMon, tuple[tuple[int, DMon], ...], tuple[Fac, ...], tuple[Fac, ...]
 OFF = 1000000
 ROUNDS = 3
 FULL_TERMS = 4096
+BS_NODES = False
+"""Whether the translation writes binder and splitter nodes (``bsTerm``)."""
 CHUNK_TEXT = 200_000
 NORM_TERMS = 1 << 14
 """The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
@@ -932,9 +934,9 @@ def tr_node(
         return w_s(d, i, (), os) + [(of_q(1 - len(os)), (), ((d, ip_v(i)),) + w_zeros(d, os), ())]
     if kind == "I" and len(os) == 1 and len(is_) == 1:
         return [(of_q(1), (), ((d, ip_sub(ip_v(os[0]), ip_v(is_[0]))),), ())]
-    if kind == "B" and len(os) == 1 and len(is_) == 2:
+    if BS_NODES and kind == "B" and len(os) == 1 and len(is_) == 2:
         return bs_term(d, dt(ph), os[0], is_[0], is_[1])
-    if kind == "S" and len(os) == 2 and len(is_) == 1:
+    if BS_NODES and kind == "S" and len(os) == 2 and len(is_) == 1:
         return bs_term(d, dt(ph), is_[0], os[0], os[1])
     return None
 

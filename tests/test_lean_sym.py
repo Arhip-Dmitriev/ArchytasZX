@@ -433,7 +433,8 @@ def test_the_mirror_keeps_the_value(seed: int) -> None:
 
 
 @pytest.mark.parametrize("src", ["b = B(literal 2, literal 3)", "s = S(literal 2, literal 3)"])
-def test_binders_and_splitters_are_deltas(src: str) -> None:
+def test_binders_and_splitters_are_deltas(src: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(S, "BS_NODES", True)
     diagram = parse_diagram(src)
     ex = S._SymExport(diagram, diagram, None, {})
     nodes, internal, bnd = ex.net(ex.a.net)
