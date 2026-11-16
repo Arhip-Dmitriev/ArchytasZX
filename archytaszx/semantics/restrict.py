@@ -51,7 +51,7 @@ from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.scalar import Scalar, ScalarGrammarError
+from archytaszx.algebra.scalar import Scalar, ScalarGrammarError, poly_coeffs
 from archytaszx.diagram.bangbox import (
     Mult,
     expand_concrete_boxes,
@@ -846,7 +846,7 @@ def _range_parts(
     var = sp.Dummy(str(symbol), real=True)
     out: list[tuple[sp.Dummy, sp.Expr]] = []
     try:
-        coeffs = sp.Poly(expr, *gens).coeffs() if gens else [expr]
+        coeffs = poly_coeffs(expr, tuple(gens)) if gens else [expr]
     except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
         return None
     for coeff in coeffs:
@@ -926,7 +926,7 @@ def _vanishes_on_ranges(restriction: Restriction, expr: sp.Expr) -> str | None:
         var = sp.Dummy(str(x), real=True)
         swap[x], domains[var] = var, domain
     try:
-        coeffs = sp.Poly(expr, *gens, *indices).coeffs() if gens or indices else [expr]
+        coeffs = poly_coeffs(expr, (*gens, *indices)) if gens or indices else [expr]
         for coeff in coeffs:
             parts = _real_parts(sp.sympify(coeff).xreplace(swap))
             if parts is None:
@@ -1038,7 +1038,7 @@ def _ranges_point(restriction: Restriction, expr: sp.Expr) -> dict[str, sp.Ratio
             return None
         choices.append(values)
     try:
-        coeffs = sp.Poly(expr, *gens, *indices).coeffs() if gens or indices else [expr]
+        coeffs = poly_coeffs(expr, (*gens, *indices)) if gens or indices else [expr]
         for chosen in itertools.product(*choices):
             point = dict(zip(names, chosen, strict=True))
             for coeff in coeffs:

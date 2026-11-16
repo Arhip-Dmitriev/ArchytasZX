@@ -56,7 +56,12 @@ from typing import Union, cast
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 from sympy.core.add import _unevaluated_Add  # type: ignore[import-untyped]
 from sympy.core.mul import _unevaluated_Mul  # type: ignore[import-untyped]
-from sympy.polys.polyutils import dict_from_expr  # type: ignore[import-untyped]
+from sympy.polys.constructor import construct_domain  # type: ignore[import-untyped]
+from sympy.polys.polyoptions import build_options  # type: ignore[import-untyped]
+from sympy.polys.polyutils import (  # type: ignore[import-untyped]
+    _dict_from_expr,
+    dict_from_expr,
+)
 
 from archytaszx.algebra.dimension import Dim, DimensionError
 from archytaszx.algebra.phase import Phase
@@ -404,6 +409,16 @@ def poly_terms(
         return None
     terms = sorted(((m, c) for m, c in found.items() if c != 0), reverse=True)
     return terms or [((0,) * len(gens), sp.Integer(0))]
+
+
+def poly_coeffs(expr: sp.Expr, gens: tuple[sp.Expr, ...]) -> list[sp.Expr]:
+    """``sp.Poly(expr, *gens).coeffs()`` from the sparse dict and the domain ``sp.Poly`` builds,
+    without the dense representation; raises as ``sp.Poly`` does."""
+    opt = build_options(tuple(gens), {})
+    rep, opt = _dict_from_expr(sp.sympify(expr), opt)
+    domain, rep = construct_domain(rep, opt=opt)
+    terms = sorted(((m, c) for m, c in rep.items() if not domain.is_zero(c)), reverse=True)
+    return [domain.to_sympy(c) for _m, c in terms] or [sp.Integer(0)]
 
 
 def _integer_terms(expr: sp.Expr) -> _Terms | None:
@@ -1731,6 +1746,11 @@ def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int]
         carry, modulus = delta.args
         if not modulus.is_Integer or int(modulus) % t:
             continue
+        solved = _unit_multiple(numerator, carry, tuple(symbols), t)
+        if solved is not None:
+            if solved:
+                return numerator, t
+            continue
         for unit in range(1, t):
             if math.gcd(unit, t) != 1:
                 continue
@@ -1740,6 +1760,36 @@ def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int]
             if all(c.is_Integer and int(c) % t == 0 for _m, c in rest):
                 return numerator, t
     return None
+
+
+def _unit_multiple(
+    x: sp.Expr, y: sp.Expr, symbols: tuple[sp.Symbol, ...], modulus: int
+) -> bool | None:
+    """Whether ``x == l*y`` coefficientwise mod ``modulus`` for a unit ``l``, the congruences
+    of the monomials solved for ``l`` one after another; None when ``x`` or ``y`` has a
+    coefficient over ``symbols`` that is not an integer."""
+    if symbols:
+        x_terms, y_terms = poly_terms(x, symbols), poly_terms(y, symbols)
+    else:
+        x_terms, y_terms = [((), x)], [((), y)]
+    if x_terms is None or y_terms is None:
+        return None
+    if not all(c.is_Integer for _m, c in (*x_terms, *y_terms)):
+        return None
+    xs = {m: int(c) for m, c in x_terms}
+    ys = {m: int(c) for m, c in y_terms}
+    residue, step = 0, 1
+    for m in xs.keys() | ys.keys():
+        a = ys.get(m, 0) * step % modulus
+        b = (xs.get(m, 0) - ys.get(m, 0) * residue) % modulus
+        g = math.gcd(a, modulus)
+        if b % g:
+            return False
+        n = modulus // g
+        if n > 1:
+            residue += step * ((b // g) * pow(a // g, -1, n) % n)
+            step *= n
+    return math.gcd(residue % step, step) == 1
 
 
 def _character_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
@@ -1927,6 +1977,9 @@ def _implies(big: ModDelta, small: ModDelta) -> bool:
     if any(v.is_integer is not True for v in symbols):
         return False
     modulus = int(t)
+    solved = _unit_multiple(x, y, tuple(symbols), modulus)
+    if solved is not None:
+        return solved
     for unit in range(1, modulus):
         if math.gcd(unit, modulus) != 1:
             continue

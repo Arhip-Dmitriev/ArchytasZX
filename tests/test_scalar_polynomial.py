@@ -16,6 +16,7 @@ against sympy expansion."""
 
 from __future__ import annotations
 
+import math
 import random
 
 import pytest
@@ -189,3 +190,54 @@ def test_radix_split_of_a_large_concrete_modulus_walks_its_divisors() -> None:
     assert _radix_split_concrete(A + B, big, ranges) is None
     d = sp.Symbol("d", positive=True, integer=True)
     assert _radix_moduli(12 * d) == [d, 2 * d, 3 * d, 4 * d, 6 * d, 12, 6, 4, 3, 2]
+
+
+def _units_by_search(x: sp.Expr, y: sp.Expr, modulus: int) -> bool:
+    for unit in range(1, modulus):
+        if math.gcd(unit, modulus) == 1:
+            coefficients = sp.Poly(sp.expand(x - unit * y), A, B).coeffs()
+            if all(int(c) % modulus == 0 for c in coefficients):
+                return True
+    return False
+
+
+def test_unit_multiple_solves_the_congruences_a_search_would() -> None:
+    from archytaszx.algebra.scalar import _unit_multiple
+
+    rng = random.Random(83)
+    for _ in range(300):
+        modulus = rng.randint(2, 40)
+        ys = [rng.randint(-50, 50) for _k in range(3)]
+        unit = rng.randint(0, 50)
+        xs = [unit * c + (rng.random() < 0.2) for c in ys] if rng.random() < 0.6 else ys[::-1]
+        x, y = xs[0] * A + xs[1] * B + xs[2], ys[0] * A + ys[1] * B + ys[2]
+        assert _unit_multiple(x, y, (A, B), modulus) == _units_by_search(x, y, modulus)
+    assert _unit_multiple(A / 2, B, (A, B), 4) is None
+
+
+def test_implied_and_carried_deltas_at_a_large_modulus() -> None:
+    from archytaszx.algebra.scalar import _carried_frequency, _implies
+
+    big = 3**30
+    assert _implies(ModDelta(2 * A + 4 * B, 3 * big), ModDelta(A + 2 * B, big))
+    assert not _implies(ModDelta(A + B, 3 * big), ModDelta(A + 2 * B, big))
+    found = _carried_frequency(ModDelta(A + 2 * B, big), (A + 2 * B) / big)
+    assert found == (A + 2 * B, big)
+    assert _carried_frequency(ModDelta(A + 2 * B, big), (A + B) / big) is None
+
+
+def test_poly_coeffs_is_poly_coeffs_without_the_dense_form() -> None:
+    from archytaszx.algebra.scalar import poly_coeffs
+
+    d = sp.Symbol("d", positive=True)
+    w = sp.Function("g")(X)
+    for expr, gens in (
+        ((d + 1) / d * w * A + 3 * A * B - sp.sqrt(2) * B + d, (w, A, B)),
+        (A / (d + 1) + A / (d - 1) + sp.I * B / 2, (A, B)),
+        (sp.Integer(0) * A, (A,)),
+    ):
+        assert [sp.srepr(c) for c in poly_coeffs(expr, gens)] == [
+            sp.srepr(c) for c in sp.Poly(expr, *gens).coeffs()
+        ]
+    many = [sp.Symbol(f"_i{k}", integer=True) for k in range(1100)]
+    assert poly_coeffs(sp.Add(*many) / d + 7, tuple(many)) == [1 / d] * 1100 + [7]
