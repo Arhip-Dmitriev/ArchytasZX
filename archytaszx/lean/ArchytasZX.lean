@@ -76,6 +76,7 @@ import ArchytasZX.PathSumSupport
 import ArchytasZX.PathSumChain
 import ArchytasZX.PathSumQudit
 import ArchytasZX.PathSumQuditNet
+import ArchytasZX.PathSumQuditDigits
 import ArchytasZX.ChainInduct
 import ArchytasZX.ChainLink
 import ArchytasZX.ChainEvery

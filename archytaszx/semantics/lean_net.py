@@ -8106,6 +8106,20 @@ def export(
 
     if not isinstance(theorem, Theorem):
         raise NetUnsupported(f"export takes a Theorem, got {type(theorem).__name__}")
+    if (
+        theorem.inference.kind == "contraction"
+        and original is None
+        and not theorem.assumptions
+        and not theorem.domain
+        and not theorem.variables
+    ):
+        from archytaszx.algebra.pathsum import PathSumError
+        from archytaszx.semantics.lean_qdigits import export_qudit_digits_net
+
+        try:
+            return export_qudit_digits_net(theorem.lhs, theorem.rhs, name)
+        except (PathSumError, ScalarUnsupported):
+            pass
 
     def run(everything: bool) -> tuple[str, _Export]:
         out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
