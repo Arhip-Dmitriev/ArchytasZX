@@ -784,3 +784,27 @@ def test_two_phases_apart_by_a_sign_power_close_to_a_parity_delta() -> None:
         assert Scalar(pair.subs(at)).simplify() == Scalar(closed.subs(at)).simplify()
     odd = first + sp.exp(sp.I * sp.pi * (15 * a * b + 2 * a + 9 * b + 7) / 8) * delta / 8
     assert _parity_pair(odd) == odd
+
+
+def test_partial_sum_with_free_exponentials_outside_is_the_whole_sum() -> None:
+    """A partial sum closed with the exponentials free of its index kept outside is the same
+    expression as the whole sum simplified (qft/main partial sums)."""
+    from archytaszx.semantics.contract_symbolic import _close_partial
+
+    a, b, c, k = sp.symbols("_i0 _i1 _i2 _k0", integer=True, nonnegative=True)
+    ranges = {"_i0": Dim(3), "_i1": Dim(3), "_i2": Dim(3)}
+    cases = [
+        sp.exp(2 * sp.pi * sp.I * (a * b / 9 + c / 27))
+        * sp.exp(2 * sp.pi * sp.I * a * k / 3)
+        * ModDelta(k - b, 3)
+        / 3,
+        sp.exp(2 * sp.pi * sp.I * a * c / 27) * sp.exp(2 * sp.pi * sp.I * (a + b) * k / 9),
+        sp.exp(2 * sp.pi * sp.I * (2 * a * b + c * k) / 9) * ModDelta(a - c, 3),
+    ]
+    for product, final in itertools.product(cases, (False, True)):
+        whole = (
+            Scalar(sp.Sum(product, (k, 0, 2)))
+            .simplify(ranges=ranges, enumerate_concrete=final)
+            .to_sympy()
+        )
+        assert _close_partial(product, k, sp.Integer(2), 1024, ranges, final) == whole

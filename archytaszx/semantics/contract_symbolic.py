@@ -2581,6 +2581,50 @@ _NESTED_INDICES = 24
 """The most summed indices a symbolic-dimension contraction sums as one nested sum."""
 
 
+def _close_partial(
+    product: sp.Expr,
+    symbol: sp.Symbol,
+    top: sp.Expr,
+    max_steps: int,
+    ranges: Mapping[str, Dim],
+    final: bool,
+) -> sp.Expr:
+    """``Sum(product, (symbol, 0, top))`` simplified: the factors of :func:`_split_on` free of
+    ``symbol`` stay outside the sum and the product of both is simplified again, when the inner
+    sum closes to one term and that product to a sum-free expression; else the whole sum."""
+
+    def simplified(expr: sp.Expr) -> sp.Expr:
+        return cast(
+            sp.Expr,
+            Scalar(expr)
+            .simplify(max_steps=max_steps, ranges=ranges, enumerate_concrete=final)
+            .to_sympy(),
+        )
+
+    inner, outer = _split_on(product, symbol)
+    if outer != 1 and not product.has(sp.Sum):
+        summed = simplified(sp.Sum(inner, (symbol, 0, top)))
+        if not isinstance(summed, sp.Add) and not summed.has(sp.Sum):
+            closed = simplified(outer * summed)
+            if not closed.has(sp.Sum):
+                return closed
+    return simplified(sp.Sum(product, (symbol, 0, top)))
+
+
+def _split_on(product: sp.Expr, symbol: sp.Symbol) -> tuple[sp.Expr, sp.Expr]:
+    """(inner, outer) with ``product == inner * outer``: ``outer`` the exponential and constant
+    factors free of ``symbol``, ``inner`` the rest."""
+    inner: list[sp.Expr] = []
+    outer: list[sp.Expr] = []
+    for factor in sp.Mul.make_args(product):
+        free = factor.free_symbols
+        if symbol not in free and (isinstance(factor, sp.exp) or not free):
+            outer.append(factor)
+        else:
+            inner.append(factor)
+    return sp.Mul(*inner), sp.Mul(*outer)
+
+
 def _parity_pair(expr: sp.Expr) -> sp.Expr:
     """``t1 + t2`` with ``t2 = t1 exp(i pi L)``, ``L`` a polynomial with integer coefficients in
     integer symbols, as ``2 t1 [L even]``; any other ``expr`` unchanged."""
@@ -2656,11 +2700,7 @@ def _sum_out(
             continue
         open_ranges = {**(boundary or {}), **{str(s.name): dims[s] for s in touched - {symbol}}}
         product = sp.Mul(*(live[i][0] for i in bucket))
-        closed = (
-            Scalar(sp.Sum(product, (symbol, 0, top)))
-            .simplify(max_steps=max_steps, ranges=open_ranges, enumerate_concrete=final)
-            .to_sympy()
-        )
+        closed = _close_partial(product, symbol, top, max_steps, open_ranges, final)
         if not final and len(closed.atoms(sp.Sum)) > len(product.atoms(sp.Sum)):
             deferred.add(symbol)
             continue
