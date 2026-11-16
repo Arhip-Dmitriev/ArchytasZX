@@ -78,16 +78,44 @@ def cyclotomic(n: int) -> tuple[int, ...]:
 
 
 @lru_cache(maxsize=256)
-def _radical(n: int) -> int:
-    """The product of the distinct primes dividing ``n``."""
-    out, p = 1, 2
+def _primes(n: int) -> tuple[int, ...]:
+    """The distinct primes dividing ``n``, increasing."""
+    out, p = [], 2
     while p * p <= n:
         if n % p == 0:
-            out *= p
+            out.append(p)
             while n % p == 0:
                 n //= p
         p += 1
-    return out * n if n > 1 else out
+    return (*out, n) if n > 1 else tuple(out)
+
+
+def _radical(n: int) -> int:
+    """The product of the distinct primes dividing ``n``."""
+    return math.prod(_primes(n))
+
+
+def _prime_coordinates(
+    primes: tuple[int, ...], terms: Mapping[int, Fraction]
+) -> dict[tuple[int, ...], Fraction]:
+    """The nonzero coordinates of ``sum v zeta_r^e`` (r the product of ``primes``) over the
+    basis of tuples ``(j_p)``, ``j_p < p - 1``: ``e`` read as ``(e mod p)`` per prime, each
+    ``p - 1`` replaced by minus the sum of ``0 .. p - 2``."""
+    out: dict[tuple[int, ...], Fraction] = {}
+    for e, v in terms.items():
+        options = [
+            ((e % p, 1),) if e % p != p - 1 else tuple((j, -1) for j in range(p - 1))
+            for p in primes
+        ]
+        for combo in product(*options):
+            key = tuple(j for j, _s in combo)
+            w = v * math.prod(s for _j, s in combo)
+            s = out.get(key, Fraction(0)) + w
+            if s:
+                out[key] = s
+            else:
+                out.pop(key, None)
+    return out
 
 
 class Cyclo:
@@ -191,19 +219,19 @@ class Cyclo:
                     poly[i - deg + j] -= c * p
         return tuple(poly[:deg])
 
-    def sparse_reduced(self) -> dict[int, tuple[Fraction, ...]]:
-        """The nonzero coordinates over the basis zeta_n^s zeta_r^j (r the radical of n,
-        0 <= s < n / r, j < phi(r)): per s, the exponents e = q (n / r) + s read as zeta_r^q and
-        reduced modulo Phi_r."""
-        r = _radical(self.n)
-        m = self.n // r
+    def sparse_reduced(self) -> dict[int, dict[tuple[int, ...], Fraction]]:
+        """The nonzero coordinates over the basis zeta_n^s times the prime-coordinate basis of
+        Q(zeta_r) (r the radical of n, 0 <= s < n / r; see :func:`_prime_coordinates`): per s,
+        the exponents e = q (n / r) + s read as zeta_r^q."""
+        primes = _primes(self.n)
+        m = self.n // math.prod(primes)
         groups: dict[int, dict[int, Fraction]] = {}
         for e, v in self.c.items():
             groups.setdefault(e % m, {})[e // m] = v
         out = {}
         for s, g in groups.items():
-            red = Cyclo(r, g).reduced()
-            if any(red):
+            red = _prime_coordinates(primes, g)
+            if red:
                 out[s] = red
         return out
 

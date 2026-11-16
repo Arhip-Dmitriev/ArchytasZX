@@ -87,6 +87,18 @@ def test_a_root_of_huge_order_is_compared_without_its_cyclotomic() -> None:
     assert Cyclo.root(Fraction(3, n)) == Cyclo.root(Fraction(3, n) + 1)
 
 
+def test_a_root_of_large_squarefree_order_is_compared_by_prime_coordinates() -> None:
+    """At n = 4 (2^16 - 1) (radical 2 3 5 17 257) equality reads per-prime coordinates
+    instead of reducing modulo Phi_131070 (dqc1/main! missing_gate n = 16)."""
+    from archytaszx.algebra.pathsum import Cyclo
+
+    n = 4 * 65535
+    x = Cyclo(n, {5: Fraction(1), 17: Fraction(-2), 1000: Fraction(1, 3)})
+    assert x == x + Cyclo(257, {j: Fraction(1) for j in range(257)})
+    assert x != x + Cyclo(257, {j: Fraction(1) for j in range(256)})
+    assert Cyclo(n, {k * (n // 3): Fraction(1) for k in range(3)}).is_zero
+
+
 def _substitute_by_adds(p: PhasePoly, var: int, value: frozenset[frozenset[int]]) -> None:
     from archytaszx.algebra.pathsum import _mono_key, _xor_lift
 
