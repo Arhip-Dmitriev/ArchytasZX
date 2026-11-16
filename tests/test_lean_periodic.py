@@ -77,7 +77,8 @@ def test_a_pair_zero_at_one_index_is_exported() -> None:
     scalar zero."""
     source = export_periodic(_theorem(FLIPS, PARITY), name="flips", checks=(2, 3))
     assert "theorem baseEq : Equal E (1) NL ((0 : ℂ)) NR := by" in source
-    assert "PSem.val_of_zeroOK 4 _ (run 4 stepsL" in source
+    assert "run_chain runL 4 stepsL" in source
+    assert "PSem.val_of_zeroOK 4 _ runL _" in source
 
 
 def test_a_theorem_of_another_kind_is_refused() -> None:

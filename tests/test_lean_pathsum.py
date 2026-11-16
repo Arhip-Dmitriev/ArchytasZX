@@ -452,7 +452,7 @@ def _support(weight: bool, net: bool) -> str:
 )
 def test_a_leftover_support_takes_the_support_final(weight: bool, net: bool) -> None:
     source = _support(weight, net)
-    assert "import ArchytasZX.PathSumSupport" in source
+    assert any(f"import ArchytasZX.{m}" in source for m in ("PathSumSupport", "PathSumChain"))
     assert ("afinalS_perm" if weight else "finalS_sound") in source
 
 
