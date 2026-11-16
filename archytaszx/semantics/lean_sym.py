@@ -2186,6 +2186,7 @@ class _SymExport:
                 theorem,
             ]
             fargs = " ".join(n for _, n, _ in self.params)
+            hyp0 = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
             out.family_diagrams(
                 name,
                 _join(bh, *(f"({n} : ℕ)" for n in names)),
@@ -2193,7 +2194,7 @@ class _SymExport:
                 f"(ksOf [{', '.join(vals)}])",
                 self.env_at(vals),
                 f"(F {fargs})" if fargs else "F",
-                _join("Fpos", self.ah),
+                _join("Fpos", self.args, hyp0),
                 s0,
                 self.a,
                 s1,
