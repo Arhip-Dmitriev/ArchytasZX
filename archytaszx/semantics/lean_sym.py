@@ -2235,7 +2235,10 @@ class _SymExport:
         fam = f"(F {args})" if args else "F"
         env = f"({fam}.env ks)" if family else self.env_at()
         unfold = "Fam.env, F, bundL, Fam.dimv, List.lookup" if family else "E"
-        decls = ["open ArchytasZX.Sym\n\nset_option linter.unusedSimpArgs false"]
+        decls = [
+            "open ArchytasZX.Sym\n\nset_option linter.unusedSimpArgs false",
+            "set_option Elab.async false",
+        ]
         decls.append(
             "/-- Each dimension index as a monomial in the dimension symbols. -/\n"
             "def DT (i : ℕ) : DMon := (["
