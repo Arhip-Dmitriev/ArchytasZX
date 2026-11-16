@@ -1118,6 +1118,63 @@ def sym_check(
     return False
 
 
+def tr_steps(
+    fl: Sequence[int],
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    labs: dict[int, int],
+    nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
+    internal: Sequence[int],
+) -> list[list[STm]] | None:
+    """``trNodesB`` on every suffix of ``nodes``: entry ``k`` the expression of ``nodes[k:]``
+    after the labels of ``nodes[:k]``."""
+    pres: list[tuple[int, ...]] = []
+    pre: tuple[int, ...] = ()
+    for node in nodes:
+        pres.append(pre)
+        pre = pre + (*node[1], *node[2])
+    b: list[STm] = [(of_q(1), (), (), ())]
+    out = [b]
+    for k in range(len(nodes) - 1, -1, -1):
+        node = nodes[k]
+        a = tr_node(dt, pt, OFF + k, *node)
+        if a is None or not ex_mul_ok(a, b):
+            return None
+        legs = (*node[1], *node[2])
+        first = tuple(
+            (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in pres[k]
+        )
+        b = list(nf_ex(fl, [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, b)]))
+        out.append(b)
+    out.reverse()
+    return out
+
+
+def _lean_cm(c: CMon) -> str:
+    gc = ", ".join(f"({g}, {_lean_dm(d)})" for g, d in c[5])
+    return (
+        f"⟨{_lean_q(c[0])}, {_lean_q(c[1])}, {_lean_ints(c[2])}, [{', '.join(map(str, c[3]))}], "
+        f"{_lean_ints(c[4])}, [{gc}]⟩"
+    )
+
+
+def _lean_ip(p: IPoly) -> str:
+    return "[" + ", ".join(f"([{', '.join(map(str, m))}], {c})" for m, c in p) + "]"
+
+
+def _lean_facs(fs: Sequence[Fac]) -> str:
+    return "[" + ", ".join(f"({_lean_dm(d)}, {_lean_ip(p)})" for d, p in fs) + "]"
+
+
+def _lean_tm(t: STm) -> str:
+    sums = ", ".join(f"({x}, {_lean_dm(d)})" for x, d in t[1])
+    return f"⟨{_lean_cm(t[0])}, [{sums}], {_lean_facs(t[2])}, {_lean_facs(t[3])}⟩"
+
+
+def _lean_ex(e: Sequence[STm]) -> str:
+    return "([" + ", ".join(_lean_tm(t) for t in e) + "] : List STm)"
+
+
 # the export
 
 
@@ -2121,12 +2178,7 @@ class _SymExport:
         A, B = self.a.name, self.b.name
         lead = "  equality over symbolic dimensions by the verified normaliser of ArchytasZX.SymNet"
         if not family:
-            decls.append(
-                "set_option maxHeartbeats 0 in\n"
-                "/-- The kernel's normalisation of the scaled difference. -/\n"
-                f"theorem chk : symCheck FL DT PT RL labs IX {A} {B} S0 S1 = true := by "
-                "decide +kernel"
-            )
+            decls += self.chk_decls(A, B)
             _, proof = self.common_wrap(self.sym(env, "", A, B, "S0", "S1", "chk"))
             theorem = (
                 "/-- The diagrams are equal for every value of their dimensions and "
@@ -2796,6 +2848,85 @@ class _SymExport:
         hs = ", ".join(f"h{i}" for i in range(len(row)))
         lines[-1] += f"simp [{hs}, ex_zero]"
         return "\n    ".join(lines)
+
+    def chk_decls(self, a: str, b: str) -> list[str]:
+        """``chk : symCheck .. a b S0 S1 = true``: each network's ``trNodesB`` one node per
+        ``decide``, through the stated intermediate expressions, when ``tr_net`` decides the
+        pair; else one ``decide`` of the whole check."""
+        whole = [
+            (
+                "set_option maxHeartbeats 0 in\n"
+                "/-- The kernel's normalisation of the scaled difference. -/\n"
+                f"theorem chk : symCheck FL DT PT RL labs IX {a} {b} S0 S1 = true := by "
+                "decide +kernel"
+            )
+        ]
+        assert self.s0 is not None and self.s1 is not None
+        labs = dict(self.out.labs)
+        nets = {a: self.a.net, b: self.b.net}
+        steps: dict[str, list[list[STm]]] = {}
+        for tag, lnet in nets.items():
+            nodes, internal, _bnd = self.net(lnet)
+            st = tr_steps(self.fl, self.dtf, self.ptf, labs, nodes, internal)
+            if st is None:
+                return whole
+            steps[tag] = st
+        e = {}
+        for tag, lnet in nets.items():
+            nodes, internal, _bnd = self.net(lnet)
+            used = {lab for n in nodes for lab in (*n[1], *n[2])}
+            sums = tuple((lab, lab_dm(self.dtf, labs, lab)) for lab in internal if lab not in used)
+            e[tag] = [(t[0], sums + t[1], t[2], t[3]) for t in steps[tag][0]]
+        neg = ex_neg(self.s1)
+        if not (
+            ex_mul_ok(self.s0, e[a])
+            and ex_mul_ok(neg, e[b])
+            and not nf_ex(self.fl, ex_mul(self.s0, e[a]) + ex_mul(neg, e[b]))
+        ):
+            return whole
+        out: list[str] = []
+        args = "FL DT PT RL labs"
+        for tag, lnet in nets.items():
+            st = steps[tag]
+            m = len(lnet.nodes)
+            for k, n in enumerate(lnet.nodes):
+                out.append(f"def {tag}n{k} : Node := {n.lean()}")
+            out.append(f"def {tag}D{m} : List Node := []")
+            for k in range(m - 1, -1, -1):
+                out.append(f"def {tag}D{k} : List Node := {tag}n{k} :: {tag}D{k + 1}")
+            out.append(f"def {tag}P0 : List ℕ := []")
+            for k in range(m):
+                out.append(
+                    f"def {tag}P{k + 1} : List ℕ := {tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
+                )
+            for k in range(m + 1):
+                out.append(f"def {tag}E{k} : List STm := {_lean_ex(st[k])}")
+            out.append(
+                f"theorem {tag}B{m} : trNodesB {args} {tag}.int {tag}P{m} {m} {tag}D{m} = "
+                f"some {tag}E{m} := by decide +kernel"
+            )
+            for k in range(m - 1, -1, -1):
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trStepB {args} {tag}.int "
+                    f"{tag}P{k} {k} {tag}n{k} {tag}E{k + 1} = some {tag}E{k} := by decide +kernel"
+                )
+                out.append(
+                    f"theorem {tag}B{k} : trNodesB {args} {tag}.int {tag}P{k} {k} {tag}D{k} = "
+                    f"some {tag}E{k} :=\n  (trNodesB_cons {args} {tag}.int {tag}P{k} {k} "
+                    f"{tag}n{k} {tag}D{k + 1} {tag}E{k + 1} {tag}B{k + 1}).trans {tag}T{k}"
+                )
+            out.append(
+                f"theorem {tag}R : trNet {args} {tag} = some (exSums (labSums DT labs "
+                f"({tag}.int.filter fun l => !(labelsOf {tag}.nodes).contains l)) {tag}E0) :=\n"
+                f"  trNet_of {args} {tag} {tag}D0 {tag}E0 rfl {tag}B0"
+            )
+        out.append(
+            "set_option maxHeartbeats 0 in\n"
+            "/-- The kernel's normalisation of the scaled difference, node by node. -/\n"
+            f"theorem chk : symCheck FL DT PT RL labs IX {a} {b} S0 S1 = true :=\n"
+            f"  symCheck_of {args} IX {a} {b} S0 S1 _ _ {a}R {b}R (by decide +kernel)"
+        )
+        return out
 
     def scalar_proof(self, model: sp.Expr, rho: str, tab: str = "S0, S1") -> str:
         return (
