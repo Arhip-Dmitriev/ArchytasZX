@@ -60,6 +60,7 @@ input and output boundaries and the engine to assert it, feeding Phase 6.
 from __future__ import annotations
 
 import enum
+import functools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -69,6 +70,7 @@ from typing import TypeAlias, cast
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+from sympy.polys.polyutils import dict_from_expr  # type: ignore[import-untyped]
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import (
@@ -1262,6 +1264,7 @@ def _resummed(expr: sp.Expr) -> sp.Expr:
     return expr
 
 
+@functools.lru_cache(maxsize=1 << 14)
 def _normal_delta(argument: sp.Expr, modulus: int) -> sp.Expr | None:
     """``[argument == 0 mod modulus]`` with the common divisor of the coefficients and the
     modulus divided out, 0 when the non-constant coefficients share a divisor of the modulus
@@ -1271,12 +1274,8 @@ def _normal_delta(argument: sp.Expr, modulus: int) -> sp.Expr | None:
     gens = tuple(sorted(argument.free_symbols, key=lambda s: str(s.name)))
     if not gens or not all(s.is_integer for s in gens):
         return None
-    try:
-        poly = sp.Poly(argument, *gens)
-    except sp.PolynomialError:
-        return None
-    terms = poly.terms()
-    if not all(c.is_Integer for _m, c in terms):
+    terms = _poly_terms(argument, gens)
+    if terms is None or not all(c.is_Integer for _m, c in terms):
         return None
     coeffs = {m: int(c) for m, c in terms}
     zero = (0,) * len(gens)
@@ -1377,15 +1376,27 @@ def _fold_residue_sets(expr: sp.Expr) -> sp.Expr:
     return sp.Add(*out)
 
 
+def _poly_terms(
+    expr: sp.Expr, gens: tuple[sp.Symbol, ...]
+) -> list[tuple[tuple[int, ...], sp.Expr]] | None:
+    """The terms of ``sp.Poly(expr, *gens)``, read from its sparse dict without the dense
+    representation; None when it is not a polynomial over ``gens``."""
+    try:
+        found, _gens = dict_from_expr(expr, gens=gens)
+    except sp.PolynomialError:
+        return None
+    terms = sorted(((m, c) for m, c in found.items() if c != 0), reverse=True)
+    return terms or [((0,) * len(gens), sp.Integer(0))]
+
+
 def _turns(expr: sp.Expr, gens: tuple[sp.Symbol, ...]) -> _TurnPoly | None:
     """``expr`` as a polynomial over ``gens`` with rational coefficients reduced mod 1; None
     when it is not one."""
-    try:
-        poly = sp.Poly(expr, *gens)
-    except sp.PolynomialError:
+    terms = _poly_terms(expr, gens)
+    if terms is None:
         return None
     out: _TurnPoly = {}
-    for monomial, c in poly.terms():
+    for monomial, c in terms:
         if not c.is_Rational:
             return None
         out[monomial] = Fraction(int(c.p), int(c.q))
@@ -1482,6 +1493,9 @@ def _lattice(
     return out
 
 
+_text = functools.lru_cache(maxsize=1 << 16)(str)
+
+
 def _resum_orbits(expr: sp.Expr, gens: tuple[sp.Symbol, ...]) -> sp.Expr:
     """``expr`` with each set of terms ``c e(b + k g + l_k)``, k = 0..r-1, ``l_k`` in the
     :func:`_lattice` of ``c`` and ``r`` the least with ``r g`` in it, replaced by
@@ -1495,8 +1509,8 @@ def _resum_orbits(expr: sp.Expr, gens: tuple[sp.Symbol, ...]) -> sp.Expr:
             out.append(term)
             continue
         groups.setdefault(split[0], []).append((split[1], term))
-    for coefficient in sorted(groups, key=str):
-        members = sorted(groups[coefficient], key=lambda e: str(e[1]))
+    for coefficient in sorted(groups, key=_text):
+        members = sorted(groups[coefficient], key=lambda e: _text(e[1]))
         if len(members) < 2:
             out.extend(t for _p, t in members)
             continue
