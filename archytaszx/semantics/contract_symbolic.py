@@ -2581,6 +2581,28 @@ _NESTED_INDICES = 24
 """The most summed indices a symbolic-dimension contraction sums as one nested sum."""
 
 
+def _parity_pair(expr: sp.Expr) -> sp.Expr:
+    """``t1 + t2`` with ``t2 = t1 exp(i pi L)``, ``L`` a polynomial with integer coefficients in
+    integer symbols, as ``2 t1 [L even]``; any other ``expr`` unchanged."""
+    if not isinstance(expr, sp.Add) or len(expr.args) != 2:
+        return expr
+    first, second = expr.args
+    ratio = sp.powsimp(second / first, force=True)
+    if not isinstance(ratio, sp.exp):
+        return expr
+    turns = sp.expand(ratio.args[0] / (sp.I * sp.pi))
+    symbols = sorted(turns.free_symbols, key=lambda s: str(s.name))
+    if not all(s.is_integer for s in symbols):
+        return expr
+    try:
+        coeffs = sp.Poly(turns, *symbols).coeffs() if symbols else [turns]
+    except sp.PolynomialError:
+        return expr
+    if not all(c.is_Integer for c in coeffs):
+        return expr
+    return cast(sp.Expr, 2 * first * ModDelta(turns, 2))
+
+
 def _sum_out(
     head: sp.Expr,
     parts: Sequence[sp.Expr],
@@ -2649,7 +2671,7 @@ def _sum_out(
             _expr, symbols = live.pop(i)
             for other in symbols - {symbol}:
                 where[other].discard(i)
-        add(closed)
+        add(_parity_pair(closed))
         for other in touched - {symbol}:
             widths[other] = width(other)
     return Scalar(head * sp.Mul(*(expr for expr, _symbols in live.values()))).simplify(

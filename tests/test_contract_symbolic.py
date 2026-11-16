@@ -765,3 +765,22 @@ def test_measured_inverse_fourier_of_four_bound_qutrits() -> None:
     symbolic = contract_symbolic(doubled)
     zero = symbolic.value_at([0] * len(symbolic.axes))
     assert zero == Scalar(sp.Rational(1, 81))
+
+
+def test_two_phases_apart_by_a_sign_power_close_to_a_parity_delta() -> None:
+    """A closed partial sum ``t + t exp(i pi L)`` re-enters as ``2 t [L even]``, its value
+    unchanged at every index (hidden_shift/main! wrong_phase n = 19 d = 8)."""
+    from archytaszx.semantics.contract_symbolic import _parity_pair
+
+    a, b = sp.symbols("_i0 _i1", integer=True, nonnegative=True)
+    delta = ModDelta(b + 1, 2)
+    first = sp.exp(sp.I * sp.pi * (15 * a * b + a + 9 * b + 7) / 8) * delta / 8
+    second = sp.exp(sp.I * sp.pi * (15 * a * b + 9 * a + 9 * b - 1) / 8) * delta / 8
+    pair = first + second
+    closed = _parity_pair(pair)
+    assert len(sp.Add.make_args(closed)) == 1
+    for x, y in itertools.product(range(4), repeat=2):
+        at = {a: x, b: y}
+        assert Scalar(pair.subs(at)).simplify() == Scalar(closed.subs(at)).simplify()
+    odd = first + sp.exp(sp.I * sp.pi * (15 * a * b + 2 * a + 9 * b + 7) / 8) * delta / 8
+    assert _parity_pair(odd) == odd
