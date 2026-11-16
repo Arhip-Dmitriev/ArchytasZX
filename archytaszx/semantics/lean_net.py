@@ -168,6 +168,12 @@ def _nodes(ns: Sequence[LNode]) -> str:
     return "([" + ", ".join(n.lean() for n in ns) + "] : List Node)"
 
 
+def _stated(term: str) -> list[str]:
+    """Tactic lines chaining ``term`` in front of the goal, its type elaborated without the
+    goal."""
+    return [f"have hR := {term}", "refine Equal.trans hR ?_"]
+
+
 def _pairs(ps: Sequence[tuple[int, int]]) -> str:
     return "[" + ", ".join(f"({a}, {b})" for a, b in ps) + "]"
 
@@ -1930,11 +1936,11 @@ class _Export:
         k = self.text(k_model)
         a1 = LNet(c_nodes + l_nodes, i_c + i_l, bnd)
         lines = [f"refine Equal.trans ({self.iso_term('1', net, a1, [])}) ?_"]
-        lines.append(
-            f"refine Equal.trans (rewrite {self.env} {_nodes(c_nodes)} {_nodes(l_nodes)} "
+        lines += _stated(
+            f"rewrite {self.env} {_nodes(c_nodes)} {_nodes(l_nodes)} "
             f"{_nodes(r_nodes)} {_list(i_c)} {_list(i_l)} {_list(i_r)} {_list(bnd)} "
             f"{_list(iface)} 1 {_paren(k)} {_paren(k)} ({lemma}) (by chk) (by chk) (by chk) "
-            f"(one_mul _).symm) ?_"
+            f"(one_mul _).symm"
         )
         current = LNet(c_nodes + r_nodes, i_c + i_r, bnd)
         ids: list[NodeId | None] = [*c_ids, *r_ids]
@@ -1953,10 +1959,10 @@ class _Export:
                 f"bunI {self.env} {_list(ms)} {n.dim} {bz} {x} {w} {_list([x, w])} "
                 f"(Fam.env_dimv_of _ _ _ _ _ rfl rfl ⟨rfl, rfl⟩) (by pos) {_chks(4)}"
             )
-            lines.append(
-                f"refine Equal.trans (rewrite {self.env} {_nodes(rest)} {_nodes((n,))} "
+            lines += _stated(
+                f"rewrite {self.env} {_nodes(rest)} {_nodes((n,))} "
                 f"{_nodes((plain,))} {_list(current.summed)} [] [] {_list(bnd)} {_list([x, w])} "
-                f"{_paren(k)} 1 {_paren(k)} ({lemma}) {_chks(3)} (mul_one _).symm) ?_"
+                f"{_paren(k)} 1 {_paren(k)} ({lemma}) {_chks(3)} (mul_one _).symm"
             )
             current = LNet(rest + (plain,), current.summed, bnd)
             ids = ids[:pos] + ids[pos + 1 :] + [ids[pos]]
@@ -1969,11 +1975,11 @@ class _Export:
             pre, post = current.nodes[:pos], current.nodes[pos + 1 :]
             target = LNet(pre + (bare,) + post, current.summed, bnd)
             lines.append(f"refine Equal.trans ({self.iso_term(k, current, target, [])}) ?_")
-            lines.append(
-                f"refine Equal.trans (wire_elim {self.env} {_paren(k)} {_nodes(pre)} "
+            lines += _stated(
+                f"wire_elim {self.env} {_paren(k)} {_nodes(pre)} "
                 f"{_nodes(post)} "
                 f"{_list(current.summed)} {_list(bnd)} {x} {w} {bare.dim} (by chk) (by chk) "
-                f"(by chk) (by chk) (by chk)) ?_"
+                f"(by chk) (by chk) (by chk)"
             )
             f = _ren([(w, x)])
             current = LNet(tuple(n.rename(f) for n in pre + post), _erase(current.summed, w), bnd)
