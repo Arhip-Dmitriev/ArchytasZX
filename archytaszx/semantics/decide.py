@@ -1644,7 +1644,8 @@ def decide_restricted(
 ) -> Decision:
     """The restricted decision: the family decided first, its EQUAL kept and an in-range
     counterexample kept, otherwise the ladder on the restricted pair under the restriction's
-    floors; ``family_first=False`` runs the ladder on the restricted pair alone. An undecided
+    floors; ``family_first=False``, or a point claim whose restricted pair the oracle refutes
+    (:func:`_point_refuted`), runs the ladder on the restricted pair alone. An undecided
     pair under a bounded or punctured range is EQUAL_UNCERTIFIED when its contractions'
     difference vanishes on that range."""
     from archytaszx.semantics.restrict import (
@@ -1718,6 +1719,9 @@ def decide_restricted(
             family_holds=False,
         )
     family: Decision | None = None
+    if family_first and restriction.instance and options.get("samples") is None:
+        with _trace.span("decide.restriction.point_oracle"):
+            family_first = not _point_refuted(left, right, restriction, options)
     if family_first:
         with _trace.span("decide.restriction.family"):
             family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
@@ -1832,6 +1836,33 @@ def decide_restricted(
             + inner.samples_checked,
         )
     )
+
+
+def _point_refuted(
+    left: Diagram, right: Diagram, restriction: Restriction, options: Mapping[str, object]
+) -> bool:
+    """Whether the oracle mismatches on the restricted pair of a point claim at a sample of at
+    most ``_DEFERRED_SIZE`` planned elements."""
+    from archytaszx.semantics.restrict import subst_pair
+
+    if options.get("mixed") or not (is_pure(left) and is_pure(right)):
+        return False
+    if _interface_reason(_family(left), _family(right)) is not None:
+        return False
+    pair = subst_pair(left, right, restriction)
+    family_l, family_r = _family(pair[0]), _family(pair[1])
+    oracle = _run_oracle(
+        family_l,
+        family_r,
+        sample_grid(family_l, family_r, restriction.floors),
+        cast(int, options.get("max_samples", 24)),
+        cast(float, options.get("tolerance", DEFAULT_TOLERANCE)),
+        cast(int, options.get("max_elements", DEFAULT_MAX_ELEMENTS)),
+        True,
+        _DEFERRED_SIZE,
+        by_size=True,
+    )
+    return oracle.mismatch is not None
 
 
 def _decide(

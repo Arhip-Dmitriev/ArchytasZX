@@ -744,6 +744,9 @@ With family_first=False (decide_equal, prove, prove_exhaustive, prove_by_inducti
 for" in the REPL) steps 1 and 2 are skipped: step 3 runs alone, with the same samples and
 floors; the result has restriction and restricted_pair set, family None and family_holds
 False, and samples_checked counts step 3 only; prove exhaustive runs only the pair's search.
+A point claim (every clause n = v or d = v) of pure diagrams with no interface mismatch and no
+given samples first runs the oracle on the restricted pair at its sample grid, samples planned
+above 2^20 elements skipped; on a mismatch steps 1 and 2 are skipped as with family_first=False.
 Certification takes the restricted-pair route. Clauses that are all identities make the flag
 inert. Without clauses the decision is the unrestricted one,
 field for field. Step 1 never uses a concrete-only axiom (its dimensions stay symbolic); they
