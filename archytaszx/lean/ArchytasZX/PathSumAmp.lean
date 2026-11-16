@@ -387,13 +387,30 @@ def asubOK (v : ℕ) (t : AData) : Bool := (asubQ v t.s).isSome
 def asubS (v : ℕ) (t : AData) : AData :=
   match asubQ v t.s with
   | none => t
-  | some q => { t with atoms := t.atoms.map fun a => (a.1, normF (substF v (q.erase [v]) a.2)) }
+  | some q =>
+    let vs := vlist (q.erase [v] ++ t.atoms.flatMap (·.2))
+    { t with atoms := t.atoms.map fun a => (a.1, substFV vs v (q.erase [v]) a.2) }
 
 theorem aval_map (A : ℕ → ℂ) (τ : ℕ → ZMod 2) (F : F2 → F2) (hF : ∀ f, fz τ (F f) = fz τ f) :
     ∀ as : Atoms, aval A (as.map fun a => (a.1, F a.2)) τ = aval A as τ
   | [] => rfl
   | a :: as => by
     rw [List.map_cons, aval_cons, aval_cons, hF, aval_map A τ F hF as]
+
+theorem aval_mapOn (A : ℕ → ℂ) (τ : ℕ → ZMod 2) (F : F2 → F2) :
+    ∀ as : Atoms, (∀ a ∈ as, fz τ (F a.2) = fz τ a.2) →
+      aval A (as.map fun a => (a.1, F a.2)) τ = aval A as τ
+  | [], _ => rfl
+  | a :: as, hF => by
+    rw [List.map_cons, aval_cons, aval_cons, hF a List.mem_cons_self,
+      aval_mapOn A τ F as (fun b hb => hF b (List.mem_cons_of_mem _ hb))]
+
+/-- The variables of `B` and of the atoms' polynomials lie in `vlist (B ++ as.flatMap (·.2))`. -/
+theorem vlist_atoms (B : F2) (as : Atoms) :
+    (∀ m ∈ B, ∀ v ∈ m, v ∈ vlist (B ++ as.flatMap (·.2))) ∧
+      ∀ a ∈ as, ∀ m ∈ a.2, ∀ v ∈ m, v ∈ vlist (B ++ as.flatMap (·.2)) :=
+  ⟨fun m hm => mem_vlist (List.mem_append_left _ hm),
+    fun a ha m hm => mem_vlist (List.mem_append_right _ (List.mem_flatMap.2 ⟨a, ha, hm⟩))⟩
 
 theorem offPath_not {s : Data} {q : F2} (h : offPath s q = true) :
     ∀ y ∈ s.path, ∀ m ∈ q, y ∉ m := by
@@ -436,8 +453,9 @@ theorem asub_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (v : ℕ) (t : AData) (
       simp [mz]
     have hv : fz τ (q.erase [v]) = τ v :=
       (z2_eq_of_add _ _ (by rw [← hqv]; exact h0)).symm
-    rw [aval_map A τ (fun f => normF (substF v (q.erase [v]) f))
-      (fun f => by rw [fz_normF, fz_substF, hv, Function.update_eq_self])]
+    rw [aval_mapOn A τ _ t.atoms (fun a ha => by
+      rw [fz_substFV τ _ v _ a.2 ((vlist_atoms _ t.atoms).2 a ha) (vlist_atoms _ t.atoms).1, hv,
+        Function.update_eq_self])]
   · simp [h0]
 
 /-- Whether some constraint or row off the path is `[v]` plus `B`. -/
@@ -446,7 +464,8 @@ def asubBOK (v : ℕ) (B : F2) (t : AData) : Bool :=
 
 /-- `v` set to `B` in every atom. -/
 def asubBS (v : ℕ) (B : F2) (t : AData) : AData :=
-  { t with atoms := t.atoms.map fun a => (a.1, normF (substF v B a.2)) }
+  let vs := vlist (B ++ t.atoms.flatMap (·.2))
+  { t with atoms := t.atoms.map fun a => (a.1, substFV vs v B a.2) }
 
 theorem asubB_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (v : ℕ) (B : F2) (t : AData)
     (σ : ℕ → ZMod 2) (h : asubBOK v B t = true) :
@@ -466,8 +485,9 @@ theorem asubB_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (v : ℕ) (B : F2) (t 
       simp [mz]
     have hv : fz τ (q.erase [v]) = τ v :=
       (z2_eq_of_add _ _ (by rw [← hqv]; exact h0)).symm
-    rw [aval_map A τ (fun f => normF (substF v (q.erase [v]) f))
-      (fun f => by rw [fz_normF, fz_substF, hv, Function.update_eq_self])]
+    rw [aval_mapOn A τ _ t.atoms (fun a ha => by
+      rw [fz_substFV τ _ v _ a.2 ((vlist_atoms _ t.atoms).2 a ha) (vlist_atoms _ t.atoms).1, hv,
+        Function.update_eq_self])]
   · simp [h0]
 
 /-! ## Atoms on a zero coefficient, the coefficient 1, and merged atoms -/
