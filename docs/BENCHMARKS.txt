@@ -762,7 +762,9 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      as the engine's "RuntimeError: ... error: MemoryError", or a
                      worker that died or failed in prepare on a failed allocation: a Rust
                      "memory allocation of" abort, an mmap "failed to map segment" ImportError),
-                     memory.rival, memory.lean
+                     memory.rival, memory.lean, limit.load_size (the engine's parser refused a
+                     load line by a size bound: "power (B)^(E) is too large", "product is too
+                     large", "leg count above the bound of N")
   error              the tool failed: rival.exception (a driver traceback whose frame is the
                      rival's library or a driver line calling the rival, or any traceback
                      carrying a panic of the rival's native code: a Rust "thread ... panicked

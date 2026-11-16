@@ -239,6 +239,30 @@ def test_engine_memory_errors_are_oom() -> None:
     assert run("RuntimeError: load: error: bad token") == ("error", "engine.load_refused")
 
 
+def test_engine_size_bound_refusals_are_oom() -> None:
+    """A load line the engine's parser refuses by a size bound (a power or product too large, a
+    leg count above the bound) is oom with cause limit.load_size."""
+    from benchmarks import outcomes
+
+    def run(detail: str) -> tuple[str, str]:
+        rec: dict[str, Any] = {"tool": "archytaszx", "outcome": "error"}
+        rec["stages"] = {
+            "generate": {"status": "ok"},
+            "decide": {"status": "error", "detail": detail},
+        }
+        out = outcomes.classify(rec)
+        return out["outcome"], out["cause"]
+
+    for text in (
+        "load: error: power (2)^(2999) is too large",
+        "@rhs =: error: power (about 2^60)^(about 2^11) is too large",
+        "load: error: product is too large",
+        "@rhs =: error: leg count above the bound of 4096",
+    ):
+        assert run(f"RuntimeError: {text}\n(detail)") == ("oom", "limit.load_size")
+    assert run("RuntimeError: load: error: power of a symbol") == ("error", "engine.load_refused")
+
+
 def test_null_return_near_the_cap_is_oom() -> None:
     """An ArchytasZX decide stage failing with "error return without exception set" is oom when
     its peak is within 10% of the worker cap (the record's, else 3481 MiB), else an error."""

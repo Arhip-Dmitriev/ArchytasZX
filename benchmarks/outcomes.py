@@ -150,6 +150,8 @@ CAUSES: dict[str, str] = {
     "rival.exception": "an exception raised in the rival's library",
     "rival.exit": "the rival's binary or driver exited nonzero",
     "engine.load_refused": "a load line of the script failed in the engine",
+    "limit.load_size": "the engine's parser refused a load line by a size bound (a power or "
+    "product too large, a leg count above the bound)",
     "engine.exception": "an exception in an ArchytasZX stage",
     "lean.rejected": "Lean did not accept the exported file",
     "harness.prepare": "an exception in the worker while preparing a rival's input",
@@ -324,6 +326,12 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
     return "error", stage, "kill.exit"
 
 
+_LOAD_SIZE = re.compile(
+    r"error: (?:power \([^\n]*\)\^\([^\n]*\) is too large|product is too large"
+    r"|[^\n]*leg count above the bound of )"
+)
+"""A load refusal by one of the engine parser's size bounds."""
+
 NULL_RETURN = "error return without exception set"
 """The SystemError text of a C extension returning NULL with no exception set."""
 
@@ -391,6 +399,8 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
     if NULL_RETURN in detail and near_cap(failed.get("peak_mb"), rec):
         return "oom", s, "memory.error", detail
     if s == "decide" and re.match(r"RuntimeError: [^\n]*?(?:load|@\w+ =): error:", detail):
+        if _LOAD_SIZE.search(detail):
+            return "oom", s, "limit.load_size", detail
         return "error", s, "engine.load_refused", detail
     return "error", s, "engine.exception", detail
 
