@@ -135,7 +135,7 @@ def test_symbolic_dimensions_keep_the_normaliser() -> None:
     )
     right = parse_diagram("a = Z(1 -> 1, d)")
     source = S.export_symbolic(left, right)
-    assert "symCheck" in source and "qchain" not in source
+    assert ("symCheck" in source or "equal_symG" in source) and "qchain" not in source
 
 
 def test_the_packed_wires_read_back() -> None:

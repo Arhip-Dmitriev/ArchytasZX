@@ -234,7 +234,7 @@ def test_phases_are_quantified_and_floored() -> None:
 def test_a_family_is_proved_by_induction() -> None:
     source = _source("boxed_fusion")
     assert "∀ m : ℕ, Equal ((F d).env (ksOf [m])) 1 N0 1 N1" in source
-    assert "Equal.of_split_at" in source and "symCheck" in source
+    assert "Equal.of_split_at" in source and ("symCheck" in source or "equal_symG" in source)
 
 
 def test_port_boxes_step_by_the_port_lemma() -> None:

@@ -956,7 +956,7 @@ class TestDecisionProofs:
         self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         source = self._boxed_symbolic(name, tmp_path, monkeypatch)
-        assert "induction " in source and "symCheck" in source
+        assert "induction " in source and ("symCheck" in source or "equal_symG" in source)
 
     @pytest.mark.slow
     @pytest.mark.skipif(

@@ -1177,6 +1177,77 @@ def tr_steps(
     return out
 
 
+def piv_tail(
+    c: tuple[Fac, ...], b: tuple[Fac, ...], ps: tuple[Fac, ...]
+) -> tuple[tuple[Fac, ...], tuple[Fac, ...]]:
+    """``pivTail c [] b ps``."""
+    head, done, out_ps = list(c), [], list(ps)
+    for f in b:
+        st = _step(f)
+        if st is not None:
+            head = [_apply(st, g) for g in head]
+            out_ps = [_apply(st, g) for g in out_ps]
+        done.append(f)
+    return tuple(head) + tuple(done), tuple(out_ps)
+
+
+def piv_pass_h(
+    c: int, ds: tuple[Fac, ...], ps: tuple[Fac, ...]
+) -> tuple[tuple[Fac, ...], tuple[Fac, ...]]:
+    """``pivPassH c ds ps``."""
+    a, ps1 = piv_pass(c, (), ds, ps)
+    return piv_tail(a[:c], a[c:], ps1)
+
+
+def canon_hint(t: STm) -> int:
+    """The hint ``canonTmH`` takes for ``t``: the least ``c`` with which ``pivPassH c`` gives
+    the full pass."""
+    r = ren_list(t, 0, bvs(t))
+    full = piv_pass(len(r[2]), (), r[2], r[3])
+    return next(c for c in range(len(r[2]) + 1) if piv_pass_h(c, r[2], r[3]) == full)
+
+
+def norm_hints(fl: Sequence[int], t: STm) -> list[int]:
+    """``norm_tm`` at ``ROUNDS`` with the hint of each round."""
+    hints = []
+    for _ in range(ROUNDS):
+        t1 = elim_all(len(t[1]) + 1, t)
+        hints.append(canon_hint(t1))
+        t2 = canon_tm(fl, t1)
+        if t2 is None:
+            break
+        t = t2
+    return hints
+
+
+def tr_hints(
+    fl: Sequence[int],
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    labs: dict[int, int],
+    nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
+    internal: Sequence[int],
+    steps: Sequence[Sequence[STm]],
+) -> list[list[list[int]]]:
+    """For node ``k``, the hints of each term of its product with ``steps[k + 1]``."""
+    pres: list[tuple[int, ...]] = []
+    pre: tuple[int, ...] = ()
+    for node in nodes:
+        pres.append(pre)
+        pre = pre + (*node[1], *node[2])
+    out = []
+    for k, node in enumerate(nodes):
+        a = tr_node(dt, pt, OFF + k, *node)
+        assert a is not None
+        legs = (*node[1], *node[2])
+        first = tuple(
+            (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in pres[k]
+        )
+        prods = [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, steps[k + 1])]
+        out.append([norm_hints(fl, t) for t in prods])
+    return out
+
+
 def _lean_cm(c: CMon) -> str:
     gc = ", ".join(f"({g}, {_lean_dm(d)})" for g, d in c[5])
     return (
@@ -1535,6 +1606,7 @@ class _SymExport:
         self.stab_decls: list[str] = []
         self.ix = [i for i in range(len(self.dt)) if i not in out.bund_of]
         self.fam_decls: list[str] = []
+        self.g_args: dict[str, str] = {}
         self.net_decls: list[str] = []
         self.planned: bool | None = None
         self.shift: tuple[str, int] | None = None
@@ -1955,11 +2027,14 @@ class _SymExport:
         l0: str = "scal0",
         l1: str = "scal1",
     ) -> str:
-        """``equal_sym`` at the environment ``envt``, multiplicities ``ks``."""
+        """``equal_sym`` at the environment ``envt``, multiplicities ``ks``; ``equal_symG`` when
+        :meth:`check_decls` wrote ``chk`` node by node."""
+        g = self.g_args.get(chk)
+        lemma = "equal_symG" if g else "equal_sym"
         return (
-            f"equal_sym {envt} {self.rho} {self.hr} FL {self.call('flOK')} DT PT RL labs IX "
+            f"{lemma} {envt} {self.rho} {self.hr} FL {self.call('flOK')} DT PT RL labs IX "
             f"{self.call('envD', ks)} {self.call('envP', ks)} rfl {n0} {n1} {a0} {a1} _ _ "
-            f"{self.call(l0)} {self.call(l1)} {chk}"
+            f"{self.call(l0)} {self.call(l1)} {g + ' ' if g else ''}{chk}"
         )
 
     def q_source(self, name: str) -> str:
@@ -2940,10 +3015,18 @@ class _SymExport:
         ):
             return whole
         out: list[str] = []
-        args = "FL DT PT RL labs"
+        texts_e: dict[str, str] = {}
         for tag, (text, lnet) in own.items():
             st = steps[tag]
             nt = _paren(text)
+            nodes, internal, _bnd = self.net(lnet)
+            hints = tr_hints(self.fl, self.dtf, self.ptf, labs, nodes, internal, st)
+            table = "[" + ", ".join(str(h).replace(" ", "") for h in hints) + "]"
+            out.append(
+                f"def {tag}H (i : ℕ) : List (List ℕ) := "
+                f"(({table} : List (List (List ℕ)))).getD i []"
+            )
+            args = f"(nfH FL {tag}H) DT PT RL labs"
             m = len(lnet.nodes)
             for k, n in enumerate(lnet.nodes):
                 out.append(f"def {tag}n{k} : Node := {n.lean()}")
@@ -2961,31 +3044,44 @@ class _SymExport:
             for k in marks:
                 out.append(f"def {tag}E{k} : List STm := {texts[k]}")
             out.append(
-                f"theorem {tag}B{m} : trNodesB {args} {nt}.int {tag}P{m} {m} {tag}D{m} = "
+                f"theorem {tag}B{m} : trNodesG {args} {nt}.int {tag}P{m} {m} {tag}D{m} = "
                 f"some {tag}E{m} := by decide +kernel"
             )
             for k, k2 in reversed(list(itertools.pairwise(marks))):
                 xs = "[" + ", ".join(f"{tag}n{j}" for j in range(k, k2)) + "]"
                 out.append(
-                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trBlockS {args} {nt}.int "
+                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trBlockG {args} {nt}.int "
                     f"{tag}E{k2} {tag}P{k} {k} {xs} = some {tag}E{k} := by decide +kernel"
                 )
                 out.append(
-                    f"theorem {tag}B{k} : trNodesB {args} {nt}.int {tag}P{k} {k} {tag}D{k} = "
-                    f"some {tag}E{k} :=\n  (trNodesB_block {args} {nt}.int {tag}E{k2} {xs} "
+                    f"theorem {tag}B{k} : trNodesG {args} {nt}.int {tag}P{k} {k} {tag}D{k} = "
+                    f"some {tag}E{k} :=\n  (trNodesG_block {args} {nt}.int {tag}E{k2} {xs} "
                     f"{tag}D{k2} {tag}P{k} {k} {tag}B{k2}).trans {tag}T{k}"
                 )
-            out.append(
-                f"theorem {tag}R : trNet {args} {nt} = some (exSums (labSums DT labs "
-                f"({nt}.int.filter fun l => !(labelsOf {nt}.nodes).contains l)) {tag}E0) :=\n"
-                f"  trNet_of {args} {nt} {tag}D0 {tag}E0 rfl {tag}B0"
+            e_text = (
+                f"(exSums (labSums DT labs ({nt}.int.filter fun l => "
+                f"!(labelsOf {nt}.nodes).contains l)) {tag}E0)"
             )
-        rb = f"{tb}R" if tb in own else f"{ta}R"
+            texts_e[tag] = e_text
+            out.append(
+                f"theorem {tag}R : trNetG {args} {nt} = some {e_text} :=\n"
+                f"  trNetG_of {args} {nt} {tag}D0 {tag}E0 rfl {tag}B0"
+            )
+        tb2 = tb if tb in own else ta
+        e0, e1 = texts_e[ta], texts_e[tb2]
         out.append(
             "set_option maxHeartbeats 0 in\n"
             + doc
-            + f"theorem {name} : symCheck FL DT PT RL labs IX {a} {b} {s0t} {s1t} = true :=\n"
-            f"  symCheck_of {args} IX {a} {b} {s0t} {s1t} _ _ {ta}R {rb} (by decide +kernel)"
+            + f"theorem {name} : ({a}.bnd.isPerm {b}.bnd && netChk FL DT PT RL labs IX {a} && "
+            f"netChk FL DT PT RL labs IX {b} && exConst {s0t} && exConst {s1t} && "
+            f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1} && "
+            f"(nfEx FL (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty)) = true := by "
+            "decide +kernel"
+        )
+        fl_ok = self.call("flOK")
+        self.g_args[name] = (
+            f"(nfH FL {ta}H) (nfH FL {tb2}H) (nfH_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
+            f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ {ta}R {tb2}R"
         )
         return out
 

@@ -20,6 +20,7 @@ import ArchytasZX.Contract
 import ArchytasZX.RefuteMod
 import ArchytasZX.SymNet
 import ArchytasZX.SymChunk
+import ArchytasZX.SymHint
 import ArchytasZX.SymF2
 import ArchytasZX.SymF2Chain
 import ArchytasZX.SymF2Bridge
