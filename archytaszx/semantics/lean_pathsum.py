@@ -419,14 +419,13 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     proof = sc.prove(lhs, rhs)
     ns = f"ArchytasZX.PathSumProof.{name}"
     lines = [
-        "import ArchytasZX.PathSumRules",
-        *(["import ArchytasZX.PathSumSupport"] if support else []),
+        "import ArchytasZX.PathSumChain",
         "",
         "/-!",
         f"# Path-sum proof `{name}`",
         "",
-        "Both path sums, each side's steps replayed and checked by `decide`, the constants'",
-        "identity, and the value equality at every boundary assignment.",
+        "Both path sums, each side's steps replayed through checkpoints (`run_chain`), the",
+        "constants' identity, and the value equality at every boundary assignment.",
         "-/",
         "",
         f"namespace {ns}",
@@ -448,10 +447,11 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
+        *_chain_lines("run", m, "sL", "sR"),
         "theorem main (σ : ℕ → ZMod 2) :",
         f"    PSem.val {m} {sc.text(c_l)} sL σ = PSem.val {m} {sc.text(c_r)} sR σ := by",
-        f"  rw [run_sound {m} (by norm_num) stepsL sL _ σ (by decide),",
-        f"    run_sound {m} (by norm_num) stepsR sR _ σ (by decide)]",
+        f"  rw [run_sound {m} (by norm_num) stepsL sL _ σ runL_ok, runL_eq,",
+        f"    run_sound {m} (by norm_num) stepsR sR _ σ runR_ok, runR_eq]",
         (
             f"  apply {'finalS_sound' if support else 'final_sound'} {m} (by norm_num) _ _ _ _ σ "
             f"{k_l} {k_r} (by decide) (by decide)"
@@ -606,15 +606,14 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
             "",
         ]
     lines = [
-        "import ArchytasZX.PathSumAmp",
-        *(["import ArchytasZX.PathSumSupport"] if plan.support else []),
+        "import ArchytasZX.PathSumChain",
         "",
         "/-!",
         f"# Path-sum proof `{name}` with amplitude atoms",
         "",
-        "Both path sums with their atoms, each side's steps replayed and checked by `decide`, the",
-        "coefficient identities, the constants' identity, and the value equality at every",
-        "boundary assignment.",
+        "Both path sums with their atoms, each side's steps replayed through checkpoints",
+        "(`aruns_chain`), the coefficient identities, the constants' identity, and the value",
+        "equality at every boundary assignment.",
         "-/",
         "",
         f"namespace {ns}",
@@ -637,11 +636,12 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
+        *_chain_lines("aruns", m, "tL", "tR"),
         "/-- Both path sums with atoms agree at every boundary assignment. -/",
         "theorem main (σ : ℕ → ZMod 2) :",
         f"    valA {m} {sc.text(c_l)} A tL σ = valA {m} {sc.text(c_r)} A tR σ := by",
-        f"  rw [aruns_sound {m} (by norm_num) A stepsL tL _ σ reqsL qreqsL (by decide),",
-        f"    aruns_sound {m} (by norm_num) A stepsR tR _ σ reqsR qreqsR (by decide)]",
+        f"  rw [aruns_sound {m} (by norm_num) A stepsL tL _ σ reqsL qreqsL arunsL_ok, arunsL_eq,",
+        f"    aruns_sound {m} (by norm_num) A stepsR tR _ σ reqsR qreqsR arunsR_ok, arunsR_eq]",
         f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ σ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide) (by decide) (by decide) (by decide)",
         "  simpa only [facL, facR] using consts",
@@ -804,13 +804,14 @@ def export_qudit_proof(left: Diagram, right: Diagram, name: str = "pair") -> str
     sub = f"rw [om_sub {n} {p} {n // p} (by norm_num) (by norm_num)]" if n != p else "skip"
     lines = [
         "import ArchytasZX.GaussSign",
+        "import ArchytasZX.PathSumQuditChain",
         "",
         "/-!",
         f"# Qudit path-sum proof `{name}` over Z_{p}",
         "",
-        "Both path sums, each side's steps replayed and checked by `decide`, the Gauss sums in",
-        "their Legendre form, the constants' identity, and the value equality at every boundary",
-        "assignment.",
+        "Both path sums, each side's steps replayed through checkpoints (`qrun_chain`), the Gauss",
+        "sums in their Legendre form, the constants' identity, and the value equality at every",
+        "boundary assignment.",
         "-/",
         "",
         f"namespace ArchytasZX.PathSumQuditProof.{name}",
@@ -863,13 +864,12 @@ def export_qudit_proof(left: Diagram, right: Diagram, name: str = "pair") -> str
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
+        *_chain_lines("qrun", p, "sL", "sR"),
         "/-- The two path sums agree at every boundary assignment. -/",
         f"theorem main (σ : ℕ → ZMod {p}) :",
         f"    QSem.val {p} ({sc.text(c_l)}) sL σ = QSem.val {p} ({sc.text(c_r)}) sR σ := by",
-        (
-            "  rw [QSem.run_sound stepsL sL _ σ (by decide), "
-            "QSem.run_sound stepsR sR _ σ (by decide)]"
-        ),
+        "  rw [QSem.run_sound stepsL sL _ σ qrunL_ok, qrunL_eq,",
+        "    QSem.run_sound stepsR sR _ σ qrunR_ok, qrunR_eq]",
         f"  apply QSem.final_sound _ _ _ _ σ {k_l} {k_r} (by decide) (by decide) (by decide)",
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
@@ -1463,11 +1463,16 @@ def _zero_body(
     for tag, side, steps in (("L", side_l, plan.steps[0]), ("R", side_r, plan.steps[1])):
         if steps is None:
             continue
-        lines += [f"def steps{tag} : List Step := [{', '.join([*side.steps, *steps])}]", ""]
         data = f"(netDataD dig{tag} N{tag} (ps{tag}.map Prod.snd))"
+        lines += [
+            f"def steps{tag} : List Step := [{', '.join([*side.steps, *steps])}]",
+            "",
+            f"run_chain run{tag} {m} steps{tag} {data} {RUN_BLOCK}",
+            "",
+        ]
         rws += [
-            f"run_sound {m} (by norm_num) steps{tag} {data} _ _ (by decide)",
-            f"PSem.val_of_zeroOK {m} _ (run {m} steps{tag} {data}) _ (by decide)",
+            f"run_sound {m} (by norm_num) steps{tag} {data} _ _ run{tag}_ok, run{tag}_eq",
+            f"PSem.val_of_zeroOK {m} _ run{tag} _ (by decide)",
         ]
     lines += [
         "/-- The two networks are equal (both zero). -/",
@@ -1530,7 +1535,8 @@ def net_body(
     rhs = f_r * side_r.scalar * w_r * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
     proof = sc.prove(lhs, rhs)
     bnd = list(range(side_l.bnd_vars))
-    run_l = f"(run {m} stepsL (netDataD digL NL (psL.map Prod.snd)))"
+    d_l = "(netDataD digL NL (psL.map Prod.snd))"
+    d_r = "(netDataD digR NR (psR.map Prod.snd))"
     lines = [
         *_net_lines("L", side_l, m),
         *_net_lines("R", side_r, m),
@@ -1551,20 +1557,15 @@ def net_body(
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
+        *_chain_lines("run", m, d_l, d_r),
         "/-- The two networks are equal. -/",
         f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
         "  apply equal_psd2 _ _ netL netR rfl",
         "  intro σ",
         "  rw [cL, cR, ← val_smul, ← val_smul,",
-        (
-            f"    run_sound {m} (by norm_num) stepsL (netDataD digL NL (psL.map Prod.snd)) _ _ "
-            "(by decide),"
-        ),
-        (
-            f"    run_sound {m} (by norm_num) stepsR (netDataD digR NR (psR.map Prod.snd)) _ _ "
-            "(by decide),"
-        ),
-        f"    val_agree {m} _ {run_l} {bnd} _ _ (by decide) (by decide)",
+        f"    run_sound {m} (by norm_num) stepsL {d_l} _ _ runL_ok, runL_eq,",
+        f"    run_sound {m} (by norm_num) stepsR {d_r} _ _ runR_ok, runR_eq,",
+        f"    val_agree {m} _ runL {bnd} _ _ (by decide) (by decide)",
         f"      (dbits_agree ownL ownR _ {bnd} (by decide))]",
         (
             f"  apply {'finalS_sound' if _leftover(red_l) else 'final_sound'} {m} (by norm_num) "
@@ -1787,14 +1788,15 @@ def net_amp_body(
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
+        *_chain_lines("aruns", m, t_l, t_r),
         "/-- The two networks are equal. -/",
         f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
         "  apply equal_psda2 _ _ netL netR rfl",
         "  intro σ",
         "  rw [cL, cR, ← valA_smul, ← valA_smul,",
-        f"    aruns_sound {m} (by norm_num) A stepsL {t_l} _ _ reqsL qreqsL (by decide),",
-        f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR qreqsR (by decide),",
-        f"    valA_agree {m} _ A (aruns {m} stepsL {t_l}) {bnd} _ _ (by decide) (by decide)",
+        f"    aruns_sound {m} (by norm_num) A stepsL {t_l} _ _ reqsL qreqsL arunsL_ok, arunsL_eq,",
+        f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR qreqsR arunsR_ok, arunsR_eq,",
+        f"    valA_agree {m} _ A arunsL {bnd} _ _ (by decide) (by decide)",
         f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
         f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide) (by decide) (by decide) (by decide)",
@@ -1814,6 +1816,20 @@ NET_OPTIONS = [
 
 CHAIN_BLOCK = 20
 """The steps between two checkpoints of run_chain and aruns_chain (ArchytasZX/PathSumChain)."""
+
+RUN_BLOCK = 4
+"""The steps between two checkpoints of the run_chain and aruns_chain of a side's reduction."""
+
+
+def _chain_lines(kind: str, m: int, start_l: str, start_r: str) -> list[str]:
+    """The run_chain (``kind`` "run"), aruns_chain ("aruns") or qrun_chain ("qrun") commands stating
+    ``{kind}L_ok``, ``{kind}L_eq``, ``{kind}R_ok`` and ``{kind}R_eq`` for ``stepsL`` from
+    ``start_l`` and ``stepsR`` from ``start_r``."""
+    return [
+        f"{kind}_chain {kind}L {m} stepsL {start_l} {RUN_BLOCK}",
+        f"{kind}_chain {kind}R {m} stepsR {start_r} {RUN_BLOCK}",
+        "",
+    ]
 
 
 def net_quarter_body(
@@ -2366,13 +2382,16 @@ def qnet_body(left: Diagram, right: Diagram, name: str, phases: list[tuple[str, 
         f"  all_goals {sub}",
         "  all_goals linear_combination key",
         "",
+        *_chain_lines(
+            "qrun", p, "(qnetData NL (psL.map Prod.snd))", "(qnetData NR (psR.map Prod.snd))"
+        ),
         "/-- The two networks are equal. -/",
         f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
         "  apply equal_qps _ _ netL netR rfl",
         "  intro τ",
         "  rw [← QSem.val_smul, ← QSem.val_smul,",
-        "    QSem.run_sound stepsL (qnetData NL (psL.map Prod.snd)) _ τ (by decide),",
-        "    QSem.run_sound stepsR (qnetData NR (psR.map Prod.snd)) _ τ (by decide)]",
+        "    QSem.run_sound stepsL (qnetData NL (psL.map Prod.snd)) _ τ qrunL_ok, qrunL_eq,",
+        "    QSem.run_sound stepsR (qnetData NR (psR.map Prod.snd)) _ τ qrunR_ok, qrunR_eq]",
         f"  apply QSem.final_sound _ _ _ _ τ {k_l} {k_r} (by decide) (by decide) (by decide)",
         "  rw [facL, facR, cL, cR]",
         "  all_goals exact consts",

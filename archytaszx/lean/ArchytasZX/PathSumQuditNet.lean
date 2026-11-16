@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0.
 import ArchytasZX.PathSumQudit
 import ArchytasZX.PathSumDigits
 import ArchytasZX.GaussSign
+import ArchytasZX.PathSumQuditChain
 
 /-!
 # Qudit networks as path sums over Z_p
