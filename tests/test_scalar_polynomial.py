@@ -177,3 +177,15 @@ def test_fixed_expand_is_sympy_expand() -> None:
             sp.exp(sp.I * sp.pi * (A + B) / 2) * deltas[0],
         ):
             assert same_tree(_expand(expr), sp.expand(expr))
+
+
+def test_radix_split_of_a_large_concrete_modulus_walks_its_divisors() -> None:
+    from archytaszx.algebra.scalar import _radix_moduli, _radix_split_concrete
+
+    big = 30**6
+    ranges = {A: sp.Integer(30**5), B: sp.Integer(30)}
+    split = _radix_split_concrete(30 * A + B, big, ranges)
+    assert split == ModDelta(B, 30) * ModDelta(A, 30**5)
+    assert _radix_split_concrete(A + B, big, ranges) is None
+    d = sp.Symbol("d", positive=True, integer=True)
+    assert _radix_moduli(12 * d) == [d, 2 * d, 3 * d, 4 * d, 6 * d, 12, 6, 4, 3, 2]

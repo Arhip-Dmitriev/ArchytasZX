@@ -1335,11 +1335,9 @@ def _radix_moduli(modulus: sp.Expr) -> list[sp.Expr]:
     whole = sp.Mul(*out)
     integer = sp.Mul(*(f for f in factors if f.is_Integer))
     if integer.is_Integer and int(integer) > 2:
-        a = int(integer)
-        out += [sp.Integer(c) * whole for c in range(2, a) if a % c == 0]
+        out += [sp.Integer(c) * whole for c in sp.divisors(int(integer))[1:-1]]
     if integer.is_Integer and int(integer) > 1:
-        a = int(integer)
-        out += [sp.Integer(c) for c in range(a, 1, -1) if a % c == 0]
+        out += [sp.Integer(c) for c in reversed(sp.divisors(int(integer))[1:])]
     return out
 
 
@@ -1407,9 +1405,7 @@ def _radix_split_concrete(
     if modulus < 4 or not any(modulus % t == 0 for t in range(2, math.isqrt(modulus) + 1)):
         return None
     pieces = sp.Add.make_args(_expand(frequency))
-    for t in range(2, modulus):
-        if modulus % t:
-            continue
+    for t in sp.divisors(modulus)[1:-1]:
         carry: sp.Expr = sp.Integer(0)
         digit: sp.Expr = sp.Integer(0)
         for piece in pieces:
