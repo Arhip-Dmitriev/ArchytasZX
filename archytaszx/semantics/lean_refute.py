@@ -1379,11 +1379,15 @@ class _Refuter:
         return tab[i]
 
     def res_decls(
-        self, tag: str, plan: tuple[list[Any], list[Any], list[Any]], dim: str
+        self,
+        tag: str,
+        plan: tuple[list[Any], list[Any], list[Any]],
+        dim: str,
+        packed: bool = False,
     ) -> list[str]:
-        """Each residue factor a definition, each factor list between steps the list of their
-        names, each step's `elimR` a `decide +kernel` theorem of its own and `CH{tag}` the
-        chain through `chainR_step`."""
+        """Each residue factor a definition (`packed` as `_rfac` packs), each factor list between
+        steps the list of their names, each step's `elimR` a `decide +kernel` theorem of its own
+        and `CH{tag}` the chain through `chainR_step`."""
         leaves, steps, _final = plan
         p = self.p
         out: list[str] = []
@@ -1391,7 +1395,7 @@ class _Refuter:
 
         def fac(name: str, f: Any) -> str:
             scopes[name] = tuple(f[0])
-            out.append(f"def {name} : RFac := {_rfac(f, self.labdim)}")
+            out.append(f"def {name} : RFac := {_rfac(f, self.labdim, packed)}")
             return name
 
         state = [fac(f"{tag}a{i}", f) for i, f in enumerate(leaves)]
@@ -1912,18 +1916,22 @@ def _fac(f: Any, dim: Callable[[int], int]) -> str:
     return f"⟨{_ints_nat(list(scope))}, {nest(list(scope), 0, 1)}⟩"
 
 
-def _rfac(f: Any, dim: Callable[[int], int]) -> str:
-    """A residue factor as a Lean `RFac`, nested as `_fac` nests."""
+def _rfac(f: Any, dim: Callable[[int], int], packed: bool = False) -> str:
+    """A residue factor as a Lean `RFac`, nested as `_fac` nests; `packed` writes a subtable of
+    equal entries as one leaf."""
     scope, tab = f
 
-    def nest(rest: Sequence[int], base: int, stride: int) -> str:
+    def nest(rest: Sequence[int], base: int, stride: int) -> tuple[str, int | None]:
         if not rest:
-            return f"RT.leaf {tab[base]}"
+            return f"RT.leaf {tab[base]}", tab[base]
         d = dim(rest[0])
-        kids = ", ".join(nest(rest[1:], base + v * stride, stride * d) for v in range(d))
-        return f"RT.node [{kids}]"
+        kids = [nest(rest[1:], base + v * stride, stride * d) for v in range(d)]
+        vals = {k[1] for k in kids}
+        if packed and len(vals) == 1 and None not in vals:
+            return kids[0]
+        return "RT.node [" + ", ".join(k[0] for k in kids) + "]", None
 
-    return f"⟨{_ints_nat(list(scope))}, {nest(list(scope), 0, 1)}⟩"
+    return f"⟨{_ints_nat(list(scope))}, {nest(list(scope), 0, 1)[0]}⟩"
 
 
 def _anon(parts: str) -> str:

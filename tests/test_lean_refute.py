@@ -26,6 +26,7 @@ from archytaszx.semantics import lean_net as L
 from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 from archytaszx.semantics.lean_numeric import export_numeric_refutation
 from archytaszx.semantics.lean_refute import export_refutation
+from archytaszx.semantics.lean_subst import lnorm
 
 CASES: dict[str, tuple[str, str]] = {
     "colour": ("a = Z(0 -> 1, d)", "a = X(0 -> 1, d)"),
@@ -185,6 +186,13 @@ def test_weighted_spiders_have_coefficient_tables(name: str) -> None:
 def test_large_fourier_chains_sum_by_substitution() -> None:
     source = _refutation("fourier_power")
     assert "sym_gstep" in source and "sym_dstep" in source and "sym_final" in source
+
+
+def test_normalised_expressions_drop_multiples() -> None:
+    inner = ("add", ("mul", 30, ("v", 61)), ("v", 13))
+    assert lnorm(("div", inner, 30), {13}, {13: 5}) == ("v", 61)
+    assert lnorm(("mod", inner, 30), {13}, {13: 5}) == ("c", 5)
+    assert lnorm(("div", ("mod", ("v", 72), 30), 30), set(), {}) == ("c", 0)
 
 
 def test_long_phase_vectors_are_tables() -> None:

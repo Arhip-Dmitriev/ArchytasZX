@@ -655,11 +655,12 @@ inductive RT where
 /-- The level of subtables `cs`. -/
 def RT.node (cs : List RT) : RT := cs.foldr RT.cons RT.nil
 
-/-- The `k`-th subtable of a level. -/
+/-- The `k`-th subtable of a level; a leaf is its own subtable. -/
 def RT.child : RT → ℕ → RT
   | .cons h _, 0 => h
   | .cons _ t, k + 1 => RT.child t k
-  | _, _ => .leaf 0
+  | .leaf v, _ => .leaf v
+  | .nil, _ => .leaf 0
 
 /-- The entry of a table at `σ`, its levels read at the labels `ls` in order. -/
 def RT.get (σ : ℕ → ℕ) : List ℕ → RT → ℕ

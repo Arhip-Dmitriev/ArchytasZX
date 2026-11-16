@@ -98,6 +98,75 @@ def ub(e: Ex, d: Callable[[int], int]) -> int:
     return max(int(e[2]) - 1, 0)
 
 
+def _sadd(a: Ex, b: Ex) -> Ex:
+    if a[0] == "c" and b[0] == "c":
+        return ("c", a[1] + b[1])
+    if a == ("c", 0):
+        return b
+    if b == ("c", 0):
+        return a
+    return ("add", a, b)
+
+
+def _smod0(a: Ex, k: int) -> Ex:
+    if a[0] == "c":
+        return ("c", a[1] % k if k else a[1])
+    return ("mod", a, k)
+
+
+def _smod(a: Ex, k: int) -> Ex:
+    if a[0] == "c":
+        return ("c", a[1] % k if k else a[1])
+    if a[0] == "mod":
+        return a if a[2] == k else ("mod", a, k)
+    if a[0] == "add" and a[1][0] == "mul":
+        return _smod0(a[2], k) if a[1][1] == k else ("mod", a, k)
+    if a[0] == "add" and a[2][0] == "mul":
+        return _smod0(a[1], k) if a[2][1] == k else ("mod", a, k)
+    return ("mod", a, k)
+
+
+def _sdiv0(a: Ex, k: int) -> Ex:
+    if a[0] == "c":
+        return ("c", a[1] // k if k else 0)
+    if a[0] == "mod":
+        return ("c", 0) if a[2] == k and k > 0 else ("div", a, k)
+    return ("div", a, k)
+
+
+def _sdiv(a: Ex, k: int) -> Ex:
+    if a[0] in ("c", "mod"):
+        return _sdiv0(a, k)
+    if a[0] == "add" and a[1][0] == "mul":
+        m, x, r = a[1][1], a[1][2], a[2]
+        return _sadd(x, _sdiv0(r, k)) if m == k and k > 0 else ("div", a, k)
+    if a[0] == "add" and a[2][0] == "mul":
+        m, x, r = a[2][1], a[2][2], a[1]
+        return _sadd(_sdiv0(r, k), x) if m == k and k > 0 else ("div", a, k)
+    return ("div", a, k)
+
+
+def lnorm(e: Ex, u: Sequence[int] | set[int], sigma: Mapping[int, int]) -> Ex:
+    """Mirror of `LX.norm`."""
+    h = e[0]
+    if h == "v":
+        return ("c", sigma.get(e[1], 0)) if e[1] in u else e
+    if h == "c":
+        return e
+    if h == "add":
+        return _sadd(lnorm(e[1], u, sigma), lnorm(e[2], u, sigma))
+    if h == "mul":
+        a = lnorm(e[2], u, sigma)
+        return ("c", e[1] * a[1]) if a[0] == "c" else ("mul", e[1], a)
+    a = lnorm(e[1], u, sigma)
+    if h == "div":
+        return _sdiv(a, e[2])
+    if h == "mod":
+        return _smod(a, e[2])
+    n = e[2]
+    return ("c", (n - a[1] % n) % n if n else 0) if a[0] == "c" else ("neg", a, n)
+
+
 def text(e: Ex) -> str:
     """An expression as a Lean `LX` term."""
     h = e[0]
@@ -140,6 +209,8 @@ class Plan:
     steps: list[tuple[Any, ...]]
     leaves: list[Any]
     groups: list[list[int]]
+    scopes: list[tuple[int, ...]]
+    cscopes: list[tuple[int, ...]]
     final: Any
     value: int
 
@@ -357,7 +428,7 @@ def _finish(
     u = set(net.bnd)
 
     def scope_of(es: Sequence[Ex]) -> tuple[int, ...]:
-        return tuple(dict.fromkeys(x for e in es for x in vars_(e) if x not in u))
+        return tuple(dict.fromkeys(x for e in es for x in vars_(lnorm(e, u, sigma))))
 
     def table(scope: Sequence[int], entry: Callable[[Callable[[int], int]], int]) -> list[int]:
         dims = [d(x) for x in scope]
@@ -381,6 +452,8 @@ def _finish(
         sc = scope_of([st.texpr(x) for x in _legs(net, i)])
         by_scope[frozenset([i])] = (sc, [i])
     groups = [g for _, g in by_scope.values()]
+    scopes = [sc for sc, _ in by_scope.values()]
+    cscopes: list[tuple[int, ...]] = []
     leaves = []
     for sc, g in by_scope.values():
 
@@ -392,18 +465,38 @@ def _finish(
                 acc = int(refuter.res(refuter.node(n, vals))) * acc % p
             return acc
 
-        leaves.append((sc, table(sc, group_entry)))
+        leaves.append(_reduce(sc, table(sc, group_entry), d))
     for nq, e in st.cs:
 
         def cons_entry(at: Callable[[int], int], nq: int = nq, e: Ex = e) -> int:
             return 1 if ev(e, at) % nq == 0 else 0
 
         sc = scope_of([e])
-        leaves.append((sc, table(sc, cons_entry)))
+        cscopes.append(sc)
+        leaves.append(_reduce(sc, table(sc, cons_entry), d))
     leaves.append(((), [st.c % p]))
     plan = refuter.res_eliminate(leaves, free)
     value = refuter.res_final(plan[2], sigma)
-    return Plan(states, frees, steps, plan[0], groups, plan, value)
+    return Plan(states, frees, steps, plan[0], groups, scopes, cscopes, plan, value)
+
+
+def _reduce(
+    scope: Sequence[int], tab: list[int], d: Callable[[int], int]
+) -> tuple[tuple[int, ...], list[int]]:
+    """The table restricted to the labels of `scope` it varies in, first label least
+    significant."""
+    scope, dims = list(scope), [d(x) for x in scope]
+    k = 0
+    while k < len(scope):
+        inner = math.prod(dims[:k])
+        dk = dims[k]
+        block = inner * dk
+        if all(tab[i] == tab[i % inner + (i // block) * block] for i in range(len(tab))):
+            tab = [tab[i] for i in range(len(tab)) if (i // inner) % dk == 0]
+            del scope[k], dims[k]
+        else:
+            k += 1
+    return tuple(scope), tab
 
 
 def sym_decls(
@@ -472,14 +565,22 @@ def sym_decls(
             )
             links.append(f"({tag}t{k} hw)")
     xt = f"{tag}x"
-    out += refuter.res_decls(xt, plan.final, dim)
+    out += refuter.res_decls(xt, plan.final, dim, packed=True)
     last = len(plan.steps)
     nl = len(plan.groups)
     names = [f"{xt}a{i}" for i in range(len(plan.final[0]))]
     gss = (
         "[" + ", ".join(ns_text(g) for g in plan.groups) + "]" if nl else "([] : List (List Node))"
     )
+    scs = (
+        "[" + ", ".join(nat_list(sc) for sc in plan.scopes) + "]" if nl else "([] : List (List ℕ))"
+    )
     ln = "[" + ", ".join(names[:nl]) + "]" if nl else "([] : List RFac)"
+    sqs = (
+        "[" + ", ".join(nat_list(sc) for sc in plan.cscopes) + "]"
+        if plan.cscopes
+        else "([] : List (List ℕ))"
+    )
     lq_names = names[nl:-1]
     lq = "[" + ", ".join(lq_names) + "]" if lq_names else "([] : List RFac)"
     lemmas = []
@@ -487,13 +588,15 @@ def sym_decls(
     for gi, g in enumerate(plan.groups):
         out.append(
             f"set_option maxHeartbeats 0 in\ntheorem {xt}L{gi} : leafS {shape} {M} Pt Ct {p} {w} "
-            f"{unbnd} σ0 {st_last}.bs {ns_text(g)} {names[gi]} = true := by decide +kernel"
+            f"{unbnd} σ0 {st_last}.bs {ns_text(g)} {nat_list(plan.scopes[gi])} {names[gi]} = true "
+            ":= by decide +kernel"
         )
         lemmas.append(f"{xt}L{gi}")
     for qi, (nq, e) in enumerate(plan.states[-1].cs):
         out.append(
             f"set_option maxHeartbeats 0 in\ntheorem {xt}Q{qi} : leafQ {p} {dim} {unbnd} σ0 "
-            f"({nq}, {text(e)}) {names[nl + qi]} = true := by decide +kernel"
+            f"({nq}, {text(e)}) {nat_list(plan.cscopes[qi])} {names[nl + qi]} = true "
+            ":= by decide +kernel"
         )
         lemmas.append(f"{xt}Q{qi}")
     zs = (
@@ -508,9 +611,10 @@ def sym_decls(
         f"    sumR {dim} {tag}R{last} ({sv} {st_last}) σ0 = "
         f"(rfold {p} FN{xt} σ0 : ZMod {p}) :=\n"
         f"  sym_final {shape} {M} Pt Ct {p} {w} (by norm_num) hw1 (by norm_num) (by norm_num) "
-        f"{unbnd} {tag}R{last} σ0 {st_last} {gss} {ln} {lq} (by decide +kernel) "
-        f"(by decide +kernel) ({zs1}) (by decide +kernel) ({zs2}) ST{xt} FN{xt} "
-        f"(by decide +kernel) CH{xt} (by decide +kernel) (by decide +kernel) {tag}hU"
+        f"{unbnd} {tag}R{last} σ0 {st_last} {gss} {scs} {ln} {lq} (by decide +kernel) "
+        f"(by decide +kernel) (by decide +kernel) ({zs1}) {sqs} (by decide +kernel) "
+        f"(by decide +kernel) ({zs2}) ST{xt} FN{xt} (by decide +kernel) CH{xt} "
+        f"(by decide +kernel) (by decide +kernel) (by decide +kernel) {tag}hU"
     )
     links.append(f"({tag}fin hw1)")
     return out, " |>.trans ".join(links)

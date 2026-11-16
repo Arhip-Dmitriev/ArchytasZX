@@ -147,6 +147,150 @@ theorem negN_negN (n x : ℕ) (hx : x < n) : negN n (negN n x) = x := by
   symm
   exact eq_negN n _ x hx (add_negN n x hn)
 
+/-! ## Normalised expressions -/
+
+/-- `a + b`, constants folded. -/
+def LX.sadd (a b : LX) : LX :=
+  match a, b with
+  | .c x, .c y => .c (x + y)
+  | .c 0, b => b
+  | a, .c 0 => a
+  | a, b => .add a b
+
+/-- `k * a`, constants folded. -/
+def LX.smul (k : ℕ) (a : LX) : LX :=
+  match a with
+  | .c x => .c (k * x)
+  | a => .mul k a
+
+/-- `negN n a`, constants folded. -/
+def LX.sneg (a : LX) (n : ℕ) : LX :=
+  match a with
+  | .c x => .c (negN n x)
+  | a => .neg a n
+
+/-- `a % k`, constants folded. -/
+def LX.smod0 (a : LX) (k : ℕ) : LX :=
+  match a with
+  | .c x => .c (x % k)
+  | a => .mod a k
+
+/-- `a % k`, constants folded and multiples of `k` dropped. -/
+def LX.smod (a : LX) (k : ℕ) : LX :=
+  match a with
+  | .c x => .c (x % k)
+  | .mod x k' => if k' = k then .mod x k' else .mod (.mod x k') k
+  | .add (.mul m x) r => if m = k then LX.smod0 r k else .mod (.add (.mul m x) r) k
+  | .add r (.mul m x) => if m = k then LX.smod0 r k else .mod (.add r (.mul m x)) k
+  | a => .mod a k
+
+/-- `a / k`, constants folded and `(x % k) / k` zero. -/
+def LX.sdiv0 (a : LX) (k : ℕ) : LX :=
+  match a with
+  | .c x => .c (x / k)
+  | .mod x k' => if k' = k ∧ 0 < k then .c 0 else .div (.mod x k') k
+  | a => .div a k
+
+/-- `a / k`, constants folded and multiples of `k` divided out. -/
+def LX.sdiv (a : LX) (k : ℕ) : LX :=
+  match a with
+  | .c x => .c (x / k)
+  | .mod x k' => if k' = k ∧ 0 < k then .c 0 else .div (.mod x k') k
+  | .add (.mul m x) r =>
+    if m = k ∧ 0 < k then LX.sadd x (LX.sdiv0 r k) else .div (.add (.mul m x) r) k
+  | .add r (.mul m x) =>
+    if m = k ∧ 0 < k then LX.sadd (LX.sdiv0 r k) x else .div (.add r (.mul m x)) k
+  | a => .div a k
+
+/-- The expression with each label of `U` replaced by its value in `σ`, simplified bottom up. -/
+def LX.norm (U : List ℕ) (σ : ℕ → ℕ) : LX → LX
+  | .v x => if U.contains x then .c (σ x) else .v x
+  | .c k => .c k
+  | .add a b => LX.sadd (a.norm U σ) (b.norm U σ)
+  | .mul k a => LX.smul k (a.norm U σ)
+  | .div a k => LX.sdiv (a.norm U σ) k
+  | .mod a k => LX.smod (a.norm U σ) k
+  | .neg a n => LX.sneg (a.norm U σ) n
+
+theorem LX.sadd_eval (τ : ℕ → ℕ) (a b : LX) : (LX.sadd a b).eval τ = a.eval τ + b.eval τ := by
+  unfold LX.sadd; split <;> simp [LX.eval]
+
+theorem LX.smul_eval (τ : ℕ → ℕ) (k : ℕ) (a : LX) : (LX.smul k a).eval τ = k * a.eval τ := by
+  unfold LX.smul; split <;> simp [LX.eval]
+
+theorem LX.sneg_eval (τ : ℕ → ℕ) (a : LX) (n : ℕ) : (LX.sneg a n).eval τ = negN n (a.eval τ) := by
+  unfold LX.sneg; split <;> simp [LX.eval]
+
+theorem LX.smod0_eval (τ : ℕ → ℕ) (a : LX) (k : ℕ) : (LX.smod0 a k).eval τ = a.eval τ % k := by
+  unfold LX.smod0; split <;> simp [LX.eval]
+
+theorem LX.smod_eval (τ : ℕ → ℕ) (a : LX) (k : ℕ) : (LX.smod a k).eval τ = a.eval τ % k := by
+  unfold LX.smod
+  split
+  · simp [LX.eval]
+  · split_ifs with h
+    · subst h; simp [LX.eval, Nat.mod_mod]
+    · rfl
+  · split_ifs with h
+    · subst h; simp [LX.smod0_eval, LX.eval, Nat.mul_add_mod]
+    · rfl
+  · split_ifs with h
+    · subst h; simp [LX.smod0_eval, LX.eval, Nat.add_mul_mod_self_left]
+    · rfl
+  · rfl
+
+theorem LX.sdiv0_eval (τ : ℕ → ℕ) (a : LX) (k : ℕ) : (LX.sdiv0 a k).eval τ = a.eval τ / k := by
+  unfold LX.sdiv0
+  split
+  · simp [LX.eval]
+  · split_ifs with h
+    · obtain ⟨rfl, hk⟩ := h
+      simp [LX.eval, Nat.div_eq_of_lt (Nat.mod_lt _ hk)]
+    · rfl
+  · rfl
+
+theorem LX.sdiv_eval (τ : ℕ → ℕ) (a : LX) (k : ℕ) : (LX.sdiv a k).eval τ = a.eval τ / k := by
+  unfold LX.sdiv
+  split
+  · simp [LX.eval]
+  · split_ifs with h
+    · obtain ⟨rfl, hk⟩ := h
+      simp [LX.eval, Nat.div_eq_of_lt (Nat.mod_lt _ hk)]
+    · rfl
+  · split_ifs with h
+    · obtain ⟨rfl, hk⟩ := h
+      simp [LX.sadd_eval, LX.sdiv0_eval, LX.eval, Nat.mul_add_div hk]
+    · rfl
+  · split_ifs with h
+    · obtain ⟨rfl, hk⟩ := h
+      simp [LX.sadd_eval, LX.sdiv0_eval, LX.eval, Nat.add_mul_div_left _ _ hk]
+    · rfl
+  · rfl
+
+theorem LX.norm_eval (U : List ℕ) (σ τ : ℕ → ℕ) (e : LX) :
+    (e.norm U σ).eval τ = e.eval (pin U σ τ) := by
+  induction e with
+  | v x =>
+    simp only [LX.norm, LX.eval, pin]
+    split_ifs <;> rfl
+  | c k => rfl
+  | add a b iha ihb => simp [LX.norm, LX.sadd_eval, LX.eval, iha, ihb]
+  | mul k a ih => simp [LX.norm, LX.smul_eval, LX.eval, ih]
+  | div a k ih => simp [LX.norm, LX.sdiv_eval, LX.eval, ih]
+  | mod a k ih => simp [LX.norm, LX.smod_eval, LX.eval, ih]
+  | neg a n ih => simp [LX.norm, LX.sneg_eval, LX.eval, ih]
+
+theorem LX.norm_agree (U : List ℕ) (σ τ ρ : ℕ → ℕ) (sc : List ℕ) (e : LX)
+    (hv : ∀ y ∈ (e.norm U σ).vars, y ∈ sc) (hρ : ∀ y ∈ sc, ρ y = τ y)
+    (hU : ∀ y ∈ U, τ y = σ y) : e.eval τ = (e.norm U σ).eval ρ := by
+  rw [LX.eval_congr ρ τ _ fun y hy => hρ y (hv y hy), LX.norm_eval]
+  apply LX.eval_congr
+  intro y _
+  unfold pin
+  split_ifs with h
+  · exact hU y (by simpa using h)
+  · rfl
+
 /-! ## Bindings -/
 
 /-- The expression bound to `x`. -/
@@ -734,28 +878,25 @@ theorem valQ_eq (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C :
     rfl
   · rfl
 
-/-- The residue factor of a group of nodes under bindings, its labels in `U` read from `σ`. -/
+/-- The residue factor of a group of nodes under bindings, checked at every assignment of the
+labels `sc`, its labels in `U` read from `σ`. -/
 def leafS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (F : RFac) : Bool :=
-  g.all (fun n => (nlegs n).all fun x =>
-      (texpr bs x).vars.all fun y => F.scope.contains y || U.contains y) &&
-    (assigns S.dim F.scope).all fun τ =>
-      F.at τ == (g.map fun n => tmN p w M (valQ S M P C (tval bs (pin U σ τ)) n)).foldr
+    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (sc : List ℕ) (F : RFac) :
+    Bool :=
+  F.scope.all (sc.contains ·) &&
+  g.all (fun n => (nlegs n).all fun x => ((texpr bs x).norm U σ).vars.all (sc.contains ·)) &&
+    (assigns S.dim sc).all fun τ =>
+      F.at τ == (g.map fun n =>
+        tmN p w M (valQ S M P C (fun x => ((texpr bs x).norm U σ).eval τ) n)).foldr
         (fun a b => a * b % p) 1
 
-/-- A constraint's residue factor, its labels in `U` read from `σ`. -/
-def leafQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (F : RFac) : Bool :=
-  q.2.vars.all (fun y => F.scope.contains y || U.contains y) &&
-    (assigns D F.scope).all fun τ =>
-      F.at τ == if q.1 ∣ q.2.eval (pin U σ τ) then 1 else 0
-
-/-- The residue factors of a state: its nodes in the groups `gss`, its constraints and its
-constant. -/
-def leavesOK (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (U : List ℕ) (σ : ℕ → ℕ) (st : SSt) (gss : List (List Node)) (ln lq : List RFac) : Bool :=
-  st.ns.isPerm gss.flatten && ln.length == gss.length &&
-    (gss.zip ln).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2) &&
-    lq.length == st.cs.length && (st.cs.zip lq).all (fun q => leafQ p S.dim U σ q.1 q.2)
+/-- A constraint's residue factor, checked at every assignment of the labels `sc`, its labels
+in `U` read from `σ`. -/
+def leafQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (sc : List ℕ) (F : RFac) :
+    Bool :=
+  F.scope.all (sc.contains ·) && (q.2.norm U σ).vars.all (sc.contains ·) &&
+    (assigns D sc).all fun τ =>
+      F.at τ == if q.1 ∣ (q.2.norm U σ).eval τ then 1 else 0
 
 theorem pin_agree (U : List ℕ) (σ τ ρ : ℕ → ℕ) (F : RFac) (e : LX)
     (he : ∀ y ∈ e.vars, (F.scope.contains y || U.contains y) = true)
@@ -780,13 +921,15 @@ theorem foldr_mod_cast (p : ℕ) (xs : List ℕ) :
 
 theorem leafS_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
     (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
-    (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (F : RFac)
-    (h : leafS S M P C p w U σ bs g F = true) (τ : ℕ → ℕ)
-    (hτ : ∀ y ∈ F.scope, τ y < S.dim y) (hU : ∀ y ∈ U, τ y = σ y) :
+    (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (sc : List ℕ) (F : RFac)
+    (h : leafS S M P C p w U σ bs g sc F = true) (τ : ℕ → ℕ)
+    (hτ : ∀ y ∈ sc, τ y < S.dim y) (hU : ∀ y ∈ U, τ y = σ y) :
     (g.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod = (F.at τ : ZMod p) := by
   simp only [leafS, Bool.and_eq_true, List.all_eq_true, beq_iff_eq] at h
-  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim F.scope τ hτ
-  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, h.2 ρ hρ, foldr_mod_cast, List.map_map]
+  obtain ⟨⟨hs, hv⟩, hc⟩ := h
+  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim sc τ hτ
+  have hFs : ∀ y ∈ F.scope, y ∈ sc := fun y hy => by simpa using hs y hy
+  rw [F.at_congr τ ρ fun l hl => (hρτ l (hFs l hl)).symm, hc ρ hρ, foldr_mod_cast, List.map_map]
   congr 1
   apply List.map_congr_left
   intro n hn
@@ -795,56 +938,69 @@ theorem leafS_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   congr 1
   apply valW_congr
   intro x hx
-  exact pin_agree U σ τ ρ F _ (h.1 n hn x (by simpa [nlegs] using hx)) hρτ hU
+  exact LX.norm_agree U σ τ ρ sc _
+    (fun y hy => by simpa using hv n hn x (by simpa [nlegs] using hx) y hy) hρτ hU
 
-theorem leafQ_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (F : RFac)
-    (h : leafQ p D U σ q F = true) (τ : ℕ → ℕ) (hτ : ∀ y ∈ F.scope, τ y < D y)
+theorem leafQ_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (sc : List ℕ)
+    (F : RFac) (h : leafQ p D U σ q sc F = true) (τ : ℕ → ℕ) (hτ : ∀ y ∈ sc, τ y < D y)
     (hU : ∀ y ∈ U, τ y = σ y) : cval p q τ = (F.at τ : ZMod p) := by
   simp only [leafQ, Bool.and_eq_true, List.all_eq_true, beq_iff_eq] at h
-  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover D F.scope τ hτ
-  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, h.2 ρ hρ, cval,
-    pin_agree U σ τ ρ F q.2 h.1 hρτ hU]
+  obtain ⟨⟨hs, hv⟩, hc⟩ := h
+  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover D sc τ hτ
+  have hFs : ∀ y ∈ F.scope, y ∈ sc := fun y hy => by simpa using hs y hy
+  rw [F.at_congr τ ρ fun l hl => (hρτ l (hFs l hl)).symm, hc ρ hρ, cval,
+    LX.norm_agree U σ τ ρ sc q.2 (fun y hy => by simpa using hv y hy) hρτ hU]
   split_ifs <;> simp
 
 theorem prod_leavesS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
     (p w : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64)
     (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) :
-    ∀ (gss : List (List Node)) (ln : List RFac), ln.length = gss.length →
-      (gss.zip ln).all (fun q => leafS S M P C p w U σ bs q.1 q.2) = true →
-      ∀ τ, (∀ F ∈ ln, ∀ y ∈ F.scope, τ y < S.dim y) → (∀ y ∈ U, τ y = σ y) →
+    ∀ (gss : List (List Node)) (scs : List (List ℕ)) (ln : List RFac),
+      scs.length = gss.length → ln.length = gss.length →
+      (gss.zip (scs.zip ln)).all (fun q => leafS S M P C p w U σ bs q.1 q.2.1 q.2.2) = true →
+      ∀ τ, (∀ sc ∈ scs, ∀ y ∈ sc, τ y < S.dim y) → (∀ y ∈ U, τ y = σ y) →
         (gss.flatten.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod =
           rprod p ln τ := by
   intro gss
   induction gss with
-  | nil => intro ln hlen _ τ _ _; cases ln <;> simp_all [rprod]
+  | nil => intro scs ln _ hlen _ τ _ _; cases ln <;> simp_all [rprod]
   | cons g gss ih =>
-    intro ln hlen hl τ hτ hU
-    cases ln with
-    | nil => simp at hlen
-    | cons F Fs =>
-      simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hl
-      have h1 := ih Fs (by simpa using hlen) hl.2 τ (fun F hF => hτ F (by simp [hF])) hU
-      simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
-      rw [List.flatten_cons, List.map_append, List.prod_append, h1,
-        leafS_val S M P C p w hp hw hM0 hMb U σ bs g F hl.1 τ (hτ F (by simp)) hU]
+    intro scs ln hsl hlen hl τ hτ hU
+    cases scs with
+    | nil => simp at hsl
+    | cons sc scs =>
+      cases ln with
+      | nil => simp at hlen
+      | cons F Fs =>
+        simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hl
+        have h1 := ih scs Fs (by simpa using hsl) (by simpa using hlen) hl.2 τ
+          (fun s hs => hτ s (by simp [hs])) hU
+        simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
+        rw [List.flatten_cons, List.map_append, List.prod_append, h1,
+          leafS_val S M P C p w hp hw hM0 hMb U σ bs g sc F hl.1 τ (hτ sc (by simp)) hU]
 
 theorem prod_leavesQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) :
-    ∀ (cs : List (ℕ × LX)) (lq : List RFac), lq.length = cs.length →
-      (cs.zip lq).all (fun q => leafQ p D U σ q.1 q.2) = true →
-      ∀ τ, (∀ F ∈ lq, ∀ y ∈ F.scope, τ y < D y) → (∀ y ∈ U, τ y = σ y) →
+    ∀ (cs : List (ℕ × LX)) (sqs : List (List ℕ)) (lq : List RFac),
+      sqs.length = cs.length → lq.length = cs.length →
+      (cs.zip (sqs.zip lq)).all (fun q => leafQ p D U σ q.1 q.2.1 q.2.2) = true →
+      ∀ τ, (∀ sc ∈ sqs, ∀ y ∈ sc, τ y < D y) → (∀ y ∈ U, τ y = σ y) →
         (cs.map fun q => cval p q τ).prod = rprod p lq τ := by
   intro cs
   induction cs with
-  | nil => intro lq hlen _ τ _ _; cases lq <;> simp_all [rprod]
+  | nil => intro sqs lq _ hlen _ τ _ _; cases lq <;> simp_all [rprod]
   | cons q cs ih =>
-    intro lq hlen hl τ hτ hU
-    cases lq with
-    | nil => simp at hlen
-    | cons F Fs =>
-      simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hl
-      have h1 := ih Fs (by simpa using hlen) hl.2 τ (fun F hF => hτ F (by simp [hF])) hU
-      simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
-      rw [h1, leafQ_val p D U σ q F hl.1 τ (hτ F (by simp)) hU]
+    intro sqs lq hsl hlen hl τ hτ hU
+    cases sqs with
+    | nil => simp at hsl
+    | cons sc sqs =>
+      cases lq with
+      | nil => simp at hlen
+      | cons F Fs =>
+        simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hl
+        have h1 := ih sqs Fs (by simpa using hsl) (by simpa using hlen) hl.2 τ
+          (fun s hs => hτ s (by simp [hs])) hU
+        simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
+        rw [h1, leafQ_val p D U σ q sc F hl.1 τ (hτ sc (by simp)) hU]
 
 /-- The constant's residue factor. -/
 def kleaf (p c : ℕ) : RFac := ⟨[], RT.leaf (c % p)⟩
@@ -852,16 +1008,21 @@ def kleaf (p c : ℕ) : RFac := ⟨[], RT.leaf (c % p)⟩
 /-- The remaining sums of a state by a checked contraction of its residue factors. -/
 theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
     (p w : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64)
-    (U R : List ℕ) (σ : ℕ → ℕ) (st : SSt) (gss : List (List Node)) (ln lq : List RFac)
-    (hns : st.ns.isPerm gss.flatten = true) (hln : ln.length = gss.length)
-    (hl1 : (gss.zip ln).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2) = true)
-    (hlq : lq.length = st.cs.length)
-    (hl2 : (st.cs.zip lq).all (fun q => leafQ p S.dim U σ q.1 q.2) = true)
+    (U R : List ℕ) (σ : ℕ → ℕ) (st : SSt) (gss : List (List Node)) (scs : List (List ℕ))
+    (ln lq : List RFac)
+    (hns : st.ns.isPerm gss.flatten = true) (hsl : scs.length = gss.length)
+    (hln : ln.length = gss.length)
+    (hl1 : (gss.zip (scs.zip ln)).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2.1 q.2.2) =
+      true)
+    (sqs : List (List ℕ)) (hsq : sqs.length = st.cs.length) (hlq : lq.length = st.cs.length)
+    (hl2 : (st.cs.zip (sqs.zip lq)).all (fun q => leafQ p S.dim U σ q.1 q.2.1 q.2.2) = true)
     (steps : List (ℕ × RFac)) (final : List RFac)
     (hperm : R.Perm (steps.map Prod.fst).reverse)
     (hchain : chainR p S.dim (ln ++ lq ++ [kleaf p st.c]) steps final = true)
     (hscope : scopesR U (ln ++ lq ++ [kleaf p st.c]) steps = true)
     (hdis : U.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hsc : (scs ++ sqs).all (fun sc => sc.all fun y => (steps.map Prod.fst).contains y) =
+      true)
     (hσ : ∀ x ∈ U, σ x < S.dim x) :
     sumR S.dim R (sval S M P C p w st) σ = (rfold p final σ : ZMod p) := by
   rw [List.isPerm_iff] at hns
@@ -882,10 +1043,11 @@ theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     apply hτ y
     have := hdis y hy
     simpa using this
-  have e1 := prod_leavesS S M P C p w hp hw hM0 hMb U σ st.bs gss ln hln hl1 τ
-    (fun F hF => hrange F (by simp [hF])) hU
-  have e2 := prod_leavesQ p S.dim U σ st.cs lq hlq hl2 τ
-    (fun F hF => hrange F (by simp [hF])) hU
+  simp only [List.all_eq_true, List.contains_iff_mem] at hsc
+  have e1 := prod_leavesS S M P C p w hp hw hM0 hMb U σ st.bs gss scs ln hsl hln hl1 τ
+    (fun sc hs y hy => hr y (by simpa using hsc sc (by simp [hs]) y hy)) hU
+  have e2 := prod_leavesQ p S.dim U σ st.cs sqs lq hsq hlq hl2 τ
+    (fun sc hs y hy => hr y (by simpa using hsc sc (by simp [hs]) y hy)) hU
   unfold sval
   rw [(hns.map _).prod_eq, e1, e2]
   simp only [rprod, List.map_append, List.prod_append, List.map_cons, List.map_nil,
