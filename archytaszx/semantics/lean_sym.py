@@ -2407,10 +2407,18 @@ class _SymExport:
             if not sym_check(self.fl, self.dtf, self.ptf, labs, self.ix, nodes0, nodes1, tx, ty):
                 raise NetUnsupported("the normal forms of the two networks differ")
             env = self.env_at(vs)
+            checks = self.check_decls(
+                f"C{i}",
+                "/-- The kernel's normalisation. -/\n",
+                [(f"C{i}x", xt, x), (f"C{i}y", yt, y)],
+                tx,
+                ty,
+                sx,
+                sy,
+            )
             self.fam_decls[i] = (
-                "set_option maxHeartbeats 0 in\n/-- The kernel's normalisation. -/\n"
-                f"theorem C{i} : symCheck FL DT PT RL labs IX {xt} {yt} {sx} {sy} = true := by "
-                f"decide +kernel\n\ntheorem P{i} {self.bh} : ∀ {vb} : ℕ, Equal {env} {sxt} {xt} "
+                "\n\n".join(checks)
+                + f"\n\ntheorem P{i} {self.bh} : ∀ {vb} : ℕ, Equal {env} {sxt} {xt} "
                 f"{syt} {yt} :=\n  fun {vb} => "
                 + self.sym(env, f"(ksOf [{', '.join(vs)}])", xt, yt, sx, sy, f"C{i}", lx, ly)
             )
@@ -2850,44 +2858,65 @@ class _SymExport:
         return "\n    ".join(lines)
 
     def chk_decls(self, a: str, b: str) -> list[str]:
-        """``chk : symCheck .. a b S0 S1 = true``: each network's ``trNodesB`` one node per
-        ``decide``, through the stated intermediate expressions, when ``tr_net`` decides the
-        pair; else one ``decide`` of the whole check."""
-        whole = [
-            (
-                "set_option maxHeartbeats 0 in\n"
-                "/-- The kernel's normalisation of the scaled difference. -/\n"
-                f"theorem chk : symCheck FL DT PT RL labs IX {a} {b} S0 S1 = true := by "
-                "decide +kernel"
-            )
-        ]
+        """``chk : symCheck .. a b S0 S1 = true`` (see :meth:`check_decls`)."""
         assert self.s0 is not None and self.s1 is not None
+        return self.check_decls(
+            "chk",
+            "/-- The kernel's normalisation of the scaled difference. -/\n",
+            [(a, a, self.a.net), (b, b, self.b.net)],
+            self.s0,
+            self.s1,
+            "S0",
+            "S1",
+        )
+
+    def check_decls(
+        self,
+        name: str,
+        doc: str,
+        nets: Sequence[tuple[str, str, Any]],
+        s0: Sequence[STm],
+        s1: Sequence[STm],
+        s0t: str,
+        s1t: str,
+    ) -> list[str]:
+        """``name : symCheck .. A B s0t s1t = true`` for ``nets`` = ``[(tag, text, net)]`` of
+        ``A`` and ``B``: each network's ``trNodesB`` one node per ``decide`` of ``trStepS``,
+        through the stated intermediate expressions, when ``tr_net`` decides the pair; else
+        one ``decide`` of the whole check."""
+        (ta, a, na), (tb, b, nb) = nets
+        whole = [
+            "set_option maxHeartbeats 0 in\n"
+            + doc
+            + f"theorem {name} : symCheck FL DT PT RL labs IX {a} {b} {s0t} {s1t} = true := by "
+            "decide +kernel"
+        ]
         labs = dict(self.out.labs)
-        nets = {a: self.a.net, b: self.b.net}
+        own = {ta: (a, na)} if a == b else {ta: (a, na), tb: (b, nb)}
         steps: dict[str, list[list[STm]]] = {}
-        for tag, lnet in nets.items():
+        e: dict[str, list[STm]] = {}
+        for tag, (_text, lnet) in own.items():
             nodes, internal, _bnd = self.net(lnet)
             st = tr_steps(self.fl, self.dtf, self.ptf, labs, nodes, internal)
             if st is None:
                 return whole
             steps[tag] = st
-        e = {}
-        for tag, lnet in nets.items():
-            nodes, internal, _bnd = self.net(lnet)
             used = {lab for n in nodes for lab in (*n[1], *n[2])}
             sums = tuple((lab, lab_dm(self.dtf, labs, lab)) for lab in internal if lab not in used)
-            e[tag] = [(t[0], sums + t[1], t[2], t[3]) for t in steps[tag][0]]
-        neg = ex_neg(self.s1)
+            e[tag] = [(t[0], sums + t[1], t[2], t[3]) for t in st[0]]
+        eb = e[tb] if tb in e else e[ta]
+        neg = ex_neg(s1)
         if not (
-            ex_mul_ok(self.s0, e[a])
-            and ex_mul_ok(neg, e[b])
-            and not nf_ex(self.fl, ex_mul(self.s0, e[a]) + ex_mul(neg, e[b]))
+            ex_mul_ok(s0, e[ta])
+            and ex_mul_ok(neg, eb)
+            and not nf_ex(self.fl, ex_mul(s0, e[ta]) + ex_mul(neg, eb))
         ):
             return whole
         out: list[str] = []
         args = "FL DT PT RL labs"
-        for tag, lnet in nets.items():
+        for tag, (text, lnet) in own.items():
             st = steps[tag]
+            nt = _paren(text)
             m = len(lnet.nodes)
             for k, n in enumerate(lnet.nodes):
                 out.append(f"def {tag}n{k} : Node := {n.lean()}")
@@ -2902,29 +2931,32 @@ class _SymExport:
             for k in range(m + 1):
                 out.append(f"def {tag}E{k} : List STm := {_lean_ex(st[k])}")
             out.append(
-                f"theorem {tag}B{m} : trNodesB {args} {tag}.int {tag}P{m} {m} {tag}D{m} = "
+                f"theorem {tag}B{m} : trNodesB {args} {nt}.int {tag}P{m} {m} {tag}D{m} = "
                 f"some {tag}E{m} := by decide +kernel"
             )
             for k in range(m - 1, -1, -1):
                 out.append(
-                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trStepB {args} {tag}.int "
+                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trStepS {args} {nt}.int "
                     f"{tag}P{k} {k} {tag}n{k} {tag}E{k + 1} = some {tag}E{k} := by decide +kernel"
                 )
                 out.append(
-                    f"theorem {tag}B{k} : trNodesB {args} {tag}.int {tag}P{k} {k} {tag}D{k} = "
-                    f"some {tag}E{k} :=\n  (trNodesB_cons {args} {tag}.int {tag}P{k} {k} "
-                    f"{tag}n{k} {tag}D{k + 1} {tag}E{k + 1} {tag}B{k + 1}).trans {tag}T{k}"
+                    f"theorem {tag}B{k} : trNodesB {args} {nt}.int {tag}P{k} {k} {tag}D{k} = "
+                    f"some {tag}E{k} :=\n  (trNodesB_cons {args} {nt}.int {tag}P{k} {k} "
+                    f"{tag}n{k} {tag}D{k + 1} {tag}E{k + 1} {tag}B{k + 1}).trans\n    "
+                    f"((trStepS_eq {args} {nt}.int {tag}P{k} {k} {tag}n{k} {tag}E{k + 1})"
+                    f".symm.trans {tag}T{k})"
                 )
             out.append(
-                f"theorem {tag}R : trNet {args} {tag} = some (exSums (labSums DT labs "
-                f"({tag}.int.filter fun l => !(labelsOf {tag}.nodes).contains l)) {tag}E0) :=\n"
-                f"  trNet_of {args} {tag} {tag}D0 {tag}E0 rfl {tag}B0"
+                f"theorem {tag}R : trNet {args} {nt} = some (exSums (labSums DT labs "
+                f"({nt}.int.filter fun l => !(labelsOf {nt}.nodes).contains l)) {tag}E0) :=\n"
+                f"  trNet_of {args} {nt} {tag}D0 {tag}E0 rfl {tag}B0"
             )
+        rb = f"{tb}R" if tb in own else f"{ta}R"
         out.append(
             "set_option maxHeartbeats 0 in\n"
-            "/-- The kernel's normalisation of the scaled difference, node by node. -/\n"
-            f"theorem chk : symCheck FL DT PT RL labs IX {a} {b} S0 S1 = true :=\n"
-            f"  symCheck_of {args} IX {a} {b} S0 S1 _ _ {a}R {b}R (by decide +kernel)"
+            + doc
+            + f"theorem {name} : symCheck FL DT PT RL labs IX {a} {b} {s0t} {s1t} = true :=\n"
+            f"  symCheck_of {args} IX {a} {b} {s0t} {s1t} _ _ {ta}R {rb} (by decide +kernel)"
         )
         return out
 

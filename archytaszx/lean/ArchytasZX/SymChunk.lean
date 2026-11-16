@@ -62,4 +62,170 @@ theorem symCheck_of (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ 
   obtain ⟨⟨⟨⟨⟨a, b⟩, c⟩, d⟩, e⟩, f⟩ := h
   exact ⟨⟨⟨⟨⟨a, b⟩, c⟩, d⟩, e⟩, Or.inl f⟩
 
+/-! ## Strict evaluation
+
+`fN`, `fZ`, `fQ`, `fL`, `fDM`, `fCM`, `fFac`, `fTm` pass a value to a continuation after
+matching on every constructor in it, so the kernel hands the continuation literals instead of
+the unevaluated terms that built them. Each is the identity (`fTm_eq`). -/
+
+/-- `k n` after matching on `n`. -/
+def fN {β : Sort _} (n : ℕ) (k : ℕ → β) : β :=
+  match n with
+  | 0 => k 0
+  | m + 1 => k (m + 1)
+
+/-- `k z` after matching on `z`. -/
+def fZ {β : Sort _} (z : ℤ) (k : ℤ → β) : β :=
+  match z with
+  | .ofNat m => fN m fun m => k (.ofNat m)
+  | .negSucc m => fN m fun m => k (.negSucc m)
+
+/-- `k q` after matching on its numerator and denominator. -/
+def fQ {β : Sort _} (q : ℚ) (k : ℚ → β) : β := fZ q.num fun a => fN q.den fun b => k (mkRat a b)
+
+/-- `k l` after forcing every element by `f`. -/
+def fL {α : Type} {β : Sort _} (f : α → (α → β) → β) : List α → (List α → β) → β
+  | [], k => k []
+  | a :: l, k => f a fun a => fL f l fun l => k (a :: l)
+
+/-- A pair forced by `f` and `g`. -/
+def fP {α γ : Type} {β : Sort _} (f : α → (α → β) → β) (g : γ → (γ → β) → β) (p : α × γ)
+    (k : α × γ → β) : β :=
+  match p with
+  | (a, c) => f a fun a => g c fun c => k (a, c)
+
+/-- A dimension monomial forced. -/
+def fDM {β : Sort _} (m : DMon) (k : DMon → β) : β :=
+  match m with
+  | ⟨c, e⟩ => fN c fun c => fL fN e fun e => k ⟨c, e⟩
+
+/-- A factor forced. -/
+def fFac {β : Sort _} (f : Fac) (k : Fac → β) : β := fP fDM (fL (fP (fL fN) fZ)) f k
+
+/-- A coefficient monomial forced. -/
+def fCM {β : Sort _} (c : CMon) (k : CMon → β) : β :=
+  match c with
+  | ⟨q, r, sq, rc, am, gc⟩ =>
+    fQ q fun q => fQ r fun r => fL fZ sq fun sq => fL fN rc fun rc => fL fZ am fun am =>
+      fL (fP fZ fDM) gc fun gc => k ⟨q, r, sq, rc, am, gc⟩
+
+/-- A term forced. -/
+def fTm {β : Sort _} (t : STm) (k : STm → β) : β :=
+  match t with
+  | ⟨c, sums, dels, phs⟩ =>
+    fCM c fun c => fL (fP fN fDM) sums fun sums => fL fFac dels fun dels =>
+      fL fFac phs fun phs => k ⟨c, sums, dels, phs⟩
+
+theorem fN_eq {β : Sort _} (n : ℕ) (k : ℕ → β) : fN n k = k n := by cases n <;> rfl
+
+theorem fZ_eq {β : Sort _} (z : ℤ) (k : ℤ → β) : fZ z k = k z := by
+  cases z <;> simp [fZ, fN_eq]
+
+theorem fQ_eq {β : Sort _} (q : ℚ) (k : ℚ → β) : fQ q k = k q := by
+  simp [fQ, fZ_eq, fN_eq, Rat.mkRat_self]
+
+theorem fL_eq {α : Type} {β : Sort _} (f : α → (α → β) → β)
+    (hf : ∀ (a : α) (k : α → β), f a k = k a) (l : List α) (k : List α → β) : fL f l k = k l := by
+  induction l generalizing k with
+  | nil => rfl
+  | cons a l ih => simp [fL, hf, ih]
+
+theorem fP_eq {α γ : Type} {β : Sort _} (f : α → (α → β) → β) (g : γ → (γ → β) → β)
+    (hf : ∀ (a : α) (k : α → β), f a k = k a) (hg : ∀ (c : γ) (k : γ → β), g c k = k c)
+    (p : α × γ) (k : α × γ → β) : fP f g p k = k p := by
+  obtain ⟨a, c⟩ := p
+  simp [fP, hf, hg]
+
+theorem fDM_eq {β : Sort _} (m : DMon) (k : DMon → β) : fDM m k = k m := by
+  obtain ⟨c, e⟩ := m
+  simp [fDM, fN_eq, fL_eq _ (fun a k => fN_eq a k)]
+
+theorem fFac_eq {β : Sort _} (f : Fac) (k : Fac → β) : fFac f k = k f :=
+  fP_eq _ _ (fun a k => fDM_eq a k)
+    (fun c k => fL_eq _ (fun p k => fP_eq _ _ (fun a k => fL_eq _ (fun a k => fN_eq a k) a k)
+      (fun z k => fZ_eq z k) p k) c k) f k
+
+theorem fCM_eq {β : Sort _} (c : CMon) (k : CMon → β) : fCM c k = k c := by
+  obtain ⟨q, r, sq, rc, am, gc⟩ := c
+  simp only [fCM, fQ_eq, fL_eq _ (fun a k => fZ_eq a k), fL_eq _ (fun a k => fN_eq a k),
+    fL_eq _ (fun p k => fP_eq _ _ (fun a k => fZ_eq a k) (fun a k => fDM_eq a k) p k)]
+
+theorem fTm_eq {β : Sort _} (t : STm) (k : STm → β) : fTm t k = k t := by
+  obtain ⟨c, sums, dels, phs⟩ := t
+  simp only [fTm, fCM_eq, fL_eq _ (fun a k => fFac_eq a k),
+    fL_eq _ (fun p k => fP_eq _ _ (fun a k => fN_eq a k) (fun a k => fDM_eq a k) p k)]
+
+/-- `elimAll`, the term forced after each elimination. -/
+def elimAllS : ℕ → STm → STm
+  | 0, t => t
+  | n + 1, t => match elimStep t with
+    | some t' => fTm t' (elimAllS n)
+    | none => t
+
+theorem elimAllS_eq : ∀ (n : ℕ) (t : STm), elimAllS n t = elimAll n t := by
+  intro n
+  induction n with
+  | zero => intro t; rfl
+  | succ n ih =>
+    intro t
+    simp only [elimAllS, elimAll]
+    cases elimStep t with
+    | none => rfl
+    | some t' => simp [fTm_eq, ih]
+
+/-- `normTm`, the term forced after each round. -/
+def normTmS (fl : List ℕ) : ℕ → STm → Option STm
+  | 0, t => some t
+  | r + 1, t =>
+    match canonTm fl (fTm t fun t => elimAllS (t.sums.length + 1) t) with
+    | none => none
+    | some t' => fTm t' (normTmS fl r)
+
+theorem normTmS_eq (fl : List ℕ) : ∀ (r : ℕ) (t : STm), normTmS fl r t = normTm fl r t := by
+  intro r
+  induction r with
+  | zero => intro t; rfl
+  | succ r ih =>
+    intro t
+    simp only [normTmS, normTm, fTm_eq, elimAllS_eq]
+    cases canonTm fl (elimAll (t.sums.length + 1) t) with
+    | none => rfl
+    | some t' => simp [fTm_eq, ih]
+
+/-- `nfEx` from the expression `acc`, each normalised term and each sum forced. -/
+def nfGo (fl : List ℕ) : List STm → List STm → List STm
+  | acc, [] => acc
+  | acc, t :: ts =>
+    match fTm t (normTmS fl ROUNDS) with
+    | none => nfGo fl acc ts
+    | some t' => fL fTm (tmAdd t' acc) fun acc => nfGo fl acc ts
+
+theorem nfGo_eq (fl : List ℕ) : ∀ (e acc : List STm),
+    nfGo fl acc e = (e.filterMap (normTm fl ROUNDS)).foldl (fun acc t => tmAdd t acc) acc := by
+  intro e
+  induction e with
+  | nil => intro acc; rfl
+  | cons t ts ih =>
+    intro acc
+    simp only [nfGo, fTm_eq, normTmS_eq, List.filterMap_cons]
+    cases normTm fl ROUNDS t with
+    | none => simp [ih]
+    | some t' => simp [fL_eq _ (fun a k => fTm_eq a k), ih]
+
+/-- `trStepB` with the strict normaliser. -/
+def trStepS (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (int pre : List ℕ) (i : ℕ) (n : Node) (b : List STm) :
+    Option (List STm) :=
+  match trNode dt pt rl (OFF + i) n with
+  | some a =>
+    if exMulOK a b then some (nfGo fl [] (exSums (labSums dt labs (firstAt int pre n)) (exMul a b)))
+    else none
+  | none => none
+
+theorem trStepS_eq (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int pre : List ℕ) (i : ℕ) (n : Node)
+    (b : List STm) :
+    trStepS fl dt pt rl labs int pre i n b = trStepB fl dt pt rl labs int pre i n b := by
+  simp only [trStepS, trStepB, nfGo_eq, nfEx]
+
 end ArchytasZX.Sym
