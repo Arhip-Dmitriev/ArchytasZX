@@ -70,7 +70,6 @@ from typing import TypeAlias, cast
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
-from sympy.polys.polyutils import dict_from_expr  # type: ignore[import-untyped]
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import (
@@ -81,6 +80,7 @@ from archytaszx.algebra.scalar import (
     Scalar,
     ScalarError,
 )
+from archytaszx.algebra.scalar import poly_terms as _poly_terms
 from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
     expand_concrete_boxes,
@@ -1111,15 +1111,16 @@ def _modulus_sup(c: sp.Expr) -> sp.Expr | None:
             continue
         if not isinstance(f, sp.Pow) or f.base.free_symbols or not f.base.is_positive:
             return None
-        try:
-            poly = sp.Poly(f.exp, *sorted(f.exp.free_symbols, key=str))
-        except sp.PolynomialError:
+        gens = tuple(sorted(f.exp.free_symbols, key=str))
+        terms = _poly_terms(f.exp, gens)
+        if terms is None:
             return None
-        if poly.total_degree() > 1:
+        if max(sum(m) for m, _c in terms) > 1:
             return None
         if not all(x.is_integer and x.is_nonnegative for x in f.exp.free_symbols):
             return None
-        coefficients = [poly.coeff_monomial(g) for g in poly.gens]
+        linear = {m.index(1): c for m, c in terms if sum(m) == 1}
+        coefficients = [linear.get(i, sp.Integer(0)) for i in range(len(gens))]
         growing = f.base > 1
         if any((cf > 0) if growing else (cf < 0) for cf in coefficients):
             return None
@@ -1189,17 +1190,15 @@ def _reduce_exponents(expr: sp.Expr) -> sp.Expr:
             if not turns.is_Rational:
                 return sp.exp(arg)
             return sp.exp(2 * sp.pi * sp.I * (turns - sp.floor(turns)))
-        try:
-            poly = sp.Poly(turns, *sorted(turns.free_symbols, key=str))
-        except sp.PolynomialError:
-            return sp.exp(arg)
-        if not all(c.is_Rational for c in poly.coeffs()):
+        gens = tuple(sorted(turns.free_symbols, key=str))
+        terms = _poly_terms(turns, gens)
+        if terms is None or not all(c.is_Rational for _m, c in terms):
             return sp.exp(arg)
         reduced = sp.Add(
             *(
                 (c - sp.floor(c))
-                * sp.Mul(*(g**e for g, e in zip(poly.gens, monomial, strict=True)))
-                for monomial, c in poly.terms()
+                * sp.Mul(*(g**e for g, e in zip(gens, monomial, strict=True) if e))
+                for monomial, c in terms
             )
         )
         return sp.exp(2 * sp.pi * sp.I * reduced)
@@ -1294,7 +1293,7 @@ def _normal_delta(argument: sp.Expr, modulus: int) -> sp.Expr | None:
     inverse = pow(unit, -1, modulus)
     expr = sp.Add(
         *(
-            ((c * inverse) % modulus) * sp.Mul(*(s**e for s, e in zip(gens, m, strict=True)))
+            ((c * inverse) % modulus) * sp.Mul(*(s**e for s, e in zip(gens, m, strict=True) if e))
             for m, c in coeffs.items()
         )
     )
@@ -1376,19 +1375,6 @@ def _fold_residue_sets(expr: sp.Expr) -> sp.Expr:
     return sp.Add(*out)
 
 
-def _poly_terms(
-    expr: sp.Expr, gens: tuple[sp.Symbol, ...]
-) -> list[tuple[tuple[int, ...], sp.Expr]] | None:
-    """The terms of ``sp.Poly(expr, *gens)``, read from its sparse dict without the dense
-    representation; None when it is not a polynomial over ``gens``."""
-    try:
-        found, _gens = dict_from_expr(expr, gens=gens)
-    except sp.PolynomialError:
-        return None
-    terms = sorted(((m, c) for m, c in found.items() if c != 0), reverse=True)
-    return terms or [((0,) * len(gens), sp.Integer(0))]
-
-
 def _turns(expr: sp.Expr, gens: tuple[sp.Symbol, ...]) -> _TurnPoly | None:
     """``expr`` as a polynomial over ``gens`` with rational coefficients reduced mod 1; None
     when it is not one."""
@@ -1431,7 +1417,7 @@ def _turn_expr(p: _TurnPoly, gens: tuple[sp.Symbol, ...]) -> sp.Expr:
     return sp.Add(
         *(
             sp.Rational(c.numerator, c.denominator)
-            * sp.Mul(*(s**e for s, e in zip(gens, m, strict=True)))
+            * sp.Mul(*(s**e for s, e in zip(gens, m, strict=True) if e))
             for m, c in p.items()
         )
     )

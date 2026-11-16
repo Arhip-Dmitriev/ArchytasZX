@@ -100,3 +100,15 @@ def test_normal_delta_divides_the_common_factor_and_a_unit() -> None:
     assert check._normal_delta(2 * i0 + 1, 4) == 0
     assert check._normal_delta(3 * i0 + 6 * i1, 9) == check._normal_delta(i0 + 2 * i1, 3)
     assert check._normal_delta(5 * i0 + 5 * i1, 7) == check._normal_delta(i0 + i1, 7)
+
+
+def test_polynomials_over_a_thousand_indices_need_no_deep_recursion() -> None:
+    from archytaszx.algebra import scalar
+
+    many = [sp.Symbol(f"_i{k}", integer=True, nonnegative=True) for k in range(1100)]
+    turns = sp.Rational(9, 8) * sp.Add(*many) + sp.Rational(5, 2) * many[0] * many[1]
+    reduced = sp.Rational(1, 8) * sp.Add(*many) + many[0] * many[1] / 2
+    assert check._reduce_exponents(_e(turns)) == _e(reduced)
+    found = check._turns(turns, tuple(many))
+    assert found is not None and found[(0,) * 1099 + (1,)] == sp.Rational(1, 8)
+    assert scalar._reduce_integer_phase(2 * sp.pi * sp.I * turns) == 2 * sp.pi * sp.I * reduced

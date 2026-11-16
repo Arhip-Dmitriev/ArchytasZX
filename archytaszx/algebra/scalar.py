@@ -56,6 +56,7 @@ from typing import Union, cast
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 from sympy.core.add import _unevaluated_Add  # type: ignore[import-untyped]
 from sympy.core.mul import _unevaluated_Mul  # type: ignore[import-untyped]
+from sympy.polys.polyutils import dict_from_expr  # type: ignore[import-untyped]
 
 from archytaszx.algebra.dimension import Dim, DimensionError
 from archytaszx.algebra.phase import Phase
@@ -392,6 +393,19 @@ def _has_outside_flat(expr: sp.Expr, *types: type) -> bool:
     return _outside_flat(expr, lambda node: isinstance(node, types))
 
 
+def poly_terms(
+    expr: sp.Expr, gens: tuple[sp.Expr, ...]
+) -> list[tuple[tuple[int, ...], sp.Expr]] | None:
+    """The terms of ``sp.Poly(expr, *gens)``, read from its sparse dict without the dense
+    representation; None when it is not a polynomial over ``gens``."""
+    try:
+        found, _gens = dict_from_expr(expr, gens=gens)
+    except sp.PolynomialError:
+        return None
+    terms = sorted(((m, c) for m, c in found.items() if c != 0), reverse=True)
+    return terms or [((0,) * len(gens), sp.Integer(0))]
+
+
 def _integer_terms(expr: sp.Expr) -> _Terms | None:
     """The nonzero integer coefficient of each monomial (a set of ``(symbol, exponent)``) of a
     polynomial ``expr`` built from symbols and integers by sums, products and nonnegative
@@ -518,19 +532,16 @@ def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
             return expr
         residue = int(expr) % modulus
         return sp.Integer(residue - modulus if 2 * residue > modulus else residue)
-    try:
-        poly = sp.Poly(expr, *symbols)
-    except sp.PolynomialError:
-        return expr
-    if not all(coefficient.is_Integer for coefficient in poly.coeffs()):
+    found = poly_terms(expr, tuple(symbols))
+    if found is None or not all(coefficient.is_Integer for _m, coefficient in found):
         return expr
     terms: list[sp.Expr] = []
-    for monomial, coefficient in poly.terms():
+    for monomial, coefficient in found:
         residue = int(coefficient) % modulus
         if 2 * residue > modulus:
             residue -= modulus
         if residue:
-            terms.append(residue * sp.Mul(*(s**e for s, e in zip(symbols, monomial))))
+            terms.append(residue * sp.Mul(*(s**e for s, e in zip(symbols, monomial) if e)))
     return cast(sp.Expr, sp.expand(sp.Add(*terms)))
 
 
@@ -1714,11 +1725,8 @@ def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int]
     symbols = sorted(numerator.free_symbols, key=lambda x: str(x.name))
     if not symbols or any(x.is_integer is not True for x in symbols):
         return None
-    try:
-        poly = sp.Poly(numerator, *symbols)
-    except sp.PolynomialError:
-        return None
-    if not all(c.is_Integer for c in poly.coeffs()):
+    numerator_terms = poly_terms(numerator, tuple(symbols))
+    if numerator_terms is None or not all(c.is_Integer for _m, c in numerator_terms):
         return None
     for factor in sp.Mul.make_args(term):
         delta = _delta_base(factor)
@@ -1730,11 +1738,10 @@ def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int]
         for unit in range(1, t):
             if math.gcd(unit, t) != 1:
                 continue
-            try:
-                rest = sp.Poly(sp.expand(numerator - unit * carry), *symbols)
-            except sp.PolynomialError:
+            rest = poly_terms(sp.expand(numerator - unit * carry), tuple(symbols))
+            if rest is None:
                 break
-            if all(c.is_Integer and int(c) % t == 0 for c in rest.coeffs()):
+            if all(c.is_Integer and int(c) % t == 0 for _m, c in rest):
                 return numerator, t
     return None
 
@@ -1858,13 +1865,13 @@ def _linear_form(expr: sp.Expr) -> dict[sp.Symbol, int] | None:
         if any(sum(e for _s, e in mono) > 1 for mono in terms):
             return None
         return {symbol: terms.get(frozenset({(symbol, 1)}), 0) for symbol in symbols}
-    try:
-        polynomial = sp.Poly(expr, *symbols)
-    except sp.PolynomialError:
+    found = poly_terms(expr, tuple(symbols))
+    if found is None:
         return None
-    if polynomial.total_degree() > 1 or not all(c.is_Integer for c in polynomial.coeffs()):
+    if max(sum(m) for m, _c in found) > 1 or not all(c.is_Integer for _m, c in found):
         return None
-    return {symbol: int(polynomial.coeff_monomial(symbol)) for symbol in symbols}
+    linear = {m.index(1): int(c) for m, c in found if sum(m) == 1}
+    return {symbol: linear.get(i, 0) for i, symbol in enumerate(symbols)}
 
 
 def _pivot(row: sp.Expr, modulus: sp.Expr) -> tuple[sp.Symbol, sp.Expr] | None:
@@ -1928,10 +1935,10 @@ def _implies(big: ModDelta, small: ModDelta) -> bool:
         if math.gcd(unit, modulus) != 1:
             continue
         difference = sp.expand(x - unit * y)
-        try:
-            coefficients = sp.Poly(difference, *symbols).coeffs() if symbols else [difference]
-        except sp.PolynomialError:
+        found = poly_terms(difference, tuple(symbols)) if symbols else [((), difference)]
+        if found is None:
             return False
+        coefficients = [c for _m, c in found]
         if all(c.is_Integer and int(c) % modulus == 0 for c in coefficients):
             return True
     return False
@@ -2137,20 +2144,16 @@ def _reduce_integer_phase(arg: sp.Expr) -> sp.Expr:
     symbols = sorted(q.free_symbols, key=lambda symbol: str(symbol.name))
     if not all(symbol.is_integer is True for symbol in symbols):
         return arg
-    try:
-        poly = sp.Poly(q, *symbols) if symbols else None
-    except sp.PolynomialError:
-        return arg
-    if poly is None:
+    if not symbols:
         return 2 * sp.pi * sp.I * (q % 1) if q.is_Rational else arg
-    if not all(coefficient.is_Rational for coefficient in poly.coeffs()):
+    found = poly_terms(q, tuple(symbols))
+    if found is None or not all(coefficient.is_Rational for _m, coefficient in found):
         return arg
-    reduced = sum(
-        (
-            (coefficient % 1) * sp.Mul(*(s**e for s, e in zip(symbols, monomial)))
-            for monomial, coefficient in poly.terms()
-        ),
-        sp.Integer(0),
+    reduced = sp.Add(
+        *(
+            (coefficient % 1) * sp.Mul(*(s**e for s, e in zip(symbols, monomial) if e))
+            for monomial, coefficient in found
+        )
     )
     return 2 * sp.pi * sp.I * reduced
 
