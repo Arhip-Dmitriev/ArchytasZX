@@ -243,6 +243,40 @@ def test_port_boxes_step_by_the_port_lemma() -> None:
         assert "Equal.of_port_at" in source and "Spec.portOK_struct" in source
 
 
+def test_boxed_diagrams_are_bridged_in_linear_time() -> None:
+    source = _source("nested_boxes")
+    for d in ("D0", "D1"):
+        assert f"theorem {d}_bb : BBridge.bridgeB " in source
+        assert f"theorem {d}_ok : {d}.FamOK FC " in source
+    assert source.count(" := (BBridge.bridgeB_ok ") == 4
+    assert "FamOK FC 2 := by decide" not in source
+
+
+def test_family_diagrams_take_positive_dimensions() -> None:
+    source = _source("x_port_box")
+    assert "(Fpos d (by omega : 0 < d))\n" in source and "(Fpos d h_d)" not in source
+
+
+def test_the_key_order_mirror_tells_slot_orders_apart() -> None:
+    m0 = L._BoxedMirror(
+        [(5, [0], []), (6, [0], []), (12, [0], []), (13, [0], [])],
+        [],
+        [(5, True, 0), (6, True, 0), (12, True, 0), (13, True, 0)],
+        [],
+        [(0, 0, None, [6, 13], [])],
+    )
+    m1 = L._BoxedMirror(
+        [(0, [0, 0], []), (1, [0, 0], [])],
+        [],
+        [(0, True, 0), (0, True, 1), (1, True, 0), (1, True, 1)],
+        [],
+        [(0, 0, None, [], [(0, True, 1)]), (1, 0, None, [], [(1, True, 1)])],
+    )
+    assert m0.key_sig() == [([], []), ([], [0]), ([], []), ([1], [])]
+    assert m1.key_sig() == [([], []), ([], [0]), ([], []), ([], [0])]
+    assert m0.bnd_data(lambda x: x) == m1.bnd_data(lambda x: x)
+
+
 def test_every_multiplicity_is_inducted_on() -> None:
     source = _source("two_multiplicities")
     assert "∀ n m : ℕ, Equal ((F d).env (ksOf [n, m, (1 + m)]))" in source

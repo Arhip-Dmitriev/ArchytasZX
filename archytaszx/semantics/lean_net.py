@@ -321,6 +321,7 @@ class _Export:
         self.next_label = 0
         self.nets: dict[object, Labelled] = {}
         self.boxed: dict[str, tuple[Diagram, tuple[NodeId, ...]]] = {}
+        self.boxed_mirror: dict[str, _BoxedMirror] = {}
         self.literal_info: dict[
             str, tuple[Diagram, list[tuple[NodeId, int, int, list[int], list[int]]]]
         ] = {}
@@ -1187,6 +1188,9 @@ class _Export:
             out = "true" if ref.direction is Direction.OUTPUT else "false"
             return f"⟨{int(ref.node_id)}, {out}, {ref.index}⟩"
 
+        def lport(ref: PortRef) -> LPort:
+            return (int(ref.node_id), ref.direction is Direction.OUTPUT, ref.index)
+
         def base(kind: object) -> object:
             while _head(kind) == "Bun":
                 kind = kind[2]  # type: ignore[index]
@@ -1222,6 +1226,23 @@ class _Export:
             boxes.append(f"⟨{int(bid)}, {m}, {par}, [{ns}], [{ps}]⟩")
         dname = f"D{a.name[1:]}"
         self.literal_info[dname] = (d, info)
+        sorted_wires = sorted(d.wires, key=lambda w: w.sort_key())
+        self.boxed_mirror[dname] = _BoxedMirror(
+            [(int(nid), outs_, ins_) for nid, _, _, outs_, ins_ in info],
+            [(lport(w.a), lport(w.b)) for w in sorted_wires],
+            [lport(r) for r in d.boundary_outputs],
+            [lport(r) for r in d.boundary_inputs],
+            [
+                (
+                    int(bid),
+                    self.mult_of(b.multiplicity.to_sympy()),
+                    None if b.parent is None else int(b.parent),
+                    sorted(int(x) for x in b.node_scope),
+                    [lport(r) for r in sorted(b.port_scope, key=lambda r: r.sort_key())],
+                )
+                for bid, b in sorted(d.bang_boxes.items())
+            ],
+        )
         self.decls.append(
             f"/-- {_comment(self.describe(d))}, as the engine's boxed diagram. -/\n"
             f"def {dname} : Diagram :=\n  {{ nodes := [{', '.join(nodes)}],\n"
@@ -1231,11 +1252,119 @@ class _Export:
             f"    boxes := [{', '.join(boxes)}] }}"
         )
         dexpr = self.dim_ids(dname)
-        self.decls.append(
-            f"theorem {dname}_net : {dexpr}.toNetB {off} = {a.name} := by decide +kernel"
+        kinds = [base(n.kind) for n in net.nodes]
+        plan = self.boxed_plan(d, order, info, kinds, off)
+        if plan is None:
+            self.decls.append(
+                f"theorem {dname}_net : {dexpr}.toNetB {off} = {a.name} := by decide +kernel"
+            )
+            self.decls.append(f"theorem {dname}_ok : {dexpr}.FamOK FC {off} := by decide +kernel")
+            return dexpr, off
+        plain, (width, bits, wb, eb, table), (bb, tb), masks, mn = plan
+        tag = a.name[1:]
+        ms = ", ".join(f"({i}, 0x{m:x})" for i, m in masks)
+        args = (
+            f"{width} {bits} {eb} {bb} {off} WB{tag} LT{tag} LB{tag} MN{tag} MS{tag} {dexpr} "
+            f"{a.name} NP{tag} FC"
         )
-        self.decls.append(f"theorem {dname}_ok : {dexpr}.FamOK FC {off} := by decide +kernel")
+        self.decls += [
+            f"/-- {dname} as a plain network. -/\ndef NP{tag} : Net := {plain.lean()}",
+            f"/-- {dname}'s wires, packed. -/\ndef WB{tag} : ℕ := 0x{wb:x}",
+            (
+                f"/-- {dname}'s dimension index at each label, {eb} bits each. -/\n"
+                f"def LT{tag} : ℕ := 0x{table:x}"
+            ),
+            (
+                f"/-- {dname}'s bundled dimension index at each label, {bb} bits each. -/\n"
+                f"def LB{tag} : ℕ := 0x{tb:x}"
+            ),
+            f"/-- {dname}'s node ids as a mask. -/\ndef MN{tag} : ℕ := 0x{mn:x}",
+            f"/-- {dname}'s boxes' node masks. -/\ndef MS{tag} : List (ℕ × ℕ) := [{ms}]",
+            f"theorem {dname}_bb : BBridge.bridgeB {args} = true := by decide +kernel",
+            (
+                f"theorem {dname}_net : {dexpr}.toNetB {off} = {a.name} := "
+                f"(BBridge.bridgeB_ok {args} {dname}_bb).1"
+            ),
+            (
+                f"theorem {dname}_ok : {dexpr}.FamOK FC {off} := "
+                f"(BBridge.bridgeB_ok {args} {dname}_bb).2"
+            ),
+        ]
         return dexpr, off
+
+    def boxed_plan(
+        self,
+        d: Diagram,
+        order: Sequence[NodeId],
+        info: Sequence[tuple[NodeId, int, int, list[int], list[int]]],
+        kinds: Sequence[object],
+        off: int,
+    ) -> (
+        tuple[
+            LNet,
+            tuple[int, int, int, int, int],
+            tuple[int, int],
+            list[tuple[int, int]],
+            int,
+        ]
+        | None
+    ):
+        """Python mirror of ``BBridge.bridgeB`` past the family checks the old decision also
+        makes, on the boxed diagram ``d`` (nodes in ``order``, ``info`` and base ``kinds`` as
+        emitted): the plain network, the ``bridgeD`` plan, the bundled table's entry bits and
+        packing, the box masks and the node id mask; ``None`` when it fails."""
+        pairs = self.raw_pairs if self.raw_ix else {}
+
+        def f(x: int) -> int:
+            return pairs.get(x, x)
+
+        def key(r: PortRef) -> LPort:
+            return (int(r.node_id), r.direction is Direction.OUTPUT, r.index)
+
+        bnd = [key(r) for r in (*d.boundary_outputs, *d.boundary_inputs)]
+        wires = [(key(w.a), key(w.b)) for w in sorted(d.wires, key=lambda w: w.sort_key())]
+        nb, nw = len(bnd), len(wires)
+        lab = {p: i for i, p in enumerate(bnd)}
+        for j, (p, q) in enumerate(wires):
+            lab.setdefault(p, off + j)
+            lab.setdefault(q, off + j)
+        nodes = []
+        legs = []
+        for (nid, ndim, ph, outs, ins), kind in zip(info, kinds, strict=True):
+            ports = [(int(nid), True, k) for k in range(len(outs))]
+            ports_in = [(int(nid), False, k) for k in range(len(ins))]
+            if any(p not in lab for p in (*ports, *ports_in)):
+                return None
+            nodes.append(
+                LNode(
+                    kind,
+                    tuple(lab[p] for p in ports),
+                    tuple(lab[p] for p in ports_in),
+                    f(ndim),
+                    f(ph) if kind in ("B", "S") else ph,
+                )
+            )
+            legs.append(([f(x) for x in outs], [f(x) for x in ins]))
+        plain = LNet(tuple(nodes), tuple(range(off, off + nw)), tuple(range(nb)))
+        ptab: dict[int, int] = {}
+        for n, (dos, dis) in zip(nodes, legs, strict=True):
+            for lb, dm in zip((*n.outs, *n.ins), (*dos, *dis), strict=True):
+                ptab.setdefault(lb, dm)
+        bplan = _bridge_plan(d, plain, off, legs, ptab, order)
+        if bplan is None:
+            return None
+        labs = sorted(self.labs.items())
+        inside = [(lb, v) for lb, v in labs if lb < nb or off <= lb < off + nw]
+        if len(inside) != nb + nw:
+            return None
+        bb = max([1, *(v.bit_length() for _, v in inside)])
+        tb = sum(v << (bb * lb) for lb, v in inside)
+        masks = [
+            (int(bid), sum(1 << int(x) for x in set(bx.node_scope)))
+            for bid, bx in sorted(d.bang_boxes.items())
+        ]
+        mn = sum(1 << int(x) for x in set(order))
+        return plain, bplan, (bb, tb), masks, mn
 
     def family_diagram_theorem(
         self,
@@ -1289,12 +1418,21 @@ class _Export:
                 continue
             if other.name in self.boxed and _unboxed_boundary(self.boxed[other.name][0]):
                 self.boxed[side.name] = (src, side.order)
+        mark = len(self.decls)
         la = self.boxed_literal(a)
         lb = self.boxed_literal(b) if b.name != a.name else la
         if la is None or lb is None:
             return
         (da, _), (db, _) = la, lb
         na, nbt = _dname(da), _dname(db)
+        ma, mb = self.boxed_mirror[na], self.boxed_mirror[nbt]
+
+        def dmap(x: int) -> int:
+            return self.raw_pairs.get(x, x) if self.raw_ix else x
+
+        if ma.key_sig() != mb.key_sig() or ma.bnd_data(dmap) != mb.bnd_data(dmap):
+            del self.decls[mark:]
+            return
         head = f"∀ {binders},\n      " if binders else ""
         stmt = (
             f"{head}DEqual {env} {_paren(sl)} ({da}.expandK {ks}) {_paren(sr)} ({db}.expandK {ks})"
@@ -8028,10 +8166,12 @@ def _bridge_plan(
     off: int,
     legs: Sequence[tuple[Sequence[int], Sequence[int]]],
     labs: Mapping[int, int],
+    order: Sequence[NodeId] | None = None,
 ) -> tuple[int, int, int, int, int] | None:
-    """Python mirror of ``DBridge.bridgeD`` on ``d`` (its nodes in id order with the leg
-    dimension indices ``legs``) and ``net`` against the label table ``labs``: the port width,
-    key bits, packed wires, table entry bits and packed table, or ``None`` when it fails."""
+    """Python mirror of ``DBridge.bridgeD`` on ``d`` (its nodes in ``order``, id order by
+    default, with the leg dimension indices ``legs``) and ``net`` against the label table
+    ``labs``: the port width, key bits, packed wires, table entry bits and packed table, or
+    ``None`` when it fails."""
 
     def key(r: PortRef) -> tuple[int, bool, int]:
         return (int(r.node_id), r.direction is Direction.OUTPUT, r.index)
@@ -8039,7 +8179,7 @@ def _bridge_plan(
     bnd = [key(r) for r in (*d.boundary_outputs, *d.boundary_inputs)]
     wires = [(key(w.a), key(w.b)) for w in sorted(d.wires, key=lambda w: w.sort_key())]
     nb, nw = len(bnd), len(wires)
-    ids = [int(n) for n in sorted(d.nodes)]
+    ids = [int(n) for n in (sorted(d.nodes) if order is None else order)]
     if (
         nb > off
         or any(a >= b for a, b in pairwise(ids))
@@ -8082,6 +8222,98 @@ def _bridge_plan(
     eb = max([1, *(v.bit_length() for v in table.values())])
     tab = sum(v << (eb * lab) for lab, v in table.items())
     return width, bits, packed, eb, tab
+
+
+LPort = tuple[int, bool, int]
+"""A Lean ``Port``: node id, output side, position."""
+
+
+@dataclass
+class _BoxedMirror:
+    """Python mirror of a Lean boxed ``Diagram`` and its ``nodeBoxes``, ``portBoxes``,
+    ``tail``, ``legChain``, ``portDim``, ``bndData`` and ``keySig``."""
+
+    nodes: list[tuple[int, list[int], list[int]]]
+    wires: list[tuple[LPort, LPort]]
+    outs: list[LPort]
+    ins: list[LPort]
+    boxes: list[tuple[int, int, int | None, list[int], list[LPort]]]
+
+    @property
+    def bnd(self) -> list[LPort]:
+        """``Diagram.bnd``."""
+        return [*self.outs, *self.ins]
+
+    def walk(self, pred: Callable[[int], bool], start: int | None) -> list[int]:
+        """``Diagram.walk`` with fuel the box count: box positions, outermost first."""
+        out: list[int] = []
+        for _ in range(len(self.boxes)):
+            nxt = next(
+                (i for i, b in enumerate(self.boxes) if pred(i) and b[2] == start),
+                None,
+            )
+            if nxt is None:
+                break
+            out.append(nxt)
+            start = self.boxes[nxt][0]
+        return out
+
+    def node_boxes(self, x: int) -> list[int]:
+        """``Diagram.nodeBoxes``."""
+        return self.walk(lambda i: x in self.boxes[i][3], None)
+
+    def port_boxes(self, q: LPort) -> list[int]:
+        """``Diagram.portBoxes``."""
+        nb = self.node_boxes(q[0])
+        return self.walk(lambda i: q in self.boxes[i][4], self.boxes[nb[-1]][0] if nb else None)
+
+    def node_chain(self, x: int) -> list[int]:
+        """``Diagram.nodeChain``."""
+        return [self.boxes[i][1] for i in self.node_boxes(x)]
+
+    def tail(self, q: LPort) -> list[int]:
+        """``Diagram.tail``."""
+        w = next((w for w in self.wires if q in w), None)
+        if w is None:
+            return [self.boxes[i][1] for i in self.port_boxes(q)]
+        r = w[1] if w[0] == q else w[0]
+        a, b = self.node_chain(q[0]), self.node_chain(r[0])
+        return b[len(a) :] if len(a) < len(b) else []
+
+    def leg_chain(self, q: LPort) -> list[int]:
+        """``Diagram.legChain``."""
+        return self.node_chain(q[0]) + self.tail(q)
+
+    def port_dim(self, q: LPort, f: Callable[[int], int]) -> int:
+        """``Diagram.portDim`` of the diagram with its dimensions read through ``f``."""
+        n = next((n for n in self.nodes if n[0] == q[0]), None)
+        if n is None:
+            return 0
+        side = n[1] if q[1] else n[2]
+        return f(side[q[2]]) if q[2] < len(side) else 0
+
+    def bnd_data(self, f: Callable[[int], int]) -> list[tuple[int, list[int]]]:
+        """``Diagram.bndData``."""
+        return [(self.port_dim(q, f), self.leg_chain(q)) for q in self.bnd]
+
+    def key_sig(self) -> list[tuple[list[int], list[int]]]:
+        """``Diagram.keySig``."""
+        bnd, no = self.bnd, len(self.outs)
+
+        def mp(i: int, o: bool) -> int:
+            return next(
+                (s for s, q in enumerate(bnd) if (s < no) == o and q[0] in self.boxes[i][3]),
+                0,
+            )
+
+        out = []
+        for i, q in enumerate(bnd):
+            bs = self.node_boxes(q[0])
+            mps = [mp(b, i < no) for b in bs]
+            r = mps.index(i) if i in mps else len(mps)
+            nb, npb = len(bs), len(self.port_boxes(q))
+            out.append((mps[:r], [*range(r, nb), *reversed(range(nb, nb + npb))]))
+        return out
 
 
 def _dname(expr: str) -> str:

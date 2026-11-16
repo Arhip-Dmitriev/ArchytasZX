@@ -52,6 +52,7 @@ import ArchytasZX.FamCheck
 import ArchytasZX.Order
 import ArchytasZX.OrderK
 import ArchytasZX.FamK
+import ArchytasZX.BoxedBridge
 import ArchytasZX.Linked
 import ArchytasZX.LinkedPeel
 import ArchytasZX.LinkedSlide
