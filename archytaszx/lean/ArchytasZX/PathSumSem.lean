@@ -1117,6 +1117,14 @@ theorem perm_sound (M : ℕ) (c : ℂ) (l : List ℕ) (s : Data) (σ : ℕ → Z
   unfold val permS
   exact bsum_perm _ (of_decide_eq_true h) σ
 
+/-- `x` moved to the front of the path. -/
+def frontS (x : ℕ) (s : Data) : Data := { s with path := x :: s.path.erase x }
+
+theorem front_sound (M : ℕ) (c : ℂ) (x : ℕ) (s : Data) (σ : ℕ → ZMod 2)
+    (h : decide (x ∈ s.path) = true) : val M c s σ = val M c (frontS x s) σ := by
+  unfold val frontS
+  exact bsum_perm _ (List.perm_cons_erase (of_decide_eq_true h)) σ
+
 /-! ## [Elim] -/
 
 /-- Whether the head path variable is in no term, constraint or row and not in the tail. -/

@@ -244,10 +244,10 @@ def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
     y, z = step.var, step.pivot
     if step.rule in _HEAD_STEP:
         rest = [v for v in cur if v != y]
-        return [f".perm {[y, *rest]}", _HEAD_STEP[step.rule]], rest
+        return [f".front {y}", _HEAD_STEP[step.rule]], rest
     if step.rule == "rem":
         cur = [y, *(v for v in cur if v != y)]
-        return [f".perm {cur}", ".rem"], cur
+        return [f".front {y}", ".rem"], cur
     if step.rule == "bsub":
         return [f".bsub {y}"], cur
     if step.rule == "dyadic":
@@ -255,12 +255,12 @@ def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
         poly = ", ".join(f"({[v for v, _e in m]}, {c})" for m, c in step.poly)
         bits = "[" + ", ".join(_f2(b) for b in step.values) + "]"
         return [
-            f".perm {[*step.group, *rest]}",
+            *(f".front {v}" for v in reversed(step.group)),
             f".dyadicB {list(step.group)} [{poly}] {list(step.fresh)} {bits}",
         ], [*step.fresh, *rest]
     if step.rule in _PAIR_STEP and z is not None:
         rest = [v for v in cur if v not in (y, z)]
-        return [f".perm {[y, z, *rest]}", _PAIR_STEP[step.rule]], (
+        return [f".front {z}", f".front {y}", _PAIR_STEP[step.rule]], (
             rest if step.rule == "hh_pivot" else [y, *rest]
         )
     raise PathSumUnsupported(f"the rule {step.rule} has no PathSumRules step")
@@ -1278,12 +1278,12 @@ def _net_side(
         if x < PIN_OFFSET:
             continue
         cur.remove(x)
-        steps += [f".perm {[x, *cur]}", f".pin [[{parent[x]}]]"]
+        steps += [f".front {x}", f".pin [[{parent[x]}]]"]
     steps.append(".norm")
     for x, value in lay["wpins"]:
         cur.remove(x)
         monos = ", ".join(str(sorted(mono)) for mono in sorted(value, key=sorted))
-        steps += [f".perm {[x, *cur]}", f".pin [{monos}]"]
+        steps += [f".front {x}", f".pin [{monos}]"]
     if sorted(cur) != sorted(raw.path):
         raise PathSumUnsupported("the pinned network keeps other path variables")
     if cur:
@@ -1699,7 +1699,7 @@ def _net_run(side: _NetSide, coefs: Any) -> Any:
         if x in run.avars():
             if p in run.cur:
                 rest = [v for v in run.cur if v != p]
-                run.inner([f".perm {[p, *rest]}"])
+                run.inner([f".front {p}"])
                 run.steps.append(".hold")
                 run.cur, run.held = rest, [p, *run.held]
             run.steps.append(f".asubB {x} [[{p}]]")
@@ -1708,7 +1708,7 @@ def _net_run(side: _NetSide, coefs: Any) -> Any:
             ]
             run.release()
         rest = [v for v in run.cur if v != x]
-        run.inner([f".perm {[x, *rest]}", f".pin [[{p}]]"])
+        run.inner([f".front {x}", f".pin [[{p}]]"])
         run.cur = rest
     run.inner([".norm"])
     for x, value in side.wpins:

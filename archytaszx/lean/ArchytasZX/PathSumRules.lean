@@ -1559,6 +1559,7 @@ inductive Step where
   | pdrop
   | dyadicB (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
   | bsub (v : ℕ)
+  | front (x : ℕ)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -1580,6 +1581,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .pdrop, _ => true
   | .dyadicB ds S fs bs, s => dyadicBOK M ds S fs bs s
   | .bsub v, s => canonOK v s
+  | .front x, s => decide (x ∈ s.path)
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -1601,6 +1603,7 @@ def stepS (M : ℕ) : Step → Data → Data
   | .pdrop, s => pdropS s
   | .dyadicB ds _ fs bs, s => dyadicBS M ds fs bs s
   | .bsub v, s => bsubS M v s
+  | .front x, s => frontS x s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
@@ -1608,7 +1611,7 @@ noncomputable def fac : Step → ℂ
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
   | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
-    | .pdrop | .dyadicB _ _ _ _ | .bsub _ => 1
+    | .pdrop | .dyadicB _ _ _ _ | .bsub _ | .front _ => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -1646,6 +1649,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | pdrop => simpa [fac, stepS] using pdrop_sound M c s σ
   | dyadicB ds S fs bs => simpa [fac, stepS] using dyadicB_sound M c ds S fs bs s σ h
   | bsub v => simpa [fac, stepS] using bsub_sound M hM c v s σ h
+  | front x => simpa [fac, stepS] using front_sound M c x s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →
