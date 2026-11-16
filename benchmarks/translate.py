@@ -566,7 +566,7 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
 
         if isinstance(g, ir.MCX):
             _gate(b, ir.F(g.t, 1))
-        _phase_fn(b, (*g.cs, g.t), f)
+        _phase_fn(b, (*g.cs, g.t), f, tuple((*values, t) for t in range(dt)))
         if isinstance(g, ir.MCX):
             _gate(b, ir.F(g.t, 3))
         return
