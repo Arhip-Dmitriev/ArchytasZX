@@ -432,6 +432,23 @@ def test_the_mirror_keeps_the_value(seed: int) -> None:
         assert abs(_ex_value(e, [d], nu) - _ex_value(nf, [d], nu)) < 1e-6
 
 
+@pytest.mark.parametrize("src", ["b = B(literal 2, literal 3)", "s = S(literal 2, literal 3)"])
+def test_binders_and_splitters_are_deltas(src: str) -> None:
+    diagram = parse_diagram(src)
+    ex = S._SymExport(diagram, diagram, None, {})
+    nodes, internal, bnd = ex.net(ex.a.net)
+    assert S.net_chk(ex.fl, ex.dtf, ex.ptf, dict(ex.out.labs), ex.ix, nodes, internal, bnd)
+    e = S.tr_net(ex.fl, ex.dtf, ex.ptf, dict(ex.out.labs), nodes, internal)
+    assert e is not None
+    kind, os, is_, _dim, _ph = nodes[0]
+    k, a, b = (os[0], *is_) if kind == "B" else (is_[0], *os)
+    for va in range(2):
+        for vb in range(3):
+            for vk in range(6):
+                want = 1 if vk == 3 * va + vb else 0
+                assert abs(_ex_value(e, [], {k: vk, a: va, b: vb}) - want) < 1e-9
+
+
 def test_the_translation_is_the_tensor() -> None:
     left, right = PROVED["bialgebra_4"]()
     assert compare(left, right, {"d": 3}).matched

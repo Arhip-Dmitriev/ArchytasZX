@@ -932,7 +932,30 @@ def tr_node(
         return w_s(d, i, (), os) + [(of_q(1 - len(os)), (), ((d, ip_v(i)),) + w_zeros(d, os), ())]
     if kind == "I" and len(os) == 1 and len(is_) == 1:
         return [(of_q(1), (), ((d, ip_sub(ip_v(os[0]), ip_v(is_[0]))),), ())]
+    if kind == "B" and len(os) == 1 and len(is_) == 2:
+        return bs_term(d, dt(ph), os[0], is_[0], is_[1])
+    if kind == "S" and len(os) == 2 and len(is_) == 1:
+        return bs_term(d, dt(ph), is_[0], os[0], os[1])
     return None
+
+
+def bs_term(ds: DMon, dt_: DMon, k: int, a: int, b: int) -> list[STm] | None:
+    """``bsTerm``."""
+    if dt_[1]:
+        return None
+    poly = ip_sub(ip_sub(ip_v(k), ip_mul(ip_c(dt_[0]), ip_v(a))), ip_v(b))
+    return [(of_q(1), (), ((dm_mul(ds, dt_), poly),), ())]
+
+
+def leg_dms(
+    dt: Callable[[int], DMon], kind: str, os: Sequence[int], is_: Sequence[int], dim: int, ph: int
+) -> list[DMon]:
+    """``legDMs``."""
+    if kind == "B" and len(os) == 1 and len(is_) == 2:
+        return [dm_mul(dt(dim), dt(ph)), dt(dim), dt(ph)]
+    if kind == "S" and len(os) == 2 and len(is_) == 1:
+        return [dt(dim), dt(ph), dm_mul(dt(dim), dt(ph))]
+    return [dt(dim)] * (len(os) + len(is_))
 
 
 def ex_mul(a: Sequence[STm], b: Sequence[STm]) -> list[STm]:
@@ -1050,16 +1073,16 @@ def net_chk(
     internal: Sequence[int],
     bnd: Sequence[int],
 ) -> bool:
-    for _kind, os, is_, dim, ph in nodes:
+    for kind, os, is_, dim, ph in nodes:
         if not node_chk(fl, dt, pt, dim, ph) or dim not in ix:
             return False
+        if kind in ("B", "S") and ph not in ix:
+            return False
         for lab in (*os, *is_):
-            if not (
-                lab < OFF
-                and (lab in bnd or lab in internal)
-                and lab_dm(dt, labs, lab) == dt(dim)
-                and labs.get(lab, 0) in ix
-            ):
+            if not (lab < OFF and (lab in bnd or lab in internal) and labs.get(lab, 0) in ix):
+                return False
+        for lab, dm in zip((*os, *is_), leg_dms(dt, kind, os, is_, dim, ph), strict=False):
+            if lab_dm(dt, labs, lab) != dm:
                 return False
     return all(labs.get(lab, 0) in ix for lab in internal)
 

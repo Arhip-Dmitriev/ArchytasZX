@@ -199,6 +199,14 @@ def wS (D : DMon) (i : ℕ) : List Fac → List ℕ → List STm
   | acc, o :: os => ⟨CMon.ofQ 1, [], acc ++ (D, ipSub (ipV o) (ipV i)) :: wZeros D os, []⟩ ::
       wS D i (acc ++ [(D, ipV o)]) os
 
+/-- The binder's or splitter's entry `[k = a t + b]` as a delta over `s t`, the dimension `t`
+a constant `Dt.c`. -/
+def bsTerm (Ds Dt : DMon) (k a b : ℕ) : Option (List STm) :=
+  if Dt.e = [] then
+    some [⟨CMon.ofQ 1, [], [(DMon.mul Ds Dt,
+      ipSub (ipSub (ipV k) (ipMul (ipC (Dt.c : ℤ)) (ipV a))) (ipV b))], []⟩]
+  else none
+
 /-- A generator's entry over its legs, `s` its bound variable. -/
 def trNode (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) : Option (List STm) :=
   let D := dt n.dim
@@ -216,6 +224,8 @@ def trNode (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → D
   | .W, os, [i] => some (wS D i [] os ++
       [⟨CMon.ofQ (1 - os.length), [], (D, ipV i) :: wZeros D os, []⟩])
   | .I, [a], [b] => some [⟨CMon.ofQ 1, [], [(D, ipSub (ipV a) (ipV b))], []⟩]
+  | .B, [k], [a, b] => bsTerm D (dt n.ph) k a b
+  | .S, [a, b], [k] => bsTerm D (dt n.ph) k a b
   | _, _, _ => none
 
 /-- A node's dimension and phases agree with the tables. -/
@@ -304,8 +314,15 @@ theorem legs_cons {d : ℕ} {σ : ℕ → ℕ} {ν : ℕ → ℤ} {l : ℕ} {ls 
     (h : LegsAt d σ ν (l :: ls)) : (σ l < d ∧ ν l = σ l) ∧ LegsAt d σ ν ls :=
   ⟨h l List.mem_cons_self, fun x hx => h x (List.mem_cons_of_mem _ hx)⟩
 
+/-- A binder or splitter. -/
+def bsKind : Kind → Bool
+  | .B => true
+  | .S => true
+  | _ => false
+
 theorem val_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
-    (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n) (σ : ℕ → ℕ) (ν : ℕ → ℤ)
+    (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n) (hk : bsKind n.kind = false)
+    (σ : ℕ → ℕ) (ν : ℕ → ℤ)
     (hs : s ∉ n.outs ++ n.ins) (hl : LegsAt (E.dimv n.dim) σ ν (n.outs ++ n.ins))
     (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
   obtain ⟨kind, os, is, dim, ph⟩ := n
@@ -413,7 +430,92 @@ theorem val_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ 
       List.map_nil, List.prod_cons, List.prod_nil, mul_one, delV_lt _ _ _ _ _ _ ho hi, val, tI,
       hdim]
     by_cases h2 : σ o = σ i <;> simp [h2, ho.1, hi.1]
+  | B => simp [bsKind] at hk
+  | S => simp [bsKind] at hk
   | _ => simp [trNode] at h
+
+/-- Each leg's dimension monomial, the legs `outs ++ ins` in order. -/
+def legDMs (dt : ℕ → DMon) (n : Node) : List DMon :=
+  match n.kind, n.outs, n.ins with
+  | .B, [_], [_, _] => [DMon.mul (dt n.dim) (dt n.ph), dt n.dim, dt n.ph]
+  | .S, [_, _], [_] => [dt n.dim, dt n.ph, DMon.mul (dt n.dim) (dt n.ph)]
+  | _, os, is => (os ++ is).map fun _ => dt n.dim
+
+theorem mem_zip_map {α β : Type} (f : α → β) : ∀ (ls : List α) (x : α), x ∈ ls →
+    (x, f x) ∈ ls.zip (ls.map f)
+  | [], _, h => by simp at h
+  | y :: ys, x, h => by
+    rcases List.mem_cons.1 h with rfl | h'
+    · simp
+    · exact List.mem_cons_of_mem _ (mem_zip_map f ys x h')
+
+theorem bs_delta (s t k a b : ℕ) (hk : k < s * t) (ha : a < s) (hb : b < t) :
+    (((s * t : ℕ) : ℤ) ∣ (k : ℤ) - (t : ℤ) * a - b) ↔ k = a * t + b := by
+  constructor
+  · intro h
+    have h1 : t * a + b < s * t := by nlinarith
+    have hz : (k : ℤ) - (t : ℤ) * a - b = 0 := by
+      apply Int.eq_zero_of_abs_lt_dvd h
+      rw [abs_lt]; push_cast; constructor <;> nlinarith
+    have : (k : ℤ) = (a * t + b : ℕ) := by push_cast; linarith
+    exact_mod_cast this
+  · intro h; subst h; push_cast; simp [mul_comm]
+
+theorem val_trB (E : Env) (ρ : Val) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n)
+    (hk : bsKind n.kind = true) (hph : E.dimv n.ph = (dt n.ph).den ρ.dv) (σ : ℕ → ℕ) (ν : ℕ → ℤ)
+    (hl : ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), σ p.1 < p.2.den ρ.dv ∧ ν p.1 = σ p.1)
+    (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
+  obtain ⟨kind, os, is, dim, ph⟩ := n
+  obtain ⟨hdim, -, -, -⟩ := hn
+  simp only at hdim hph hl hk ⊢
+  have key : ∀ k a b : ℕ, bsTerm (dt dim) (dt ph) k a b = some e →
+      σ k < (DMon.mul (dt dim) (dt ph)).den ρ.dv ∧ ν k = σ k →
+      σ a < (dt dim).den ρ.dv ∧ ν a = σ a → σ b < (dt ph).den ρ.dv ∧ ν b = σ b →
+      tB (E.dimv dim) (E.dimv ph) (σ k) (σ a) (σ b) = exDen ρ ν e := by
+    intro k a b hb hk' ha' hb'
+    unfold bsTerm at hb
+    split_ifs at hb with he
+    simp only [Option.some.injEq] at hb
+    subst hb
+    have hc : (dt ph).den ρ.dv = (dt ph).c := by simp [DMon.den, he, npow]
+    rw [DMon.den_mul] at hk'
+    rw [exDen_cons, exDen_nil, add_zero, den_zero, ofQ_den]
+    simp only [bodyOf, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one,
+      delV, DMon.den_mul, ipDen_sub, ipDen_mul, ipDen_C, ipDen_V, hk'.2, ha'.2, hb'.2, tB, hdim,
+      hph, Rat.cast_one, one_mul]
+    rw [← hc]
+    by_cases hx : σ k = σ a * (dt ph).den ρ.dv + σ b
+    · rw [if_pos ((bs_delta _ _ _ _ _ hk'.1 ha'.1 hb'.1).2 hx), if_pos ⟨ha'.1, hb'.1, hx⟩]
+    · rw [if_neg (fun h' => hx ((bs_delta _ _ _ _ _ hk'.1 ha'.1 hb'.1).1 h')),
+        if_neg (fun h' => hx h'.2.2)]
+  cases kind <;> simp [bsKind] at hk
+  · rcases os with _ | ⟨k, _ | _⟩ <;> rcases is with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;>
+      simp only [trNode, reduceCtorEq] at h
+    simp only [val, List.map_cons, List.map_nil]
+    exact key k a b h (hl (k, DMon.mul (dt dim) (dt ph)) (by simp [legDMs]))
+      (hl (a, dt dim) (by simp [legDMs])) (hl (b, dt ph) (by simp [legDMs]))
+  · rcases os with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;> rcases is with _ | ⟨k, _ | _⟩ <;>
+      simp only [trNode, reduceCtorEq] at h
+    simp only [val, List.map_cons, List.map_nil]
+    exact key k a b h (hl (k, DMon.mul (dt dim) (dt ph)) (by simp [legDMs]))
+      (hl (a, dt dim) (by simp [legDMs])) (hl (b, dt ph) (by simp [legDMs]))
+
+theorem val_trG (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n)
+    (hph : bsKind n.kind = true → E.dimv n.ph = (dt n.ph).den ρ.dv) (σ : ℕ → ℕ) (ν : ℕ → ℤ)
+    (hs : s ∉ n.outs ++ n.ins)
+    (hl : ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), σ p.1 < p.2.den ρ.dv ∧ ν p.1 = σ p.1)
+    (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
+  cases hk : bsKind n.kind
+  · refine val_tr E ρ hρ dt pt rl s n e hn hk σ ν hs (fun l hl' => ?_) h
+    have hd : legDMs dt n = (n.outs ++ n.ins).map fun _ => dt n.dim := by
+      obtain ⟨kind, os, is, dim, ph⟩ := n
+      cases kind <;> simp [bsKind] at hk <;> simp [legDMs]
+    have := hl _ (hd ▸ mem_zip_map (fun _ => dt n.dim) _ l hl')
+    rw [hn.dim]
+    exact this
+  · exact val_trB E ρ dt pt rl s n e hn hk (hph hk) σ ν hl h
 
 /-! ## Networks -/
 
@@ -501,10 +603,39 @@ def nodeChk (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)
 /-- The network's labels fit the translation. -/
 def netChk (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ))
     (IX : List ℕ) (N : Net) : Bool :=
-  (N.nodes.all fun n => nodeChk fl dt pt rl n && IX.contains n.dim && (n.outs ++ n.ins).all fun l =>
-    decide (l < OFF) && (N.bnd.contains l || N.int.contains l) && labDM dt labs l == dt n.dim &&
+  (N.nodes.all fun n => nodeChk fl dt pt rl n && IX.contains n.dim &&
+    (!bsKind n.kind || IX.contains n.ph) &&
+    ((n.outs ++ n.ins).all fun l => decide (l < OFF) && (N.bnd.contains l || N.int.contains l) &&
       IX.contains ((labs.lookup l).getD 0)) &&
+    ((n.outs ++ n.ins).zip (legDMs dt n)).all fun p => labDM dt labs p.1 == p.2) &&
   N.int.all fun l => IX.contains ((labs.lookup l).getD 0)
+
+theorem netChk_ok (E : Env) (ρ : Val) (fl : List ℕ) (hfl : FloorOK fl ρ) (dt : ℕ → DMon)
+    (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (IX : List ℕ)
+    (hE : ∀ i ∈ IX, E.dimv i = (dt i).den ρ.dv)
+    (hP : ∀ ph j, ex (E.phase ph j) = phF ρ (pt ph) j * rV ρ (rl ph) j)
+    (hL : E.labs = labs) (N : Net) (hc : netChk fl dt pt rl labs IX N = true) :
+    (∀ n ∈ N.nodes, NodeOK E ρ dt pt rl n ∧
+      (bsKind n.kind = true → E.dimv n.ph = (dt n.ph).den ρ.dv) ∧
+      (∀ l ∈ n.outs ++ n.ins, l < OFF ∧ (l ∈ N.bnd ∨ l ∈ N.int)) ∧
+      ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), labDim E p.1 = p.2.den ρ.dv) ∧
+    ∀ l ∈ N.int, labDim E l = (labDM dt labs l).den ρ.dv := by
+  have hlab : ∀ l, (labs.lookup l).getD 0 ∈ IX → labDim E l = (labDM dt labs l).den ρ.dv :=
+    fun l hl => by simp only [labDim, labDM, hL]; exact hE _ hl
+  simp only [netChk, List.all_eq_true, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq,
+    beq_iff_eq, List.contains_iff_mem, Bool.not_eq_true'] at hc
+  obtain ⟨hc, hci⟩ := hc
+  refine ⟨fun n hn => ?_, fun l hl => hlab l (hci l hl)⟩
+  obtain ⟨⟨⟨⟨hnc, hnix⟩, hbs⟩, hlegs⟩, hz⟩ := hc n hn
+  simp only [nodeChk, Bool.and_eq_true, bne_iff_ne, ne_eq, List.all_eq_true,
+    decide_eq_true_eq] at hnc
+  refine ⟨⟨hE _ hnix, Nat.pos_of_ne_zero hnc.1, hP _, fun p hp => ?_⟩, fun hk => ?_,
+    fun l hl => ⟨(hlegs l hl).1.1, (hlegs l hl).1.2⟩, fun p hp => ?_⟩
+  · exact lt_of_lt_of_le (hnc.2 p hp) (DMon.den_mono _ _ hfl _)
+  · rcases hbs with h | h
+    · rw [hk] at h; exact absurd h (by decide)
+    · exact hE _ h
+  · rw [hlab _ (hlegs _ (List.of_mem_zip hp).1).2, hz p hp]
 
 /-- The internal labels `n` reads first, after the labels `pre`. -/
 def firstAt (int pre : List ℕ) (n : Node) : List ℕ :=
@@ -556,8 +687,10 @@ theorem firstOf_perm (int pre : List ℕ) (n : Node) (ns : List Node) :
 theorem trNodesB_ok (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
     (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ)
     (hD : ∀ l ∈ int, labDim E l = (labDM dt labs l).den ρ.dv) (ns : List Node)
-    (hn : ∀ n ∈ ns, NodeOK E ρ dt pt rl n ∧ ∀ l ∈ n.outs ++ n.ins, l < OFF ∧
-      labDim E l = E.dimv n.dim) (pre : List ℕ) (i : ℕ) (e : List STm)
+    (hn : ∀ n ∈ ns, NodeOK E ρ dt pt rl n ∧
+      (bsKind n.kind = true → E.dimv n.ph = (dt n.ph).den ρ.dv) ∧ (∀ l ∈ n.outs ++ n.ins, l < OFF) ∧
+      ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), labDim E p.1 = p.2.den ρ.dv)
+    (pre : List ℕ) (i : ℕ) (e : List STm)
     (h : trNodesB fl dt pt rl labs int pre i ns = some e) (σ : ℕ → ℕ)
     (hσ : ∀ l ∈ labelsOf ns, l ∉ firstOf int pre ns → σ l < labDim E l) :
     sumOver (labDim E) (firstOf int pre ns) (prodVal E ns) σ = exDen ρ (fun x => (σ x : ℤ)) e := by
@@ -573,7 +706,7 @@ theorem trNodesB_ok (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Fl
       split_ifs at h with hok
       simp only [Option.some.injEq] at h
       subst h
-      obtain ⟨hnode, hlt⟩ := hn n List.mem_cons_self
+      obtain ⟨hnode, hph, hlt, hdl⟩ := hn n List.mem_cons_self
       have hperm := firstOf_perm int pre n ns
       have hmem : ∀ l, l ∈ firstOf int pre (n :: ns) →
           l ∈ firstAt int pre n ∨ l ∈ firstOf int (pre ++ (n.outs ++ n.ins)) ns := by
@@ -602,15 +735,16 @@ theorem trNodesB_ok (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Fl
           rcases hmem l h' with h1 | h1
           · exact hF h1
           · exact hl' h1)]
-      rw [exDen_mul ρ hρ a b hok, ← val_tr E ρ hρ dt pt rl (OFF + i) n a hnode τ _ (fun h' => by
-        have := (hlt _ h').1; omega) (fun l hl => ⟨?_, rfl⟩) ha]
-      rw [← (hlt l hl).2]
-      by_cases hF : l ∈ firstAt int pre n
-      · exact hr l hF
-      · refine hlab l (by simp [labelsOf]; tauto) (fun h' => ?_) hF
-        rcases hmem l h' with h1 | h1
+      rw [exDen_mul ρ hρ a b hok, ← val_trG E ρ hρ dt pt rl (OFF + i) n a hnode hph τ _
+        (fun h' => by have := hlt _ h'; omega) (fun p hp => ⟨?_, rfl⟩) ha]
+      have hl : p.1 ∈ n.outs ++ n.ins := (List.of_mem_zip hp).1
+      rw [← hdl p hp]
+      by_cases hF : p.1 ∈ firstAt int pre n
+      · exact hr _ hF
+      · refine hlab _ (by simp [labelsOf]; tauto) (fun h' => ?_) hF
+        rcases hmem _ h' with h1 | h1
         · exact hF h1
-        · exact hS l hl h1
+        · exact hS _ hl h1
     · simp at h
 
 /-- The network's entry over its boundary labels. -/
@@ -634,11 +768,7 @@ theorem eval_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorO
     simp only [Option.map_some, Option.some.injEq] at ht
     subst ht
     rw [exDen_sums]
-    have hlab : ∀ l, (labs.lookup l).getD 0 ∈ IX → labDim E l = (labDM dt labs l).den ρ.dv :=
-      fun l hl => by simp only [labDim, labDM, hL]; exact hE _ hl
-    simp only [netChk, List.all_eq_true, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq,
-      beq_iff_eq, List.contains_iff_mem] at hc
-    obtain ⟨hc, hci⟩ := hc
+    obtain ⟨hc, hci⟩ := netChk_ok E ρ fl hfl dt pt rl labs IX hE hP hL N hc
     set rest := N.int.filter fun l => !(labelsOf N.nodes).contains l
     have hfirst : firstOf N.int [] N.nodes = N.int.filter fun l => (labelsOf N.nodes).contains l := by
       unfold firstOf; exact List.filter_congr fun l _ => by simp
@@ -647,22 +777,13 @@ theorem eval_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorO
       exact (List.filter_append_perm _ N.int).symm.trans List.perm_append_comm
     unfold eval labSums
     rw [sumOver_perm _ hperm, sumOver_append]
-    refine sumOver_sumsV ρ _ _ _ (fun l hl => hlab l (hci l (List.mem_filter.1 hl).1)) _ _ σ
+    refine sumOver_sumsV ρ _ _ _ (fun l hl => hci l (List.mem_filter.1 hl).1) _ _ σ
       fun τ hτ hr => ?_
-    have hn : ∀ n ∈ N.nodes, NodeOK E ρ dt pt rl n ∧ ∀ l ∈ n.outs ++ n.ins, l < OFF ∧
-        labDim E l = E.dimv n.dim := by
-      intro n hn
-      obtain ⟨⟨hnc, hnix⟩, hlegs⟩ := hc n hn
-      simp only [nodeChk, Bool.and_eq_true, bne_iff_ne, ne_eq, List.all_eq_true,
-        decide_eq_true_eq] at hnc
-      refine ⟨⟨hE _ hnix, Nat.pos_of_ne_zero hnc.1, hP _, fun p hp => ?_⟩, fun l hl => ?_⟩
-      · exact lt_of_lt_of_le (hnc.2 p hp) (DMon.den_mono _ _ hfl _)
-      · obtain ⟨⟨⟨hlt, -⟩, hd⟩, hix⟩ := hlegs l hl
-        exact ⟨hlt, by rw [hlab l hix, hd, hE _ hnix]⟩
-    refine trNodesB_ok E ρ hρ fl hfl dt pt rl labs N.int (fun l hl => hlab l (hci l hl)) N.nodes hn
-      [] 0 e0 h0 τ fun l hl hl' => ?_
+    refine trNodesB_ok E ρ hρ fl hfl dt pt rl labs N.int hci N.nodes
+      (fun n hn => ⟨(hc n hn).1, (hc n hn).2.1, fun l hl => ((hc n hn).2.2.1 l hl).1,
+        (hc n hn).2.2.2⟩) [] 0 e0 h0 τ fun l hl hl' => ?_
     obtain ⟨n, hnm, hln⟩ := List.mem_flatMap.1 hl
-    obtain ⟨⟨⟨-, hbi⟩, -⟩, -⟩ := (hc n hnm).2 l hln
+    have hbi := ((hc n hnm).2.2.1 l hln).2
     have hni : l ∉ N.int := fun hi => hl' (by
       rw [hfirst]; exact List.mem_filter.2 ⟨hi, by simpa using hl⟩)
     have hnr : l ∉ rest := fun h' => hni (List.mem_filter.1 h').1
@@ -708,8 +829,9 @@ def trNodesF (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ →
 
 theorem trNodesF_ok (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
     (σ : ℕ → ℕ) (ν : ℕ → ℤ) (ns : List Node) (i : ℕ) (e : List STm)
-    (hn : ∀ n ∈ ns, NodeOK E ρ dt pt rl n ∧ (∀ l ∈ n.outs ++ n.ins, l < OFF) ∧
-      LegsAt (E.dimv n.dim) σ ν (n.outs ++ n.ins))
+    (hn : ∀ n ∈ ns, NodeOK E ρ dt pt rl n ∧
+      (bsKind n.kind = true → E.dimv n.ph = (dt n.ph).den ρ.dv) ∧ (∀ l ∈ n.outs ++ n.ins, l < OFF) ∧
+      ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), σ p.1 < p.2.den ρ.dv ∧ ν p.1 = σ p.1)
     (h : trNodesF dt pt rl i ns = some e) : prodVal E ns σ = exDen ρ ν e := by
   induction ns generalizing i e with
   | nil =>
@@ -723,9 +845,9 @@ theorem trNodesF_ok (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt :
       split_ifs at h with hok
       simp only [Option.some.injEq] at h
       subst h
-      obtain ⟨hnode, hlt, hlegs⟩ := hn n List.mem_cons_self
+      obtain ⟨hnode, hph, hlt, hlegs⟩ := hn n List.mem_cons_self
       rw [exDen_mul ρ hρ a b hok, ← ih (i + 1) b (fun m hm => hn m (List.mem_cons_of_mem _ hm)) hb,
-        ← val_tr E ρ hρ dt pt rl (OFF + i) n a hnode σ ν (fun h' => by
+        ← val_trG E ρ hρ dt pt rl (OFF + i) n a hnode hph σ ν (fun h' => by
           have := hlt _ h'; omega) hlegs ha]
       simp [prodVal]
     · simp at h
@@ -750,28 +872,18 @@ theorem eval_trF (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Floor
     simp only [Option.map_some, Option.some.injEq] at ht
     subst ht
     rw [exDen_sums]
-    have hlab : ∀ l, (labs.lookup l).getD 0 ∈ IX → labDim E l = (labDM dt labs l).den ρ.dv :=
-      fun l hl => by simp only [labDim, labDM, hL]; exact hE _ hl
-    simp only [netChk, List.all_eq_true, Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq,
-      beq_iff_eq, List.contains_iff_mem] at hc
-    obtain ⟨hc, hci⟩ := hc
+    obtain ⟨hc, hci⟩ := netChk_ok E ρ fl hfl dt pt rl labs IX hE hP hL N hc
     unfold eval labSums
-    refine sumOver_sumsV ρ _ _ _ (fun l hl => hlab l (hci l hl)) _ _ σ fun τ hτ hr => ?_
+    refine sumOver_sumsV ρ _ _ _ hci _ _ σ fun τ hτ hr => ?_
     refine trNodesF_ok E ρ hρ dt pt rl τ _ N.nodes 0 e0 (fun n hn => ?_) h0
-    obtain ⟨⟨hnc, hnix⟩, hlegs⟩ := hc n hn
-    simp only [nodeChk, Bool.and_eq_true, bne_iff_ne, ne_eq, List.all_eq_true,
-      decide_eq_true_eq] at hnc
-    refine ⟨⟨hE _ hnix, Nat.pos_of_ne_zero hnc.1, hP _, fun p hp => ?_⟩,
-      fun l hl => (hlegs l hl).1.1.1, fun l hl => ⟨?_, rfl⟩⟩
-    · exact lt_of_lt_of_le (hnc.2 p hp) (DMon.den_mono _ _ hfl _)
-    · obtain ⟨⟨⟨-, hbi⟩, hd⟩, hix⟩ := hlegs l hl
-      have hdim : labDim E l = E.dimv n.dim := by rw [hlab l hix, hd, hE _ hnix]
-      rw [← hdim]
-      rcases hbi with hb | hi
-      · by_cases hm : l ∈ N.int
-        · exact hr l hm
-        · rw [hτ l hm]; exact hσ l hb
-      · exact hr l hi
+    obtain ⟨hnode, hph, hlegs, hdl⟩ := hc n hn
+    refine ⟨hnode, hph, fun l hl => (hlegs l hl).1, fun p hp => ⟨?_, rfl⟩⟩
+    rw [← hdl p hp]
+    rcases (hlegs _ (List.of_mem_zip hp).1).2 with hb | hi
+    · by_cases hm : p.1 ∈ N.int
+      · exact hr _ hm
+      · rw [hτ _ hm]; exact hσ _ hb
+    · exact hr _ hi
 
 /-- Both networks translate by `tr` and the scaled difference normalises to nothing. -/
 def checkWith (tr : Net → Option (List STm)) (fl : List ℕ) (N0 N1 : Net) (S0 S1 : List STm) :
