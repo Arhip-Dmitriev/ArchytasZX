@@ -17,8 +17,8 @@
 parameters and proves it at one point. There each network's entry is, by ``eval_W``, a
 product of ``(√d)⁻¹`` and coefficient denominators times a formal sum in ``ζ = om M``.
 ``eval_res`` gives that sum mod a prime ``p = 1 mod M`` at an element ``w`` of order ``M``
-by a checked contraction of residue tables; ``refute_res`` shows the scaled entries differ
-because their images in ``ZMod p`` differ.
+by a checked contraction of residue tables; ``refute_res`` derives that the scaled entries
+differ from their differing images in ``ZMod p``.
 """
 
 from __future__ import annotations
