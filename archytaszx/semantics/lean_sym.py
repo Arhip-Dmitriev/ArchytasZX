@@ -1291,24 +1291,43 @@ def tr_hints(
     return out
 
 
+def _rn(x: int) -> str:
+    """A natural number as a raw literal."""
+    return f"nat_lit {x}"
+
+
+def _rz(x: int) -> str:
+    """An integer through its constructors on raw literals."""
+    return f"Int.ofNat ({_rn(x)})" if x >= 0 else f"Int.negSucc ({_rn(-x - 1)})"
+
+
+def _rq(q: Fraction) -> str:
+    """A rational as ``mkRat`` of raw literals."""
+    return f"mkRat ({_rz(q.numerator)}) ({_rn(q.denominator)})"
+
+
+def _rdm(m: DMon) -> str:
+    return f"⟨{_rn(m[0])}, [{', '.join(_rn(e) for e in m[1])}]⟩"
+
+
 def _lean_cm(c: CMon) -> str:
-    gc = ", ".join(f"({g}, {_lean_dm(d)})" for g, d in c[5])
+    gc = ", ".join(f"({_rz(g)}, {_rdm(d)})" for g, d in c[5])
     return (
-        f"⟨{_lean_q(c[0])}, {_lean_q(c[1])}, {_lean_ints(c[2])}, [{', '.join(map(str, c[3]))}], "
-        f"{_lean_ints(c[4])}, [{gc}]⟩"
+        f"⟨{_rq(c[0])}, {_rq(c[1])}, [{', '.join(_rz(x) for x in c[2])}], "
+        f"[{', '.join(_rn(x) for x in c[3])}], [{', '.join(_rz(x) for x in c[4])}], [{gc}]⟩"
     )
 
 
 def _lean_ip(p: IPoly) -> str:
-    return "[" + ", ".join(f"([{', '.join(map(str, m))}], {c})" for m, c in p) + "]"
+    return "[" + ", ".join(f"([{', '.join(_rn(x) for x in m)}], {_rz(c)})" for m, c in p) + "]"
 
 
 def _lean_facs(fs: Sequence[Fac]) -> str:
-    return "[" + ", ".join(f"({_lean_dm(d)}, {_lean_ip(p)})" for d, p in fs) + "]"
+    return "[" + ", ".join(f"({_rdm(d)}, {_lean_ip(p)})" for d, p in fs) + "]"
 
 
 def _lean_tm(t: STm) -> str:
-    sums = ", ".join(f"({x}, {_lean_dm(d)})" for x, d in t[1])
+    sums = ", ".join(f"({_rn(x)}, {_rdm(d)})" for x, d in t[1])
     return f"⟨{_lean_cm(t[0])}, [{sums}], {_lean_facs(t[2])}, {_lean_facs(t[3])}⟩"
 
 
