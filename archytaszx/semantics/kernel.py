@@ -1842,8 +1842,17 @@ class _Lean:
             proved = self.split(t, binders)
             if proved is not None:
                 return proved
-        if inf.kind in ("repeel", "peel", "identity_slide", "box_split", "leg_move", "power_split"):
+        if inf.kind in (
+            "repeel",
+            "peel",
+            "identity_slide",
+            "box_split",
+            "leg_move",
+            "power_split",
+            "w_fusion",
+        ):
             note = {
+                "w_fusion": "copies of a W node fed by one W output leg fused into it",
                 "repeel": "two joint peels of one box family",
                 "peel": "a joint peel of one box family",
                 "identity_slide": "a boxed identity spider moved onto another wire",
@@ -2421,10 +2430,21 @@ def _lean_restricted(
     while base.inference.kind == "subst":
         base = base.inference.premises[0]
     plain = Theorem(_TOKEN, base.lhs, base.rhs, base.inference, base.assumptions, floors=False)
-    source = lean(plain, name, describe, semantic=semantic)
     origin = theorem.origin
     text = ", ".join(c.text() for c in theorem.domain)
-    if origin is not None and base.lhs is origin[0] and base.rhs is origin[1]:
+    family = origin is not None and base.lhs is origin[0] and base.rhs is origin[1]
+    try:
+        source = lean(plain, name, describe, semantic=semantic)
+    except KernelError:
+        concrete = _concrete_export(theorem, text) if family and semantic else None
+        if concrete is None:
+            raise
+        return concrete
+    if family:
+        if semantic and _OPAQUE_AXIOM.search(source):
+            concrete = _concrete_export(theorem, text)
+            if concrete is not None:
+                return concrete
         source = header(source, f"restricted to {text}: the family theorem, then {_RESTRICTED}")
         try:
             return corollary(source, theorem.domain, name, _var)
@@ -2435,6 +2455,24 @@ def _lean_restricted(
     if shifted is not None:
         return header(shifted, _pair_note(restriction) + f"; {_lifted_note(restriction)}")
     return header(source, _pair_note(restriction) + _unlinked(restriction))
+
+
+_OPAQUE_AXIOM = re.compile(r"^axiom ", re.MULTILINE)
+"""A top-level axiom declaration in an opaque export."""
+
+
+def _concrete_export(theorem: Theorem, text: str) -> str | None:
+    """The network proof of a restricted theorem's own sides when they have no free
+    multiplicity and no bang box, with the restriction in its header; else None."""
+    from archytaszx.semantics.lean_restrict import header
+
+    lhs, rhs = theorem.lhs, theorem.rhs
+    if theorem.variables or lhs.bang_boxes or rhs.bang_boxes:
+        return None
+    source = _semantic_pair(lhs, rhs)
+    if source is None:
+        return None
+    return header(source, f"restricted to {text}: the instantiated pair over its networks")
 
 
 def _guards(theorem: Theorem) -> dict[str, int] | None:
