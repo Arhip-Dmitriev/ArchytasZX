@@ -170,7 +170,8 @@ theorem equal_symG (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Flo
     ← hs1] at hz
   linear_combination hz
 
-/-- `equal_symG` with the check's parts as separate hypotheses. -/
+/-- `equal_symG` with the check's parts as separate hypotheses, the scaled difference normalised
+by `nfz`. -/
 theorem equal_symS (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
     (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ))
     (IX : List ℕ) (hE : ∀ i ∈ IX, E.dimv i = (dt i).den ρ.dv)
@@ -183,12 +184,23 @@ theorem equal_symS (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Flo
     (hp : N0.bnd.isPerm N1.bnd = true) (hc0 : netChk fl dt pt rl labs IX N0 = true)
     (hc1 : netChk fl dt pt rl labs IX N1 = true) (hk : (exConst S0 && exConst S1) = true)
     (hm : (exMulOK S0 e0 && exMulOK (exNeg S1) e1) = true)
-    (hz : (nfEx fl (exMul S0 e0 ++ exMul (exNeg S1) e1)).isEmpty = true) :
+    (nfz : List STm → List STm) (hnfz : ∀ e ν, exDen ρ ν (nfz e) = exDen ρ ν e)
+    (hz : (nfz (exMul S0 e0 ++ exMul (exNeg S1) e1)).isEmpty = true) :
     Equal E s0 N0 s1 N1 := by
-  refine equal_symG E ρ hρ fl hfl dt pt rl labs IX hE hP hL N0 N1 S0 S1 s0 s1 hs0 hs1 nf0 nf1
-    hnf0 hnf1 e0 e1 h0 h1 ?_
-  simp only [Bool.and_eq_true] at hk hm ⊢
-  exact ⟨⟨⟨⟨⟨hp, hc0⟩, hc1⟩, hk.1⟩, hk.2⟩, hm, hz⟩
+  simp only [Bool.and_eq_true] at hk hm
+  obtain ⟨hk0, hk1⟩ := hk
+  obtain ⟨hm0, hm1⟩ := hm
+  have hp' : N0.bnd.Perm N1.bnd := List.isPerm_iff.1 hp
+  refine ⟨hp', fun σ hσ => ?_⟩
+  set ν : ℕ → ℤ := fun x => (σ x : ℤ)
+  have hz' : exDen ρ ν (exMul S0 e0 ++ exMul (exNeg S1) e1) = 0 := by
+    rw [← hnfz, List.isEmpty_iff.1 hz]; simp [exDen]
+  rw [exDen_append, exDen_mul ρ hρ _ _ hm0, exDen_mul ρ hρ _ _ hm1, exDen_neg,
+    ← eval_trG E ρ hρ fl hfl nf0 hnf0 dt pt rl labs IX hE hP hL N0 e0 hc0 h0 σ hσ,
+    ← eval_trG E ρ hρ fl hfl nf1 hnf1 dt pt rl labs IX hE hP hL N1 e1 hc1 h1 σ (hσ.perm hp'),
+    exDen_const ρ S0 hk0 ν (fun _ => 0), exDen_const ρ S1 hk1 ν (fun _ => 0), ← hs0,
+    ← hs1] at hz'
+  linear_combination hz'
 
 /-! ## Blocks through `trNodesG` -/
 
@@ -293,6 +305,32 @@ theorem pivTail_ok (dv : ℕ → ℕ) (hdv : ∀ i, 0 < dv i) : ∀ (B C U ps : 
       exact part_body dv C U B ps f σ (stepOf_ok dv hdv f σ hq) ν
     · rw [ih, List.append_assoc, List.singleton_append]
 
+/-- `pivPass` taking the step of the delta at position `i` only where bit `i` of `m` is set. -/
+def pivPassB (m : ℕ) : ℕ → ℕ → List Fac → List Fac → List Fac → List Fac × List Fac
+  | 0, _, A, B, ps => (A ++ B, ps)
+  | _ + 1, _, A, [], ps => (A, ps)
+  | n + 1, i, A, f :: B, ps =>
+    match (if m.testBit i then stepOf f else none) with
+    | some σ => pivPassB m n (i + 1) ((A.map σ) ++ [f]) (B.map σ) (ps.map σ)
+    | none => pivPassB m n (i + 1) (A ++ [f]) B ps
+
+theorem pivPassB_ok (dv : ℕ → ℕ) (hdv : ∀ i, 0 < dv i) (m n i : ℕ) (A B ps : List Fac)
+    (ν : ℕ → ℤ) :
+    bodyOf dv (pivPassB m n i A B ps).1 (pivPassB m n i A B ps).2 ν = bodyOf dv (A ++ B) ps ν := by
+  induction n generalizing i A B ps with
+  | zero => rfl
+  | succ n ih =>
+    cases B with
+    | nil => simp [pivPassB]
+    | cons f B =>
+      simp only [pivPassB]
+      split
+      · next σ hq =>
+        have hq' : stepOf f = some σ := by split at hq <;> simp_all
+        rw [ih, List.append_assoc, List.singleton_append]
+        exact step_body dv A B ps f σ (stepOf_ok dv hdv f σ hq') ν
+      · rw [ih, List.append_assoc, List.singleton_append]
+
 /-- `pivPass` on the first `c` deltas, `pivTail` on the rest. -/
 def pivPassH (c : ℕ) (ds ps : List Fac) : List Fac × List Fac :=
   pivTail ((pivPass c [] ds ps).1.take c) [] ((pivPass c [] ds ps).1.drop c) (pivPass c [] ds ps).2
@@ -354,17 +392,20 @@ theorem canonTmP_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl �
     ring
 
 
-/-- `canonTm` with the hinted pivot pass `pivPassH c`. -/
+/-- The pivot pass of `canonTmH` on the step mask `m`. -/
+def pivPassM (m : ℕ) (ds ps : List Fac) : List Fac × List Fac := pivPassB m ds.length 0 [] ds ps
+
+/-- `canonTm` with the pivot pass taking the steps of the mask `c`. -/
 def canonTmH (c : ℕ) (fl : List ℕ) (t : STm) : Option STm :=
-  canonTmP (pivPassH c) fl (renList t 0 (bvs t))
+  canonTmP (pivPassM c) fl (renList t 0 (bvs t))
 
 theorem canonTmH_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ) (c : ℕ) (t : STm) :
     TmRes ρ t (canonTmH c fl t) := by
-  have h := canonTmP_ok ρ hρ fl hfl (pivPassH c) (pivPassH_ok ρ.dv hρ.dpos c)
-    (renList t 0 (bvs t))
+  have h := canonTmP_ok ρ hρ fl hfl (pivPassM c)
+    (fun ds ps ν => pivPassB_ok ρ.dv hρ.dpos c ds.length 0 [] ds ps ν) (renList t 0 (bvs t))
   unfold canonTmH
   revert h
-  cases canonTmP (pivPassH c) fl (renList t 0 (bvs t)) with
+  cases canonTmP (pivPassM c) fl (renList t 0 (bvs t)) with
   | none => intro h ν; rw [← renList_ok ρ t 0 (bvs t) ν]; exact h ν
   | some t' => intro h ν; rw [h ν, renList_ok]
 

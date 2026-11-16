@@ -1179,34 +1179,53 @@ def tr_steps(
     return out
 
 
-def piv_tail(
-    c: tuple[Fac, ...], b: tuple[Fac, ...], ps: tuple[Fac, ...]
-) -> tuple[tuple[Fac, ...], tuple[Fac, ...]]:
-    """``pivTail c [] b ps``."""
-    head, done, out_ps = list(c), [], list(ps)
-    for f in b:
-        st = _step(f)
+def piv_pass_b(
+    m: int | None, ds: tuple[Fac, ...], ps: tuple[Fac, ...]
+) -> tuple[tuple[Fac, ...], tuple[Fac, ...], int]:
+    """``pivPassM m ds ps`` (every step when ``m`` is ``None``), with the mask of the steps that
+    changed a factor."""
+    la: list[Fac] = []
+    va: list[frozenset[int]] = []
+    lb, lp = list(ds), list(ps)
+    vb = [ip_varset(g[1]) for g in lb]
+    vp = [ip_varset(g[1]) for g in lp]
+
+    def run(st: tuple[Any, ...], fs: list[Fac], vs: list[frozenset[int]], start: int) -> bool:
+        hit = False
+        for j in range(start, len(fs)):
+            if st[0] and st[2] not in vs[j]:
+                continue
+            g = _apply(st, fs[j])
+            if g != fs[j]:
+                fs[j] = g
+                vs[j] = ip_varset(g[1])
+                hit = True
+        return hit
+
+    used = 0
+    for i in range(len(lb)):
+        f, vf = lb[i], vb[i]
+        st = _step(f) if m is None or (m >> i) & 1 else None
         if st is not None:
-            head = [_apply(st, g) for g in head]
-            out_ps = [_apply(st, g) for g in out_ps]
-        done.append(f)
-    return tuple(head) + tuple(done), tuple(out_ps)
-
-
-def piv_pass_h(
-    c: int, ds: tuple[Fac, ...], ps: tuple[Fac, ...]
-) -> tuple[tuple[Fac, ...], tuple[Fac, ...]]:
-    """``pivPassH c ds ps``."""
-    a, ps1 = piv_pass(c, (), ds, ps)
-    return piv_tail(a[:c], a[c:], ps1)
+            hit = run(st, la, va, 0)
+            hit = run(st, lb, vb, i + 1) or hit
+            hit = run(st, lp, vp, 0) or hit
+            if hit:
+                used |= 1 << i
+        la.append(f)
+        va.append(vf)
+    return tuple(la), tuple(lp), used
 
 
 def canon_hint(t: STm) -> int:
-    """The hint ``canonTmH`` takes for ``t``: the least ``c`` with which ``pivPassH c`` gives
-    the full pass."""
+    """The hint ``canonTmH`` takes for ``t``: the mask of the steps of the full pass that change
+    a factor, or every step when that mask does not reproduce it."""
     r = ren_list(t, 0, bvs(t))
     full = piv_pass(len(r[2]), (), r[2], r[3])
-    return next(c for c in range(len(r[2]) + 1) if piv_pass_h(c, r[2], r[3]) == full)
+    *_, used = piv_pass_b(None, r[2], r[3])
+    if piv_pass_b(used, r[2], r[3])[:2] == full:
+        return used
+    return (1 << len(r[2])) - 1
 
 
 def elim_choice(t: STm) -> tuple[STm, tuple[int, int, int]] | None:
@@ -1250,13 +1269,15 @@ def elim_hints(n: int, t: STm) -> tuple[STm, list[tuple[int, int, int]]]:
 
 def norm_hints(fl: Sequence[int], t: STm) -> list[tuple[int, list[tuple[int, int, int]]]]:
     """``norm_tm`` at ``ROUNDS`` with the hints of each round: the pivot hint and the
-    eliminations."""
+    eliminations; the rounds from the first one that keeps the term left out."""
     hints = []
     for _ in range(ROUNDS):
         t1, es = elim_hints(len(t[1]) + 1, t)
         assert t1 == elim_all(len(t[1]) + 1, t)
-        hints.append((canon_hint(t1), es))
         t2 = canon_tm(fl, t1)
+        if t2 == t:
+            break
+        hints.append((canon_hint(t1), es))
         if t2 is None:
             break
         t = t2
@@ -3171,11 +3192,16 @@ class _SymExport:
                 nets_ok[tag] = f"{name}c{tag}"
         tb2 = tb if tb in own else ta
         e0, e1 = texts_e[ta], texts_e[tb2]
+        zh = [norm_hints(self.fl, t) for t in ex_mul(s0, e[ta]) + ex_mul(neg, eb)]
+        out.append(
+            f"def {name}ZH (_ : ℕ) : List (List RHint) := "
+            "[" + ", ".join(str(h).replace(" ", "") for h in zh) + "]"
+        )
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
             ("k", f"(exConst {s0t} && exConst {s1t})"),
             ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
-            ("z", f"(nfEx FL (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
+            ("z", f"(nfH FL {name}ZH 0 (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
         ]
         for k, (sfx, stmt) in enumerate(parts):
             out.append(
@@ -3188,7 +3214,8 @@ class _SymExport:
             f"(nfH FL {ta}H) (nfH FL {tb2}H) (nfH_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
             f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
             f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
-            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {name}z"
+            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m (nfH FL {name}ZH 0) "
+            f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {name}ZH 0) {name}z"
         )
         return out
 
