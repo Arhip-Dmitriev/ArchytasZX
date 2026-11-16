@@ -10,8 +10,9 @@ import ArchytasZX.SymChunk
 `trNodesG` is `trNodesB` with any value-preserving normaliser per node; `eval_trG` and
 `equal_symG` prove `Equal` through it. `pivPassH c` pivots the first `c` deltas on every factor
 and each later delta only on the first `c` deltas and the phases (`pivTail`); `canonTmH`,
-`normTmH`, `nfGoH` are the normaliser with one such `c` per canonicalisation, read from a hint
-list, and `nfGoH_den` shows it keeps the value.
+`normTmH`, `nfGoH` are the normaliser with one such `c` per canonicalisation and the
+eliminations given by sum, rule and delta (`elimStepH`), read from a hint list; `nfGoH_den`
+shows it keeps the value.
 -/
 
 namespace ArchytasZX.Sym
@@ -347,26 +348,118 @@ theorem canonTmH_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl �
   | none => intro h ν; rw [← renList_ok ρ t 0 (bvs t) ν]; exact h ν
   | some t' => intro h ν; rw [h ν, renList_ok]
 
-/-- Eliminations and hinted canonicalisation, one round per hint, each result forced. -/
-def normTmH (fl : List ℕ) : List ℕ → STm → Option STm
+/-- The elimination of a variable by rule `r`: 0 unused, 1 the delta at `j`, 2 characters,
+3 the gcd of the delta at `j`. -/
+def elimVarH (x : ℕ) (D : DMon) (ds ps : List Fac) (r j : ℕ) : Option Elim :=
+  match r with
+  | 0 => elimUnused x D ds ps
+  | 1 =>
+    match ds.drop j with
+    | f :: post => elimDelta1 x D (ds.take j) f post ps
+    | [] => none
+  | 2 => elimChar x D ds ps
+  | _ =>
+    match ds.drop j with
+    | f :: post => elimGcd1 x D (ds.take j) f post ps
+    | [] => none
+
+theorem elimVarH_ok (ρ : Val) (hρ : ρ.OK) (x : ℕ) (D : DMon) (ds ps : List Fac) (r j : ℕ)
+    (e : Elim) (h : elimVarH x D ds ps r j = some e) : ElimOK ρ x D ds ps e := by
+  rcases r with _ | _ | _ | r
+  · exact elimUnused_ok ρ x D ds ps e h
+  · simp only [elimVarH] at h
+    split at h
+    · next f post hd =>
+      have := elimDelta1_ok ρ hρ x D _ f post ps e h
+      rw [← hd, List.take_append_drop] at this
+      exact this
+    · simp at h
+  · exact elimChar_ok ρ hρ x D ds ps e h
+  · simp only [elimVarH] at h
+    split at h
+    · next f post hd =>
+      have := elimGcd1_ok ρ hρ x D _ f post ps e h
+      rw [← hd, List.take_append_drop] at this
+      exact this
+    · simp at h
+
+/-- The elimination of the sum at `i` by `elimVarH r j`. -/
+def elimStepH (t : STm) (i r j : ℕ) : Option STm :=
+  match t.sums.drop i with
+  | (x, D) :: post =>
+    if ((t.sums.take i ++ post).map (·.1)).contains x then none
+    else
+      match elimVarH x D t.dels t.phs r j with
+      | some e => some ⟨CMon.mul t.c e.k, t.sums.take i ++ post, e.ds, e.ps⟩
+      | none => none
+  | [] => none
+
+theorem elimStepH_ok (ρ : Val) (hρ : ρ.OK) (t t' : STm) (i r j : ℕ)
+    (h : elimStepH t i r j = some t') (ν : ℕ → ℤ) : t'.den ρ ν = t.den ρ ν := by
+  unfold elimStepH at h
+  split at h
+  · next x D post hd =>
+    split_ifs at h with hx
+    split at h
+    · next e hev =>
+      simp only [Option.some.injEq] at h
+      subst h
+      have hok := elimVarH_ok ρ hρ x D t.dels t.phs r j e hev
+      have hs : t.sums = t.sums.take i ++ (x, D) :: post := by rw [← hd, List.take_append_drop]
+      set A := t.sums.take i with hA
+      unfold STm.den
+      rw [hs, sumsV_pull ρ.dv A post x D (by simpa using hx)]
+      simp only [body_eq] at *
+      rw [sumsV_congr _ _ _ _ hok, sumsV_mul_left, CMon.den_mul ρ hρ]
+      ring
+    · simp at h
+  · simp at h
+
+/-- The hinted eliminations in order, each result forced; the term at the first that fails. -/
+def elimAllH : List (ℕ × ℕ × ℕ) → STm → STm
+  | [], t => t
+  | (i, r, j) :: hs, t =>
+    match elimStepH t i r j with
+    | some t' => fTm t' (elimAllH hs)
+    | none => t
+
+theorem elimAllH_ok (ρ : Val) (hρ : ρ.OK) : ∀ (hs : List (ℕ × ℕ × ℕ)) (t : STm) (ν : ℕ → ℤ),
+    (elimAllH hs t).den ρ ν = t.den ρ ν := by
+  intro hs
+  induction hs with
+  | nil => intro t ν; rfl
+  | cons h hs ih =>
+    obtain ⟨i, r, j⟩ := h
+    intro t ν
+    simp only [elimAllH]
+    cases he : elimStepH t i r j with
+    | none => rfl
+    | some t' => dsimp only; rw [fTm_eq, ih, elimStepH_ok ρ hρ t t' i r j he]
+
+/-- A round's hints: the pivot hint and the eliminations. -/
+abbrev RHint := ℕ × List (ℕ × ℕ × ℕ)
+
+/-- Hinted eliminations and canonicalisation, one round per hint, each result forced. -/
+def normTmH (fl : List ℕ) : List RHint → STm → Option STm
   | [], t => some t
-  | c :: cs, t =>
-    match canonTmH c fl (fTm t fun t => elimAllS (t.sums.length + 1) t) with
+  | (c, es) :: cs, t =>
+    match canonTmH c fl (fTm t (elimAllH es)) with
     | none => none
     | some t' => fTm t' (normTmH fl cs)
 
 theorem normTmH_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ) :
-    ∀ (cs : List ℕ) (t : STm), TmRes ρ t (normTmH fl cs t) := by
+    ∀ (cs : List RHint) (t : STm), TmRes ρ t (normTmH fl cs t) := by
   intro cs
   induction cs with
   | nil => intro t ν; rfl
-  | cons c cs ih =>
+  | cons h cs ih =>
+    obtain ⟨c, es⟩ := h
     intro t
-    have hc := canonTmH_ok ρ hρ fl hfl c (elimAll (t.sums.length + 1) t)
-    have he := elimAll_ok ρ hρ (t.sums.length + 1) t
-    simp only [normTmH, fTm_eq, elimAllS_eq]
+    have hc := canonTmH_ok ρ hρ fl hfl c (elimAllH es t)
+    have he := elimAllH_ok ρ hρ es t
+    simp only [normTmH, fTm_eq]
     revert hc
-    cases canonTmH c fl (elimAll (t.sums.length + 1) t) with
+    cases canonTmH c fl (elimAllH es t) with
     | none => intro hc ν; rw [← he ν, hc ν]
     | some t' =>
       intro hc
@@ -378,7 +471,7 @@ theorem normTmH_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ
       | some t'' => intro h' ν; rw [h' ν, hc ν, he ν]
 
 /-- The terms normalised with their hint lists, in order, and summed into `acc`. -/
-def nfGoH (fl : List ℕ) : List (List ℕ) → List STm → List STm → List STm
+def nfGoH (fl : List ℕ) : List (List RHint) → List STm → List STm → List STm
   | _, acc, [] => acc
   | hs, acc, t :: ts =>
     match fTm t (normTmH fl (hs.headD [])) with
@@ -386,7 +479,7 @@ def nfGoH (fl : List ℕ) : List (List ℕ) → List STm → List STm → List S
     | some t' => fL fTm (tmAdd t' acc) fun acc => nfGoH fl hs.tail acc ts
 
 theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ) (ν : ℕ → ℤ) :
-    ∀ (e : List STm) (hs : List (List ℕ)) (acc : List STm),
+    ∀ (e : List STm) (hs : List (List RHint)) (acc : List STm),
     exDen ρ ν (nfGoH fl hs acc e) = exDen ρ ν acc + exDen ρ ν e := by
   intro e
   induction e with
@@ -411,11 +504,11 @@ theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
       rw [hn ν]; ring
 
 /-- The hinted normaliser of node `i`, its hints `H i`. -/
-def nfH (fl : List ℕ) (H : ℕ → List (List ℕ)) (i : ℕ) (e : List STm) : List STm :=
+def nfH (fl : List ℕ) (H : ℕ → List (List RHint)) (i : ℕ) (e : List STm) : List STm :=
   nfGoH fl (H i) [] e
 
 theorem nfH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
-    (H : ℕ → List (List ℕ)) (i : ℕ) (e : List STm) (ν : ℕ → ℤ) :
+    (H : ℕ → List (List RHint)) (i : ℕ) (e : List STm) (ν : ℕ → ℤ) :
     exDen ρ ν (nfH fl H i e) = exDen ρ ν e := by
   unfold nfH
   rw [nfGoH_den ρ hρ fl hfl ν e (H i) []]

@@ -1207,12 +1207,53 @@ def canon_hint(t: STm) -> int:
     return next(c for c in range(len(r[2]) + 1) if piv_pass_h(c, r[2], r[3]) == full)
 
 
-def norm_hints(fl: Sequence[int], t: STm) -> list[int]:
-    """``norm_tm`` at ``ROUNDS`` with the hint of each round."""
+def elim_choice(t: STm) -> tuple[STm, tuple[int, int, int]] | None:
+    """``elim_step`` with its choice as ``elimStepH`` reads it: sum index, rule (0 unused,
+    1 delta, 2 characters, 3 gcd) and delta index."""
+    for i, (pre, (x, d), post) in enumerate(_splits(t[1])):
+        if x in [y for y, _ in (*pre, *post)]:
+            continue
+        e = elim_unused(x, d, t[2], t[3])
+        r, j = 0, 0
+        if e is None:
+            for j, (pd, f, qd) in enumerate(_splits(t[2])):
+                e = elim_delta1(x, d, pd, f, qd, t[3])
+                if e is not None:
+                    r = 1
+                    break
+        if e is None:
+            e, r, j = elim_char(x, d, t[2], t[3]), 2, 0
+        if e is None:
+            for j, (pd, f, qd) in enumerate(_splits(t[2])):
+                e = elim_gcd1(x, d, pd, f, qd, t[3])
+                if e is not None:
+                    r = 3
+                    break
+        if e is not None:
+            return (cm_mul(t[0], e[0]), pre + post, e[1], e[2]), (i, r, j)
+    return None
+
+
+def elim_hints(n: int, t: STm) -> tuple[STm, list[tuple[int, int, int]]]:
+    """``elim_all`` and the choice of each elimination."""
+    hints = []
+    for _ in range(n):
+        found = elim_choice(t)
+        if found is None:
+            break
+        t, h = found
+        hints.append(h)
+    return t, hints
+
+
+def norm_hints(fl: Sequence[int], t: STm) -> list[tuple[int, list[tuple[int, int, int]]]]:
+    """``norm_tm`` at ``ROUNDS`` with the hints of each round: the pivot hint and the
+    eliminations."""
     hints = []
     for _ in range(ROUNDS):
-        t1 = elim_all(len(t[1]) + 1, t)
-        hints.append(canon_hint(t1))
+        t1, es = elim_hints(len(t[1]) + 1, t)
+        assert t1 == elim_all(len(t[1]) + 1, t)
+        hints.append((canon_hint(t1), es))
         t2 = canon_tm(fl, t1)
         if t2 is None:
             break
@@ -1228,7 +1269,7 @@ def tr_hints(
     nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
     internal: Sequence[int],
     steps: Sequence[Sequence[STm]],
-) -> list[list[list[int]]]:
+) -> list[list[list[tuple[int, list[tuple[int, int, int]]]]]]:
     """For node ``k``, the hints of each term of its product with ``steps[k + 1]``."""
     pres: list[tuple[int, ...]] = []
     pre: tuple[int, ...] = ()
@@ -3023,8 +3064,8 @@ class _SymExport:
             hints = tr_hints(self.fl, self.dtf, self.ptf, labs, nodes, internal, st)
             table = "[" + ", ".join(str(h).replace(" ", "") for h in hints) + "]"
             out.append(
-                f"def {tag}H (i : ℕ) : List (List ℕ) := "
-                f"(({table} : List (List (List ℕ)))).getD i []"
+                f"def {tag}H (i : ℕ) : List (List RHint) := "
+                f"(({table} : List (List (List RHint)))).getD i []"
             )
             args = f"(nfH FL {tag}H) DT PT RL labs"
             m = len(lnet.nodes)
