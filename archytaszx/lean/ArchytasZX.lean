@@ -18,6 +18,7 @@ import ArchytasZX.Refute
 import ArchytasZX.Ball
 import ArchytasZX.Contract
 import ArchytasZX.RefuteMod
+import ArchytasZX.RefuteSym
 import ArchytasZX.SymNet
 import ArchytasZX.SymChunk
 import ArchytasZX.SymHint

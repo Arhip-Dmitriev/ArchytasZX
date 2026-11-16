@@ -147,6 +147,13 @@ REFUTATIONS: dict[str, tuple[str, str]] = {
         "a = X(1 -> 1, literal 3) weight{1: 1/2, 2: sqrt(2)}",
         "a = X(1 -> 1, literal 3)",
     ),
+    "fourier_power": (
+        (
+            "a = F(literal 600); b = F(literal 600); c = F(literal 600); e = F(literal 600); "
+            "wire a.out0 -- b.in0; wire b.out0 -- c.in0; wire c.out0 -- e.in0"
+        ),
+        "a = Z(1 -> 1, literal 600); scalar 2",
+    ),
 }
 
 
@@ -169,6 +176,11 @@ def test_weighted_spiders_have_coefficient_tables(name: str) -> None:
     source = _refutation(name)
     assert "have hC : CoefOK E " in source and (".ZW" in source or ".XW" in source)
     assert "def Qt (i : ℕ) : ℕ := ((([] :" not in source
+
+
+def test_large_fourier_chains_sum_by_substitution() -> None:
+    source = _refutation("fourier_power")
+    assert "sym_gstep" in source and "sym_dstep" in source and "sym_final" in source
 
 
 def test_square_roots_are_gauss_sums() -> None:

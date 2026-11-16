@@ -1,0 +1,491 @@
+# Copyright 2026 Arkhip A. Dmitriev
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Residue contraction by substitution and geometric sums, a mirror of `RefuteSym.lean`.
+
+A plan sums out the labels a binder, splitter, Z spider or constraint fixes (delta steps) and
+the labels shared by exactly two Fourier boxes (geometric steps), then contracts the remaining
+labels with residue tables. :func:`sym_plan` builds the plan at one boundary assignment and
+:func:`sym_decls` writes its Lean declarations.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from archytaszx.semantics.lean_net import LNet, NetUnsupported, _head
+
+Ex = tuple[Any, ...]
+
+MAX_SYM_STEPS = 4000
+
+
+def ev(e: Ex, t: Callable[[int], int]) -> int:
+    """Mirror of `LX.eval`."""
+    h = e[0]
+    if h == "v":
+        return t(e[1])
+    if h == "c":
+        return int(e[1])
+    if h == "add":
+        return ev(e[1], t) + ev(e[2], t)
+    if h == "mul":
+        return int(e[1]) * ev(e[2], t)
+    if h == "div":
+        return ev(e[1], t) // e[2] if e[2] else 0
+    if h == "mod":
+        return ev(e[1], t) % e[2] if e[2] else ev(e[1], t)
+    n = e[2]
+    return (n - ev(e[1], t) % n) % n if n else 0
+
+
+def vars_(e: Ex) -> list[int]:
+    """Mirror of `LX.vars`."""
+    h = e[0]
+    if h == "v":
+        return [e[1]]
+    if h == "c":
+        return []
+    if h == "add":
+        return vars_(e[1]) + vars_(e[2])
+    if h == "mul":
+        return vars_(e[2])
+    return vars_(e[1])
+
+
+def subst(e: Ex, l: int, r: Ex) -> Ex:
+    """Mirror of `LX.subst`."""
+    h = e[0]
+    if h == "v":
+        return r if e[1] == l else e
+    if h == "c":
+        return e
+    if h == "add":
+        return ("add", subst(e[1], l, r), subst(e[2], l, r))
+    if h == "mul":
+        return ("mul", e[1], subst(e[2], l, r))
+    return (h, subst(e[1], l, r), e[2])
+
+
+def ub(e: Ex, d: Callable[[int], int]) -> int:
+    """Mirror of `LX.ub`."""
+    h = e[0]
+    if h == "v":
+        return max(d(e[1]) - 1, 0)
+    if h == "c":
+        return int(e[1])
+    if h == "add":
+        return ub(e[1], d) + ub(e[2], d)
+    if h == "mul":
+        return int(e[1]) * ub(e[2], d)
+    if h == "div":
+        return ub(e[1], d) // e[2] if e[2] else 0
+    if h == "mod":
+        return ub(e[1], d) if e[2] == 0 else int(e[2]) - 1
+    return max(int(e[2]) - 1, 0)
+
+
+def text(e: Ex) -> str:
+    """An expression as a Lean `LX` term."""
+    h = e[0]
+    if h == "v":
+        return f"(LX.v {e[1]})"
+    if h == "c":
+        return f"(LX.c {e[1]})"
+    if h == "add":
+        return f"(LX.add {text(e[1])} {text(e[2])})"
+    if h == "mul":
+        return f"(LX.mul {e[1]} {text(e[2])})"
+    return f"(LX.{h} {text(e[1])} {e[2]})"
+
+
+@dataclass
+class State:
+    """Mirror of `SSt`: bindings newest first, node indices, constraints and a constant."""
+
+    bs: list[tuple[int, Ex]] = field(default_factory=list)
+    ns: list[int] = field(default_factory=list)
+    cs: list[tuple[int, Ex]] = field(default_factory=list)
+    c: int = 1
+
+    def texpr(self, x: int) -> Ex:
+        for a, e in self.bs:
+            if a == x:
+                return e
+        return ("v", x)
+
+    def bound(self, x: int) -> bool:
+        return any(a == x for a, _ in self.bs)
+
+
+@dataclass
+class Plan:
+    """The states and steps of a substitution contraction and its final residue tables."""
+
+    states: list[State]
+    frees: list[list[int]]
+    steps: list[tuple[Any, ...]]
+    leaves: list[Any]
+    nleaves: int
+    final: Any
+    value: int
+
+
+def _legs(net: LNet, i: int) -> list[int]:
+    n = net.nodes[i]
+    return [*n.outs, *n.ins]
+
+
+def _spair(st: State, net: LNet, dimv: Callable[[int], int], src: tuple[Any, ...]) -> Any:
+    """Mirror of `spair`."""
+    if src[0] == "zz":
+        _, i, x, y = src
+        if _head(net.nodes[i].kind) == "Z" and x in _legs(net, i) and y in _legs(net, i):
+            return st.texpr(x), st.texpr(y)
+        return None
+    _, i, pos = src
+    n = net.nodes[i]
+    h = _head(n.kind)
+    t = dimv(n.ph)
+    if h == "B" and len(n.outs) == 1 and len(n.ins) == 2:
+        (k,), (a, b) = n.outs, n.ins
+    elif h == "S" and len(n.outs) == 2 and len(n.ins) == 1:
+        (a, b), (k,) = n.outs, n.ins
+        pos = {2: 0, 0: 1, 1: 2}[pos] if pos in (0, 1, 2) else 3
+    else:
+        return None
+    ek, ea, eb = st.texpr(k), st.texpr(a), st.texpr(b)
+    if pos == 0:
+        return ek, ("add", ("mul", t, ea), eb)
+    if pos == 1:
+        return ea, ("div", ek, t)
+    if pos == 2:
+        return eb, ("mod", ek, t)
+    return None
+
+
+def _solvep(pair: Any, l: int, d: Callable[[int], int]) -> Ex | None:
+    """Mirror of `solveP`."""
+    if pair is None:
+        return None
+    a, t = pair
+    if a == ("v", l):
+        return tuple(t)
+    if a[0] == "neg" and a[1] == ("v", l) and a[2] == d(l):
+        return ("neg", t, a[2])
+    return None
+
+
+def _csolve(n: int, a: Ex, b: Ex, l: int, d: Callable[[int], int]) -> Ex | None:
+    """Mirror of `csolve`."""
+    if a == ("v", l) and n == d(l):
+        return ("neg", b, n)
+    if a[0] == "neg" and a[1] == ("v", l) and a[2] == n and n == d(l):
+        return ("mod", b, n)
+    return None
+
+
+def _solve(st: State, net: LNet, dimv: Any, d: Any, l: int, src: tuple[Any, ...]) -> Ex | None:
+    if src[0] == "cn":
+        n, e = src[1]
+        if e[0] != "add":
+            return None
+        return _csolve(n, e[1], e[2], l, d) or _csolve(n, e[2], e[1], l, d)
+    return _solvep(_spair(st, net, dimv, src), l, d)
+
+
+def _fleg(st: State, net: LNet, i: int, l: int) -> Ex | None:
+    """Mirror of `fleg`."""
+    n = net.nodes[i]
+    if _head(n.kind) != "F" or len(n.outs) != 1 or len(n.ins) != 1:
+        return None
+    eo, ei = st.texpr(n.outs[0]), st.texpr(n.ins[0])
+    if eo == ("v", l) and l not in vars_(ei):
+        return ei
+    if ei == ("v", l) and l not in vars_(eo):
+        return eo
+    return None
+
+
+def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
+    """The substitution contraction of ``net`` at the boundary assignment ``sigma``."""
+    d = refuter.labdim
+    dimv = refuter.dimv
+    p, m = refuter.p, refuter.M
+    bnd = list(net.bnd)
+    st = State(ns=list(range(len(net.nodes))))
+    free = list(dict.fromkeys(net.summed))
+    states: list[State] = [st]
+    frees: list[list[int]] = [list(free)]
+    steps: list[tuple[Any, ...]] = []
+
+    def men(s: State, i: int, l: int) -> bool:
+        return any(l in vars_(s.texpr(x)) for x in _legs(net, i))
+
+    def dcands(s: State) -> Any:
+        for i in s.ns:
+            n = net.nodes[i]
+            h = _head(n.kind)
+            if h == "Z":
+                L = list(dict.fromkeys(_legs(net, i)))
+                for x in L:
+                    for y in L:
+                        if x != y:
+                            yield ("zz", i, x, y)
+            elif h in ("B", "S"):
+                for pos in (0, 1, 2):
+                    yield ("bs", i, pos)
+        for q in s.cs:
+            yield ("cn", q)
+
+    def dok(s: State, l: int, src: tuple[Any, ...]) -> Ex | None:
+        if l not in free or s.bound(l):
+            return None
+        e = _solve(s, net, dimv, d, l, src)
+        if e is None or l in vars_(e):
+            return None
+        if any(x not in free and x not in bnd for x in vars_(e)):
+            return None
+        if ub(e, d) >= d(l):
+            return None
+        return e
+
+    def leg_label(s: State, src: tuple[Any, ...]) -> int | None:
+        if src[0] == "cn":
+            e = src[1][1]
+            if e[0] != "add":
+                return None
+            for a in (e[1], e[2]):
+                if a[0] == "v" and a[1] in free:
+                    return int(a[1])
+                if a[0] == "neg" and a[1][0] == "v" and a[1][1] in free:
+                    return int(a[1][1])
+            return None
+        pr = _spair(s, net, dimv, src)
+        if pr is None:
+            return None
+        a = pr[0]
+        if a[0] == "v":
+            return int(a[1])
+        if a[0] == "neg" and a[1][0] == "v":
+            return int(a[1][1])
+        return None
+
+    def delta(s: State, closed: bool, only_cn: bool = False) -> tuple[Any, ...] | None:
+        for src in dcands(s):
+            if only_cn and src[0] != "cn":
+                continue
+            l = leg_label(s, src)
+            if l is None:
+                continue
+            e = dok(s, l, src)
+            if e is None:
+                continue
+            if closed and any(x in free for x in vars_(e)):
+                continue
+            return ("D", l, src, e)
+        return None
+
+    def geom(s: State) -> tuple[Any, ...] | None:
+        for l in free:
+            if s.bound(l):
+                continue
+            ms = [i for i in s.ns if men(s, i, l)]
+            if len(ms) != 2 or any(l in vars_(q[1]) for q in s.cs):
+                continue
+            n = d(l)
+            if n <= 0 or m % n:
+                continue
+            if any(dimv(net.nodes[i].dim) != n for i in ms):
+                continue
+            x, z = _fleg(s, net, ms[0], l), _fleg(s, net, ms[1], l)
+            if x is None or z is None:
+                continue
+            return ("G", l, ms[0], ms[1], [i for i in s.ns if i not in ms], x, z)
+        return None
+
+    while free and len(steps) < MAX_SYM_STEPS:
+        step = delta(st, True) or delta(st, False, True) or geom(st) or delta(st, False)
+        if step is None:
+            break
+        l = step[1]
+        if step[0] == "D":
+            e = step[3]
+            st = State(
+                [(l, e), *((a, subst(v, l, e)) for a, v in st.bs)],
+                list(st.ns),
+                [(nq, subst(v, l, e)) for nq, v in st.cs],
+                st.c,
+            )
+        else:
+            _, _, _, _, rest, x, z = step
+            st = State(list(st.bs), list(rest), [*st.cs, (d(l), ("add", x, z))], st.c * d(l) % p)
+        free.remove(l)
+        steps.append(step)
+        states.append(st)
+        frees.append(list(free))
+    return _finish(refuter, net, sigma, st, states, frees, steps, free)
+
+
+def _finish(
+    refuter: Any,
+    net: LNet,
+    sigma: Mapping[int, int],
+    st: State,
+    states: list[State],
+    frees: list[list[int]],
+    steps: list[tuple[Any, ...]],
+    free: list[int],
+) -> Plan:
+    """The residue tables of the last state over the labels left, a mirror of `leafS`,
+    `leafQ` and `kleaf`, and their elimination."""
+    d = refuter.labdim
+    p = refuter.p
+    u = set(net.bnd)
+
+    def scope_of(es: Sequence[Ex]) -> tuple[int, ...]:
+        return tuple(dict.fromkeys(x for e in es for x in vars_(e) if x not in u))
+
+    def table(scope: Sequence[int], entry: Callable[[Callable[[int], int]], int]) -> list[int]:
+        dims = [d(x) for x in scope]
+        size = math.prod(dims)
+        if size > refuter.MAX_TABLE:
+            raise NetUnsupported("a residue table is too large after substitution")
+        out = []
+        for idx in range(size):
+            tau, rest = {}, idx
+            for x, dx in zip(scope, dims, strict=True):
+                tau[x], rest = rest % dx, rest // dx
+
+            def at(y: int, tau: dict[int, int] = tau) -> int:
+                return sigma.get(y, 0) if y in u else tau.get(y, 0)
+
+            out.append(entry(at))
+        return out
+
+    leaves = []
+    for i in st.ns:
+        legs = _legs(net, i)
+        es = [st.texpr(x) for x in legs]
+
+        def node_entry(at: Callable[[int], int], i: int = i, es: list[Ex] = es) -> int:
+            n = net.nodes[i]
+            vals = {x: ev(e, at) for x, e in zip(_legs(net, i), es, strict=True)}
+            return int(refuter.res(refuter.node(n, vals)))
+
+        sc = scope_of(es)
+        leaves.append((sc, table(sc, node_entry)))
+    nleaves = len(leaves)
+    for nq, e in st.cs:
+
+        def cons_entry(at: Callable[[int], int], nq: int = nq, e: Ex = e) -> int:
+            return 1 if ev(e, at) % nq == 0 else 0
+
+        sc = scope_of([e])
+        leaves.append((sc, table(sc, cons_entry)))
+    leaves.append(((), [st.c % p]))
+    plan = refuter.res_eliminate(leaves, free)
+    value = refuter.res_final(plan[2], sigma)
+    return Plan(states, frees, steps, plan[0], nleaves, plan, value)
+
+
+def sym_decls(
+    refuter: Any, tag: str, net: LNet, plan: Plan, env: str, unbnd: str
+) -> tuple[list[str], str]:
+    """The declarations of ``plan`` and the term proving the network's formal entry mod `p`
+    equal to its final residue."""
+    M, p, w = refuter.M, refuter.p, refuter.w
+    shape = f"{env}.shape"
+    dim = f"{shape}.dim"
+    sv = f"sval {shape} {M} Pt Ct {p} {w}"
+    out: list[str] = []
+    for i, n in enumerate(net.nodes):
+        out.append(f"def {tag}k{i} : Node := {n.lean()}")
+
+    def ns_text(ns: Sequence[int]) -> str:
+        return "[" + ", ".join(f"{tag}k{i}" for i in ns) + "]" if ns else "([] : List Node)"
+
+    def bs_text(bs: Sequence[tuple[int, Ex]]) -> str:
+        if not bs:
+            return "([] : List (ℕ × LX))"
+        return "[" + ", ".join(f"({a}, {text(e)})" for a, e in bs) + "]"
+
+    def cs_text(cs: Sequence[tuple[int, Ex]]) -> str:
+        if not cs:
+            return "([] : List (ℕ × LX))"
+        return "[" + ", ".join(f"({a}, {text(e)})" for a, e in cs) + "]"
+
+    def nat_list(xs: Sequence[int]) -> str:
+        return "[" + ", ".join(str(x) for x in xs) + "]" if xs else "([] : List ℕ)"
+
+    for k, (s, fr) in enumerate(zip(plan.states, plan.frees, strict=True)):
+        body = f"⟨{bs_text(s.bs)}, {ns_text(s.ns)}, {cs_text(s.cs)}, {s.c}⟩"
+        out.append(f"def {tag}s{k} : SSt := {body}")
+        out.append(f"def {tag}R{k} : List ℕ := {nat_list(fr)}")
+    out.append(f"theorem {tag}hU : ∀ x ∈ ({unbnd} : List ℕ), σ0 x < {dim} x := by decide +kernel")
+    links = [f"(sym_start {shape} {M} Pt Ct {p} {w} {tag} σ0)"]
+    for k, step in enumerate(plan.steps):
+        head = (
+            f"sumR {dim} {tag}R{k} ({sv} {tag}s{k}) σ0 = "
+            f"sumR {dim} {tag}R{k + 1} ({sv} {tag}s{k + 1}) σ0"
+        )
+        if step[0] == "D":
+            _, l, src, e = step
+            if src[0] == "zz":
+                stext = f"(Src.zz {tag}k{src[1]} {src[2]} {src[3]})"
+            elif src[0] == "bs":
+                stext = f"(Src.bs {tag}k{src[1]} {src[2]})"
+            else:
+                stext = f"(Src.cn ({src[1][0]}, {text(src[1][1])}))"
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} : {head} :=\n"
+                f"  sym_dstep {shape} {M} Pt Ct {p} {w} {unbnd} {tag}R{k} {tag}R{k + 1} "
+                f"{tag}s{k} {tag}s{k + 1} {l} {stext} {text(e)} σ0 {tag}hU "
+                f"(by decide +kernel) (by decide +kernel) (by decide +kernel)"
+            )
+            links.append(f"{tag}t{k}")
+        else:
+            _, l, i1, i2, rest, x, z = step
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} [Fact (Nat.Prime {p})] "
+                f"(hw : IsPrimitiveRoot (({w} : ℕ) : ZMod {p}) {M}) : {head} :=\n"
+                f"  sym_gstep {shape} {M} Pt Ct {p} {w} hw (by norm_num) {tag}R{k} {tag}R{k + 1} "
+                f"{tag}s{k} {tag}s{k + 1} {l} {tag}k{i1} {tag}k{i2} {ns_text(rest)} {text(x)} "
+                f"{text(z)} σ0 (by decide +kernel) (by decide +kernel) (by decide +kernel)"
+            )
+            links.append(f"({tag}t{k} hw)")
+    xt = f"{tag}x"
+    out += refuter.res_decls(xt, plan.final, dim)
+    last = len(plan.steps)
+    nl = plan.nleaves
+    names = [f"{xt}a{i}" for i in range(len(plan.final[0]))]
+    ln = "[" + ", ".join(names[:nl]) + "]" if nl else "([] : List RFac)"
+    lq_names = names[nl:-1]
+    lq = "[" + ", ".join(lq_names) + "]" if lq_names else "([] : List RFac)"
+    out.append(
+        f"set_option maxHeartbeats 0 in\ntheorem {tag}fin "
+        f"(hw1 : (({w} : ℕ) : ZMod {p}) ^ {M} = 1) :\n"
+        f"    sumR {dim} {tag}R{last} ({sv} {tag}s{last}) σ0 = "
+        f"(rfold {p} FN{xt} σ0 : ZMod {p}) :=\n"
+        f"  sym_final {shape} {M} Pt Ct {p} {w} (by norm_num) hw1 (by norm_num) (by norm_num) "
+        f"{unbnd} {tag}R{last} σ0 {tag}s{last} {ln} {lq} (by decide +kernel) ST{xt} FN{xt} "
+        f"(by decide +kernel) CH{xt} (by decide +kernel) (by decide +kernel) {tag}hU"
+    )
+    links.append(f"({tag}fin hw1)")
+    return out, " |>.trans ".join(links)
+
+
+__all__ = ["Plan", "State", "sym_decls", "sym_plan"]

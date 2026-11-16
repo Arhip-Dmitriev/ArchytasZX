@@ -46,6 +46,7 @@ from archytaszx.semantics.lean_net import (
     _paren,
 )
 from archytaszx.semantics.lean_scalar import II, NC, Ex, Inv, Om, Rt, ScalarUnsupported
+from archytaszx.semantics.lean_subst import sym_decls, sym_plan
 
 K = "(by decide +kernel)"
 MAX_ASSIGNMENTS = 4096
@@ -296,6 +297,14 @@ def _weighted(kind: Any) -> bool:
     return h in ("ZW", "XW") or (h == "Bun" and _weighted(kind[2]))
 
 
+def _phased(kind: Any) -> bool:
+    """Mirror of `Kind.phased`: the kind reads a phase or coefficient vector."""
+    h = _head(kind)
+    if h == "Bun":
+        return _phased(kind[2])
+    return h in ("Z", "X", "ZB", "XB", "ZW", "XW")
+
+
 def _mult_phases(diagram: Diagram) -> bool:
     """True when some node phase of ``diagram`` holds one of its bang-box multiplicities."""
     from archytaszx.diagram.bangbox import free_mult_symbols
@@ -457,7 +466,8 @@ class _Refuter:
 
     def tz(self, ph: int, d: int, vs: Sequence[int]) -> Vec:
         out: Vec = {}
-        for k in range(d):
+        ks_ = range(d) if not vs else [vs[0]] if vs[0] < d else []
+        for k in ks_:
             if all(v == k for v in vs):
                 e, ks = self.P(ph, k)
                 _add(out, (ks, e), 1, self.M)
@@ -830,10 +840,19 @@ class _Refuter:
 
     # the order of ζ
 
+    def zero_vector(self, ph: int) -> bool:
+        """The phase vector ``ph`` is zero at every index."""
+        specs = self.out.phase_specs
+        entries, rule = specs[ph] if ph < len(specs) else ({}, None)
+        if rule is not None and sp.sympify(rule) != 0:
+            return False
+        return all(sp.sympify(v) == 0 for v in entries.values())
+
     def choose_m(self) -> None:
         needs = {1}
         self.keys: list[tuple[int, int]] = []
         self.ckeys: list[tuple[int, int]] = []
+        self.zs: list[int] = []
         seen: set[tuple[int, int]] = set()
         dens: list[sp.Rational] = []
         for net in (self.a.net, self.b.net):
@@ -843,13 +862,19 @@ class _Refuter:
                 d = self.dimv(n.dim)
                 if d <= 0:
                     raise NetUnsupported("a node of dimension 0")
+                needs.add(d)
+                if not _phased(n.kind):
+                    continue
                 if d > MAX_TERMS:
                     raise NetUnsupported(f"a node of dimension {d}, above {MAX_TERMS}")
-                needs.add(d)
                 if _weighted(n.kind):
                     for j in range(d):
                         if (n.ph, j) not in self.ckeys:
                             self.ckeys.append((n.ph, j))
+                    continue
+                if self.zero_vector(n.ph):
+                    if n.ph not in self.zs:
+                        self.zs.append(n.ph)
                     continue
                 for j in range(d):
                     if (n.ph, j) not in seen:
@@ -868,10 +893,6 @@ class _Refuter:
                 if c:
                     needs |= self.atom_needs(Rt(d))
         self.M = math.lcm(*needs)
-        if sp.totient(self.M) > MAX_CYCLOTOMIC_DEGREE:
-            raise NetUnsupported(
-                f"the cyclotomic field of order {self.M} has degree above {MAX_CYCLOTOMIC_DEGREE}"
-            )
         self.ptab: dict[tuple[int, int], tuple[int, tuple[int, ...]]] = {}
         for (ph, j), t in zip(self.keys, dens, strict=True):
             self.ptab[(ph, j)] = (int((t * self.M) % self.M), ())
@@ -926,10 +947,17 @@ class _Refuter:
     # exact values in ℚ(ζ)
 
     def phi(self) -> sp.Poly:
+        if sp.totient(self.M) > MAX_CYCLOTOMIC_DEGREE:
+            raise NetUnsupported(
+                f"the cyclotomic field of order {self.M} has degree above {MAX_CYCLOTOMIC_DEGREE}"
+            )
         return sp.Poly(sp.cyclotomic_poly(self.M, _Z), _Z, domain="QQ")
 
     def poly(self, e: sp.Expr) -> sp.Poly:
         """``e`` as a polynomial in ζ reduced modulo Φ_M."""
+        q = _rational(e)
+        if q is not None:
+            return sp.Poly(q, _Z, domain="QQ")
         phi = self.phi()
         return self.poly_expr(e).rem(phi)
 
@@ -1111,6 +1139,8 @@ class _Refuter:
                 if q[0] != 0:
                     terms.append((q[0], name))
                 rest = sp.expand(r)
+        if rest != 0 and not self.rel_lines:
+            self.relations()
         if rest != 0:
             q, r = sp.div(rest, _Z**self.M - 1, _Z)
             if sp.expand(q) != 0:
@@ -1184,8 +1214,10 @@ class _Refuter:
         M = self.M
         rels = [sp.Poly(_Z**M - 1, _Z, domain="QQ")]
         names = ["hzM"]
-        self.rel_lines = [f"have hzM : om {M} ^ {M} = 1 := om_pow_self {M} (by norm_num)"]
-        self.hyp_diff = {"hzM": _Z**M - 1}
+        self.rel_lines: list[str] = [
+            f"have hzM : om {M} ^ {M} = 1 := om_pow_self {M} (by norm_num)"
+        ]
+        self.hyp_diff["hzM"] = _Z**M - 1
         for p in sp.primefactors(M):
             step = M // p
             g = sum(_Z ** (j * step) for j in range(p))
@@ -1209,7 +1241,7 @@ class _Refuter:
         coeffs = [c * (1 / lead) for c in coeffs]
         if (cur * (1 / lead)) != self.phi():
             raise NetUnsupported("the relations of ζ do not generate Φ_M")
-        self.bezout = coeffs
+        self.bezout: list[sp.Poly] = coeffs
         self.rel_names = names
 
     # the source
@@ -1223,7 +1255,9 @@ class _Refuter:
         self.free: dict[sp.Symbol, str] = getattr(self, "free", {})
         self.inv_pairs: list[tuple[sp.Symbol, sp.Symbol, str]] = getattr(self, "inv_pairs", [])
         self.facts: list[str] = []
-        self.relations()
+        self.rel_lines = []
+        self.hyp_diff: dict[str, sp.Expr] = {}
+        self.bezout = []
 
     def run(self, name: str) -> str:
         if self.arity:
@@ -1280,6 +1314,16 @@ class _Refuter:
             out[i] = self.hint[slot]
         return [tuple(out)]
 
+    def net_plan(self, net: LNet, sigma: Mapping[int, int]) -> tuple[str, Any, int]:
+        """The residue contraction of ``net`` at ``sigma``: by tables, else by substitution and
+        geometric sums; with the residue it gives."""
+        try:
+            pl = self.res_plan(net, sigma)
+            return "res", pl, self.res_final(pl[2], sigma)
+        except NetUnsupported:
+            sp_ = sym_plan(self, net, sigma)
+            return "sym", sp_, sp_.value
+
     def find_sigma(self, fr: Sequence[int]) -> tuple[dict[int, int], list[Any]] | None:
         """A boundary assignment where `f₀(w) r₀ ≠ f₁(w) r₁` mod p, with both networks'
         residue contractions there."""
@@ -1291,9 +1335,8 @@ class _Refuter:
             if count >= MAX_PINNED:
                 break
             sigma = dict(zip(bnd, values, strict=True))
-            plans = [self.res_plan(net, sigma) for net in nets]
-            r = [self.res_final(pl[2], sigma) for pl in plans]
-            if (fr[0] * r[0] - fr[1] * r[1]) % self.p:
+            plans = [self.net_plan(net, sigma) for net in nets]
+            if (fr[0] * plans[0][2] - fr[1] * plans[1][2]) % self.p:
                 return sigma, plans
         try:
             free = [self.res_plan(net, {}) for net in nets]
@@ -1306,7 +1349,7 @@ class _Refuter:
             sigma = dict(zip(bnd, values, strict=True))
             r = [self.res_final(pl[2], sigma) for pl in free]
             if (fr[0] * r[0] - fr[1] * r[1]) % self.p:
-                return sigma, [self.res_plan(net, sigma) for net in nets]
+                return sigma, [self.net_plan(net, sigma) for net in nets]
         return None
 
     def res_final(self, final: Sequence[Any], sigma: Mapping[int, int]) -> int:
@@ -1412,6 +1455,7 @@ class _Refuter:
         qt = ", ".join(f"({ph}, {q})" for ph, q in sorted(self.qtab.items()))
         sig = ", ".join(f"({x}, {v})" for x, v in sorted(sigma.items()))
         unfold = "Fam.env, F, Φ" if out.family else "E, Φ"
+        zsl = _ints_nat(self.zs)
         phok = ", ".join(self.phase_proof(ph, j, unfold) for ph, j in self.keys)
         coefok = ", ".join(
             f"by rw [show Qt {ph} = {self.qtab[ph]} from rfl]; norm_num, {self.coef_proof(ph, j)}"
@@ -1420,8 +1464,8 @@ class _Refuter:
         decls = [
             (
                 f"/-- Each phase entry's power of `om {M}`. -/\n"
-                f"def Pt (i k : ℕ) : ℕ × List ℤ := ((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ)))"
-                f".lookup (i, k)).getD (0, []))"
+                f"def Pt (i k : ℕ) : ℕ × List ℤ := if i ∈ ({zsl} : List ℕ) then (0, []) else "
+                f"((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ))).lookup (i, k)).getD (0, []))"
             ),
             (
                 "/-- Each coefficient entry times its denominator as a formal sum. -/\n"
@@ -1441,32 +1485,53 @@ class _Refuter:
         if self.b.name != self.a.name:
             nets.append((self.b.name, sq1, plans[1]))
         keys, ckeys = _list_pairs(self.keys), _list_pairs(self.ckeys)
+        zproof = (
+            f"by intro i hi k; fin_cases hi <;> simp [{unfold}]"
+            if self.zs
+            else "by intro i hi; simp at hi"
+        )
         body = [
             "  intro h",
             f"  have he := h {' '.join(args)}" if args and binders else "  have he := h",
             f"  have hp : Fact (Nat.Prime {p}) := ⟨by norm_num⟩",
-            f"  have hw := prim_of {p} {w} {M} (by norm_num) {K} {K}",
+            (
+                f"  have hw := prim_of {p} {w} {M} (by norm_num) (by norm_num) {_fac_list(M)} "
+                f"{K} (by norm_num) {K} {K}"
+            ),
             f"  have hw1 : (({w} : ℕ) : ZMod {p}) ^ {M} = 1 := hw.pow_eq_one",
             f"  have hP : PhOK {env} {M} [] Pt {keys} := {_anon(phok)}",
             *(f"  {line}" for line in self.rel_lines),
             *(f"  {line}" for line in self.facts),
             (f"  have hC : CoefOK {env} {M} [] Ct Qt {ckeys} := {_anon(coefok)}"),
+            f"  have hZ : ∀ i ∈ ({zsl} : List ℕ), ∀ k, {env}.phase i k = 0 := {zproof}",
+            (
+                f"  have hZP : ∀ i ∈ ({zsl} : List ℕ), ∀ k, Pt i k = (0, []) := "
+                "by intro i hi k; simp only [Pt]; rw [if_pos hi]"
+            ),
         ]
-        for i, (tag, _sq, plan) in enumerate(nets):
-            decls += self.res_decls(tag, plan, dim)
-            body += [
-                (
-                    f"  have e{i} := eval_W {env} {M} [] Pt Ct Qt {keys} {ckeys} {tag} σ0 "
-                    f"(by norm_num) {K} hP hC"
-                ),
-                (
+        unbnd = _ints_nat(list(self.a.net.bnd))
+        for i, (tag, _sq, (route, plan, _r)) in enumerate(nets):
+            body.append(
+                f"  have e{i} := eval_W {env} {M} [] Pt Ct Qt {keys} {ckeys} {zsl} {tag} σ0 "
+                f"(by norm_num) {K} hP hC hZ hZP"
+            )
+            if route == "res":
+                decls += self.res_decls(tag, plan, dim)
+                body.append(
                     f"  have r{i} := eval_res {env}.shape {M} Pt Ct {p} {w} (by norm_num) hw1 "
-                    f"{tag} σ0 L{tag} {K} {K} ST{tag} FN{tag} {K} CH{tag} {K} {K} {K}"
-                ),
-            ]
+                    f"(by norm_num) (by norm_num) {tag} σ0 L{tag} {K} {K} ST{tag} FN{tag} {K} "
+                    f"CH{tag} {K} {K} {K}"
+                )
+            else:
+                more, term = sym_decls(
+                    self, tag, self.a.net if i == 0 else self.b.net, plan, env, unbnd
+                )
+                decls += more
+                body.append(f"  have r{i} := {term}")
         two = "1" if len(nets) > 1 else "0"
         body.append(
-            f"  refine refute_res σ0 (inRange_of _ _ _ {K}) {M} {p} {w} (by norm_num) hw "
+            f"  refine refute_res σ0 (inRange_of _ _ _ {K}) {M} {p} {w} (by norm_num) "
+            f"(by norm_num) hw "
             f"_ _ _ _ _ _ ⟨e0, r0⟩ ⟨e{two}, r{two}⟩ he ({lcd} : ℂ) {_ints(vecs[0])} "
             f"{_ints(vecs[1])} ?_ ?_ {K}"
         )
@@ -1537,13 +1602,14 @@ class _Refuter:
             out.append(entry(tau))
         return out
 
+    MAX_TABLE = MAX_TERMS
+
     def res_plan(
         self, net: LNet, at: Mapping[int, int]
     ) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
         """Residue leaves, elimination steps and final factors of ``net``, the leaves reading
         the labels of ``at`` from it; a mirror of `leafR` and `elimR`."""
         pinned = dict(at)
-        p = self.p
         self.__dict__["_res_entries"] = 0
         leaves = []
         for n in net.nodes:
@@ -1553,9 +1619,17 @@ class _Refuter:
                 return self.res(self.node(n, {**tau, **pinned}))
 
             leaves.append((scope, self.res_table(scope, leaf)))
+        return self.res_eliminate(leaves, list(dict.fromkeys(net.summed)))
+
+    def res_eliminate(
+        self, leaves: list[Any], labels: Sequence[int]
+    ) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
+        """The elimination of ``labels`` from the residue factors ``leaves``, a mirror of
+        `elimR`."""
+        p = self.p
         facs = list(leaves)
         steps = []
-        left: list[int] = list(dict.fromkeys(net.summed))
+        left: list[int] = list(labels)
         while left:
 
             def cost(l: int, facs: list[Any] = facs) -> int:
@@ -1670,6 +1744,24 @@ class _Refuter:
         return ", ".join(f"{k} = {v}" for k, v in sorted(self.point.items())) or "no parameters"
 
 
+def _rational(e: sp.Expr) -> sp.Rational | None:
+    """``e`` as a rational number when its atoms are square roots, inverses and numerals
+    whose value is rational."""
+    e = sp.sympify(e)
+    if any(isinstance(a, (Om, Ex)) or a == II for a in sp.preorder_traversal(e)):
+        return None
+    v = e.replace(lambda a: isinstance(a, Rt), lambda a: sp.sqrt(a.args[0]))
+    v = v.replace(lambda a: isinstance(a, Inv), lambda a: 1 / a.args[0])
+    v = v.replace(lambda a: isinstance(a, NC), lambda a: a.args[0])
+    v = sp.simplify(v)
+    return sp.Rational(v) if v.is_Rational else None
+
+
+def _fac_list(m: int) -> str:
+    """The prime factorisation of ``m`` as a Lean list of pairs."""
+    return "[" + ", ".join(f"({q}, {e})" for q, e in sorted(sp.factorint(m).items())) + "]"
+
+
 def _kw(sq: Sequence[tuple[int, int, int, int]]) -> sp.Expr:
     """The value of `KW` from its `sqLW` list."""
     return sp.Mul(*(Inv(Rt(d)) ** c * sp.Rational(1, q) ** k for d, c, q, k in sq))
@@ -1679,7 +1771,8 @@ def _coeff_list(f: sp.Poly, scale: int) -> list[int]:
     """The coefficients of scale f, constant first, as integers."""
     out = [0] * (f.degree() + 1) if not f.is_zero else []
     for (e,), c in f.terms():
-        out[int(e)] = int(sp.Rational(c) * scale)
+        if c:
+            out[int(e)] = int(sp.Rational(c) * scale)
     return out
 
 
