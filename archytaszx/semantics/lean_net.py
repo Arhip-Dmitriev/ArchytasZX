@@ -35,6 +35,7 @@ scalar, dimension or phase this module cannot write in Lean.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -90,6 +91,24 @@ _RESERVED = frozenset(
     | {"ex", "om", "fou", "Net", "Node", "Env", "Equal", "I", "π", "pi", "exp", "sqrt"}
     | {"F", "FC", "SpC", "ksOf", "bundL", "sS", "sG", "Δpos", "j"}
 )
+
+
+PHASE_TABLE_MIN = 64
+
+
+def _phase_table(pv: PhaseVector) -> tuple[list[int], int] | None:
+    """The numerators by index and the common denominator of ``pv``'s phases in turns, when it
+    has more than ``PHASE_TABLE_MIN`` entries, all rational, and no rule."""
+    if pv.rule is not None:
+        return None
+    entries = {i: ph.to_sympy_turns() for i, ph in pv.entries().items()}
+    if len(entries) <= PHASE_TABLE_MIN or any(not v.is_Rational for v in entries.values()):
+        return None
+    den = math.lcm(*(int(sp.Rational(v).q) for v in entries.values()))
+    nums = [0] * (max(entries) + 1)
+    for i, v in entries.items():
+        nums[i] = int(sp.Rational(v) * den)
+    return nums, den
 
 
 @dataclass(frozen=True)
@@ -320,6 +339,7 @@ class _Export:
         self.phases: list[str] = ["fun _ => 0"]
         self.phase_specs: list[tuple[dict[int, sp.Expr], sp.Expr | None]] = [({}, None)]
         self.phase_key: dict[str, int] = {"": 0}
+        self.phase_tables: dict[int, tuple[list[int], int]] = {}
         self.weight_tab: dict[int, str] = {}
         self.coef_models: dict[str, dict[int, sp.Expr]] = {}
         self.labs: dict[int, int] = {}
@@ -438,7 +458,13 @@ class _Export:
         return self.dim_key[key]
 
     def phase_body(self, pv: PhaseVector) -> str:
-        """The phases of ``pv`` in turns, as the body of a Lean ``fun k``."""
+        """The phases of ``pv`` in turns, as the body of a Lean ``fun k``: a packed table of
+        numerators over one denominator when it has more than ``PHASE_TABLE_MIN`` rational
+        entries and no rule, else a chain of cases."""
+        tab = _phase_table(pv)
+        if tab is not None:
+            nums, den = tab
+            return f"(((([{', '.join(map(str, nums))}] : List ℤ).getD k 0 : ℤ) : ℝ) / {den})"
         parts = []
         for index, ph in sorted(pv.entries().items()):
             parts.append((index, self.sym.render(self.table_expr(ph.to_sympy_turns()), "ℝ", "ℝ")))
@@ -485,6 +511,9 @@ class _Export:
             if weights is not None:
                 self.weight_tab[len(self.phases)] = weights
             self.phases.append(f"fun k => {body}")
+            tab = _phase_table(pv)
+            if tab is not None and weights is None:
+                self.phase_tables[len(self.phases) - 1] = tab
             self.phase_specs.append(
                 (
                     {i: ph.to_sympy_turns() for i, ph in pv.entries().items()},

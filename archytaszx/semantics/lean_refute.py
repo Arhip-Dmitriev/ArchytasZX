@@ -853,6 +853,7 @@ class _Refuter:
         self.keys: list[tuple[int, int]] = []
         self.ckeys: list[tuple[int, int]] = []
         self.zs: list[int] = []
+        self.tabs: dict[int, tuple[list[int], int]] = {}
         seen: set[tuple[int, int]] = set()
         dens: list[sp.Rational] = []
         for net in (self.a.net, self.b.net):
@@ -875,6 +876,11 @@ class _Refuter:
                 if self.zero_vector(n.ph):
                     if n.ph not in self.zs:
                         self.zs.append(n.ph)
+                    continue
+                tab = self.out.phase_tables.get(n.ph)
+                if tab is not None and not self.out.family:
+                    self.tabs[n.ph] = tab
+                    needs.add(tab[1])
                     continue
                 for j in range(d):
                     if (n.ph, j) not in seen:
@@ -919,6 +925,10 @@ class _Refuter:
         return self.at_point(models.get(k, sp.Integer(1)))
 
     def P(self, ph: int, k: int) -> tuple[int, tuple[int, ...]]:
+        tab = getattr(self, "tabs", {}).get(ph)
+        if tab is not None:
+            nums, den = tab
+            return ((nums[k] if k < len(nums) else 0) * (self.M // den)) % self.M, ()
         return self.ptab.get((ph, k), (0, ()))
 
     def at_point(self, model: sp.Expr) -> sp.Expr:
@@ -1455,7 +1465,13 @@ class _Refuter:
         qt = ", ".join(f"({ph}, {q})" for ph, q in sorted(self.qtab.items()))
         sig = ", ".join(f"({x}, {v})" for x, v in sorted(sigma.items()))
         unfold = "Fam.env, F, Φ" if out.family else "E, Φ"
-        zsl = _ints_nat(self.zs)
+        fs = [*self.zs, *self.tabs]
+        fsl = _ints_nat(fs)
+        cases = "".join(f"  | {ph}, _ => (0, [])\n" for ph in self.zs) + "".join(
+            f"  | {ph}, k => ((((({_ints(nums)}) : List ℤ).getD k 0 * {M // den}) % {M}).toNat, "
+            "[])\n"
+            for ph, (nums, den) in self.tabs.items()
+        )
         phok = ", ".join(self.phase_proof(ph, j, unfold) for ph, j in self.keys)
         coefok = ", ".join(
             f"by rw [show Qt {ph} = {self.qtab[ph]} from rfl]; norm_num, {self.coef_proof(ph, j)}"
@@ -1464,8 +1480,9 @@ class _Refuter:
         decls = [
             (
                 f"/-- Each phase entry's power of `om {M}`. -/\n"
-                f"def Pt (i k : ℕ) : ℕ × List ℤ := if i ∈ ({zsl} : List ℕ) then (0, []) else "
-                f"((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ))).lookup (i, k)).getD (0, []))"
+                f"def Pt : ℕ → ℕ → ℕ × List ℤ\n{cases}"
+                f"  | i, k => ((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ))).lookup (i, k))"
+                ".getD (0, []))"
             ),
             (
                 "/-- Each coefficient entry times its denominator as a formal sum. -/\n"
@@ -1485,11 +1502,18 @@ class _Refuter:
         if self.b.name != self.a.name:
             nets.append((self.b.name, sq1, plans[1]))
         keys, ckeys = _list_pairs(self.keys), _list_pairs(self.ckeys)
-        zproof = (
-            f"by intro i hi k; fin_cases hi <;> simp [{unfold}]"
-            if self.zs
-            else "by intro i hi; simp at hi"
-        )
+        if fs:
+            fproof = "by\n    intro i hi k\n    fin_cases hi"
+            for _ph in self.zs:
+                fproof += f"\n    · simp [{unfold}, Pt, ex_zero, mono_nil]"
+            for _nums, den in self.tabs.values():
+                fproof += (
+                    f"\n    · simp only [{unfold}, Pt, List.map_nil, mono_nil]"
+                    f"\n      exact (ex_tab {M} {den} {M // den} (by norm_num) (by norm_num) _ "
+                    f"({den} : ℝ) (by norm_num)).trans (mul_one _).symm"
+                )
+        else:
+            fproof = "by intro i hi; simp at hi"
         body = [
             "  intro h",
             f"  have he := h {' '.join(args)}" if args and binders else "  have he := h",
@@ -1503,17 +1527,16 @@ class _Refuter:
             *(f"  {line}" for line in self.rel_lines),
             *(f"  {line}" for line in self.facts),
             (f"  have hC : CoefOK {env} {M} [] Ct Qt {ckeys} := {_anon(coefok)}"),
-            f"  have hZ : ∀ i ∈ ({zsl} : List ℕ), ∀ k, {env}.phase i k = 0 := {zproof}",
             (
-                f"  have hZP : ∀ i ∈ ({zsl} : List ℕ), ∀ k, Pt i k = (0, []) := "
-                "by intro i hi k; simp only [Pt]; rw [if_pos hi]"
+                f"  have hF : ∀ i ∈ ({fsl} : List ℕ), ∀ k, ex ({env}.phase i k) = "
+                f"om {M} ^ (Pt i k).1 * mono (([] : List ℝ).map ex) (Pt i k).2 := {fproof}"
             ),
         ]
         unbnd = _ints_nat(list(self.a.net.bnd))
         for i, (tag, _sq, (route, plan, _r)) in enumerate(nets):
             body.append(
-                f"  have e{i} := eval_W {env} {M} [] Pt Ct Qt {keys} {ckeys} {zsl} {tag} σ0 "
-                f"(by norm_num) {K} hP hC hZ hZP"
+                f"  have e{i} := eval_W {env} {M} [] Pt Ct Qt {keys} {ckeys} {fsl} {tag} σ0 "
+                f"(by norm_num) {K} hP hC hF"
             )
             if route == "res":
                 decls += self.res_decls(tag, plan, dim)

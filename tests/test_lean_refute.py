@@ -147,6 +147,10 @@ REFUTATIONS: dict[str, tuple[str, str]] = {
         "a = X(1 -> 1, literal 3) weight{1: 1/2, 2: sqrt(2)}",
         "a = X(1 -> 1, literal 3)",
     ),
+    "phase_table": (
+        "a = Z(0 -> 1, literal 80) phase {" + ", ".join(f"{k}: {k}/80" for k in range(1, 71)) + "}",
+        "a = Z(0 -> 1, literal 80)",
+    ),
     "fourier_power": (
         (
             "a = F(literal 600); b = F(literal 600); c = F(literal 600); e = F(literal 600); "
@@ -181,6 +185,12 @@ def test_weighted_spiders_have_coefficient_tables(name: str) -> None:
 def test_large_fourier_chains_sum_by_substitution() -> None:
     source = _refutation("fourier_power")
     assert "sym_gstep" in source and "sym_dstep" in source and "sym_final" in source
+
+
+def test_long_phase_vectors_are_tables() -> None:
+    source = _refutation("phase_table")
+    assert ": List ℤ).getD k 0" in source and "ex_tab " in source
+    assert "ex_atoms" not in source
 
 
 def test_square_roots_are_gauss_sums() -> None:

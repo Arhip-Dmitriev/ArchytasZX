@@ -734,12 +734,14 @@ theorem valQ_eq (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C :
     rfl
   · rfl
 
-/-- A node's residue factor under bindings, its labels in `U` read from `σ`. -/
+/-- The residue factor of a group of nodes under bindings, its labels in `U` read from `σ`. -/
 def leafS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (n : Node) (F : RFac) : Bool :=
-  (nlegs n).all (fun x => (texpr bs x).vars.all fun y => F.scope.contains y || U.contains y) &&
+    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (F : RFac) : Bool :=
+  g.all (fun n => (nlegs n).all fun x =>
+      (texpr bs x).vars.all fun y => F.scope.contains y || U.contains y) &&
     (assigns S.dim F.scope).all fun τ =>
-      F.at τ == tmN p w M (valQ S M P C (tval bs (pin U σ τ)) n)
+      F.at τ == (g.map fun n => tmN p w M (valQ S M P C (tval bs (pin U σ τ)) n)).foldr
+        (fun a b => a * b % p) 1
 
 /-- A constraint's residue factor, its labels in `U` read from `σ`. -/
 def leafQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (F : RFac) : Bool :=
@@ -747,10 +749,12 @@ def leafQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ
     (assigns D F.scope).all fun τ =>
       F.at τ == if q.1 ∣ q.2.eval (pin U σ τ) then 1 else 0
 
-/-- The residue factors of a state: its nodes, its constraints and its constant. -/
+/-- The residue factors of a state: its nodes in the groups `gss`, its constraints and its
+constant. -/
 def leavesOK (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (U : List ℕ) (σ : ℕ → ℕ) (st : SSt) (ln lq : List RFac) : Bool :=
-  ln.length == st.ns.length && (st.ns.zip ln).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2) &&
+    (U : List ℕ) (σ : ℕ → ℕ) (st : SSt) (gss : List (List Node)) (ln lq : List RFac) : Bool :=
+  st.ns.isPerm gss.flatten && ln.length == gss.length &&
+    (gss.zip ln).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2) &&
     lq.length == st.cs.length && (st.cs.zip lq).all (fun q => leafQ p S.dim U σ q.1 q.2)
 
 theorem pin_agree (U : List ℕ) (σ τ ρ : ℕ → ℕ) (F : RFac) (e : LX)
@@ -766,20 +770,32 @@ theorem pin_agree (U : List ℕ) (σ τ ρ : ℕ → ℕ) (F : RFac) (e : LX)
   · have : y ∈ F.scope := (he y hy).resolve_right hu
     simp [hu, hρ y this]
 
+theorem foldr_mod_cast (p : ℕ) (xs : List ℕ) :
+    ((xs.foldr (fun a b => a * b % p) 1 : ℕ) : ZMod p) = (xs.map (Nat.cast : ℕ → ZMod p)).prod := by
+  induction xs with
+  | nil => simp
+  | cons a xs ih =>
+    simp only [List.foldr_cons, List.map_cons, List.prod_cons]
+    rw [ZMod.natCast_mod, Nat.cast_mul, ih]
+
 theorem leafS_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
     (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
-    (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (n : Node) (F : RFac)
-    (h : leafS S M P C p w U σ bs n F = true) (τ : ℕ → ℕ)
+    (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (F : RFac)
+    (h : leafS S M P C p w U σ bs g F = true) (τ : ℕ → ℕ)
     (hτ : ∀ y ∈ F.scope, τ y < S.dim y) (hU : ∀ y ∈ U, τ y = σ y) :
-    tmv p w (valW S M P C (tval bs τ) n) = (F.at τ : ZMod p) := by
+    (g.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod = (F.at τ : ZMod p) := by
   simp only [leafS, Bool.and_eq_true, List.all_eq_true, beq_iff_eq] at h
   obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim F.scope τ hτ
-  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, h.2 ρ hρ, tmN_cast p w M hp hw hM0 hMb,
-    valQ_eq]
+  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, h.2 ρ hρ, foldr_mod_cast, List.map_map]
+  congr 1
+  apply List.map_congr_left
+  intro n hn
+  simp only [Function.comp_apply]
+  rw [tmN_cast p w M hp hw hM0 hMb, valQ_eq]
   congr 1
   apply valW_congr
   intro x hx
-  exact pin_agree U σ τ ρ F _ (h.1 x (by simpa [nlegs] using hx)) hρτ hU
+  exact pin_agree U σ τ ρ F _ (h.1 n hn x (by simpa [nlegs] using hx)) hρτ hU
 
 theorem leafQ_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (F : RFac)
     (h : leafQ p D U σ q F = true) (τ : ℕ → ℕ) (hτ : ∀ y ∈ F.scope, τ y < D y)
@@ -793,14 +809,15 @@ theorem leafQ_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) 
 theorem prod_leavesS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
     (p w : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64)
     (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) :
-    ∀ (ns : List Node) (ln : List RFac), ln.length = ns.length →
-      (ns.zip ln).all (fun q => leafS S M P C p w U σ bs q.1 q.2) = true →
+    ∀ (gss : List (List Node)) (ln : List RFac), ln.length = gss.length →
+      (gss.zip ln).all (fun q => leafS S M P C p w U σ bs q.1 q.2) = true →
       ∀ τ, (∀ F ∈ ln, ∀ y ∈ F.scope, τ y < S.dim y) → (∀ y ∈ U, τ y = σ y) →
-        (ns.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod = rprod p ln τ := by
-  intro ns
-  induction ns with
+        (gss.flatten.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod =
+          rprod p ln τ := by
+  intro gss
+  induction gss with
   | nil => intro ln hlen _ τ _ _; cases ln <;> simp_all [rprod]
-  | cons n ns ih =>
+  | cons g gss ih =>
     intro ln hlen hl τ hτ hU
     cases ln with
     | nil => simp at hlen
@@ -808,7 +825,8 @@ theorem prod_leavesS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ)
       simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hl
       have h1 := ih Fs (by simpa using hlen) hl.2 τ (fun F hF => hτ F (by simp [hF])) hU
       simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
-      rw [h1, leafS_val S M P C p w hp hw hM0 hMb U σ bs n F hl.1 τ (hτ F (by simp)) hU]
+      rw [List.flatten_cons, List.map_append, List.prod_append, h1,
+        leafS_val S M P C p w hp hw hM0 hMb U σ bs g F hl.1 τ (hτ F (by simp)) hU]
 
 theorem prod_leavesQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) :
     ∀ (cs : List (ℕ × LX)) (lq : List RFac), lq.length = cs.length →
@@ -834,8 +852,11 @@ def kleaf (p c : ℕ) : RFac := ⟨[], RT.leaf (c % p)⟩
 /-- The remaining sums of a state by a checked contraction of its residue factors. -/
 theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
     (p w : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64)
-    (U R : List ℕ) (σ : ℕ → ℕ) (st : SSt) (ln lq : List RFac)
-    (hl : leavesOK S M P C p w U σ st ln lq = true)
+    (U R : List ℕ) (σ : ℕ → ℕ) (st : SSt) (gss : List (List Node)) (ln lq : List RFac)
+    (hns : st.ns.isPerm gss.flatten = true) (hln : ln.length = gss.length)
+    (hl1 : (gss.zip ln).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2) = true)
+    (hlq : lq.length = st.cs.length)
+    (hl2 : (st.cs.zip lq).all (fun q => leafQ p S.dim U σ q.1 q.2) = true)
     (steps : List (ℕ × RFac)) (final : List RFac)
     (hperm : R.Perm (steps.map Prod.fst).reverse)
     (hchain : chainR p S.dim (ln ++ lq ++ [kleaf p st.c]) steps final = true)
@@ -843,8 +864,7 @@ theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     (hdis : U.all (fun x => !(steps.map Prod.fst).contains x) = true)
     (hσ : ∀ x ∈ U, σ x < S.dim x) :
     sumR S.dim R (sval S M P C p w st) σ = (rfold p final σ : ZMod p) := by
-  simp only [leavesOK, Bool.and_eq_true, beq_iff_eq] at hl
-  obtain ⟨⟨⟨hln, hl1⟩, hlq⟩, hl2⟩ := hl
+  rw [List.isPerm_iff] at hns
   rw [sumR_perm _ hperm, rfold_cast]
   simp only [List.all_eq_true, Bool.not_eq_true'] at hdis
   rw [← chainR_val p S.dim U steps _ final hchain hscope σ hσ]
@@ -862,12 +882,12 @@ theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     apply hτ y
     have := hdis y hy
     simpa using this
-  have e1 := prod_leavesS S M P C p w hp hw hM0 hMb U σ st.bs st.ns ln hln hl1 τ
+  have e1 := prod_leavesS S M P C p w hp hw hM0 hMb U σ st.bs gss ln hln hl1 τ
     (fun F hF => hrange F (by simp [hF])) hU
   have e2 := prod_leavesQ p S.dim U σ st.cs lq hlq hl2 τ
     (fun F hF => hrange F (by simp [hF])) hU
   unfold sval
-  rw [e1, e2]
+  rw [(hns.map _).prod_eq, e1, e2]
   simp only [rprod, List.map_append, List.prod_append, List.map_cons, List.map_nil,
     List.prod_cons, List.prod_nil, mul_one, kleaf, RFac.at, RT.get, ZMod.natCast_mod]
   ring

@@ -139,7 +139,7 @@ class Plan:
     frees: list[list[int]]
     steps: list[tuple[Any, ...]]
     leaves: list[Any]
-    nleaves: int
+    groups: list[list[int]]
     final: Any
     value: int
 
@@ -376,19 +376,23 @@ def _finish(
             out.append(entry(at))
         return out
 
-    leaves = []
+    by_scope: dict[frozenset[int], tuple[tuple[int, ...], list[int]]] = {}
     for i in st.ns:
-        legs = _legs(net, i)
-        es = [st.texpr(x) for x in legs]
+        sc = scope_of([st.texpr(x) for x in _legs(net, i)])
+        by_scope[frozenset([i])] = (sc, [i])
+    groups = [g for _, g in by_scope.values()]
+    leaves = []
+    for sc, g in by_scope.values():
 
-        def node_entry(at: Callable[[int], int], i: int = i, es: list[Ex] = es) -> int:
-            n = net.nodes[i]
-            vals = {x: ev(e, at) for x, e in zip(_legs(net, i), es, strict=True)}
-            return int(refuter.res(refuter.node(n, vals)))
+        def group_entry(at: Callable[[int], int], g: list[int] = g) -> int:
+            acc = 1
+            for i in reversed(g):
+                n = net.nodes[i]
+                vals = {x: ev(st.texpr(x), at) for x in _legs(net, i)}
+                acc = int(refuter.res(refuter.node(n, vals))) * acc % p
+            return acc
 
-        sc = scope_of(es)
-        leaves.append((sc, table(sc, node_entry)))
-    nleaves = len(leaves)
+        leaves.append((sc, table(sc, group_entry)))
     for nq, e in st.cs:
 
         def cons_entry(at: Callable[[int], int], nq: int = nq, e: Ex = e) -> int:
@@ -399,7 +403,7 @@ def _finish(
     leaves.append(((), [st.c % p]))
     plan = refuter.res_eliminate(leaves, free)
     value = refuter.res_final(plan[2], sigma)
-    return Plan(states, frees, steps, plan[0], nleaves, plan, value)
+    return Plan(states, frees, steps, plan[0], groups, plan, value)
 
 
 def sym_decls(
@@ -470,18 +474,42 @@ def sym_decls(
     xt = f"{tag}x"
     out += refuter.res_decls(xt, plan.final, dim)
     last = len(plan.steps)
-    nl = plan.nleaves
+    nl = len(plan.groups)
     names = [f"{xt}a{i}" for i in range(len(plan.final[0]))]
+    gss = (
+        "[" + ", ".join(ns_text(g) for g in plan.groups) + "]" if nl else "([] : List (List Node))"
+    )
     ln = "[" + ", ".join(names[:nl]) + "]" if nl else "([] : List RFac)"
     lq_names = names[nl:-1]
     lq = "[" + ", ".join(lq_names) + "]" if lq_names else "([] : List RFac)"
+    lemmas = []
+    st_last = f"{tag}s{last}"
+    for gi, g in enumerate(plan.groups):
+        out.append(
+            f"set_option maxHeartbeats 0 in\ntheorem {xt}L{gi} : leafS {shape} {M} Pt Ct {p} {w} "
+            f"{unbnd} σ0 {st_last}.bs {ns_text(g)} {names[gi]} = true := by decide +kernel"
+        )
+        lemmas.append(f"{xt}L{gi}")
+    for qi, (nq, e) in enumerate(plan.states[-1].cs):
+        out.append(
+            f"set_option maxHeartbeats 0 in\ntheorem {xt}Q{qi} : leafQ {p} {dim} {unbnd} σ0 "
+            f"({nq}, {text(e)}) {names[nl + qi]} = true := by decide +kernel"
+        )
+        lemmas.append(f"{xt}Q{qi}")
+    zs = (
+        "by simp only [List.zip_cons_cons, List.zip_nil_left, List.zip_nil_right, List.all_cons, "
+        "List.all_nil, Bool.and_true"
+    )
+    zs1 = zs + "".join(f", {x}" for x in lemmas[:nl]) + "]"
+    zs2 = zs + f", {st_last}" + "".join(f", {x}" for x in lemmas[nl:]) + "]"
     out.append(
         f"set_option maxHeartbeats 0 in\ntheorem {tag}fin "
         f"(hw1 : (({w} : ℕ) : ZMod {p}) ^ {M} = 1) :\n"
-        f"    sumR {dim} {tag}R{last} ({sv} {tag}s{last}) σ0 = "
+        f"    sumR {dim} {tag}R{last} ({sv} {st_last}) σ0 = "
         f"(rfold {p} FN{xt} σ0 : ZMod {p}) :=\n"
         f"  sym_final {shape} {M} Pt Ct {p} {w} (by norm_num) hw1 (by norm_num) (by norm_num) "
-        f"{unbnd} {tag}R{last} σ0 {tag}s{last} {ln} {lq} (by decide +kernel) ST{xt} FN{xt} "
+        f"{unbnd} {tag}R{last} σ0 {st_last} {gss} {ln} {lq} (by decide +kernel) "
+        f"(by decide +kernel) ({zs1}) (by decide +kernel) ({zs2}) ST{xt} FN{xt} "
         f"(by decide +kernel) CH{xt} (by decide +kernel) (by decide +kernel) {tag}hU"
     )
     links.append(f"({tag}fin hw1)")

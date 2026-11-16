@@ -255,10 +255,10 @@ def sqNW (E : Shape) (n : Node) : ℕ :=
 /-- A node's number of `(Q ph)⁻¹` factors. -/
 def qNW (E : Shape) (n : Node) : ℕ := if isBS n then 0 else qcW E n.kind
 
-/-- `M` is a multiple of the node's dimension; its phase vector is among the zero vectors
-`zs`, or `keys` lists its phase entries, or `ckeys` its coefficient entries. -/
-def nodeOKW (E : Shape) (M : ℕ) (keys ckeys : List (ℕ × ℕ)) (zs : List ℕ) (n : Node) : Bool :=
-  isBS n || (M % E.dimv n.dim == 0 && (!n.kind.phased || (n.kind.noZW && zs.contains n.ph) ||
+/-- `M` is a multiple of the node's dimension; its phase vector is among the vectors `fs`
+known at every index, or `keys` lists its phase entries, or `ckeys` its coefficient entries. -/
+def nodeOKW (E : Shape) (M : ℕ) (keys ckeys : List (ℕ × ℕ)) (fs : List ℕ) (n : Node) : Bool :=
+  isBS n || (M % E.dimv n.dim == 0 && (!n.kind.phased || (n.kind.noZW && fs.contains n.ph) ||
     (List.range (E.dimv n.dim)).all fun j =>
       if n.kind.noZW then keys.contains (n.ph, j) else ckeys.contains (n.ph, j)))
 
@@ -280,10 +280,10 @@ theorem CoefOK.get {E : Env} {M : ℕ} {xs : List ℂ} {C : ℕ → ℕ → Term
     · exact ih h.2.2 he
 
 theorem val_cycW (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
-    (C : ℕ → ℕ → Terms) (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (zs : List ℕ) (hM : 0 < M)
+    (C : ℕ → ℕ → Terms) (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (fs : List ℕ) (hM : 0 < M)
     (hph : PhOK E M gs P keys) (hco : CoefOK E M (gs.map ex) C Q ckeys)
-    (hz : ∀ i ∈ zs, ∀ k, E.phase i k = 0) (hzP : ∀ i ∈ zs, ∀ k, P i k = (0, []))
-    (σ : ℕ → ℕ) (n : Node) (hok : nodeOKW E.shape M keys ckeys zs n = true) :
+    (hf : ∀ i ∈ fs, ∀ k, ex (E.phase i k) = om M ^ (P i k).1 * mono (gs.map ex) (P i k).2)
+    (σ : ℕ → ℕ) (n : Node) (hok : nodeOKW E.shape M keys ckeys fs n = true) :
     val E σ n = (rt (E.dimv n.dim))⁻¹ ^ sqNW E.shape n * ((Q n.ph : ℂ)⁻¹) ^ qNW E.shape n *
       tv (om M) (gs.map ex) (valW E.shape M P C σ n) := by
   obtain ⟨kind, outs, ins, dim, ph⟩ := n
@@ -302,7 +302,7 @@ theorem val_cycW (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ ×
       simp [isBS, hb'.1, hb'.2]
     simp only [nodeOKW, hn, Bool.false_or, Bool.and_eq_true, beq_iff_eq, Env.shape] at hok
     obtain ⟨hmod, hkeys'⟩ := hok
-    have hkeys0 : kind.phased = true → (kind.noZW = true ∧ ph ∈ zs) ∨ ∀ j < E.dimv dim,
+    have hkeys0 : kind.phased = true → (kind.noZW = true ∧ ph ∈ fs) ∨ ∀ j < E.dimv dim,
         (if kind.noZW = true then keys.contains (ph, j) else ckeys.contains (ph, j)) = true := by
       intro hph'
       simp only [hph', Bool.not_true, Bool.false_or, Bool.or_eq_true, Bool.and_eq_true,
@@ -316,8 +316,7 @@ theorem val_cycW (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ ×
         ex (E.phase ph j) = om M ^ (P ph j).1 * mono (gs.map ex) (P ph j).2 := by
       intro hph' hk j hj
       rcases hkeys0 hph' with ⟨_, hzs⟩ | hall
-      · rw [hz ph hzs j, hzP ph hzs j, ex_zero]
-        simp [mono_nil]
+      · exact hf ph hzs j
       have := hall j hj
       rw [if_pos hk, List.contains_iff_mem] at this
       exact hph.get (e := (ph, j)) this
@@ -358,10 +357,10 @@ noncomputable def KW (E : Shape) (Q : ℕ → ℕ) (N : Net) : ℂ :=
   ((sqLW E Q N).map fun t => (rt t.1)⁻¹ ^ t.2.1 * ((t.2.2.1 : ℂ))⁻¹ ^ t.2.2.2).prod
 
 theorem prodVal_W (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
-    (C : ℕ → ℕ → Terms) (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (zs : List ℕ) (hM : 0 < M)
+    (C : ℕ → ℕ → Terms) (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (fs : List ℕ) (hM : 0 < M)
     (hph : PhOK E M gs P keys) (hco : CoefOK E M (gs.map ex) C Q ckeys)
-    (hz : ∀ i ∈ zs, ∀ k, E.phase i k = 0) (hzP : ∀ i ∈ zs, ∀ k, P i k = (0, []))
-    (ns : List Node) (hok : ns.all (nodeOKW E.shape M keys ckeys zs) = true) (σ : ℕ → ℕ) :
+    (hf : ∀ i ∈ fs, ∀ k, ex (E.phase i k) = om M ^ (P i k).1 * mono (gs.map ex) (P i k).2)
+    (ns : List Node) (hok : ns.all (nodeOKW E.shape M keys ckeys fs) = true) (σ : ℕ → ℕ) :
     prodVal E ns σ = (ns.map fun n => (rt (E.dimv n.dim))⁻¹ ^ sqNW E.shape n *
       ((Q n.ph : ℂ)⁻¹) ^ qNW E.shape n).prod * tv (om M) (gs.map ex) (prodW E.shape M P C ns σ) := by
   induction ns with
@@ -370,7 +369,7 @@ theorem prodVal_W (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ �
     simp only [List.all_cons, Bool.and_eq_true] at hok
     have := ih hok.2
     simp only [prodVal, List.map_cons, List.prod_cons, prodW, List.foldr_cons] at this ⊢
-    rw [tv_mul _ _ (ex_atoms_ne gs), val_cycW E M gs P C Q keys ckeys zs hM hph hco hz hzP σ n hok.1, this]
+    rw [tv_mul _ _ (ex_atoms_ne gs), val_cycW E M gs P C Q keys ckeys fs hM hph hco hf σ n hok.1, this]
     ring
 
 theorem sumOver_sumLT (M : ℕ) (xs : List ℂ) (D : ℕ → ℕ) (K : ℂ) (g : (ℕ → ℕ) → ℂ)
@@ -383,10 +382,10 @@ theorem sumOver_sumLT (M : ℕ) (xs : List ℂ) (D : ℕ → ℕ) (K : ℂ) (g :
 
 /-- A network's entry as `KW` times a formal sum. -/
 theorem eval_W (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
-    (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (zs : List ℕ) (N : Net) (σ : ℕ → ℕ) (hM : 0 < M)
-    (hok : N.nodes.all (nodeOKW E.shape M keys ckeys zs) = true) (hph : PhOK E M gs P keys)
-    (hco : CoefOK E M (gs.map ex) C Q ckeys) (hz : ∀ i ∈ zs, ∀ k, E.phase i k = 0)
-    (hzP : ∀ i ∈ zs, ∀ k, P i k = (0, [])) :
+    (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (fs : List ℕ) (N : Net) (σ : ℕ → ℕ) (hM : 0 < M)
+    (hok : N.nodes.all (nodeOKW E.shape M keys ckeys fs) = true) (hph : PhOK E M gs P keys)
+    (hco : CoefOK E M (gs.map ex) C Q ckeys)
+    (hf : ∀ i ∈ fs, ∀ k, ex (E.phase i k) = om M ^ (P i k).1 * mono (gs.map ex) (P i k).2) :
     eval E N σ = KW E.shape Q N *
       tv (om M) (gs.map ex) (sumLT E.shape.dim N.int (prodW E.shape M P C N.nodes) σ) := by
   unfold eval KW
@@ -394,7 +393,29 @@ theorem eval_W (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × L
       N.nodes.map fun n => (rt (E.dimv n.dim))⁻¹ ^ sqNW E.shape n *
         ((Q n.ph : ℂ)⁻¹) ^ qNW E.shape n := by simp [sqLW, Env.shape]
   rw [this, show E.shape.dim = labDim E from rfl]
-  exact sumOver_sumLT M _ _ _ _ _ (prodVal_W E M gs P C Q keys ckeys zs hM hph hco hz hzP N.nodes hok) _ _
+  exact sumOver_sumLT M _ _ _ _ _ (prodVal_W E M gs P C Q keys ckeys fs hM hph hco hf N.nodes hok) _ _
+
+/-- A phase `n / den` in turns as a power of `om M` when `M = den q`. -/
+theorem ex_tab (M den q : ℕ) (hM : 0 < M) (hq : M = den * q) (n : ℤ) (dr : ℝ)
+    (hdr : dr = den) : ex ((n : ℝ) / dr) = om M ^ ((n * q) % (M : ℤ)).toNat := by
+  have hd : (den : ℝ) ≠ 0 := by
+    rintro h
+    have : den = 0 := by exact_mod_cast h
+    subst this; simp at hq; omega
+  have hMr : (M : ℝ) = den * q := by exact_mod_cast hq
+  have hM0 : (M : ℤ) ≠ 0 := by exact_mod_cast hM.ne'
+  have hnn : 0 ≤ n * q % (M : ℤ) := Int.emod_nonneg _ hM0
+  have h2 : (n * q : ℤ) = M * (n * q / M) + n * q % M := by
+    exact (Int.mul_ediv_add_emod (n * q) M).symm
+  have h2r : (n : ℝ) * q = (M : ℝ) * ((n * q / M : ℤ) : ℝ) + ((n * q % M : ℤ) : ℝ) := by
+    exact_mod_cast h2
+  apply ex_of M ((n * q) % (M : ℤ)).toNat (n * q / M) hM
+  rw [show (((n * q % (M : ℤ)).toNat : ℕ) : ℝ) = ((n * q % (M : ℤ) : ℤ) : ℝ) by
+    rw [← Int.cast_natCast (R := ℝ), Int.toNat_of_nonneg hnn], hdr]
+  have hMne : (M : ℝ) ≠ 0 := by exact_mod_cast hM.ne'
+  field_simp
+  rw [hMr] at h2r ⊢
+  linear_combination (den : ℝ) * h2r
 
 /-! ## Residues -/
 
