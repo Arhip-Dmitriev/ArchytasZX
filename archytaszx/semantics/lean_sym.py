@@ -32,7 +32,7 @@ import functools
 import itertools
 import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from fractions import Fraction
 from typing import Any
 
@@ -1263,6 +1263,14 @@ def norm_hints(fl: Sequence[int], t: STm) -> list[tuple[int, list[tuple[int, int
     return hints
 
 
+def _mask(labels: Iterable[int]) -> int:
+    """The bit mask with bit ``l`` set for each label ``l`` (``maskOf``)."""
+    m = 0
+    for lab in labels:
+        m |= 1 << lab
+    return m
+
+
 def tr_hints(
     fl: Sequence[int],
     dt: Callable[[int], DMon],
@@ -2089,14 +2097,14 @@ class _SymExport:
         l0: str = "scal0",
         l1: str = "scal1",
     ) -> str:
-        """``equal_sym`` at the environment ``envt``, multiplicities ``ks``; ``equal_symG`` when
-        :meth:`check_decls` wrote ``chk`` node by node."""
+        """``equal_sym`` at the environment ``envt``, multiplicities ``ks``; ``equal_symS`` on the
+        parts of ``chk`` when :meth:`check_decls` wrote it node by node."""
         g = self.g_args.get(chk)
-        lemma = "equal_symG" if g else "equal_sym"
+        lemma = "equal_symS" if g else "equal_sym"
         return (
             f"{lemma} {envt} {self.rho} {self.hr} FL {self.call('flOK')} DT PT RL labs IX "
             f"{self.call('envD', ks)} {self.call('envP', ks)} rfl {n0} {n1} {a0} {a1} _ _ "
-            f"{self.call(l0)} {self.call(l1)} {g + ' ' if g else ''}{chk}"
+            f"{self.call(l0)} {self.call(l1)} {g or chk}"
         )
 
     def q_source(self, name: str) -> str:
@@ -3081,10 +3089,11 @@ class _SymExport:
             return whole
         out: list[str] = []
         texts_e: dict[str, str] = {}
+        nets_ok: dict[str, str] = {}
         for tag, (text, lnet) in own.items():
             st = steps[tag]
             nt = _paren(text)
-            nodes, internal, _bnd = self.net(lnet)
+            nodes, internal, bnd = self.net(lnet)
             hints = tr_hints(self.fl, self.dtf, self.ptf, labs, nodes, internal, st)
             table = "[" + ", ".join(str(h).replace(" ", "") for h in hints) + "]"
             out.append(
@@ -3133,26 +3142,53 @@ class _SymExport:
                 f"(exSums (labSums DT labs ({nt}.int.filter fun l => "
                 f"!(labelsOf {nt}.nodes).contains l)) {tag}E0)"
             )
-            texts_e[tag] = e_text
             out.append(
                 f"theorem {tag}R : trNetG {args} {nt} = some {e_text} :=\n"
                 f"  trNetG_of {args} {nt} {tag}D0 {tag}E0 rfl {tag}B0"
             )
+            used = {lab for n in nodes for lab in (*n[1], *n[2])}
+            free = [lab for lab in internal if lab not in used]
+            out.append(f"def {tag}ML : ℕ := {hex(_mask(used))}")
+            out.append(f"def {tag}X : List STm := exSums (labSums DT labs {free}) {tag}E0")
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}XE : {e_text} = {tag}X := by\n"
+                f"  rw [filter_free {nt}.int (labelsOf {nt}.nodes) {tag}ML (by decide +kernel)]\n"
+                "  decide +kernel"
+            )
+            texts_e[tag] = f"{tag}X"
+            if all(v == 0 for v in labs.values()) and 0 in self.ix:
+                out.append(f"def {tag}MK : ℕ := {hex(_mask((*bnd, *internal)))}")
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {name}c{tag} : netChkF FL DT PT RL "
+                    f"labs IX {tag}MK {nt} = true := by decide +kernel"
+                )
+                nets_ok[tag] = f"(netChkF_ok FL DT PT RL labs IX {tag}MK {nt} {name}c{tag})"
+            else:
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {name}c{tag} : netChk FL DT PT RL "
+                    f"labs IX {nt} = true := by decide +kernel"
+                )
+                nets_ok[tag] = f"{name}c{tag}"
         tb2 = tb if tb in own else ta
         e0, e1 = texts_e[ta], texts_e[tb2]
-        out.append(
-            "set_option maxHeartbeats 0 in\n"
-            + doc
-            + f"theorem {name} : ({a}.bnd.isPerm {b}.bnd && netChk FL DT PT RL labs IX {a} && "
-            f"netChk FL DT PT RL labs IX {b} && exConst {s0t} && exConst {s1t} && "
-            f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1} && "
-            f"(nfEx FL (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty)) = true := by "
-            "decide +kernel"
-        )
+        parts = [
+            ("p", f"{a}.bnd.isPerm {b}.bnd"),
+            ("k", f"(exConst {s0t} && exConst {s1t})"),
+            ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
+            ("z", f"(nfEx FL (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
+        ]
+        for k, (sfx, stmt) in enumerate(parts):
+            out.append(
+                "set_option maxHeartbeats 0 in\n"
+                + (doc if k == len(parts) - 1 else "")
+                + f"theorem {name}{sfx} : {stmt} = true := by decide +kernel"
+            )
         fl_ok = self.call("flOK")
         self.g_args[name] = (
             f"(nfH FL {ta}H) (nfH FL {tb2}H) (nfH_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
-            f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ {ta}R {tb2}R"
+            f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
+            f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
+            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {name}z"
         )
         return out
 

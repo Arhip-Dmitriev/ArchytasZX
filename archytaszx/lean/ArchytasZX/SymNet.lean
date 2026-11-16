@@ -637,6 +637,58 @@ theorem netChk_ok (E : Env) (ρ : Val) (fl : List ℕ) (hfl : FloorOK fl ρ) (dt
     · exact hE _ h
   · rw [hlab _ (hlegs _ (List.of_mem_zip hp).1).2, hz p hp]
 
+/-- The bit mask with bit `l` set for each label `l` of `ls`. -/
+def maskOf (ls : List ℕ) : ℕ := ls.foldr (fun l m => m ||| 2 ^ l) 0
+
+theorem testBit_maskOf : ∀ (ls : List ℕ) (l : ℕ), (maskOf ls).testBit l = ls.contains l
+  | [], l => by simp [maskOf]
+  | a :: ls, l => by
+    show (maskOf ls ||| 2 ^ a).testBit l = _
+    rw [Nat.testBit_or, testBit_maskOf ls l, Nat.testBit_two_pow, List.contains_cons]
+    by_cases h : a = l
+    · subst h; simp
+    · simp [h, Ne.symm h]
+
+theorem filter_free (int ls : List ℕ) (m : ℕ) (h : maskOf ls = m) :
+    int.filter (fun l => !ls.contains l) = int.filter fun l => !m.testBit l := by
+  subst h; simp only [testBit_maskOf]
+
+theorem lookup_getD_zero : ∀ (labs : List (ℕ × ℕ)), (∀ p ∈ labs, p.2 = 0) →
+    ∀ l, (labs.lookup l).getD 0 = 0
+  | [], _, _ => rfl
+  | (a, b) :: t, h, l => by
+    have hb : b = 0 := h (a, b) List.mem_cons_self
+    have ht := lookup_getD_zero t (fun p hp => h p (List.mem_cons_of_mem _ hp)) l
+    unfold List.lookup
+    split <;> simp_all
+
+/-- `netChk` for label tables of dimension index `0` throughout, the network's labels read from
+the bit mask `mk`. -/
+def netChkF (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (IX : List ℕ) (mk : ℕ) (N : Net) : Bool :=
+  (labs.all fun p => p.2 == 0) && IX.contains 0 && maskOf (N.bnd ++ N.int) == mk &&
+  N.nodes.all fun n => nodeChk fl dt pt rl n && IX.contains n.dim &&
+    (!bsKind n.kind || IX.contains n.ph) &&
+    ((n.outs ++ n.ins).all fun l => decide (l < OFF) && mk.testBit l) &&
+    ((n.outs ++ n.ins).zip (legDMs dt n)).all fun p => dt 0 == p.2
+
+theorem netChkF_ok (fl : List ℕ) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (IX : List ℕ) (mk : ℕ) (N : Net)
+    (h : netChkF fl dt pt rl labs IX mk N = true) : netChk fl dt pt rl labs IX N = true := by
+  simp only [netChkF, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, List.all_eq_true,
+    decide_eq_true_eq, List.contains_iff_mem] at h
+  obtain ⟨⟨⟨hl, h0⟩, hm⟩, hn⟩ := h
+  have hlk := lookup_getD_zero labs hl
+  subst hm
+  simp only [netChk, labDM, hlk, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq,
+    Bool.or_eq_true, List.contains_iff_mem, beq_iff_eq]
+  refine ⟨fun n hn' => ?_, fun _ _ => h0⟩
+  obtain ⟨⟨⟨⟨hc, hd⟩, hb⟩, hlegs⟩, hz⟩ := hn n hn'
+  refine ⟨⟨⟨⟨hc, hd⟩, hb⟩, fun l hl => ⟨⟨(hlegs l hl).1, ?_⟩, h0⟩⟩, hz⟩
+  have := (hlegs l hl).2
+  rw [testBit_maskOf, List.contains_iff_mem, List.mem_append] at this
+  simpa using this
+
 /-- The internal labels `n` reads first, after the labels `pre`. -/
 def firstAt (int pre : List ℕ) (n : Node) : List ℕ :=
   int.filter fun l => (n.outs ++ n.ins).contains l && !pre.contains l

@@ -170,6 +170,26 @@ theorem equal_symG (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Flo
     ← hs1] at hz
   linear_combination hz
 
+/-- `equal_symG` with the check's parts as separate hypotheses. -/
+theorem equal_symS (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
+    (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ))
+    (IX : List ℕ) (hE : ∀ i ∈ IX, E.dimv i = (dt i).den ρ.dv)
+    (hP : ∀ ph j, ex (E.phase ph j) = phF ρ (pt ph) j * rV ρ (rl ph) j)
+    (hL : E.labs = labs) (N0 N1 : Net) (S0 S1 : List STm) (s0 s1 : ℂ)
+    (hs0 : s0 = exDen ρ (fun _ => 0) S0) (hs1 : s1 = exDen ρ (fun _ => 0) S1)
+    (nf0 nf1 : ℕ → List STm → List STm) (hnf0 : ∀ i e ν, exDen ρ ν (nf0 i e) = exDen ρ ν e)
+    (hnf1 : ∀ i e ν, exDen ρ ν (nf1 i e) = exDen ρ ν e) (e0 e1 : List STm)
+    (h0 : trNetG nf0 dt pt rl labs N0 = some e0) (h1 : trNetG nf1 dt pt rl labs N1 = some e1)
+    (hp : N0.bnd.isPerm N1.bnd = true) (hc0 : netChk fl dt pt rl labs IX N0 = true)
+    (hc1 : netChk fl dt pt rl labs IX N1 = true) (hk : (exConst S0 && exConst S1) = true)
+    (hm : (exMulOK S0 e0 && exMulOK (exNeg S1) e1) = true)
+    (hz : (nfEx fl (exMul S0 e0 ++ exMul (exNeg S1) e1)).isEmpty = true) :
+    Equal E s0 N0 s1 N1 := by
+  refine equal_symG E ρ hρ fl hfl dt pt rl labs IX hE hP hL N0 N1 S0 S1 s0 s1 hs0 hs1 nf0 nf1
+    hnf0 hnf1 e0 e1 h0 h1 ?_
+  simp only [Bool.and_eq_true] at hk hm ⊢
+  exact ⟨⟨⟨⟨⟨hp, hc0⟩, hc1⟩, hk.1⟩, hk.2⟩, hm, hz⟩
+
 /-! ## Blocks through `trNodesG` -/
 
 /-- One node's step of `trNodesG` on the tail's expression `b`. -/
