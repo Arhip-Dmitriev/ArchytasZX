@@ -560,12 +560,29 @@ def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
     return cast(sp.Expr, sp.expand(sp.Add(*terms)))
 
 
+def _plain_monomial(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is a rational number, a symbol, an integer power of a symbol, or a
+    product of these."""
+    return all(
+        f.is_Rational or f.is_Symbol or (f.is_Pow and f.base.is_Symbol and f.exp.is_Integer)
+        for f in sp.Mul.make_args(expr)
+    )
+
+
+def _ratio(a: sp.Expr, m: sp.Expr) -> sp.Expr:
+    """``sp.cancel(a / m)``; for two :func:`_plain_monomial` arguments the quotient as sympy
+    builds it."""
+    if _plain_monomial(a) and _plain_monomial(m):
+        return cast(sp.Expr, a / m)
+    return cast(sp.Expr, sp.cancel(a / m))
+
+
 def _reduce_symbolic_mod(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
     """``expr`` with each term ``q * modulus`` (``q`` a rational number) moved to
     ``(q mod 1) * modulus``."""
     out: list[sp.Expr] = []
     for term in sp.Add.make_args(expr):
-        ratio = sp.cancel(term / modulus)
+        ratio = _ratio(term, modulus)
         if ratio.is_Rational and not ratio.is_Integer:
             term = sp.expand((ratio - sp.floor(ratio)) * modulus)
         out.append(cast(sp.Expr, term))
@@ -686,6 +703,10 @@ def _substitute_terms(terms: _Terms, var: sp.Symbol, value: _Terms) -> _Terms:
     return out
 
 
+_SYMBOLIC_DELTAS: dict[tuple[sp.Expr, sp.Expr], sp.Expr | None] = {}
+"""Results of :meth:`ModDelta.eval` at a symbolic modulus, keyed by its arguments."""
+
+
 class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
     """``[j == 0 mod m]`` for an integer-valued ``j`` and a positive integer modulus ``m``."""
 
@@ -695,7 +716,22 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
 
     @classmethod
     def eval(cls, j: sp.Expr, m: sp.Expr) -> sp.Expr | None:
-        """The value when decidable, else ``j`` moved to its canonical residue."""
+        """The value when decidable, else ``j`` moved to its canonical residue; at a symbolic
+        ``m`` memoised in :data:`_SYMBOLIC_DELTAS`."""
+        if m.is_Integer:
+            return cls._eval(j, m)
+        key = (j, m)
+        if key in _SYMBOLIC_DELTAS:
+            return _SYMBOLIC_DELTAS[key]
+        out = cls._eval(j, m)
+        if len(_SYMBOLIC_DELTAS) >= _MEMO_CAP:
+            _SYMBOLIC_DELTAS.clear()
+        _SYMBOLIC_DELTAS[key] = out
+        return out
+
+    @classmethod
+    def _eval(cls, j: sp.Expr, m: sp.Expr) -> sp.Expr | None:
+        """:meth:`eval` without the memo."""
         if m.is_Integer and m != 1 and j.free_symbols:
             terms = _integer_terms(j)
             if terms is not None:
@@ -706,12 +742,12 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
             return sp.Integer(1)
         if m.is_Integer and j.is_Integer:
             return sp.Integer(1 if int(j) % int(m) == 0 else 0)
-        if not m.is_Integer and sp.cancel(j / m).is_integer is True:
+        if not m.is_Integer and _ratio(j, m).is_integer is True:
             return sp.Integer(1)
         if not m.is_Integer and _off_factor(j, m):
             return sp.Integer(0)
         if not m.is_Integer and j.is_Add:
-            kept = [t for t in j.args if sp.cancel(t / m).is_integer is not True]
+            kept = [t for t in j.args if _ratio(t, m).is_integer is not True]
             if len(kept) < len(j.args):
                 return cast(sp.Expr, cls(sp.Add(*kept), m))
         if isinstance(m, ModGcd) and m.args[0].is_Integer:

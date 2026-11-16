@@ -241,3 +241,26 @@ def test_poly_coeffs_is_poly_coeffs_without_the_dense_form() -> None:
         ]
     many = [sp.Symbol(f"_i{k}", integer=True) for k in range(1100)]
     assert poly_coeffs(sp.Add(*many) / d + 7, tuple(many)) == [1 / d] * 1100 + [7]
+
+
+def test_monomial_ratio_is_the_cancelled_quotient() -> None:
+    """_ratio of two plain monomials is sp.cancel of their quotient (qudit_toric_family
+    symbolic-d deltas); a symbolic ModDelta built twice gives the same object."""
+    from archytaszx.algebra.scalar import ModDelta, _ratio
+
+    d, e = sp.symbols("d e", positive=True, integer=True)
+    i, k = sp.symbols("_i0 _k1", integer=True, nonnegative=True)
+    rng = random.Random(2)
+
+    def mono() -> sp.Expr:
+        m = sp.Rational(rng.randint(-12, 12) or 1, rng.randint(1, 6))
+        for s in (d, e, i, k):
+            if rng.random() < 0.5:
+                m *= s ** rng.randint(1, 3)
+        return m
+
+    for _ in range(500):
+        a, m = mono(), mono()
+        assert _ratio(a, m) == sp.cancel(a / m)
+    assert _ratio(i + d, d) == sp.cancel((i + d) / d)
+    assert ModDelta(i + d * k, d**2) is ModDelta(i + d * k, d**2)
