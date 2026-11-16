@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import fcntl
 import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -228,3 +230,53 @@ def test_profiler_stderr_and_bad_bytes_stay_out_of_messages(
     assert out["decl_ms"] == [
         {"kind": "theorem", "name": "t", "ms": 2.0, "by": {"elaboration": 2.0}}
     ]
+
+
+def test_budget_kill_records_the_tree_peak_and_cpu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A budget-killed check reports the Lean tree peak RssAnon (at least the budget) and its CPU
+    seconds read from /proc; lake rusage never sees the killed child."""
+    monkeypatch.setattr(lean, "SLOT_DIR", tmp_path)
+    monkeypatch.setattr(lean, "cgroups", lambda: False)
+    monkeypatch.setattr(lean, "LEAN_DIR", tmp_path)
+    monkeypatch.setattr(lean, "lake", lambda: _fake_lake(tmp_path, 300, 1.5))
+    monkeypatch.setenv("BENCH_LEAN_SLOTS", "1")
+    monkeypatch.setenv("BENCH_LEAN_BUDGET_MB", "120")
+    src = tmp_path / "t.lean"
+    src.write_text("theorem t : True := trivial\n")
+    out = lean.check(src, timeout=60)
+    assert out["lean_status"] == "oom" and out["lean_kill"] == "budget"
+    assert out["lean_peak_anon_mb"] >= 120
+    assert out["lean_cpu_tree"] > 0
+    assert out["lean_cpu"] == max(out["lean_cpu_rusage"], out["lean_cpu_tree"])
+
+
+BURN = """
+import subprocess, sys
+child = (
+    "import time\\nb = b'\\\\x01' * (64 << 20)\\nt = time.process_time()\\n"
+    "while time.process_time() - t < 0.3: pass\\ntime.sleep(30)\\n"
+)
+subprocess.Popen([sys.executable, "-c", child]).wait()
+"""
+
+
+def test_watch_sums_the_tree(tmp_path: Path) -> None:
+    """watch records the RssAnon and CPU seconds of a process and its child."""
+    proc = subprocess.Popen([sys.executable, "-c", BURN], start_new_session=True)
+    try:
+        done = threading.Event()
+        stats: dict[str, float] = {}
+        over = lean.watch(proc.pid, 10_000, done, lambda: None, stats)
+        deadline = time.monotonic() + 20
+        while stats.get("cpu_tree", 0.0) < 0.3 and time.monotonic() < deadline:
+            time.sleep(0.1)
+        done.set()
+        anon, cpu = lean.tree_usage(proc.pid)
+        assert not over.is_set()
+        assert anon >= 64 and cpu >= 0.3
+        assert stats["peak_anon_mb"] >= 64 and stats["cpu_tree"] >= 0.3
+    finally:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait(10)

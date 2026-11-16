@@ -195,9 +195,20 @@ def _children(pid: int) -> list[int]:
     return out
 
 
-def tree_anon_mb(pid: int) -> float:
-    """RssAnon in MiB summed over ``pid`` and its descendants."""
-    total, stack, seen = 0, [pid], set()
+def _cpu_ticks(pid: int) -> int:
+    """utime + stime + cutime + cstime of ``pid`` in clock ticks (/proc/PID/stat), 0 when gone."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as fh:
+            fields = fh.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return 0
+    return sum(int(f) for f in fields[11:15])
+
+
+def tree_usage(pid: int) -> tuple[float, float]:
+    """(RssAnon in MiB, CPU seconds with reaped children) summed over ``pid`` and its
+    descendants."""
+    anon, ticks, stack, seen = 0, 0, [pid], set()
     while stack:
         p = stack.pop()
         if p in seen:
@@ -205,24 +216,41 @@ def tree_anon_mb(pid: int) -> float:
         seen.add(p)
         try:
             with open(f"/proc/{p}/status", encoding="ascii", errors="replace") as fh:
-                total += next((int(ln.split()[1]) for ln in fh if ln.startswith("RssAnon:")), 0)
+                anon += next((int(ln.split()[1]) for ln in fh if ln.startswith("RssAnon:")), 0)
         except OSError:
             continue
+        ticks += _cpu_ticks(p)
         stack.extend(_children(p))
-    return total / 1024
+    return anon / 1024, ticks / os.sysconf("SC_CLK_TCK")
+
+
+def tree_anon_mb(pid: int) -> float:
+    """RssAnon in MiB summed over ``pid`` and its descendants."""
+    return tree_usage(pid)[0]
 
 
 def watch(
-    pid: int, limit_mb: float, done: threading.Event, kill: Callable[[], None]
+    pid: int,
+    limit_mb: float,
+    done: threading.Event,
+    kill: Callable[[], None],
+    stats: dict[str, float] | None = None,
 ) -> threading.Event:
-    """A daemon thread that calls ``kill`` once :func:`tree_anon_mb` of ``pid`` passes
-    ``limit_mb``, polled every WATCH_SECONDS until ``done``; the returned event is set on
-    that kill."""
+    """A daemon thread that calls ``kill`` once the tree RssAnon of ``pid`` passes ``limit_mb``,
+    polled every WATCH_SECONDS until ``done``; the returned event is set on that kill.
+    ``stats`` gets ``peak_anon_mb`` and ``cpu_tree``, the largest tree RssAnon and tree CPU
+    seconds seen over the polls."""
     over = threading.Event()
+    seen = stats if stats is not None else {}
+    seen.setdefault("peak_anon_mb", 0.0)
+    seen.setdefault("cpu_tree", 0.0)
 
     def loop() -> None:
         while not done.wait(WATCH_SECONDS):
-            if tree_anon_mb(pid) > limit_mb:
+            anon, cpu = tree_usage(pid)
+            seen["peak_anon_mb"] = max(seen["peak_anon_mb"], anon)
+            seen["cpu_tree"] = max(seen["cpu_tree"], cpu)
+            if anon > limit_mb:
                 over.set()
                 kill()
                 return
@@ -469,7 +497,8 @@ def check(
             killed.set()
             killpg()
 
-        over = watch(pgid, budget, done, killpg)
+        stats: dict[str, float] = {}
+        over = watch(pgid, budget, done, killpg, stats)
         timer = threading.Timer(timeout, kill) if timeout else None
         if timer is not None:
             timer.start()
@@ -487,10 +516,14 @@ def check(
             _ACTIVE.discard(proc.pid)
         slot.close()
     code = os.waitstatus_to_exitcode(status)
+    rusage_cpu = usage.ru_utime + usage.ru_stime
     out |= {
-        "lean_cpu": usage.ru_utime + usage.ru_stime,
+        "lean_cpu": max(rusage_cpu, stats.get("cpu_tree", 0.0)),
+        "lean_cpu_rusage": rusage_cpu,
+        "lean_cpu_tree": round(stats.get("cpu_tree", 0.0), 2),
         "lean_wall": wall,
         "lean_peak_mb": round(usage.ru_maxrss / 1024, 1),
+        "lean_peak_anon_mb": round(stats.get("peak_anon_mb", 0.0), 1),
         "decl_ms": declaration_times(messages),
     }
     if over.is_set():
