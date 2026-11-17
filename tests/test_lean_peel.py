@@ -21,7 +21,8 @@ read through the slot data of both sides' box groups (79.16f); the engine's inst
 in the key order of ``LinkedSplice.lean`` (``flatAt``), peels and slides read at those flat
 positions, a peel whose copy slots moved refused here and in Lean (79.16h, 79.16i); peels of the
 open grids, the chain end on the boundary held in the box of the identity the peel puts behind
-it, at the engine's flat positions, checked in Lean (79.16l)."""
+it, at the engine's flat positions, checked in Lean, and peels of the reversed row chain
+(the first copy peeled) through ``evalL_peel_first`` (79.16l)."""
 
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ from archytaszx.semantics.decide import decide_equal
 from archytaszx.semantics.induction import rename_multiplicity
 from archytaszx.semantics.lean_net import check, lean_project
 from archytaszx.semantics.prove import InductionSide, _with_scalar_index
-from tests.test_nested_chain import _grid_pair, _open_grid
+from tests.test_nested_chain import GRID, _grid_pair, _open_grid
 
 
 def _peels(t: kernel.Theorem, seen: set[int] | None = None) -> Iterator[kernel.Theorem]:
@@ -345,9 +346,13 @@ def test_the_flat_positions_are_the_engine_boundary_order() -> None:
         assert _engine_flat(d, ["n", "m"], values) == _model_flat(d, values), groups
 
 
-def _open_peel(head: bool, tail: bool) -> tuple[Diagram, Diagram]:
-    """An open grid at ``s + 1`` rows and its peel of the row box."""
-    d = rename_multiplicity(parse_dsl(_open_grid(head, tail)), "n", Mult("s") + 1)
+def _open_peel(head: bool, tail: bool, reverse: bool = False) -> tuple[Diagram, Diagram]:
+    """An open grid (with ``reverse`` its row chain reversed, with neither end open the closed
+    grid) at ``s + 1`` rows and its peel of the row box."""
+    text = _open_grid(head, tail) if head or tail else GRID
+    if reverse:
+        text = text.replace("chain R: v.out2 -> hv.in0", "chain R: hv.in0 -> v.out2")
+    d = rename_multiplicity(parse_dsl(text), "n", Mult("s") + 1)
     row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
     return d, bangbox.peel_one(d, row.id).diagram
 
@@ -356,12 +361,15 @@ OPEN = [(True, False), (False, True), (True, True)]
 """The open grids: top, bottom or both vertical legs on the boundary."""
 
 
+@pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize(("head", "tail"), OPEN)
-def test_open_grid_flat_positions_are_the_engine_boundary_order(head: bool, tail: bool) -> None:
-    before, after = _open_peel(head, tail)
+def test_open_grid_flat_positions_are_the_engine_boundary_order(
+    head: bool, tail: bool, reverse: bool
+) -> None:
+    before, after = _open_peel(head, tail, reverse)
 
     def held(tables: lean_linked._Tables) -> Mapping[lean_linked.Port, lean_linked.LBox]:
-        pe = lean_linked.peel_ends(before, after, tables)
+        pe = lean_linked.peel_ends(before, after, tables, reverse)
         assert pe is not None and pe.held
         return pe.held
 
@@ -379,6 +387,32 @@ def test_a_peel_of_an_open_grid_exports_through_boxed_ghosts(head: bool, tail: b
     assert source is not None and "evalL_peel_flat ok flat" in source
     assert "evalG_ghostAt okb1" in source
     assert lean_linked.export_peel(after, before) is None
+
+
+@pytest.mark.parametrize(("head", "tail"), [(False, False), *OPEN])
+def test_a_peel_of_a_reversed_chain_exports_through_evalL_peel_first(
+    head: bool, tail: bool
+) -> None:
+    before, after = _open_peel(head, tail, True)
+    source = lean_linked.export_peel(before, after)
+    assert source is not None and "evalL_peel_first rb rb' rk rk' ok flat hcp" in source
+    assert "theorem flat : PeelFirst Lb Lk" in source
+    assert lean_linked.export_peel(after, before) is None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_a_reversed_chain_peel_and_refuses_a_wrong_copy_count(tmp_path: object) -> None:
+    source = lean_linked.export_peel(*_open_peel(False, False, True))
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/rev.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    bad = source.replace("+ 1 →", "+ 2 →")
+    assert bad != source
+    ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
 
 
 @pytest.mark.skipif(

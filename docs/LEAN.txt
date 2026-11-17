@@ -414,12 +414,20 @@ such an identity: the link ends carry x's node chain as copy index, the ghost ha
 (gch), and pinsG bounds each ghost's slot digit t below its dimension for t over its leg chain's
 copy indices; tests/test_lean_peel.py compares these flat positions with the engine's
 instantiated boundary, where the identities the instantiation adds take the slot and copy index
-of the leg they meet. Both write the box groups G (before) and G' (after). A peel, namespace <N>.P<i>: PeelFlat (checked by decide +kernel) maps each slot digit of
-Lb to its own or, at the box's last copy, its copy's in Lk, one to one and onto, and keeps the
-order of their keys slot pair by slot pair (agree, copyVs, copyCopy on the anchors);
-evalL_peel_flat (evalL_peel, then evalL_congr: the digit sum reads only its boundary legs'
-copies) proves Lk and Lb read at their flat positions equal, and P<i>.main is that between the
-two chains. A slide, namespace <N>.S<i>, writes C, the diagram both identity forms drop to
+of the leg they meet. Both write the box groups G (before) and G' (after). A peel, namespace
+<N>.P<i>: PeelFlat (checked by decide +kernel) maps each slot digit of Lb to its own or, at the
+box's last copy, its copy's in Lk, one to one and onto, and keeps the order of their keys slot
+pair by slot pair (agree, copyVs, copyCopy on the anchors); evalL_peel_flat (evalL_peel, then
+evalL_congr: the digit sum reads only its boundary legs' copies) proves Lk and Lb read at their
+flat positions equal, and P<i>.main is that between the two chains. A chain box whose chain runs
+the other way (chain R: hv.in0 -> v.out2) is peeled at its first copy: the export writes Lbr and
+Lkr, Lb and Lk with the box's links flipped (flipLinks: l1 and l2, e1 and e2 swapped), RevOK
+both ways for each side (LinkedPeel.lean; evalL_rev, through evalL_relabelφ: copy t of the box
+read at revT t, its first coordinate counted from the far end), PeelOK Lbr Lkr, and PeelFirst
+(LinkedSplice.lean: PeelFlat with the copy before the box's copies, copyVs0, the kept copies one
+lower, decT, and slots of one first anchor all on the box or all off it); evalL_peel_first
+composes evalL_rev, evalL_peel and evalL_rev, and PeelFirst.fpos_psi gives the flat positions
+through psi0. A slide, namespace <N>.S<i>, writes C, the diagram both identity forms drop to
 (chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G, and S<i>.main is
 evalG_flatAt: the two digit sums read at the flat positions of their slot data agree.
 

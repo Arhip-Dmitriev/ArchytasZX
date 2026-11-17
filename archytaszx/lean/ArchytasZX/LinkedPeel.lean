@@ -14,6 +14,10 @@ copy as the nodes `cp x` (`PeelOK`), `L'` is `L` with `B`'s last-copy digits rea
 The box's links end in the copy: its last template copy's `l1` meets the copy's `l2`, the copy's
 `l1` meets the old end `e1` by a wire; the links of boxes inside it hold once on the template and
 once on the copy.
+
+`evalL_rev`: for `L'` the diagram `L` with the links of the outermost box `bid` flipped
+(`RevOK`, both ways), `L'` is `L` with the box's copy `t` read at `revT t`, the first coordinate
+counted from the far end.
 -/
 
 namespace ArchytasZX
@@ -889,6 +893,399 @@ theorem evalL_peel (h : PeelOK L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) 
       exact cons_mem_cidx ks mb _ _ u (by omega) (by rw [h.lc'] at hu; exact hu)
 
 end peel
+
+/-! ## Reversing the copies of an outermost chain box -/
+
+/-- `t` with its first coordinate counted from the far end of `k` copies. -/
+def revT (k : ℕ) : List ℕ → List ℕ
+  | [] => []
+  | j :: u => (k - 1 - j) :: u
+
+theorem revT_mem (ks : ℕ → ℕ) (m : ℕ) (r t : List ℕ) (ht : t ∈ cidx ks (m :: r)) :
+    revT (ks m) t ∈ cidx ks (m :: r) := by
+  obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks m r t).1 ht
+  exact cons_mem_cidx ks m _ r u (by omega) hu
+
+theorem revT_revT (ks : ℕ → ℕ) (m : ℕ) (r t : List ℕ) (ht : t ∈ cidx ks (m :: r)) :
+    revT (ks m) (revT (ks m) t) = t := by
+  obtain ⟨j, u, rfl, hj, -⟩ := (mem_cidx_cons ks m r t).1 ht
+  simp only [revT, List.cons.injEq, and_true]
+  omega
+
+theorem cidx_revT_perm (ks : ℕ → ℕ) (m : ℕ) (r : List ℕ) :
+    ((cidx ks (m :: r)).map (revT (ks m))).Perm (cidx ks (m :: r)) := by
+  refine (List.perm_ext_iff_of_nodup ((cidx_nodup ks _).map_on fun a ha b hb e => ?_)
+    (cidx_nodup ks _)).2 fun t => ?_
+  · rw [← revT_revT ks m r a ha, e, revT_revT ks m r b hb]
+  · constructor
+    · intro h
+      obtain ⟨s, hs, rfl⟩ := List.mem_map.1 h
+      exact revT_mem ks m r s hs
+    · intro h
+      exact List.mem_map.2 ⟨revT (ks m) t, revT_mem ks m r t h, revT_revT ks m r t h⟩
+
+/-- A link with its two ports and its two ends swapped. -/
+def flipL (l : DLink) : DLink := ⟨l.box, l.l2, l.l1, l.e2, l.e1⟩
+
+/-- The links with those of the box `bid` flipped. -/
+def flipLinks (bid : ℕ) (ls : List DLink) : List DLink :=
+  ls.map fun l => if l.box = bid then flipL l else l
+
+/-- A leg on `B` at copy `t` of the outermost box of `k` copies reads copy `revT k t`. -/
+def revφ (B : List ℕ) (k : ℕ) (p : Port) (t : List ℕ) : Dig :=
+  if p.node ∈ B then (p, revT k t) else (p, t)
+
+theorem revφ_fst (B : List ℕ) (k : ℕ) (p : Port) (t : List ℕ) : (revφ B k p t).1 = p := by
+  unfold revφ; split <;> rfl
+
+/-- The links between two copies of each nested box in `B` are kept by `revφ`: the pairs of a
+link at coordinate `d + 1` are those at coordinate `d` with a first coordinate put before. -/
+theorem mem_lp_cons (ks : ℕ → ℕ) (d k m : ℕ) (r : List ℕ) (l : DLink) (x : Dig × Dig) :
+    x ∈ lp ks (d + 1) k (m :: r) l ↔ ∃ j < ks m, ∃ y ∈ lp ks d k r l, x = consS j y := by
+  rw [mem_lp]
+  simp only [List.eraseIdx_cons_succ, mem_cidx_cons, List.getD_cons_succ, List.set_cons_succ]
+  constructor
+  · rintro (⟨_, ⟨j, u, rfl, hj, hu⟩, h1, rfl⟩ | ⟨_, ⟨j, u, rfl, hj, hu⟩, h1, rfl⟩ |
+      ⟨_, ⟨j, u, rfl, hj, hu⟩, h1, rfl⟩ | ⟨h1, _, ⟨j, u, rfl, hj, hu⟩, rfl⟩)
+    · exact ⟨j, hj, _, (mem_lp ks d k r l _).2 (Or.inl ⟨u, hu, h1, rfl⟩), rfl⟩
+    · exact ⟨j, hj, _, (mem_lp ks d k r l _).2 (Or.inr (Or.inl ⟨u, hu, h1, rfl⟩)), rfl⟩
+    · exact ⟨j, hj, _, (mem_lp ks d k r l _).2 (Or.inr (Or.inr (Or.inl ⟨u, hu, h1, rfl⟩))), rfl⟩
+    · exact ⟨j, hj, _, (mem_lp ks d k r l _).2 (Or.inr (Or.inr (Or.inr ⟨h1, u, hu, rfl⟩))), rfl⟩
+  · rintro ⟨j, hj, y, hy, rfl⟩
+    rcases (mem_lp ks d k r l y).1 hy with ⟨u, hu, h1, rfl⟩ | ⟨u, hu, h1, rfl⟩ |
+      ⟨u, hu, h1, rfl⟩ | ⟨h1, u, hu, rfl⟩
+    · exact Or.inl ⟨_, ⟨j, u, rfl, hj, hu⟩, h1, rfl⟩
+    · exact Or.inr (Or.inl ⟨_, ⟨j, u, rfl, hj, hu⟩, h1, rfl⟩)
+    · exact Or.inr (Or.inr (Or.inl ⟨_, ⟨j, u, rfl, hj, hu⟩, h1, rfl⟩))
+    · exact Or.inr (Or.inr (Or.inr ⟨h1, _, ⟨j, u, rfl, hj, hu⟩, rfl⟩))
+
+/-- `L'` is `L` with the links of the outermost node box `bid` (multiplicity index `mb`, nodes
+`B`) flipped. -/
+structure RevOK (L L' : LDiagram) (bid mb : ℕ) (B : List ℕ) : Prop where
+  ports : ∀ y ∈ L.base.boxes, y.ports = []
+  wch : ∀ w ∈ L.base.wires, L.base.nodeChain w.1.node = L.base.nodeChain w.2.node
+  cph : L.cph = []
+  cph' : L'.cph = []
+  base : L'.base = L.base
+  links : L'.links = flipLinks bid L.links
+  ids : (L.base.nodes.map (·.id)).Nodup
+  legs : L.base.legs.Nodup
+  bnd : L.base.bnd.Nodup
+  bl : ∀ p ∈ L.base.bnd, p ∈ L.base.legs
+  chB : ∀ n ∈ L.base.nodes, n.id ∈ B → (L.base.nodeChain n.id).head? = some mb
+  wires : ∀ w ∈ L.base.wires, w.1 ∈ L.base.legs ∧ w.2 ∈ L.base.legs ∧ (w.1.node ∈ B ↔ w.2.node ∈ B)
+  lwf : ∀ l ∈ L.links, l.l1 ∈ L.base.legs ∧ l.l2 ∈ L.base.legs ∧ l.e1 ∈ L.base.legs ∧
+    l.e2 ∈ L.base.legs ∧ L.base.nodeChain l.l2.node = L.base.nodeChain l.l1.node ∧
+    L.depth l.box l.l1.node < (L.base.nodeChain l.l1.node).length ∧
+    (L.base.nodeChain l.l1.node).getD (L.depth l.box l.l1.node) 0 = L.multOf l.box ∧
+    L.base.nodeChain l.e1.node = (L.base.nodeChain l.l1.node).eraseIdx (L.depth l.box l.l1.node) ∧
+    L.base.nodeChain l.e2.node = (L.base.nodeChain l.l1.node).eraseIdx (L.depth l.box l.l1.node)
+  lb : ∀ l ∈ L.links, l.box = bid → l.l1.node ∈ B ∧ l.l2.node ∈ B ∧ l.e1.node ∉ B ∧
+    l.e2.node ∉ B ∧ L.depth bid l.l1.node = 0 ∧ L.depth bid l.l2.node = 0 ∧ L.multOf bid = mb
+  lin : ∀ l ∈ L.links, l.box ≠ bid → l.l1.node ∈ B → l.l2.node ∈ B ∧ l.e1.node ∈ B ∧
+    l.e2.node ∈ B ∧ 1 ≤ L.depth l.box l.l1.node
+  lout : ∀ l ∈ L.links, l.box ≠ bid → l.l1.node ∉ B → l.l2.node ∉ B ∧ l.e1.node ∉ B ∧
+    l.e2.node ∉ B
+
+section rev
+
+variable {L L' : LDiagram} {bid mb : ℕ} {B : List ℕ}
+
+theorem RevOK.lc (h : RevOK L L' bid mb B) (q : Port) :
+    L.base.legChain q = L.base.nodeChain q.node := L.base.legChain_eq h.ports h.wch q
+
+theorem RevOK.lc' (h : RevOK L L' bid mb B) (q : Port) :
+    L'.base.legChain q = L.base.nodeChain q.node := by rw [h.base, h.lc]
+
+theorem RevOK.depth_eq (h : RevOK L L' bid mb B) : L'.depth = L.depth := by
+  funext y x; simp only [depth, h.base]
+
+theorem RevOK.multOf_eq (h : RevOK L L' bid mb B) : L'.multOf = L.multOf := by
+  funext y; simp only [multOf, h.base]
+
+theorem RevOK.chBn (h : RevOK L L' bid mb B) (n : DNode) (hn : n ∈ L.base.nodes) (hB : n.id ∈ B) :
+    ∃ r, L.base.nodeChain n.id = mb :: r := by
+  have e := h.chB n hn hB
+  cases hc : L.base.nodeChain n.id with
+  | nil => rw [hc] at e; simp at e
+  | cons a r =>
+    rw [hc] at e
+    simp only [List.head?_cons, Option.some.injEq] at e
+    exact ⟨r, by rw [e]⟩
+
+theorem RevOK.chB' (h : RevOK L L' bid mb B) (p : Port) (hp : p ∈ L.base.legs) (hB : p.node ∈ B) :
+    ∃ r, L.base.nodeChain p.node = mb :: r := by
+  obtain ⟨n, hn, e⟩ := node_of_legs _ p hp
+  rw [e] at hB ⊢
+  exact h.chBn n hn hB
+
+theorem RevOK.flip_mem (h : RevOK L L' bid mb B) (l : DLink) (hl : l ∈ L.links)
+    (hb : l.box = bid) : flipL l ∈ L'.links := by
+  rw [h.links]; exact List.mem_map.2 ⟨l, hl, by simp [hb]⟩
+
+theorem RevOK.keep_mem (h : RevOK L L' bid mb B) (l : DLink) (hl : l ∈ L.links)
+    (hb : l.box ≠ bid) : l ∈ L'.links := by
+  rw [h.links]; exact List.mem_map.2 ⟨l, hl, by simp [hb]⟩
+
+theorem RevOK.lp_eq (h : RevOK L L' bid mb B) (ks : ℕ → ℕ) (l : DLink) :
+    L.linkPairs ks l = lp ks (L.depth l.box l.l1.node) (ks (L.multOf l.box))
+      (L.base.nodeChain l.l1.node) l := by
+  rw [linkPairs, h.lc]
+
+theorem RevOK.lp_eq' (h : RevOK L L' bid mb B) (ks : ℕ → ℕ) (l : DLink) :
+    L'.linkPairs ks l = lp ks (L.depth l.box l.l1.node) (ks (L.multOf l.box))
+      (L.base.nodeChain l.l1.node) l := by
+  rw [linkPairs, h.depth_eq, h.multOf_eq, h.lc']
+
+theorem pmap_rev_consS (k j : ℕ) (y : Dig × Dig) (h1 : y.1.1.node ∈ B) (h2 : y.2.1.node ∈ B) :
+    pmap (revφ B k) (consS j y) = consS (k - 1 - j) y := by
+  obtain ⟨⟨p1, t1⟩, ⟨p2, t2⟩⟩ := y
+  simp only at h1 h2
+  simp [pmap, consS, revφ, revT, h1, h2]
+
+theorem pmap_rev_out (k : ℕ) (x : Dig × Dig) (h1 : x.1.1.node ∉ B) (h2 : x.2.1.node ∉ B) :
+    pmap (revφ B k) x = x := by
+  obtain ⟨⟨p1, t1⟩, ⟨p2, t2⟩⟩ := x
+  simp only at h1 h2
+  simp only [pmap, revφ, if_neg h1, if_neg h2]
+
+/-- The legs and copy indices of `L`'s digit pairs. -/
+theorem RevOK.pl (h : RevOK L L' bid mb B) (ks : ℕ → ℕ) (x : Dig × Dig) (hx : x ∈ L.dpairs ks) :
+    x.1.1 ∈ L.base.legs ∧ x.1.2 ∈ cidx ks (L.base.legChain x.1.1) ∧
+      x.2.1 ∈ L.base.legs ∧ x.2.2 ∈ cidx ks (L.base.legChain x.2.1) := by
+  rcases (mem_dpairs L ks x).1 hx with ⟨w, hw, t, ht, rfl⟩ | ⟨l, hl, hx⟩
+  · obtain ⟨hw1, hw2, -⟩ := h.wires w hw
+    refine ⟨hw1, ht, hw2, ?_⟩
+    rw [h.lc] at ht ⊢
+    rw [← h.wch w hw]
+    exact ht
+  · obtain ⟨hl1, hl2, he1, he2, hc2, hdl, hgd, hce1, hce2⟩ := h.lwf l hl
+    rw [h.lp_eq] at hx
+    rcases (mem_lp ks _ _ _ l x).1 hx with ⟨t, ht, h1, rfl⟩ | ⟨t, ht, h1, rfl⟩ |
+      ⟨t, ht, h1, rfl⟩ | ⟨-, u, hu, rfl⟩
+    · refine ⟨hl1, by rw [h.lc]; exact ht, hl2, ?_⟩
+      rw [h.lc, hc2]
+      exact cidx_set ks _ t _ _ ht (by rw [hgd]; exact h1) hdl
+    · exact ⟨hl1, by rw [h.lc]; exact ht, he1,
+        by rw [h.lc, hce1]; exact cidx_eraseIdx ks _ t _ ht⟩
+    · exact ⟨he2, by rw [h.lc, hce2]; exact cidx_eraseIdx ks _ t _ ht, hl2,
+        by rw [h.lc, hc2]; exact ht⟩
+    · exact ⟨he2, by rw [h.lc, hce2]; exact hu, he1, by rw [h.lc, hce1]; exact hu⟩
+
+theorem RevOK.inv (h : RevOK L L' bid mb B) (ks : ℕ → ℕ) (p : Port) (hp : p ∈ L.base.legs)
+    (t : List ℕ) (ht : t ∈ cidx ks (L.base.legChain p)) :
+    revφ B (ks mb) (revφ B (ks mb) p t).1 (revφ B (ks mb) p t).2 = (p, t) := by
+  by_cases hB : p.node ∈ B
+  · obtain ⟨r, c1⟩ := h.chB' p hp hB
+    rw [h.lc, c1] at ht
+    simp only [revφ, if_pos hB, revT_revT ks mb r t ht]
+  · simp only [revφ, if_neg hB]
+
+/-- Every digit pair of `L` goes to a digit pair of `L'`. -/
+theorem RevOK.fwd (h : RevOK L L' bid mb B) (ks : ℕ → ℕ) (x : Dig × Dig) (hx : x ∈ L.dpairs ks) :
+    pmap (revφ B (ks mb)) x ∈ L'.dpairs ks ∨ pswap (pmap (revφ B (ks mb)) x) ∈ L'.dpairs ks := by
+  have hw' : ∀ w ∈ L.base.wires, w ∈ L'.base.wires := fun w hw => by rw [h.base]; exact hw
+  rcases (mem_dpairs L ks x).1 hx with ⟨w, hw, t, ht, rfl⟩ | ⟨l, hl, hx⟩
+  · obtain ⟨hw1, -, hiff⟩ := h.wires w hw
+    rw [h.lc] at ht
+    left
+    by_cases hB : w.1.node ∈ B
+    · have hB2 := hiff.1 hB
+      obtain ⟨r, c1⟩ := h.chB' w.1 hw1 hB
+      have e : pmap (revφ B (ks mb)) ((w.1, t), (w.2, t)) =
+          ((w.1, revT (ks mb) t), (w.2, revT (ks mb) t)) := by
+        simp only [pmap, revφ, if_pos hB, if_pos hB2]
+      rw [e]
+      refine wire_mem_dpairs L' ks w (hw' w hw) _ ?_
+      rw [h.lc', c1]
+      rw [c1] at ht
+      exact revT_mem ks mb r t ht
+    · have hB2 : w.2.node ∉ B := fun e => hB (hiff.2 e)
+      have e : pmap (revφ B (ks mb)) ((w.1, t), (w.2, t)) = ((w.1, t), (w.2, t)) := by
+        simp only [pmap, revφ, if_neg hB, if_neg hB2]
+      rw [e]
+      exact wire_mem_dpairs L' ks w (hw' w hw) _ (by rw [h.lc']; exact ht)
+  · obtain ⟨hl1, -, -, -, hc2, -, -, -, -⟩ := h.lwf l hl
+    rw [h.lp_eq] at hx
+    by_cases hb : l.box = bid
+    · obtain ⟨hl1B, hl2B, he1B, he2B, hd0, hd0', hm⟩ := h.lb l hl hb
+      obtain ⟨r, c1⟩ := h.chB' l.l1 hl1 hl1B
+      have hL' : ∀ y ∈ lp ks 0 (ks mb) (mb :: r) (flipL l), y ∈ L'.dpairs ks := fun y hy =>
+        link_mem_dpairs L' ks _ (h.flip_mem l hl hb) y (by
+          rw [h.lp_eq']
+          show y ∈ lp ks (L.depth l.box l.l2.node) (ks (L.multOf l.box))
+            (L.base.nodeChain l.l2.node) _
+          rw [hb, hd0', hm, hc2, c1]; exact hy)
+      rw [hb, hd0, hm, c1] at hx
+      right
+      rcases (mem_lp ks 0 _ _ l x).1 hx with ⟨t, ht, h1, rfl⟩ | ⟨t, ht, h1, rfl⟩ |
+        ⟨t, ht, h1, rfl⟩ | ⟨h1, u, hu, rfl⟩
+      · obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks mb _ t).1 ht
+        simp only [List.getD_cons_zero, List.set_cons_zero] at h1 ⊢
+        have e : pswap (pmap (revφ B (ks mb)) ((l.l1, j :: u), (l.l2, (j + 1) :: u))) =
+            ((l.l2, (ks mb - 1 - (j + 1)) :: u), (l.l1, (ks mb - 1 - j) :: u)) := by
+          simp only [pswap, pmap, revφ, if_pos hl1B, if_pos hl2B, revT]
+        rw [e]
+        have e2 : ks mb - 1 - (j + 1) + 1 = ks mb - 1 - j := by omega
+        refine hL' _ ((mem_lp ks 0 _ _ _ _).2 (Or.inl ⟨(ks mb - 1 - (j + 1)) :: u,
+          cons_mem_cidx ks mb _ _ u (by omega) hu, by simp only [List.getD_cons_zero]; omega, ?_⟩))
+        simp only [flipL, List.getD_cons_zero, List.set_cons_zero, e2]
+      · obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks mb _ t).1 ht
+        simp only [List.getD_cons_zero, List.eraseIdx_cons_zero] at h1 ⊢
+        have hz : ks mb - 1 - j = 0 := by omega
+        have e : pswap (pmap (revφ B (ks mb)) ((l.l1, j :: u), (l.e1, u))) =
+            ((l.e1, u), (l.l1, 0 :: u)) := by
+          simp only [pswap, pmap, revφ, if_pos hl1B, if_neg he1B, revT, hz]
+        rw [e]
+        exact hL' _ ((mem_lp ks 0 _ _ _ _).2 (Or.inr (Or.inr (Or.inl ⟨0 :: u,
+          cons_mem_cidx ks mb 0 _ u (by omega) hu, by simp only [List.getD_cons_zero],
+          by simp only [flipL, List.eraseIdx_cons_zero]⟩))))
+      · obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks mb _ t).1 ht
+        simp only [List.getD_cons_zero, List.eraseIdx_cons_zero] at h1 ⊢
+        subst h1
+        have e : pswap (pmap (revφ B (ks mb)) ((l.e2, u), (l.l2, 0 :: u))) =
+            ((l.l2, (ks mb - 1) :: u), (l.e2, u)) := by
+          simp only [pswap, pmap, revφ, if_neg he2B, if_pos hl2B, revT, Nat.sub_zero]
+        rw [e]
+        exact hL' _ ((mem_lp ks 0 _ _ _ _).2 (Or.inr (Or.inl ⟨(ks mb - 1) :: u,
+          cons_mem_cidx ks mb _ _ u (by omega) hu, by simp only [List.getD_cons_zero]; omega,
+          by simp only [flipL, List.eraseIdx_cons_zero]⟩)))
+      · have e : pswap (pmap (revφ B (ks mb)) ((l.e2, u), (l.e1, u))) = ((l.e1, u), (l.e2, u)) := by
+          simp only [pswap, pmap, revφ, if_neg he2B, if_neg he1B]
+        rw [e]
+        exact hL' _ ((mem_lp ks 0 _ _ _ _).2 (Or.inr (Or.inr (Or.inr ⟨h1, u, hu,
+          by simp only [flipL]⟩))))
+    · have hl' := h.keep_mem l hl hb
+      by_cases hin : l.l1.node ∈ B
+      · obtain ⟨hl2B, he1B, he2B, hd1⟩ := h.lin l hl hb hin
+        obtain ⟨r, c1⟩ := h.chB' l.l1 hl1 hin
+        obtain ⟨d0, hd0⟩ : ∃ d0, L.depth l.box l.l1.node = d0 + 1 :=
+          ⟨_, (Nat.succ_pred_eq_of_pos hd1).symm⟩
+        rw [hd0, c1] at hx
+        obtain ⟨j, hj, y, hy, rfl⟩ := (mem_lp_cons ks d0 _ mb r l x).1 hx
+        obtain ⟨p1, p2⟩ := lp_ports_in ks d0 _ _ l (· ∈ B) y hy hin hl2B he1B he2B
+        left
+        rw [pmap_rev_consS (ks mb) j y p1 p2]
+        refine link_mem_dpairs L' ks l hl' _ ?_
+        rw [h.lp_eq', hd0, c1]
+        exact (mem_lp_cons ks d0 _ mb r l _).2 ⟨_, by omega, y, hy, rfl⟩
+      · obtain ⟨hl2O, he1O, he2O⟩ := h.lout l hl hb hin
+        obtain ⟨p1, p2⟩ := lp_ports_in ks _ _ _ l (· ∉ B) x hx hin hl2O he1O he2O
+        left
+        rw [pmap_rev_out (ks mb) x p1 p2]
+        exact link_mem_dpairs L' ks l hl' x (by rw [h.lp_eq']; exact hx)
+
+/-- Every digit pair of `L'` comes from a digit pair of `L`. -/
+theorem RevOK.bwd (h' : RevOK L' L bid mb B) (ks : ℕ → ℕ) (y : Dig × Dig)
+    (hy : y ∈ L'.dpairs ks) : ∃ x ∈ L.dpairs ks,
+      pmap (revφ B (ks mb)) x = y ∨ pswap (pmap (revφ B (ks mb)) x) = y := by
+  obtain ⟨a1, a2, a3, a4⟩ := h'.pl ks y hy
+  obtain ⟨⟨p1, t1⟩, ⟨p2, t2⟩⟩ := y
+  simp only at a1 a2 a3 a4
+  rcases h'.fwd ks _ hy with hx | hx
+  · refine ⟨_, hx, Or.inl ?_⟩
+    simp only [pmap]
+    rw [h'.inv ks p1 a1 t1 a2, h'.inv ks p2 a3 t2 a4]
+  · refine ⟨_, hx, Or.inr ?_⟩
+    simp only [pswap, pmap]
+    rw [h'.inv ks p1 a1 t1 a2, h'.inv ks p2 a3 t2 a4]
+
+/-- The node products agree under the reversal. -/
+theorem RevOK.prod (h : RevOK L L' bid mb B) (E : Env) (ks : ℕ → ℕ) (τ τ' : ℕ → ℕ)
+    (hτ : ∀ x ∈ L.base.dlabs ks, τ' x = τ (relab (revφ B (ks mb)) x)) :
+    L'.prodL E ks τ = L.prodL E ks τ' := by
+  set φ := revφ B (ks mb)
+  have hv : ∀ n ∈ L.base.nodes, ∀ t ∈ cidx ks (L.base.nodeChain n.id),
+      val E τ' (L.dnodeL ks n t) = val E τ ⟨n.kind,
+        (List.range n.outs.length).map (fun i => dlab (φ ⟨n.id, true, i⟩ t).1 (φ ⟨n.id, true, i⟩ t).2),
+        (List.range n.ins.length).map (fun i => dlab (φ ⟨n.id, false, i⟩ t).1 (φ ⟨n.id, false, i⟩ t).2),
+        n.dim, n.ph⟩ := by
+    intro n hn t ht
+    have e : (⟨n.kind,
+        (List.range n.outs.length).map (fun i => dlab (φ ⟨n.id, true, i⟩ t).1 (φ ⟨n.id, true, i⟩ t).2),
+        (List.range n.ins.length).map (fun i => dlab (φ ⟨n.id, false, i⟩ t).1 (φ ⟨n.id, false, i⟩ t).2),
+        n.dim, n.ph⟩ : Node) = (L.base.dnode ks n t).rename (relab φ) := by
+      rw [L.base.dnode_notail h.ports h.wch]
+      simp [Node.rename, List.map_map, Function.comp_def, relab_dlab]
+    rw [e, val_rename, L.dnodeL_plain h.cph]
+    refine val_reads E _ _ _ fun x hx => ?_
+    rw [L.base.dnode_notail h.ports h.wch] at hx
+    simp only [Node.labels, List.mem_append, List.mem_map, List.mem_range] at hx
+    have hmem : x ∈ L.base.dlabs ks := by
+      rcases hx with ⟨i, hi, rfl⟩ | ⟨i, hi, rfl⟩
+      · refine (mem_dlabs _ _ _).2 ⟨_, List.mem_flatMap.2 ⟨n, hn, ?_⟩, t, by rw [h.lc]; exact ht, rfl⟩
+        simp [DNode.legs, hi]
+      · refine (mem_dlabs _ _ _).2 ⟨_, List.mem_flatMap.2 ⟨n, hn, ?_⟩, t, by rw [h.lc]; exact ht, rfl⟩
+        simp [DNode.legs, hi]
+    exact hτ x hmem
+  have hd' : ∀ m : DNode, ∀ t, L'.dnodeL ks m t = ⟨m.kind,
+      (List.range m.outs.length).map (fun i => dlab ⟨m.id, true, i⟩ t),
+      (List.range m.ins.length).map (fun i => dlab ⟨m.id, false, i⟩ t), m.dim, m.ph⟩ := by
+    intro m t
+    rw [L'.dnodeL_plain h.cph', h.base, L.base.dnode_notail h.ports h.wch]
+  unfold prodL
+  rw [h.base]
+  refine congrArg List.prod (List.map_congr_left fun n hn => ?_)
+  by_cases hB : n.id ∈ B
+  · obtain ⟨r, c1⟩ := h.chBn n hn hB
+    rw [c1, ← ((cidx_revT_perm ks mb r).map fun t => val E τ (L'.dnodeL ks n t)).prod_eq,
+      List.map_map]
+    refine congrArg List.prod (List.map_congr_left fun t ht => ?_)
+    simp only [Function.comp_apply]
+    rw [hv n hn t (by rw [c1]; exact ht), hd']
+    have hp : ∀ o i, φ ⟨n.id, o, i⟩ t = (⟨n.id, o, i⟩, revT (ks mb) t) := fun o i => if_pos hB
+    simp [hp]
+  · refine congrArg List.prod (List.map_congr_left fun t ht => ?_)
+    rw [hv n hn t ht, hd']
+    have hp : ∀ o i, φ ⟨n.id, o, i⟩ t = (⟨n.id, o, i⟩, t) := fun o i => if_neg hB
+    simp [hp]
+
+/-- Flipping the links of an outermost chain box keeps the linked digit sum, `L`'s slot digits
+read from `L'`'s at the copy counted from the far end. -/
+theorem evalL_rev (h : RevOK L L' bid mb B) (h' : RevOK L' L bid mb B) (E : Env) (ks : ℕ → ℕ)
+    (σ' : ℕ → List ℕ → ℕ) :
+    L'.evalL E ks σ' = L.evalL E ks (bndMap L.base L'.base (revφ B (ks mb)) σ') := by
+  refine evalL_relabelφ L L' E ks ks σ' (revφ B (ks mb)) (Diagram.dlabs_nodup _ _ h.legs)
+    (by rw [h.base]; exact Diagram.dlabs_nodup _ _ h.legs) (by rw [h.base]; exact h.bnd)
+    ?_ ?_ ?_ ?_ (fun x hx => h.pl ks x hx) (fun x hx => h.fwd ks x hx)
+    (fun y hy => h'.bwd ks y hy) h.bl ?_ ?_ (fun τ τ' hτ => h.prod E ks τ τ' hτ)
+  · intro p hp t ht
+    rw [h.base]
+    by_cases hB : p.node ∈ B
+    · obtain ⟨r, c1⟩ := h.chB' p hp hB
+      rw [h.lc, c1] at ht
+      simp only [revφ, if_pos hB]
+      exact ⟨hp, by rw [h.lc, c1]; exact revT_mem ks mb r t ht⟩
+    · simp only [revφ, if_neg hB]
+      exact ⟨hp, ht⟩
+  · intro q hq u hu
+    rw [h.base] at hq hu
+    by_cases hB : q.node ∈ B
+    · obtain ⟨r, c1⟩ := h.chB' q hq hB
+      rw [h.lc, c1] at hu
+      exact ⟨q, hq, revT (ks mb) u, by rw [h.lc, c1]; exact revT_mem ks mb r u hu,
+        by simp only [revφ, if_pos hB, revT_revT ks mb r u hu]⟩
+    · exact ⟨q, hq, u, hu, by simp only [revφ, if_neg hB]⟩
+  · intro p hp t ht p' hp' t' ht' he
+    have e := congrArg (fun z : Dig => revφ B (ks mb) z.1 z.2) he
+    simp only [h.inv ks p hp t ht, h.inv ks p' hp' t' ht'] at e
+    exact ⟨congrArg Prod.fst e, congrArg Prod.snd e⟩
+  · intro p _ t _
+    rw [revφ_fst, h.base]
+  · intro p hp t _
+    rw [revφ_fst, h.base]
+    exact hp
+  · intro q hq u hu
+    rw [h.base] at hq hu
+    have hq' := h.bl q hq
+    by_cases hB : q.node ∈ B
+    · obtain ⟨r, c1⟩ := h.chB' q hq' hB
+      rw [h.lc, c1] at hu
+      exact ⟨q, hq, revT (ks mb) u, by rw [h.lc, c1]; exact revT_mem ks mb r u hu,
+        by simp only [revφ, if_pos hB, revT_revT ks mb r u hu]⟩
+    · exact ⟨q, hq, u, hu, by simp only [revφ, if_neg hB]⟩
+
+end rev
 
 end LDiagram
 

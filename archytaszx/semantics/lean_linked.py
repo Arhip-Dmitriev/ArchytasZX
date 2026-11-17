@@ -248,11 +248,11 @@ def linked(
 
 
 def _boundary_ends(
-    before: Diagram, after: Diagram, bid: int, cp: dict[int, int]
+    before: Diagram, after: Diagram, bid: int, cp: dict[int, int], first: bool = False
 ) -> tuple[dict[Port, int], dict[Port, int]]:
     """The :func:`linked` identity ends of both sides of a peel of the box ``bid``: one fresh id
     per link port on ``before``'s boundary, on ``after`` at the same leg, or at its copy's for a
-    first port of a link of ``bid``."""
+    first port of a link of ``bid`` (with ``first``, a second port)."""
     bnd = {_port(r) for r in [*before.boundary_outputs, *before.boundary_inputs]}
     nid = 1 + max((int(x) for x in [*before.nodes, *after.nodes]), default=0)
     ends_l: dict[Port, int] = {}
@@ -264,7 +264,8 @@ def _boundary_ends(
                 if port not in bnd or port in ends_l:
                     continue
                 ends_l[port] = nid
-                ends_r[_cpp(cp, port) if int(b_id) == bid and ref is p else port] = nid
+                moved = int(b_id) == bid and ref is (q if first else p)
+                ends_r[_cpp(cp, port) if moved else port] = nid
                 nid += 1
     return ends_l, ends_r
 
@@ -337,6 +338,71 @@ def _same(L: LDiag, R: LDiag, lk: LLink, x: LLink) -> bool:
 def _kept(L: LDiag, R: LDiag, lk: LLink) -> bool:
     """Some link of ``R`` is :func:`_same` as ``lk``."""
     return any(_same(L, R, lk, x) for x in R.links)
+
+
+def flip(D: LDiag, bid: int) -> LDiag:
+    """The Lean ``flipLinks``: ``D`` with the links of the box ``bid`` flipped."""
+    links = [LLink(lk.box, lk.l2, lk.l1, lk.e2, lk.e1) if lk.box == bid else lk for lk in D.links]
+    return LDiag(list(D.nodes), list(D.wires), list(D.outs), list(D.ins), list(D.boxes), links)
+
+
+def _links_ok(L: LDiag) -> bool:
+    """The ``lwf`` field of ``PeelOK`` and ``RevOK``."""
+    legs = L.legs()
+    for lk in L.links:
+        ch = L.chain(lk.l1[0])
+        dp = L.depth(lk.box, lk.l1[0])
+        rest = ch[:dp] + ch[dp + 1 :]
+        if not (
+            all(p in legs for p in (lk.l1, lk.l2, lk.e1, lk.e2))
+            and L.chain(lk.l2[0]) == ch
+            and dp < len(ch)
+            and ch[dp] == L.mult_of(lk.box)
+            and L.chain(lk.e1[0]) == rest
+            and L.chain(lk.e2[0]) == rest
+        ):
+            return False
+    return True
+
+
+def rev_ok(L: LDiag, R: LDiag, bid: int, mb: int, B: Sequence[int]) -> bool:
+    """The Lean ``RevOK L R bid mb B``, field by field."""
+    inB = set(B)
+    legs = L.legs()
+    ids = [n.id for n in L.nodes]
+    if (R.nodes, R.wires, R.outs, R.ins, R.boxes) != (L.nodes, L.wires, L.outs, L.ins, L.boxes):
+        return False
+    if R.links != flip(L, bid).links:
+        return False
+    if any(len(set(xs)) != len(xs) for xs in (ids, legs, L.bnd())):
+        return False
+    if any(p not in legs for p in L.bnd()):
+        return False
+    if any(L.chain(w[0][0]) != L.chain(w[1][0]) for w in L.wires):
+        return False
+    if any(n.id in inB and L.chain(n.id)[:1] != [mb] for n in L.nodes):
+        return False
+    for w in L.wires:
+        if w[0] not in legs or w[1] not in legs or (w[0][0] in inB) != (w[1][0] in inB):
+            return False
+    if not _links_ok(L):
+        return False
+    for lk in L.links:
+        ins = [p[0] in inB for p in (lk.l1, lk.l2, lk.e1, lk.e2)]
+        if lk.box == bid:
+            if not (
+                ins == [True, True, False, False]
+                and L.depth(bid, lk.l1[0]) == 0
+                and L.depth(bid, lk.l2[0]) == 0
+                and L.mult_of(bid) == mb
+            ):
+                return False
+        elif ins[0]:
+            if not (all(ins) and L.depth(lk.box, lk.l1[0]) >= 1):
+                return False
+        elif any(ins):
+            return False
+    return True
 
 
 def peel_ok(
@@ -488,6 +554,9 @@ _FIELDS = 21
 _FLAT_FIELDS = 10
 """The fields of ``PeelFlat``."""
 
+_REV_FIELDS = 16
+"""The fields of ``RevOK``."""
+
 
 @dataclass
 class PeelEnds:
@@ -503,10 +572,13 @@ class PeelEnds:
     held: dict[Port, LBox]
 
 
-def peel_ends(before: Diagram, after: Diagram, tables: _Tables) -> PeelEnds | None:
-    """The :class:`PeelEnds` of ``after`` peeling the last copy of one outermost node box of
-    ``before``: the new nodes of ``after`` are the copies of the box's nodes and the phaseless
-    Z(1 -> 1) nodes the peel puts behind boundary link ports; None outside that form."""
+def peel_ends(
+    before: Diagram, after: Diagram, tables: _Tables, first: bool = False
+) -> PeelEnds | None:
+    """The :class:`PeelEnds` of ``after`` peeling the last (with ``first``, the first) copy of
+    one outermost node box of ``before``: the new nodes of ``after`` are the copies of the box's
+    nodes and the phaseless Z(1 -> 1) nodes the peel puts behind boundary link ports; None
+    outside that form."""
     shifted = [
         bid
         for bid, b in before.bang_boxes.items()
@@ -526,7 +598,7 @@ def peel_ends(before: Diagram, after: Diagram, tables: _Tables) -> PeelEnds | No
         return None
     fresh = [x for x in new if x not in engine]
     cp = dict(zip(B, fresh, strict=True))
-    ends_l, ends_r = _boundary_ends(before, after, int(shifted[0]), cp)
+    ends_l, ends_r = _boundary_ends(before, after, int(shifted[0]), cp, first)
     try:
         found, boxes = _held(after, ends_r, tables, engine)
     except LinkedUnsupported:
@@ -545,10 +617,16 @@ def peel_ends(before: Diagram, after: Diagram, tables: _Tables) -> PeelEnds | No
 
 def export_peel(before: Diagram, after: Diagram) -> str | None:
     """Lean source whose ``main`` proves the linked digit sums of ``before`` and ``after`` equal,
-    ``after`` peeling the last copy of one outermost node box of ``before``; None outside that
-    form."""
+    ``after`` peeling the last copy of one outermost node box of ``before`` (``PeelOK``), or its
+    first copy (``PeelOK`` between the two sides with the box's links flipped); None outside
+    that form."""
+    return _export_peel(before, after, False) or _export_peel(before, after, True)
+
+
+def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
+    """:func:`export_peel` of the last copy, or with ``first`` of the first copy."""
     tables = _Tables()
-    pe = peel_ends(before, after, tables)
+    pe = peel_ends(before, after, tables, first)
     if pe is None:
         return None
     shifted, B, fresh, cp = [pe.box], pe.B, pe.fresh, pe.cp
@@ -566,7 +644,17 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     R.nodes = [order[n.id] for n in L.nodes] + [
         order[cp[x]] for x in (n.id for n in L.nodes) if x in cp
     ]
-    if not peel_ok(L, R, box.id, box.mult, c, B, cp):
+    if not first and not peel_ok(L, R, box.id, box.mult, c, B, cp):
+        return None
+    Lr, Rr = flip(L, box.id), flip(R, box.id)
+    if first and not (
+        rev_ok(L, Lr, box.id, box.mult, B)
+        and rev_ok(Lr, L, box.id, box.mult, B)
+        and rev_ok(R, Rr, box.id, c, B)
+        and rev_ok(Rr, R, box.id, c, B)
+        and peel_ok(Lr, Rr, box.id, box.mult, c, B, cp)
+        and all(_cpp(cp, q)[0] not in B for q in L.bnd() if q[0] in B)
+    ):
         return None
     G = 1 + max(n.id for n in [*L.nodes, *R.nodes])
     ids_l, ids_r = set(ends_l.values()), set(ends_r.values())
@@ -587,12 +675,43 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         return None
     if not (nested(sl_d) and nested(sr_d)):
         return None
-    if not peel_flat_ok(L, R, B, cp, box.mult, c, sl_d, sr_d):
+    if not peel_flat_ok(L, R, B, cp, box.mult, c, sl_d, sr_d, first):
         return None
     zero = _Tables.index(tables.phases, repr(None))
     table = ", ".join(f"({x}, {y})" for x, y in cp.items())
     proof = ",\n    ".join(["by decide +kernel"] * _FIELDS)
-    flat = ",\n    ".join(["by decide +kernel"] * _FLAT_FIELDS)
+    flat = ",\n    ".join(["by decide +kernel"] * (_FLAT_FIELDS + first))
+    rev = ",\n    ".join(["by decide +kernel"] * _REV_FIELDS)
+    pre, post = ("Lb", "Lk") if not first else ("Lbr", "Lkr")
+    revs = (
+        (
+            "/-- `Lb` with the peeled box's links flipped. -/\n"
+            f"def Lbr : LDiagram :=\n  {literal(Lr)}\n\n"
+            "/-- `Lk` with the peeled box's links flipped. -/\n"
+            f"def Lkr : LDiagram :=\n  {literal(Rr)}\n\n"
+            f"theorem rb : RevOK Lb Lbr {box.id} {box.mult} {_lnat(B)} :=\n  ⟨{rev}⟩\n\n"
+            f"theorem rb' : RevOK Lbr Lb {box.id} {box.mult} {_lnat(B)} :=\n  ⟨{rev}⟩\n\n"
+            f"theorem rk : RevOK Lk Lkr {box.id} {c} {_lnat(B)} :=\n  ⟨{rev}⟩\n\n"
+            f"theorem rk' : RevOK Lkr Lk {box.id} {c} {_lnat(B)} :=\n  ⟨{rev}⟩\n\n"
+        )
+        if first
+        else ""
+    )
+    hcp = (
+        (
+            "theorem hcp : ∀ i < Lb.base.bnd.length, inB Lb "
+            f"{_lnat(B)} i = true →\n    (cpP cp (Lb.bndAt i)).node ∉ {_lnat(B)} := by\n"
+            "  decide +kernel\n\n"
+        )
+        if first
+        else ""
+    )
+    step = (
+        "(evalL_peel_first rb rb' rk rk' ok flat hcp E ks hk y)"
+        if first
+        else "(evalL_peel_flat ok flat E ks hk y)"
+    )
+    kind = "PeelFirst" if first else "PeelFlat"
     return (
         "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
         "open ArchytasZX ArchytasZX.LDiagram\n\n"
@@ -611,7 +730,8 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         + _chain("k", "Lk", "L'", "gsL'", sr, gr)
         + "/-- Each node of the peeled box to its node in the copy. -/\n"
         f"def cp (x : ℕ) : ℕ := (([{table}] : List (ℕ × ℕ)).lookup x).getD 0\n\n"
-        f"theorem ok : PeelOK Lb Lk {box.id} {box.mult} {c} {_lnat(B)} cp :=\n"
+        + revs
+        + f"theorem ok : PeelOK {pre} {post} {box.id} {box.mult} {c} {_lnat(B)} cp :=\n"
         f"  ⟨{proof}⟩\n\n"
         "/-- The box groups before the peel, node lists by box. -/\n"
         f"def G : List (ℕ × List (List ℕ)) := {_lgroups(Gl)}\n\n"
@@ -619,9 +739,10 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         f"def G' : List (ℕ × List (List ℕ)) := {_lgroups(Gr)}\n\n"
         "theorem sdb : Lb.slotData G = L.slotData G := by\n  decide +kernel\n\n"
         "theorem sdk : Lk.slotData G' = L'.slotData G' := by\n  decide +kernel\n\n"
-        f"theorem flat : PeelFlat Lb Lk {_lnat(B)} cp {box.mult} {c} (Lb.slotData G)\n"
+        f"theorem flat : {kind} Lb Lk {_lnat(B)} cp {box.mult} {c} (Lb.slotData G)\n"
         f"    (Lk.slotData G') :=\n  ⟨{flat}⟩\n\n"
-        "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
+        + hcp
+        + "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
         "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
         f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 → ∀ y : ℕ → ℕ,\n"
         "      L'.evalG gsL' E ks (flatAt (L'.slotData G') ks y) =\n"
@@ -629,7 +750,7 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         "  intro E hE ks hk y\n"
         "  rw [← sdb, ← sdk]\n"
         "  exact (chain_k E hE ks _).symm.trans\n"
-        "    ((evalL_peel_flat ok flat E ks hk y).trans (chain_b E hE ks _))\n\n"
+        f"    ({step}.trans (chain_b E hE ks _))\n\n"
         "end ArchytasZX.Export\n"
     )
 
@@ -1062,6 +1183,15 @@ def _copy_vs(
     return (_head(A) < _head(A2)) == (_head(E) < _head(F)) and _head(E) != _head(F)
 
 
+def _copy_vs0(
+    A: Sequence[int], A2: Sequence[int], E: Sequence[int], F: Sequence[int], b: bool
+) -> bool:
+    """The Lean ``copyVs0 A A2 E F b``."""
+    if _head(A) == _head(A2):
+        return b and _head(E) < _head(F)
+    return (_head(A) < _head(A2)) == (_head(E) < _head(F)) and _head(E) != _head(F)
+
+
 def _copy_copy(A: Sequence[int], A2: Sequence[int], E: Sequence[int], E2: Sequence[int]) -> bool:
     """The Lean ``copyCopy A A2 E E2``."""
     if _head(A) == _head(A2):
@@ -1078,8 +1208,10 @@ def peel_flat_ok(
     c: int,
     sd: SlotData,
     sd2: SlotData,
+    first: bool = False,
 ) -> bool:
-    """The Lean ``PeelFlat L R B cp mb c sd sd2``, field by field."""
+    """The Lean ``PeelFlat L R B cp mb c sd sd2`` (with ``first`` ``PeelFirst``), field by
+    field."""
     bl, br = L.bnd(), R.bnd()
     n, n2 = len(bl), len(br)
     if sd[0] + sd[1] != n or sd2[0] + sd2[1] != n2:
@@ -1105,7 +1237,10 @@ def peel_flat_ok(
         for j in range(n):
             if not _agree(A[i][0], A[j][0], A2[m[i]][0], A2[m[j]][0]):
                 return False
-            if inb[i] and not _copy_vs(A[i][0], A[j][0], A2[ci[i]][0], A2[m[j]][0], inb[j]):
+            vs = _copy_vs0 if first else _copy_vs
+            if inb[i] and not vs(A[i][0], A[j][0], A2[ci[i]][0], A2[m[j]][0], inb[j]):
+                return False
+            if first and _head(A[i][0]) == _head(A[j][0]) and inb[i] != inb[j]:
                 return False
             if inb[i] and inb[j] and not _copy_copy(A[i][0], A[j][0], A2[ci[i]][0], A2[ci[j]][0]):
                 return False
