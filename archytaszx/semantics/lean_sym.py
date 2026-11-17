@@ -60,9 +60,10 @@ ROUNDS = 3
 FULL_TERMS = 4096
 BS_NODES = False
 """Whether the translation writes binder and splitter nodes (``bsTerm``)."""
-CHUNK_TEXT = 200_000
 BLOCK_MAX = 8
 """The most nodes of one ``trBlockG`` theorem."""
+BLOCK_TERMS = 24
+"""The most nodes times terms of the largest stated expression in one ``trBlockG`` theorem."""
 PRE_LITERAL = 32
 """Every how many nodes the labels before a node are written as a literal list."""
 NORM_TERMS = 1 << 14
@@ -1368,6 +1369,15 @@ def _rn(x: int) -> str:
     return f"nat_lit {x}"
 
 
+def _lean_th(h: THint) -> str:
+    """A term hint on raw literals."""
+    rounds = ", ".join(
+        f"({_rn(c)}, [" + ", ".join(f"({_rn(i)}, {_rn(r)}, {_rn(j)})" for i, r, j in es) + "])"
+        for c, es in h[2]
+    )
+    return f"({_rn(h[0])}, {_rn(h[1])}, [{rounds}])"
+
+
 def _rz(x: int) -> str:
     """An integer through its constructors on raw literals."""
     return f"Int.ofNat ({_rn(x)})" if x >= 0 else f"Int.negSucc ({_rn(-x - 1)})"
@@ -1394,17 +1404,22 @@ def _lean_ip(p: IPoly) -> str:
     return "[" + ", ".join(f"([{', '.join(_rn(x) for x in m)}], {_rz(c)})" for m, c in p) + "]"
 
 
-def _lean_facs(fs: Sequence[Fac]) -> str:
-    return "[" + ", ".join(f"({_rdm(d)}, {_lean_ip(p)})" for d, p in fs) + "]"
+def _lean_fac(f: Fac) -> str:
+    return f"({_rdm(f[0])}, {_lean_ip(f[1])})"
 
 
-def _lean_tm(t: STm) -> str:
+def _lean_facs(fs: Sequence[Fac], name: Callable[[Fac], str] | None = None) -> str:
+    return "[" + ", ".join((name or _lean_fac)(f) for f in fs) + "]"
+
+
+def _lean_tm(t: STm, name: Callable[[Fac], str] | None = None) -> str:
     sums = ", ".join(f"({_rn(x)}, {_rdm(d)})" for x, d in t[1])
-    return f"⟨{_lean_cm(t[0])}, [{sums}], {_lean_facs(t[2])}, {_lean_facs(t[3])}⟩"
+    return f"⟨{_lean_cm(t[0])}, [{sums}], {_lean_facs(t[2], name)}, {_lean_facs(t[3], name)}⟩"
 
 
-def _lean_ex(e: Sequence[STm]) -> str:
-    return "([" + ", ".join(_lean_tm(t) for t in e) + "] : List STm)"
+def _lean_ex(e: Sequence[STm], name: Callable[[Fac], str] | None = None) -> str:
+    """An expression literal; with ``name``, each factor written as ``name`` gives it."""
+    return "([" + ", ".join(_lean_tm(t, name) for t in e) + "] : List STm)"
 
 
 # the export
@@ -3159,7 +3174,7 @@ class _SymExport:
             nt = _paren(text)
             nodes, internal, bnd = self.net(lnet)
             hints = tr_hints(self.fl, self.dtf, self.ptf, labs, nodes, internal, st)
-            table = "[" + ", ".join(str(h).replace(" ", "") for h in hints) + "]"
+            table = "[" + ", ".join("[" + ", ".join(map(_lean_th, h)) + "]" for h in hints) + "]"
             out.append(
                 f"def {tag}H (i : ℕ) : List THint := (({table} : List (List THint))).getD i []"
             )
@@ -3181,11 +3196,19 @@ class _SymExport:
                         f"def {tag}P{k + 1} : List ℕ := "
                         f"{tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
                     )
-            texts = [_lean_ex(x) for x in st]
-            per = min(BLOCK_MAX, max(1, -(-sum(map(len, texts)) // CHUNK_TEXT)))
+            per = min(BLOCK_MAX, max(1, BLOCK_TERMS // max(1, *map(len, st))))
             marks = sorted({*range(0, m, per), m})
-            for k in marks:
-                out.append(f"def {tag}E{k} : List STm := {texts[k]}")
+            fac_names: dict[Fac, str] = {}
+
+            def fac_name(f: Fac, tag: str = tag, names: dict[Fac, str] = fac_names) -> str:
+                if f not in names:
+                    names[f] = f"{tag}F{len(names)}"
+                return names[f]
+
+            stated = [_lean_ex(st[k], fac_name) for k in marks]
+            out += [f"def {n} : ArchytasZX.Sym.Fac := {_lean_fac(f)}" for f, n in fac_names.items()]
+            for k, text in zip(marks, stated, strict=True):
+                out.append(f"def {tag}E{k} : List STm := {text}")
             out.append(
                 f"theorem {tag}B{m} : trNodesG {args} {nt}.int {tag}P{m} {m} {tag}D{m} = "
                 f"some {tag}E{m} := by decide +kernel"
@@ -3235,10 +3258,7 @@ class _SymExport:
         tb2 = tb if tb in own else ta
         e0, e1 = texts_e[ta], texts_e[tb2]
         zh = [term_hint(self.fl, t) for t in ex_mul(s0, e[ta]) + ex_mul(neg, eb)]
-        out.append(
-            f"def {name}ZH (_ : ℕ) : List THint := "
-            "[" + ", ".join(str(h).replace(" ", "") for h in zh) + "]"
-        )
+        out.append(f"def {name}ZH (_ : ℕ) : List THint := [" + ", ".join(map(_lean_th, zh)) + "]")
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
             ("k", f"(exConst {s0t} && exConst {s1t})"),

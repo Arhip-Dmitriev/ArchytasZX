@@ -233,7 +233,7 @@ def trBlockG (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ 
   | _, _, [] => some b0
   | pre, i, n :: ns =>
     match trBlockG nf dt pt rl labs int b0 (pre ++ (n.outs ++ n.ins)) (i + 1) ns with
-    | some b => fL fTm b fun b => trStepG nf dt pt rl labs int pre i n b
+    | some b => trStepG nf dt pt rl labs int pre i n b
     | none => none
 
 theorem trNodesG_block (nf : ℕ → List STm → List STm) (dt : ℕ → DMon)
@@ -253,9 +253,6 @@ theorem trNodesG_block (nf : ℕ → List STm → List STm) (dt : ℕ → DMon)
       exact h
     rw [List.cons_append, trNodesG_cons', ih ys _ _ h']
     simp only [trBlockG]
-    cases trBlockG nf dt pt rl labs int b (pre ++ (n.outs ++ n.ins)) (i + 1) xs with
-    | none => rfl
-    | some c => simp [fL_eq _ (fun a k => fTm_eq a k)]
 
 theorem trNetG_of (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
     (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (N : Net) (ns : List Node) (b : List STm)
@@ -653,10 +650,10 @@ abbrev THint := ℕ × ℕ × List RHint
 def nfGoH (fl : List ℕ) : List THint → List STm → List STm → List STm
   | _, acc, [] => acc
   | hs, acc, t :: ts =>
-    match fTm t (normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
-      (hs.headD (0, 0, [])).2.2) with
+    match normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
+      (hs.headD (0, 0, [])).2.2 t with
     | none => nfGoH fl hs.tail acc ts
-    | some t' => fL fTm (tmAdd t' acc) fun acc => nfGoH fl hs.tail acc ts
+    | some t' => nfGoH fl hs.tail (tmAdd t' acc) ts
 
 theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ) (ν : ℕ → ℤ) :
     ∀ (e : List STm) (hs : List THint) (acc : List STm),
@@ -668,7 +665,7 @@ theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
     intro hs acc
     have hn := normTmK_ok ρ hρ fl hfl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
       (hs.headD (0, 0, [])).2.2 t
-    simp only [nfGoH, fTm_eq]
+    simp only [nfGoH]
     revert hn
     cases normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
         (hs.headD (0, 0, [])).2.2 t with
@@ -681,7 +678,7 @@ theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
     | some t' =>
       intro hn
       dsimp only
-      rw [fL_eq _ (fun a k => fTm_eq a k), ih, tmAdd_ok]
+      rw [ih, tmAdd_ok]
       simp only [exDen, List.map_cons, List.sum_cons]
       rw [hn ν]; ring
 
