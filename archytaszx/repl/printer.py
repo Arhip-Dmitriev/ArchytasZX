@@ -1083,15 +1083,16 @@ def _traced(text: str, env: Sequence[int], unicode: bool) -> str:
     return f"Tr_env[ {text} ], env = {noun} {where}"
 
 
-def dirac(diagram: Diagram, *, unicode: bool = False) -> DiracRendering:
-    """Every Dirac view of ``diagram``: term, name, text, instance text, parser source.
+def dirac(diagram: Diagram, *, unicode: bool = False, bound: bool = True) -> DiracRendering:
+    """Every Dirac view of ``diagram``: term, name, text, instance text (None without
+    ``bound``), parser source.
 
     A mixed diagram is its purification ``P`` with the environment outputs traced out,
     ``Tr_env[ P ]`` standing for the CPM ``rho -> Tr_env(P rho P^dagger)``.
     """
     if not is_pure(_require_diagram(diagram)):
         pure, env = purify(diagram)
-        inner = dirac(pure, unicode=unicode)
+        inner = dirac(pure, unicode=unicode, bound=bound)
         instance = inner.instance_text
         if instance is not None:
             instance = _traced(instance, env, unicode)
@@ -1102,7 +1103,7 @@ def dirac(diagram: Diagram, *, unicode: bool = False) -> DiracRendering:
     if name is not None and unicode:
         name = name.replace(" (x) ", " ⊗ ")
     text = formula if name is None else f"{name} = {formula}"
-    params = dict(diagram.parameters)
+    params = dict(diagram.parameters) if bound else {}
     with _trace.span("output.bound_values"):
         instance = render_term(term, env=params, unicode=unicode) if params else None
     return DiracRendering(term, name, text, instance, to_dirac_source(diagram))
@@ -1111,7 +1112,7 @@ def dirac(diagram: Diagram, *, unicode: bool = False) -> DiracRendering:
 @_trace.traced("output.display")
 def render_dirac(diagram: Diagram, *, unicode: bool = False, instance: bool = False) -> str:
     """The Dirac text of ``diagram``; with ``instance``, the ``at d = 3: ...`` line follows."""
-    rendering = dirac(diagram, unicode=unicode)
+    rendering = dirac(diagram, unicode=unicode, bound=instance)
     if not instance or rendering.instance_text is None:
         return rendering.text
     env = ", ".join(f"{k} = {v}" for k, v in sorted(diagram.parameters.items()))

@@ -1769,7 +1769,7 @@ def _unnest(d: Diagram) -> tuple[Diagram, dict[str, str]]:
 
 def _family_mults(left: Diagram, right: Diagram) -> list[sp.Expr]:
     """The multiplicities of the port boxes and of the node boxes, each node box meeting the
-    rest only at the boundary or at wires into Z spiders, bare symbols first;
+    rest only at the boundary or at wires into Z or X spiders, bare symbols first;
     :class:`NetUnsupported` for any other box."""
     from archytaszx.diagram.bangbox import crossing_wires
 
@@ -1778,7 +1778,7 @@ def _family_mults(left: Diagram, right: Diagram) -> list[sp.Expr]:
         for box in d.bang_boxes.values():
             if box.is_node_scope and not all(
                 d.nodes[(w.b if w.a.node_id in box.node_scope else w.a).node_id].generator_type.name
-                == "Z"
+                in ("Z", "X")
                 for w in crossing_wires(d, box.node_scope)
             ):
                 raise NetUnsupported("a box meeting the rest at a wire")
@@ -3058,6 +3058,7 @@ class _SymExport:
             _rename_net,
             _split_net,
             _tail,
+            _xk,
             _zk,
         )
 
@@ -3066,16 +3067,24 @@ class _SymExport:
         spiders = [
             n
             for n in x.nodes
-            if _head(n.kind) == "ZB" and any(isb(lab) and lab in x.summed for lab in n.ins)
+            if _head(n.kind) in ("ZB", "XB") and any(isb(lab) and lab in x.summed for lab in n.ins)
         ]
         if len(spiders) != 1:
-            raise NetUnsupported("a node box meeting other than one Z spider")
+            raise NetUnsupported("a node box meeting other than one Z or X spider")
         zn = spiders[0]
+        xs = _head(zn.kind) == "XB"
+        if xs and zn.kind[1]:
+            raise NetUnsupported("an X spider meeting the node box with bundled outputs")
         if any(_head(n.kind) == "Bun" and n.kind[1] != m for n in x.nodes):
             raise NetUnsupported("towers along two multiplicities")
         o = next((lab for lab in zn.outs if lab in x.bnd), None)
+        at_in = False
+        if o is None and not xs:
+            plain = zn.ins[: len(zn.ins) - len(zn.kind[-1])]
+            o = next((lab for lab in plain if lab in x.bnd), None)
+            at_in = o is not None
         if o is None:
-            raise NetUnsupported("the spider meeting the node box has no boundary output")
+            raise NetUnsupported("the spider meeting the node box has no boundary leg")
         sp0, sp1 = _split_net(x, m, isb, H), _split_net(y, m, isb, H)
         others = [n for n in x.nodes if n is not zn]
         rest = list(sp0.nodes)
@@ -3083,7 +3092,7 @@ class _SymExport:
             if n not in rest:
                 raise NetUnsupported("the split network does not contain the network")
             rest.remove(n)
-        split_z = [n for n in rest if _head(n.kind) == "ZB" and n.outs == zn.outs]
+        split_z = [n for n in rest if _head(n.kind) == _head(zn.kind) and n.outs == zn.outs]
         if len(split_z) != 1:
             raise NetUnsupported("the split spider is not found")
         zs = split_z[0]
@@ -3092,16 +3101,23 @@ class _SymExport:
         if len(extra) != 1:
             raise NetUnsupported("the split spider gains other than one leg")
         e = extra[0]
-        cs1 = tuple(zn.kind[1])
+        cs1 = tuple(zn.kind[-1])
         t1 = _tail(zn.ins, cs1)
         i1 = tuple(zn.ins[: len(zn.ins) - len(cs1)])
-        cs_s = tuple(zs.kind[1])
+        cs_s = tuple(zs.kind[-1])
         if tuple(zs.ins) != i1 + tuple(t1) + (e,) or cs_s != cs1 + ((),):
             raise NetUnsupported("the split spider's legs are not the unfused form")
+        if xs and zs.kind[1]:
+            raise NetUnsupported("the split X spider has bundled outputs")
         w = out.fresh_like(o)
         o1 = tuple(w if lab == o else lab for lab in zn.outs)
-        za = LNode(zn.kind, o1, zn.ins, zn.dim, zn.ph)
-        zb = LNode(_zk(((),)), (o,), (w, e), zs.dim, 0)
+        if at_in:
+            ia = tuple(w if lab == o else lab for lab in i1)
+            za = LNode(zn.kind, zn.outs, ia + tuple(t1), zn.dim, zn.ph)
+            zb = LNode(_zk(((),)), (), (o, w, e), zs.dim, 0)
+        else:
+            za = LNode(zn.kind, o1, zn.ins, zn.dim, zn.ph)
+            zb = LNode(_xk((), ((),)) if xs else _zk(((),)), (o,), (w, e), zs.dim, 0)
         spc = f"(SpC {m})"
         kvs = [("k_" if j == m else v) for j, v in enumerate(vs)]
         envk = self.env_at(kvs)
@@ -3133,6 +3149,26 @@ class _SymExport:
             f"{_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} (by chk) (by chk) "
             "(by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by phs)"
         )
+        if at_in:
+            ia = za.ins[: len(i1)]
+            fusion = (
+                f"fusionZG {envk} {self.fmt_cs(cs1)} {self.fmt_cs(((),))} {za.ph} {zb.ph} "
+                f"{zs.ph} {zs.dim} {w} {_list(zn.outs)} {_list(ia)} {_list(t1)} [] "
+                f"{_list((o, w))} {_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} "
+                "(by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) "
+                "(by chk) (by phs)"
+            )
+        if xs:
+            hyp_d = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
+            pos = f"(Fpos {_join(self.args, hyp_d)} _)" if (self.args or hyp_d) else "(Fpos _)"
+            fusion = (
+                f"fusionXG {envk} [] {self.fmt_cs(cs1)} [] {self.fmt_cs(((),))} {za.ph} {zb.ph} "
+                f"{zs.ph} {zs.dim} {w} {_list(o1)} [] {_list(i1)} {_list(t1)} {_list(zb.outs)} [] "
+                f"{_list((w,))} {_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} "
+                "(by chk) (by chk) (by chk) (by chk) "
+                f"(Fam.env_dimv_pos _ _ _ {pos}) (by chk) (by chk) (by chk) (by chk) (by chk) "
+                "(by chk) (by chk) (by chk) (by chk) (by chk) (by phs)"
+            )
         unfuse = (
             f"(plug {envk} {lit(ctx1)} {lit([zs])} {lit([za, zb])} {_list(sp0.summed)} [] "
             f"[{w}] {bl} {_list(iface)} 1 1 (fun τ hτ => (({fusion}) τ hτ).symm) (by chk) "
@@ -3607,6 +3643,8 @@ def export_symbolic(
         if not ex.check():
             raise NetUnsupported(getattr(ex, "why", "the normal forms of the two networks differ"))
         return ex.source(name)
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(str(exc)) from exc
     finally:
         _BS_ON = saved
 
