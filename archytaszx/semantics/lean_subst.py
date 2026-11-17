@@ -309,13 +309,20 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     frees: list[list[int]] = [list(free)]
     steps: list[tuple[Any, ...]] = []
 
-    def dcands(s: State) -> Any:
-        for i in s.ns:
+    def opened(s: State, a: Ex) -> bool:
+        if a[0] == "neg" and a[1][0] == "v":
+            a = a[1]
+        return a[0] == "v" and a[1] in fset and not s.bound(a[1])
+
+    def dcands(s: State, only_cn: bool = False) -> Any:
+        for i in [] if only_cn else s.ns:
             n = net.nodes[i]
             h = _head(n.kind)
             if h == "Z":
                 L = list(dict.fromkeys(_legs(net, i)))
                 for x in L:
+                    if not opened(s, s.texpr(x)):
+                        continue
                     for y in L:
                         if x != y:
                             yield ("zz", i, x, y)
@@ -359,9 +366,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
         return None
 
     def delta(s: State, closed: bool, only_cn: bool = False) -> tuple[Any, ...] | None:
-        for src in dcands(s):
-            if only_cn and src[0] != "cn":
-                continue
+        for src in dcands(s, only_cn):
             l = leg_label(s, src)
             if l is None:
                 continue
