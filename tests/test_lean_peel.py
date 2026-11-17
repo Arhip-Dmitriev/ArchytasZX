@@ -24,7 +24,9 @@ open grids, the chain end on the boundary held in the box of the identity the pe
 it, at the engine's flat positions, checked in Lean, and peels of the reversed row chain
 (the first copy peeled) through ``evalL_peel_first`` (79.16l); a peel of the binder chains of
 BINDERS, whose box index is read through ``cph`` and ``cdim`` and whose copies read their template
-at the constant copy, through ``evalX_peel_flat`` and ``evalGX_ghostAt`` (79.16l)."""
+at the constant copy, through ``evalX_peel_flat`` and ``evalGX_ghostAt`` (79.16l); a peel of the
+first copy of a reversed chain whose box has an index, its kept copies read one copy higher,
+through ``evalX_peel_first``, and a copy reading an inner box's index one level up (79.16l)."""
 
 from __future__ import annotations
 
@@ -474,6 +476,119 @@ def test_lean_checks_a_binder_chain_peel_and_refuses_a_copy_read_at_zero(tmp_pat
     ok, output = check(
         head + "def L' : LDiagram :=" + tail.replace(found[0], bad, 1), f"{tmp_path}/bad.lean"
     )
+    assert not ok
+
+
+REV_BINDER = (
+    GRID.replace("repeat n as R: v, hv, hh, hs, he", "repeat n as R index m: v, hv, hh, hs, he, q")
+    .replace("hv = F(d)", "hv = F(d)\nq = B(literal 2, literal 2^m)")
+    .replace("outputs v.out0", "inputs q.in0, q.in1\noutputs v.out0, q.out0")
+    .replace("chain R: v.out2 -> hv.in0", "chain R: hv.in0 -> v.out2")
+)
+"""GRID with the row chain reversed, the row box indexed by ``m`` and holding a binder
+B(2, 2^m) with its legs on the boundary."""
+
+
+def _rev_binder_peel() -> tuple[Diagram, Diagram]:
+    """REV_BINDER at ``s + 1`` rows and its peel of the row box (the first copy)."""
+    d = rename_multiplicity(parse_dsl(REV_BINDER), "n", Mult("s") + 1)
+    row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
+    return d, bangbox.peel_one(d, row.id).diagram
+
+
+def test_a_reversed_chain_peel_with_an_index_exports_through_evalX_peel_first() -> None:
+    before, after = _rev_binder_peel()
+    source = lean_linked.export_peel(before, after)
+    assert source is not None and "(evalX_peel_first fo okx flat E ks hk hm y)" in source
+    assert "theorem okx : FirstX Lb Lk" in source and "theorem rb : RevOK Lb.strip Lbr" in source
+    m1 = re.search(r"ks \d+ = ks \d+ \+ 1 → ks (\d+) = 1 →", source)
+    assert m1 is not None
+    kept = re.findall(rf"\(⟨\d+, \w+, \d+⟩, \d+, 1, {m1[1]}\)", source.split("def L' ")[1])
+    assert len(kept) >= 2
+    assert lean_linked.export_peel(after, before) is None
+
+
+def test_a_kept_binder_not_its_template_one_copy_higher_is_not_exported() -> None:
+    before, after = _rev_binder_peel()
+    kept = next(x for x, n in before.nodes.items() if n.generator_type.name == "B")
+    node = after.nodes[kept]
+    after.set_port_dims(kept, [node.inputs[0].dim, node.outputs[0].dim], [node.outputs[0].dim])
+    assert lean_linked.export_peel(before, after) is None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_a_reversed_chain_peel_with_an_index_and_refuses_a_kept_copy_read_at_t(
+    tmp_path: object,
+) -> None:
+    source = lean_linked.export_peel(*_rev_binder_peel())
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/revx.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    head, tail = source.split("def L' : LDiagram :=", 1)
+    found = re.search(r"\((⟨\d+, \w+, \d+⟩), (\d+), 1, (\d+)\)", tail)
+    assert found is not None
+    bad = f"({found[1]}, {found[2]}, 0, {found[3]})"
+    ok, output = check(
+        head + "def L' : LDiagram :=" + tail.replace(found[0], bad, 1), f"{tmp_path}/bad.lean"
+    )
+    assert not ok
+
+
+INNER = (
+    BINDERS.replace("repeat n as R index m: b, u, w", "repeat n as R index m: b, u, w, q")
+    .replace("repeat l as C in R: b", "repeat l as C index k in R: b, q")
+    .replace("w = Z(1 -> 0, literal 2)", "w = Z(1 -> 0, literal 2)\nq = B(literal 2, literal 2^k)")
+    .replace("inputs b.in1, b.in0", "inputs b.in1, b.in0, q.in0, q.in1")
+    .replace("outputs b.out0", "outputs b.out0, q.out0")
+)
+"""BINDERS with the column box indexed by ``k`` and holding a binder B(2, 2^k) with its legs on
+the boundary."""
+
+
+def _inner_peel() -> tuple[Diagram, Diagram]:
+    """INNER at ``s + 1`` rows and its peel of the row box."""
+    d = rename_multiplicity(parse_dsl(INNER), "n", Mult("s") + 1)
+    row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
+    return d, bangbox.peel_one(d, row.id).diagram
+
+
+def _inner_copy_reading(source: str) -> tuple[str, str]:
+    """The phase reading of the copy of the inner binder in ``L'`` and that reading at the
+    template's box."""
+    cph = [
+        re.findall(r"\((\d+), (\d+), (\d+), (\d+)\)", m) for m in re.findall(r"cph := .*", source)
+    ]
+    before, after = set(cph[0]), set(cph[1])
+    (x, y, a, m), *_ = sorted(q for q in after - before if q[2] == "0")
+    (tx, ty, *_), *_ = sorted(q for q in before if q[1] != "0")
+    assert tx != x
+    return f"({x}, {y}, {a}, {m})", f"({x}, {ty}, {a}, {m})"
+
+
+def test_a_peel_reading_an_inner_box_index_exports_with_the_copy_one_level_up() -> None:
+    before, after = _inner_peel()
+    source = lean_linked.export_peel(before, after)
+    assert source is not None and "(evalX_peel_flat ok flat E ks hk y)" in source
+    good, _ = _inner_copy_reading(source)
+    assert good in source.split("def L' ")[1]
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_an_inner_box_reading_on_a_copy_and_refuses_it_at_the_template_box(
+    tmp_path: object,
+) -> None:
+    source = lean_linked.export_peel(*_inner_peel())
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/inner.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    good, bad = _inner_copy_reading(source)
+    ok, output = check(source.replace(good, bad), f"{tmp_path}/bad.lean")
     assert not ok
 
 

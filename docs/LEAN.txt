@@ -395,7 +395,8 @@ read through G after lperm, for every Env, ks and flat assignment. lay<j> become
 applied to R<i>.main; slots<i> stays opaque.
 
 A peel and an identity slide are proved the same way over linked diagrams (ArchytasZX/Linked.lean,
-LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean). Both
+LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean,
+LinkedFirst.lean). Both
 read each side's digits at its flat boundary positions: the engine instantiates a box by
 splicing each of its slot blocks into one run at the place of the block's first leg,
 copy-major, outputs and inputs apart (bangbox._splice_box), and LinkedSplice.lean states the
@@ -463,8 +464,28 @@ checked by sympy equal to its template at the box's count after the peel. Plain 
 phase indices are numbered below every one read at a copy (seeded first, checked on both sides).
 Lb and L' are then written with cph and cdim, ok is PeelX Lb Lk, chain_b drops the identities by
 GhostOKX and evalGX_ghostAt, and main states L'.evalGX gsL' and L.evalGX gsL read at their flat
-positions equal through evalX_peel_flat. A reversed chain of a box with an index, and an identity
-wired to a node leg on such a side, are not exported.
+positions equal through evalX_peel_flat. A copy of a node of an inner box reading that box's
+index keeps the reading at the copy's box one level up (rdC); tests/test_lean_peel.py checks it on
+BINDERS with an indexed column box (INNER), and Lean refuses the copy read at the template's box.
+
+A reversed chain of a box with an index is peeled at its first copy over evalX
+(LinkedFirst.lean). FirstOK holds RevOK both ways between each side stripped of its readings and
+its flip (Lbr, Lkr) and PeelOK Lbr Lkr; FirstX holds the readings: every node and leg off the box
+read alike, a node or leg of the box reading the box (coefficient 0, depth 0) read in L' at
+coefficient 1 of the multiplicity index m1 of the constant 1 (rdS: the kept copy j reads j + 1),
+an inner box the same at the same depth, and its copy reading the box at coefficient 0 off its
+chain (rdC0: 0), an inner box one level up; the copies lie off the box (cpB). evalX_first: L'.evalX
+equals L.evalX read through firstφ (a leg of the box at copy 0 goes to its copy, at copy j + 1 to
+copy j), through evalX_relabelφ; its digit pairs go through RevOK.fwd, PeelOK.fwd and RevOK.fwd
+(back through the three bwd), whose composite is firstφ on every digit (FirstOK.comp), and the
+node products split each node of the box into its first copy and the rest (cidx_first).
+evalX_peel_first reads both sides at their flat positions (PeelFirst, bndMap_first, psi0). The
+engine writes the kept copies with their index shifted (2**(m + 1)) and the first copy at 0; the
+export writes both with their template's indices, the kept ones with (_, box, 1, m1) and the copy
+with (_, box, 0, 0), each literal checked by sympy (m + 1, 0), and main takes ks m1 = 1.
+tests/test_lean_peel.py checks REV_BINDER (GRID with the row chain reversed and a binder
+B(2, 2^m) in the row box of index m); Lean refuses a kept copy read at coefficient 0. An identity
+wired to a node leg on a side with an index is not exported.
 
 A power split (kernel.power_split) is proved the same way when both sides are linked diagrams
 (ArchytasZX/LinkedSplit.lean), over the digit sum evalX (Linked.lean): evalL with copy-indexed
