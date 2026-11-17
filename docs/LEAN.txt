@@ -323,6 +323,27 @@ sum_nokey, phC_den0); lean_sym.tab_row emits it when ptOK holds, else the by_cas
 whose entries off the listed indices tab_zero / tab_zeroZ close. draper_adder n=1 d=10: 139 residual terms, pv = [0, 2], 157 split terms, 337
 characters, 41 cycles; fzOK decides in 12 s.
 
+A residual can vanish only where the boundary labels lie in their ranges (fourier_constant_adder
+n=2 d=3: roots of unity omega_9^(a x) of labels x of range 3). SymRange proves it zero there
+(rgOK, rgOK_zero). Each term is first pinned (elimAllR): elimPin1 removes a bound variable x of
+constant range D held by a delta [D | s x + c], s = +-1, c constant, since on [0, D) only x =
+(-s c) mod D satisfies it, so every factor takes that value whatever its modulus (elimPin1_ok,
+by dvd_sub_iff_eq); the other moves are those of elimStep, except that splitStepR skips a
+delta whose modulus is the variable's range (that split only adds [1 | ..]). The pinned terms
+must be sum-free.
+rsplit substitutes each label of R = [(x, D)] by each v < D (subTm); a valuation with every
+label of R in range equals one case at x = v (subTm_den0, rsplit_zero). Each case, its
+constant deltas evaluated (pruneTm), is empty or passes fzOK with its own certificate (caseR,
+allCases); no case is normalised. labOK reads R off the network:
+each x a boundary label whose dimension DT i is the constant D (labOK_in gives the ranges from
+InRange). rgNf / rgNf_den wrap the hint normaliser (equal_symSR); symCheckR / equal_symR wrap
+nfEx. lean_sym.rg_cert builds the certificate RgCert = (fuel, R, cases): R the labels some
+factor reads with a coefficient a where M does not divide a D; at most RG_CASES = 729 cases and
+RG_WORK = 2^16 case terms. sym_check tries it after fz_cert (only where the check failed before)
+and the export writes RGC or chkRC. fourier_constant_adder n=2 d=3 (node by node): 288 residual
+terms, sum-free after at most 9 pins/eliminations each, R = [(1, 3), (3, 3)], 9 cases, 802
+pruned terms, 39 cycles.
+
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.

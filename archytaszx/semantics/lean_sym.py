@@ -1055,6 +1055,157 @@ def _lean_cert(cert: FZCert) -> str:
     return f"(({_lean_ints(list(cert[0]))}, {_lean_ints(list(cert[1]))}, [{rows}]) : FzCert)"
 
 
+# residuals vanishing on the labels' ranges (SymRange)
+
+RgCert = tuple[int, tuple[tuple[int, int], ...], tuple[tuple[int, FZCert], ...]]
+RG_CASES = 729
+"""The most cases :func:`rg_cert` splits the labels into."""
+RG_WORK = 1 << 16
+"""The most cases times residual terms :func:`rg_cert` normalises."""
+RG_FUEL = 256
+"""The most pins and eliminations :func:`rg_cert` runs on one term."""
+_NO_CERT: FZCert = ((), (), ())
+
+
+def elim_pin1(
+    x: int, d: DMon, pre: tuple[Fac, ...], f: Fac, post: tuple[Fac, ...], ps: tuple[Fac, ...]
+) -> tuple[CMon, tuple[Fac, ...], tuple[Fac, ...]] | None:
+    """``elimPin1``: ``x`` of constant range ``D`` held by ``[D | s x + c]`` at ``(-s c) mod D``."""
+    if not (f[0] == d and dm_const(d) and d[0] > 0):
+        return None
+    lin = ip_lin(x, f[1])
+    if lin is None:
+        return None
+    s, c = ip_const(lin[0]), ip_const(lin[1])
+    if s not in (1, -1) or c is None:
+        return None
+    v = ip_c((-s * c) % d[0])
+    return (
+        of_q(1),
+        tuple(fac_sub(x, v, g) for g in (*pre, *post)),
+        tuple(fac_sub(x, v, g) for g in ps),
+    )
+
+
+def elim_var_r(x: int, d: DMon, ds: tuple[Fac, ...], ps: tuple[Fac, ...]) -> Any:
+    """``elimVarR``: a pin by range first, else :func:`elim_var`."""
+    for pre, f, post in _splits(ds):
+        e = elim_pin1(x, d, pre, f, post, ps)
+        if e is not None:
+            return e
+    return elim_var(x, d, ds, ps)
+
+
+def split_step_r(t: STm) -> STm | None:
+    """``splitStepR``: :func:`split_step` without splits of a delta whose modulus is the
+    variable's range."""
+    for pre, f, post in _splits(t[2]):
+        for y, d in t[1]:
+            got = None if f[0] == d else split_del(t[1], y, d, f)
+            if got is not None:
+                return (t[0], t[1], (*pre, got[0], got[1], *post), t[3])
+    return None
+
+
+def elim_step_r(t: STm) -> STm | None:
+    """``elimStepR``: the first elimination by :func:`elim_var_r`, else
+    :func:`split_step_r`."""
+    for pre, (x, d), post in _splits(t[1]):
+        if x in [y for y, _ in (*pre, *post)]:
+            continue
+        e = elim_var_r(x, d, t[2], t[3])
+        if e is not None:
+            return (cm_mul(t[0], e[0]), pre + post, e[1], e[2])
+    return split_step_r(t)
+
+
+def _pin_count(t: STm) -> tuple[STm, int]:
+    """The term after :func:`elim_step_r` to a fixed point within RG_FUEL, and the steps."""
+    for k in range(RG_FUEL):
+        t2 = elim_step_r(t)
+        if t2 is None:
+            return t, k
+        t = t2
+    return t, RG_FUEL
+
+
+def sub_tm(x: int, v: int, t: STm) -> STm:
+    """``subTm``."""
+    w = ip_c(v)
+    return (
+        t[0],
+        t[1],
+        tuple(fac_sub(x, w, f) for f in t[2]),
+        tuple(fac_sub(x, w, f) for f in t[3]),
+    )
+
+
+def rsplit(r: Sequence[tuple[int, int]], e: Sequence[STm]) -> list[list[STm]]:
+    """``rsplit``: each label of ``r`` substituted by each value of its range."""
+    if not r:
+        return [list(e)]
+    (x, d), rest = r[0], r[1:]
+    return [c for v in range(d) for c in rsplit(rest, [sub_tm(x, v, t) for t in e])]
+
+
+def lab_ranges(
+    labs: Mapping[int, int], dt: Callable[[int], DMon], ix: Sequence[int], bnd: Sequence[int]
+) -> dict[int, int]:
+    """The boundary labels ``labOK`` accepts, each with its constant dimension."""
+    out = {}
+    for lab in bnd:
+        i = labs.get(lab, 0)
+        m = dt(i)
+        if i in ix and dm_const(m):
+            out[lab] = m[0]
+    return out
+
+
+def rg_cert(e: Sequence[STm], ranges: Mapping[int, int]) -> RgCert | None:
+    """``rgOK``'s certificate for a residual: pins to sum-free terms, the labels some character
+    reads with a period beyond their range split over ``ranges``, each case's normal form empty
+    or certified by :func:`fz_cert` after :func:`_prune`; None otherwise."""
+    if not e:
+        return None
+    pinned, fuel = [], 1
+    for t in e:
+        u, k = _pin_count(t)
+        if u[1] or k >= RG_FUEL:
+            return None
+        pinned.append(u)
+        fuel = max(fuel, k)
+    split: set[int] = set()
+    for t in pinned:
+        for m, p in (*t[2], *t[3]):
+            if not (dm_const(m) and m[0] > 0):
+                return None
+            for mon, c in p:
+                if len(mon) == 1 and mon[0] in ranges and (c * ranges[mon[0]]) % m[0]:
+                    split.add(mon[0])
+    r = tuple((x, ranges[x]) for x in sorted(split))
+    cases = math.prod(d for _x, d in r)
+    if not r or cases > RG_CASES or cases * len(pinned) > RG_WORK:
+        return None
+    certs = []
+    for case in rsplit(r, pinned):
+        rest = [p for p in (_prune(t) for t in case) if p is not None]
+        if not rest:
+            certs.append((0, _NO_CERT))
+            continue
+        got = fz_cert(rest)
+        if got is None:
+            return None
+        certs.append(got)
+    return fuel, r, tuple(certs)
+
+
+def _lean_rg(rc: RgCert) -> str:
+    """A range certificate literal."""
+    labs = ", ".join(f"({x}, {d})" for x, d in rc[1])
+    cases = ", ".join(f"({n}, {_lean_cert(c)})" for n, c in rc[2])
+    return f"(({rc[0]}, [{labs}], [{cases}]) : RgCert)"
+
+
 # networks
 
 
@@ -1344,10 +1495,13 @@ def sym_check(
     s0: Sequence[STm],
     s1: Sequence[STm],
     fz: list[tuple[int, FZCert]] | None = None,
+    rg: list[RgCert] | None = None,
 ) -> bool:
     """``symCheck``; a network is ``(nodes, internal, boundary)``. With ``fz``, a sum-free
     residual whose characters vanish (:func:`fz_cert`) also passes (``symCheckF``), its
-    modulus and certificate appended to ``fz``."""
+    modulus and certificate appended to ``fz``; with ``rg``, failing that, a residual
+    vanishing on the labels' ranges (:func:`rg_cert`, ``symCheckR``), its certificate
+    appended to ``rg``."""
     if sorted(n0[2]) != sorted(n1[2]):
         return False
     if not (BS_NODES or _BS_ON) and any(n[0] in ("B", "S") for n in (*n0[0], *n1[0])):
@@ -1373,6 +1527,11 @@ def sym_check(
             got = fz_cert(rest)
             if got is not None:
                 fz.append(got)
+                return True
+        if rg is not None:
+            got_r = rg_cert(rest, lab_ranges(labs, dt, ix, n0[2]))
+            if got_r is not None:
+                rg.append(got_r)
                 return True
     return False
 
@@ -1996,6 +2155,8 @@ class _SymExport:
         self.fixed_steps: Any = None
         self.q: Any = None
         self.fz: list[tuple[int, FZCert]] = []
+        self.rg: list[RgCert] = []
+        self.g_lemma: dict[str, str] = {}
 
     # tables as Python
 
@@ -2076,6 +2237,7 @@ class _SymExport:
             if self.q_plan():
                 return True
             self.fz = []
+            self.rg = []
             return sym_check(
                 self.fl,
                 self.dtf,
@@ -2087,6 +2249,7 @@ class _SymExport:
                 self.s0,
                 self.s1,
                 self.fz,
+                self.rg,
             )
         if self.planned is None:
             try:
@@ -2414,8 +2577,11 @@ class _SymExport:
         """``equal_sym`` at the environment ``envt``, multiplicities ``ks``; ``equal_symS`` on the
         parts of ``chk`` when :meth:`check_decls` wrote it node by node."""
         g = self.g_args.get(chk)
-        lemma = "equal_symS" if g else "equal_symF" if self.fz else "equal_sym"
-        fzargs = " FZN FZC" if self.fz and not g else ""
+        if g:
+            lemma = self.g_lemma.get(chk, "equal_symS")
+        else:
+            lemma = "equal_symF" if self.fz else "equal_symR" if self.rg else "equal_sym"
+        fzargs = " FZN FZC" if self.fz and not g else " RGC" if self.rg and not g else ""
         return (
             f"{lemma} {envt} {self.rho} {self.hr} FL {self.call('flOK')}{fzargs} DT PT RL labs IX "
             f"{self.call('envD', ks)} {self.call('envP', ks)} rfl {n0} {n1} {a0} {a1} _ _ "
@@ -3668,6 +3834,17 @@ class _SymExport:
                 + f"theorem {name} : symCheckF FZN FZC FL DT PT RL labs IX {a} {b} {s0t} {s1t} = "
                 "true := by decide +kernel",
             ]
+        elif self.rg and name == "chk":
+            whole = [
+                (
+                    "/-- The pins, the labels split over their ranges and each case's "
+                    f"certificate. -/\ndef RGC : RgCert := {_lean_rg(self.rg[0])}"
+                ),
+                "set_option maxHeartbeats 0 in\n"
+                + doc
+                + f"theorem {name} : symCheckR RGC FL DT PT RL labs IX {a} {b} {s0t} {s1t} = "
+                "true := by decide +kernel",
+            ]
         else:
             whole = [
                 "set_option maxHeartbeats 0 in\n"
@@ -3694,7 +3871,10 @@ class _SymExport:
             return whole
         rest = nf_ex(self.fl, ex_mul(s0, e[ta]) + ex_mul(neg, eb))
         fzs = fz_cert(rest) if rest and self.fz and name == "chk" else None
-        if rest and fzs is None:
+        rgs = None
+        if rest and fzs is None and self.rg and name == "chk":
+            rgs = rg_cert(rest, lab_ranges(labs, self.dtf, self.ix, self.net(na)[2]))
+        if rest and fzs is None and rgs is None:
             return whole
         out: list[str] = []
         if fzs is not None:
@@ -3702,6 +3882,8 @@ class _SymExport:
                 f"def {name}FN : ℕ := {fzs[0]}",
                 f"def {name}FC : FzCert := {_lean_cert(fzs[1])}",
             ]
+        if rgs is not None:
+            out.append(f"def {name}RC : RgCert := {_lean_rg(rgs)}")
         texts_e: dict[str, str] = {}
         nets_ok: dict[str, str] = {}
         for tag, (text, lnet) in own.items():
@@ -3797,12 +3979,20 @@ class _SymExport:
         if fzs is not None:
             nfz = f"(fzNf {name}FN {name}FC (nfH FL {name}ZH 0))"
             hnfz = f"(fzNf_den {self.rho} {self.hr} {name}FN {name}FC _ {hnfz})"
+        rgx = ""
+        if rgs is not None:
+            nfz = f"(rgNf {name}RC (nfH FL {name}ZH 0))"
+            hnfz = f"(rgNf_den {self.rho} {self.hr} {name}RC _ {hnfz})"
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
             ("k", f"(exConst {s0t} && exConst {s1t})"),
             ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
             ("z", f"({nfz[1:-1]} (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
         ]
+        if rgs is not None:
+            parts.insert(3, ("r", f"labOK labs IX DT {a}.bnd {name}RC.2.1"))
+            rgx = f" {name}RC.2.1"
+            self.g_lemma[name] = "equal_symSR"
         for k, (sfx, stmt) in enumerate(parts):
             out.append(
                 "set_option maxHeartbeats 0 in\n"
@@ -3813,7 +4003,8 @@ class _SymExport:
             f"(nfH FL {ta}H) (nfH FL {tb2}H) (nfH_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
             f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
             f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
-            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {nfz} {hnfz} {name}z"
+            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m{rgx} {nfz} {hnfz} {name}z"
+            + (f" {name}r" if rgs is not None else "")
         )
         return ["noncomputable section", *out, "end"]
 
