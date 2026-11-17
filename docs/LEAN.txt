@@ -299,6 +299,20 @@ equal wherever the listed bound variables lie in their ranges have equal sums) g
 splitDel_ok and splitStep_ok; the free labels need no range. The hint list reads a split as
 rule 4 (elimStepH, splitH). The mirror is lean_sym.split_del / split_step / elim_choice.
 
+SymFourier (not yet used by the exporter) proves a sum-free residual zero through its
+characters. expTerm writes a term with constant moduli dividing N and constant q ex r (r N an
+integer) as characters w omega_N^P: each root of unity omega_M^p as omega_N^((N/M) p), each delta
+[M | p] as (1/M) Sum_{k<M} omega_N^(k (N/M) p) (delV_avg from sum_om_lin). A certificate (vs,
+rows) lists cycles (K, p, a, lambda), each lambda Sum_{i<p} omega_N^(K + a + i N/p) = 0 for
+1 < p | N (om_geom). fzOK packs each character linear over vs into a slot, the digits of its
+coefficients mod N read in base N (slotOf; slot_eq: equal slots give equal characters, by
+Nat.ofDigits_inj_of_len_eq), sorts the characters and the negated cycles by slot and checks
+that every run of one slot sums to zero (runsGo, runs_ok); fz_zero gives exDen e = 0 at every
+valuation. fzNf / fzNf_den wrap a normaliser; symCheckF / equal_symF are symCheck / equal_sym
+with the check beside the empty normal form. On draper_adder n=1 d=10 the residual has 13900
+characters and the kernel's decide exceeds 600 s (4000 characters: expansion 5 s, slots 57 s,
+sort 80 s), so the exporter does not emit it.
+
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.

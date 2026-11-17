@@ -22,6 +22,7 @@ import ArchytasZX.RefuteSym
 import ArchytasZX.SymNet
 import ArchytasZX.SymChunk
 import ArchytasZX.SymHint
+import ArchytasZX.SymFourier
 import ArchytasZX.SymF2
 import ArchytasZX.SymF2Chain
 import ArchytasZX.SymF2Bridge
