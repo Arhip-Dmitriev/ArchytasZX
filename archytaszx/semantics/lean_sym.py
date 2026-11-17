@@ -3087,7 +3087,10 @@ class _SymExport:
             if zn.ph or zm.ph or self.tower_shared(zn, zm, x) is None:
                 continue
             return zm
-        raise NetUnsupported("a spider meeting the node box with no boundary leg or neighbour")
+        raise NetUnsupported(
+            "the spider meeting the node box has no boundary leg and no neighbour of its colour "
+            "with one"
+        )
 
     @staticmethod
     def tower_shared(a: Any, b: Any, x: Any) -> int | None:
