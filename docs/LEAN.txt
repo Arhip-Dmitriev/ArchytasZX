@@ -351,9 +351,10 @@ networks"; the benchmark runner classes the file as opaque.
 
 A regroup step's layout axiom lay<j> is replaced the same way when the side and its premise
 side are one linked diagram (ArchytasZX/LinkedRegroup.lean) apart from box groups and every
-boundary slot lies in at most one box, that box outermost: namespace <N>.R<i> writes the linked
-diagram L and the slot blocks G (premise side) and G' (regrouped side), each block a chain and
-its slots over outs ++ ins, laid out copy-major at its first slot; R<i>.main is
+boundary slot lies in at most one box, that box outermost (a linked diagram, lean_linked.linked,
+has no wire between two boxes neither of which holds the other): namespace <N>.R<i> writes the
+linked diagram L and the slot blocks G (premise side) and G' (regrouped side), each block a
+chain and its slots over outs ++ ins, laid out copy-major at its first slot; R<i>.main is
 regroup_layout: layout ks G' is a permutation of layout ks G, lperm (a flat position of G to
 the position of its slot in G') is one to one and onto, and L read through G' (readAt) equals L
 read through G after lperm, for every Env, ks and flat assignment. lay<j> becomes net<j>

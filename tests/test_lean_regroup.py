@@ -13,8 +13,9 @@
 
 """Kernel regroup layout facts exported through ``regroup_layout`` (REMAINING_BUGS_SPEC 79.16b):
 the box groups of a row and of the cluster_state_2d proof as slot blocks, a pair differing beyond
-box groups refused, the semantic export with no ``lay`` axiom, and Lean accepting the layout proof
-and rejecting a block that is no boundary slot of its chain."""
+box groups or with a wire between sibling boxes refused, the semantic export with no ``lay``
+axiom, and Lean accepting the layout proof and rejecting a block that is no boundary slot of its
+chain."""
 
 from __future__ import annotations
 
@@ -30,13 +31,16 @@ from archytaszx.semantics.lean_net import check, lean_project
 from tests.test_columns import ROW
 from tests.test_nested_chain import _grid_pair
 
+ONE_BOX = ROW.replace("as A: v, w", "as A: v, u, w").replace("repeat m as B: u\n", "")
+"""ROW with the identity in the copy spider's box."""
 
-def _grouped() -> tuple[Diagram, Diagram]:
-    d = parse_dsl(ROW)
+
+def _grouped(text: str = ONE_BOX) -> tuple[Diagram, Diagram]:
+    d = parse_dsl(text)
     grouped = d.copy()
     v = next(n for n, node in d.nodes.items() if len(node.outputs) == 2)
     a = next(b for b, box in d.bang_boxes.items() if v in box.node_scope)
-    w = next(n for n in d.bang_boxes[a].node_scope if n != v)
+    w = next(r.node_id for r in d.boundary_inputs if r.node_id != v)
     grouped.set_bang_box_extension(a, groups=(frozenset({v}), frozenset({w})))
     return d, grouped
 
@@ -45,14 +49,21 @@ def test_a_row_regroup_exports_through_regroup_layout() -> None:
     d, grouped = _grouped()
     source = lean_regroup.export_regroup(grouped, d)
     assert source is not None and "regroup_layout L G G'" in source
-    assert "def G : List Blk := [([0], [0, 2]), ([0], [1]), ([0], [3, 4])]" in source
+    assert "def G : List Blk := [([0], [0, 1, 2]), ([0], [3, 4])]" in source
     other = d.copy()
     other.remove_node(next(iter(other.nodes)))
     assert lean_regroup.export_regroup(other, d) is None
     step = kernel.regroup(kernel.refl(d), grouped, grouped)
-    lean = kernel.lean(step, "main")
+    lean = kernel.lean(step, "main", guards={"m": 0})
     assert "namespace ArchytasZX.Export.R" in lean and "axiom lay" not in lean
     assert "axiom lay" in kernel.lean(step, "main", semantic=False)
+
+
+def test_a_row_regroup_with_a_wire_between_sibling_boxes_is_not_exported() -> None:
+    d, grouped = _grouped(ROW)
+    assert lean_regroup.export_regroup(grouped, d) is None
+    step = kernel.regroup(kernel.refl(d), grouped, grouped)
+    assert "axiom lay" in kernel.lean(step, "main", guards={"m": 0})
 
 
 def test_the_cluster_state_2d_regroup_exports_through_regroup_layout() -> None:

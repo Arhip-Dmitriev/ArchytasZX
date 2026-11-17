@@ -219,7 +219,12 @@ def linked(
                 ends.append(w[1] if w[0] == _port(ref) else w[0])
             links.append(LLink(int(bid), _port(p), _port(q), ends[0], ends[1]))
     kept = [w for i, w in enumerate(wires) if i not in used]
-    return LDiag(nodes, kept, bouts, bins, boxes, links)
+    out = LDiag(nodes, kept, bouts, bins, boxes, links)
+    for w in kept:
+        a, c = ([b.id for b in out.node_boxes(e[0])] for e in w)
+        if a[: len(c)] != c and c[: len(a)] != a:
+            raise LinkedUnsupported("a wire between boxes neither of which holds the other")
+    return out
 
 
 def _boundary_ends(
