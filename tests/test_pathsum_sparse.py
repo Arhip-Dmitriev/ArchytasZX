@@ -267,3 +267,51 @@ def test_parity_expr_is_the_evaluated_sum() -> None:
         )
         want = sp.Add(*(sp.Mul(*(var[v] for v in sorted(m))) for m in sorted(poly, key=sorted)))
         assert sp.srepr(_parity_expr(poly, var)) == sp.srepr(want)
+
+
+def test_column_digits_are_the_digits_of_the_column_sum() -> None:
+    import itertools
+
+    from archytaszx.algebra.pathsum import _column_digits, f2_assign
+
+    rng = random.Random(47)
+    for _ in range(150):
+        nv, k = rng.randint(1, 4), rng.randint(1, 4)
+        cols = [
+            [
+                frozenset(
+                    frozenset(rng.sample(range(nv), rng.randint(0, nv)))
+                    for _m in range(rng.randint(1, 3))
+                )
+                for _x in range(rng.randint(0, 4))
+            ]
+            for _c in range(k)
+        ]
+        digits = _column_digits(cols)
+        for bits in itertools.product((0, 1), repeat=nv):
+            val = dict(enumerate(bits))
+            total = sum(
+                (len(f2_assign(x, val)) & 1) << i for i, col in enumerate(cols) for x in col
+            )
+            got = sum((len(f2_assign(d, val)) & 1) << i for i, d in enumerate(digits))
+            assert got == total % (1 << k)
+
+
+def test_dyadic_columns_give_the_low_digit_canonical_form(monkeypatch: pytest.MonkeyPatch) -> None:
+    from archytaszx.algebra import pathsum
+    from archytaszx.algebra.pathsum import Cyclo, PathSum, canonical, reduce
+
+    def adder() -> PathSum:
+        phase = PhasePoly()
+        s = {0: 1, 1: 2, 2: 3, 3: 2, 4: 3, 5: 2}
+        for v, c in s.items():
+            phase.add({6, v}, Fraction(c, 4))
+            phase.add({7, v}, Fraction(2 * c % 4, 4))
+        return PathSum((0, 1, 2, 3, 4, 5), {6, 7}, phase, Cyclo.rational(1))
+
+    want = canonical(reduce(adder()))
+    monkeypatch.setattr(pathsum, "COLUMN_DIGITS", 1)
+    out = reduce(adder())
+    assert any(step.rule == "dyadic_columns" for step in out.trace)
+    got = canonical(out)
+    assert want is not None and got is not None and got.same(want)

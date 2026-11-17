@@ -1124,7 +1124,8 @@ def _try_low_digit(
     """For a dyadic group whose S mod 2 (b0) reads only boundary variables: [BSub] (a boundary
     variable u replaced in the phase by c + u, c a constraint) on each u of S in exactly one
     constraint, as its pivot, c + u reading only boundary variables above u; when there is
-    none, [HH] on the top digit and [BSub] on a boundary pivot of b0."""
+    none, :func:`_try_columns` on a group of at least :data:`COLUMN_DIGITS` digits, else [HH] on
+    the top digit and [BSub] on a boundary pivot of b0."""
     b0 = frozenset(m for m, c in s.items() if c % 2)
     cons_vars = {v for c in ps.constraints for m in c for v in m}
     if any(v in ps.path for m in b0 for v in m) or cons_vars & set(digits):
@@ -1149,6 +1150,8 @@ def _try_low_digit(
             ps.trace.append(Step("bsub", u, None, value))
             done += 1
         return done > 0
+    if len(digits) >= COLUMN_DIGITS and _try_columns(ps, occ, digits, s):
+        return True
     v = _boundary_pivot(ps, b0)
     if v is None:
         return False
@@ -1172,6 +1175,92 @@ def _try_low_digit(
     ps.trace.append(Step("hh_constraint", top, None, b0))
     ps.trace.append(Step("bsub", v, None, value))
     return True
+
+
+COLUMN_DIGITS = 8
+"""The fewest digits of a group :func:`_try_low_digit` sums by :func:`_try_columns`."""
+
+
+def _column_digits(columns: list[list[F2Poly]]) -> list[F2Poly]:
+    """The binary digits, as F_2 polynomials, of ``Sum_i 2^i (sum of the 0/1 items of column
+    i)`` below ``2^len(columns)``: digit i is the XOR of column i, and digit j of its count, the
+    elementary symmetric polynomial e_(2^j) over F_2, joins column i + j."""
+    k = len(columns)
+    cols = [list(c) for c in columns]
+    out: list[F2Poly] = []
+    for i in range(k):
+        items = [x for x in cols[i] if x]
+        top = 0
+        while i + top + 1 < k and 1 << (top + 1) <= len(items):
+            top += 1
+        e: list[F2Poly] = [ONE] + [frozenset()] * (1 << top)
+        for x in items:
+            for t in range(len(e) - 1, 0, -1):
+                if e[t - 1]:
+                    e[t] = f2_add(e[t], f2_mul(e[t - 1], x))
+        out.append(e[1])
+        for j in range(1, top + 1):
+            if e[1 << j]:
+                cols[i + j].append(e[1 << j])
+    return out
+
+
+def _try_columns(
+    ps: PathSum,
+    occ: Mapping[int, list[tuple[Mono, Fraction]]],
+    digits: Sequence[int],
+    s: Mapping[Mono, int],
+) -> bool:
+    """[Dyadic] as constraints: Sum_Y exp(2 pi i Y S / 2^k) = 2^k [S = 0 mod 2^k]. With S =
+    +-C + R, C = Sum_i 2^i c_i over boundary variables c_i in no other monomial of S, phase term,
+    constraint or amplitude exponent, the sum is 2^k Prod_i [c_i = digit i of -+R]
+    (:func:`_column_digits` of R's coefficients mod 2^k by binary digit)."""
+    k = len(digits)
+    mod = 1 << k
+    group = {m for d in digits for m, _c in occ.get(d, [])}
+    taken = {v for c in ps.constraints for m in c for v in m} | ps.amp_vars()
+    taken |= {v for m in ps.phase.terms if m not in group for v in m}
+    taken |= {v for m in s if len(m) > 1 for v in m}
+    for sign in (1, -1):
+        chosen: list[int] = []
+        for i in range(k):
+            want = (sign << i) % mod
+            c = next(
+                (
+                    u
+                    for u in sorted(ps.boundary)
+                    if s.get(frozenset({u}), 0) % mod == want and u not in taken and u not in chosen
+                ),
+                None,
+            )
+            if c is None:
+                break
+            chosen.append(c)
+        if len(chosen) < k:
+            continue
+        picked = {frozenset({c}) for c in chosen}
+        columns: list[list[F2Poly]] = [[] for _ in range(k)]
+        for m in sorted(s, key=_mono_key):
+            if m in picked:
+                continue
+            t = (-sign * s[m]) % mod
+            for j in range(k):
+                if t >> j & 1:
+                    columns[j].append(frozenset({m}))
+        rows = [
+            f2_add(d, frozenset({frozenset({c})}))
+            for c, d in zip(chosen, _column_digits(columns), strict=True)
+        ]
+        for d in digits:
+            _drop_terms(ps, occ.get(d, []))
+            ps.path.discard(d)
+        ps.constraints.extend(rows)
+        ps.sqrt2 += 2 * k
+        ps.trace.append(
+            Step("dyadic_columns", digits[0], None, None, tuple(digits), (), tuple(rows))
+        )
+        return True
+    return False
 
 
 def _try_dyadic(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
