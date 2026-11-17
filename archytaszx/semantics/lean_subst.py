@@ -314,23 +314,20 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             a = a[1]
         return a[0] == "v" and a[1] in fset and not s.bound(a[1])
 
-    def dcands(s: State, only_cn: bool = False) -> Any:
-        for i in [] if only_cn else s.ns:
-            n = net.nodes[i]
-            h = _head(n.kind)
-            if h == "Z":
-                L = list(dict.fromkeys(_legs(net, i)))
-                for x in L:
-                    if not opened(s, s.texpr(x)):
-                        continue
-                    for y in L:
-                        if x != y:
-                            yield ("zz", i, x, y)
-            elif h in ("B", "S"):
-                for pos in (0, 1, 2):
-                    yield ("bs", i, pos)
-        for q in s.cs:
-            yield ("cn", q)
+    def ncands(s: State, i: int) -> Any:
+        n = net.nodes[i]
+        h = _head(n.kind)
+        if h == "Z":
+            L = list(dict.fromkeys(_legs(net, i)))
+            for x in L:
+                if not opened(s, s.texpr(x)):
+                    continue
+                for y in L:
+                    if x != y:
+                        yield ("zz", i, x, y)
+        elif h in ("B", "S"):
+            for pos in (0, 1, 2):
+                yield ("bs", i, pos)
 
     def dok(s: State, l: int, src: tuple[Any, ...]) -> Ex | None:
         if l not in fset or s.bound(l):
@@ -365,8 +362,8 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             return int(a[1][1])
         return None
 
-    def delta(s: State, closed: bool, only_cn: bool = False) -> tuple[Any, ...] | None:
-        for src in dcands(s, only_cn):
+    def first(s: State, closed: bool, srcs: Any) -> tuple[Any, ...] | None:
+        for src in srcs:
             l = leg_label(s, src)
             if l is None:
                 continue
@@ -376,6 +373,23 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             if closed and any(x in fset for x in vars_(e)):
                 continue
             return ("D", l, src, e)
+        return None
+
+    memo: dict[Any, tuple[Any, ...] | None] = {}
+
+    def delta(s: State, closed: bool, only_cn: bool = False) -> tuple[Any, ...] | None:
+        for i in [] if only_cn else s.ns:
+            key: Any = (closed, i, tuple(s.texpr(x) for x in _legs(net, i)))
+            if key not in memo:
+                memo[key] = first(s, closed, ncands(s, i))
+            if memo[key] is not None:
+                return memo[key]
+        for q in s.cs:
+            key = (closed, "cn", q)
+            if key not in memo:
+                memo[key] = first(s, closed, [("cn", q)])
+            if memo[key] is not None:
+                return memo[key]
         return None
 
     def geom(s: State) -> tuple[Any, ...] | None:
