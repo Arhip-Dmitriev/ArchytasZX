@@ -3029,6 +3029,235 @@ class _SymExport:
             self.top = f"P{i}"
         return f"P{i}"
 
+    def tower_cut(
+        self, x: Any, zn: Any, rest: Sequence[Any]
+    ) -> tuple[Any, int, tuple[int, ...], str]:
+        """The split spider of ``zn`` in ``rest``, the boundary leg of ``zn`` its unfused part
+        takes, the legs the split adds and the unfusion's form: ``zout`` (a Z spider's boundary
+        output), ``zin`` (a Z spider's plain boundary input) or ``xout`` (an X spider's boundary
+        output)."""
+        from archytaszx.semantics.lean_net import _head, _tail
+
+        xs = _head(zn.kind) == "XB"
+        if xs and zn.kind[1]:
+            raise NetUnsupported("an X spider meeting the node box with bundled outputs")
+        cs1 = tuple(zn.kind[-1])
+        i1 = tuple(zn.ins[: len(zn.ins) - len(cs1)])
+        o = next((lab for lab in zn.outs if lab in x.bnd), None)
+        mode = "xout" if xs else "zout"
+        if o is None and not xs:
+            o = next((lab for lab in i1 if lab in x.bnd), None)
+            mode = "zin"
+        if o is None:
+            raise NetUnsupported("the spider meeting the node box has no boundary leg")
+        found = [n for n in rest if _head(n.kind) == _head(zn.kind) and n.outs == zn.outs]
+        if len(found) != 1:
+            raise NetUnsupported("the split spider is not found")
+        zs = found[0]
+        es = tuple(lab for lab in zs.ins if lab not in zn.ins)
+        if not es:
+            raise NetUnsupported("the split spider gains no leg")
+        t1 = _tail(zn.ins, cs1)
+        if tuple(zs.ins) != i1 + tuple(t1) + es or tuple(zs.kind[-1]) != cs1 + ((),) * len(es):
+            raise NetUnsupported("the split spider's legs are not the unfused form")
+        if xs and zs.kind[1]:
+            raise NetUnsupported("the split X spider has bundled outputs")
+        return zs, o, es, mode
+
+    @staticmethod
+    def tower_leg(x: Any, zn: Any) -> int | None:
+        """A boundary output of ``zn``, or for a Z spider a plain boundary input; None if
+        neither."""
+        from archytaszx.semantics.lean_net import _head
+
+        o = next((lab for lab in zn.outs if lab in x.bnd), None)
+        if o is None and _head(zn.kind) == "ZB":
+            plain = zn.ins[: len(zn.ins) - len(zn.kind[-1])]
+            o = next((lab for lab in plain if lab in x.bnd), None)
+        return o
+
+    def tower_target(self, x: Any, zn: Any, spiders: Sequence[Any], held: Sequence[Any]) -> Any:
+        """The phaseless spider of ``spiders`` with a boundary leg and ``zn``'s kind that
+        phaseless ``zn`` meets at one summed plain leg (:meth:`tower_shared`)."""
+        from archytaszx.semantics.lean_net import _head
+
+        for zm in spiders:
+            if any(zm is h for h in held) or _head(zm.kind) != _head(zn.kind):
+                continue
+            if zn.ph or zm.ph or self.tower_shared(zn, zm, x) is None:
+                continue
+            return zm
+        raise NetUnsupported("a spider meeting the node box with no boundary leg or neighbour")
+
+    @staticmethod
+    def tower_shared(a: Any, b: Any, x: Any) -> int | None:
+        """The one summed label joining a plain leg of ``a`` and one of ``b`` (``a``'s output
+        and ``b``'s input for X spiders without bundled outputs); None if there is not one."""
+        from archytaszx.semantics.lean_net import _head
+
+        if _head(a.kind) == "XB":
+            if a.kind[1] or b.kind[1]:
+                return None
+            ao = tuple(a.outs)
+            bi = tuple(b.ins[: len(b.ins) - len(b.kind[2])])
+            both = [lab for lab in ao if lab in bi]
+        else:
+            al = (*a.outs, *a.ins[: len(a.ins) - len(a.kind[1])])
+            bl = (*b.outs, *b.ins[: len(b.ins) - len(b.kind[1])])
+            both = [lab for lab in al if lab in bl]
+        both = [lab for lab in both if lab in x.summed]
+        return both[0] if len(both) == 1 else None
+
+    def tower_fuse(self, envk: str, a: Any, b: Any, w: int) -> tuple[Any, str]:
+        """The spider fusing phaseless ``a`` and ``b`` along ``w`` and the local equation
+        (``fusionZG`` or ``fusionXG``) from the two to it."""
+        from archytaszx.semantics.lean_net import LNode, _head, _list, _xk, _zk
+
+        chk = "(by chk)"
+        if _head(a.kind) == "ZB":
+            c1, c2 = tuple(a.kind[1]), tuple(b.kind[1])
+            i1, t1 = tuple(a.ins[: len(a.ins) - len(c1)]), tuple(a.ins[len(a.ins) - len(c1) :])
+            i2, t2 = tuple(b.ins[: len(b.ins) - len(c2)]), tuple(b.ins[len(b.ins) - len(c2) :])
+            o3 = tuple(lab for lab in (*a.outs, *b.outs) if lab != w)
+            i3 = tuple(lab for lab in (*i1, *i2) if lab != w)
+            f = LNode(_zk(c1 + c2), o3, i3 + t1 + t2, a.dim, 0)
+            iface = tuple(dict.fromkeys(f.labels()))
+            text = (
+                f"fusionZG {envk} {self.fmt_cs(c1)} {self.fmt_cs(c2)} 0 0 0 {a.dim} {w} "
+                f"{_list(a.outs)} {_list(i1)} {_list(t1)} {_list(b.outs)} {_list(i2)} "
+                f"{_list(t2)} {_list(o3)} {_list(i3)} {_list(iface)} "
+                + " ".join([chk] * 9)
+                + " (by phs)"
+            )
+            return f, text
+        ci1, ci2 = tuple(a.kind[2]), tuple(b.kind[2])
+        o1, o2 = tuple(a.outs), tuple(b.outs)
+        i1, t1 = tuple(a.ins[: len(a.ins) - len(ci1)]), tuple(a.ins[len(a.ins) - len(ci1) :])
+        i2, t2 = tuple(b.ins[: len(b.ins) - len(ci2)]), tuple(b.ins[len(b.ins) - len(ci2) :])
+        o3 = tuple(lab for lab in o1 if lab != w) + o2
+        i3 = i1 + tuple(lab for lab in i2 if lab != w)
+        f = LNode(_xk((), ci1 + ci2), o3, i3 + t1 + t2, a.dim, 0)
+        iface = tuple(dict.fromkeys(f.labels()))
+        hyp_d = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
+        pos = f"(Fpos {_join(self.args, hyp_d)} _)" if (self.args or hyp_d) else "(Fpos _)"
+        text = (
+            f"fusionXG {envk} [] {self.fmt_cs(ci1)} [] {self.fmt_cs(ci2)} 0 0 0 {a.dim} {w} "
+            f"{_list(o1)} [] {_list(i1)} {_list(t1)} {_list(o2)} [] {_list(i2)} {_list(t2)} "
+            f"{_list(o3)} {_list(i3)} {_list(iface)} "
+            + " ".join([chk] * 4)
+            + f" (Fam.env_dimv_pos _ _ _ {pos}) "
+            + " ".join([chk] * 10)
+            + " (by phs)"
+        )
+        return f, text
+
+    def tower_move(
+        self,
+        envk: str,
+        x: Any,
+        zn: Any,
+        zm: Any,
+        rest: Sequence[Any],
+        ints: tuple[int, ...],
+        others: Sequence[Any],
+        nb: tuple[int, ...],
+    ) -> tuple[Any, ...]:
+        """The legs the split adds to ``zn`` moved onto ``zm`` through the spider fusing the
+        two (fused, reordered, unfused): the network before (joining label last), the joining
+        label, the fusion step, the fused network, the reordered network, the unfusion step,
+        the network after, the two split spiders and ``zm``'s split spider with both spiders'
+        added legs."""
+        from archytaszx.semantics.lean_net import LNet, LNode, _head, _list
+
+        def split_of(z: Any) -> Any:
+            found = [n for n in rest if _head(n.kind) == _head(z.kind) and n.outs == z.outs]
+            if len(found) != 1:
+                raise NetUnsupported("the split spider is not found")
+            return found[0]
+
+        def lit(nodes: Sequence[Any]) -> str:
+            return "[" + ", ".join(n.lean() for n in nodes) + "]"
+
+        sn, sm = split_of(zn), split_of(zm)
+        w = self.tower_shared(zn, zm, x)
+        assert w is not None
+        en = tuple(lab for lab in sn.ins if lab not in zn.ins)
+        tail = tuple(zn.kind[-1]) + ((),) * len(en)
+        if not en or tuple(sn.ins) != tuple(zn.ins) + en or tuple(sn.kind[-1]) != tail:
+            raise NetUnsupported("the split spider's legs are not the unfused form")
+        kind = list(sm.kind)
+        kind[-1] = tuple(sm.kind[-1]) + ((),) * len(en)
+        sm2 = LNode(tuple(kind), sm.outs, tuple(sm.ins) + en, sm.dim, sm.ph)
+        ctx = tuple(n for n in rest if n is not sn and n is not sm) + tuple(others)
+        ic = tuple(lab for lab in ints if lab != w)
+        f1, fuse1 = self.tower_fuse(envk, sn, sm, w)
+        f2, fuse2 = self.tower_fuse(envk, zn, sm2, w)
+        before = LNet(ctx + (sn, sm), ic + (w,), nb)
+        fused = LNet(ctx + (f1,), ic, nb)
+        refused = LNet(ctx + (f2,), ic, nb)
+        after = LNet(ctx + (zn, sm2), ic + (w,), nb)
+        bl = _list(nb)
+        iface1 = tuple(dict.fromkeys(f1.labels()))
+        iface2 = tuple(dict.fromkeys(f2.labels()))
+        step1 = (
+            f"(plug {envk} {lit(ctx)} {lit([sn, sm])} {lit([f1])} {_list(ic)} [{w}] [] {bl} "
+            f"{_list(iface1)} 1 1 (fun τ hτ => ({fuse1}) τ hτ) (by chk) (by chk) (by chk))"
+        )
+        step2 = (
+            f"(plug {envk} {lit(ctx)} {lit([f2])} {lit([zn, sm2])} {_list(ic)} [] [{w}] {bl} "
+            f"{_list(iface2)} 1 1 (fun τ hτ => (({fuse2}) τ hτ).symm) (by chk) (by chk) "
+            "(by chk))"
+        )
+        return before, w, step1, fused, refused, step2, after, sn, sm, sm2
+
+    def tower_fusion(
+        self, envk: str, zn: Any, zs: Any, o: int, w: int, es: tuple[int, ...], mode: str
+    ) -> tuple[Any, Any, str]:
+        """``zn`` with its leg ``o`` renamed ``w``, the spider on ``o``, ``w`` and ``es``, and
+        the local equation fusing the two into ``zs`` (``fusionZG`` or ``fusionXG``)."""
+        from archytaszx.semantics.lean_net import LNode, _list, _tail, _xk, _zk
+
+        cs1 = tuple(zn.kind[-1])
+        t1 = _tail(zn.ins, cs1)
+        i1 = tuple(zn.ins[: len(zn.ins) - len(cs1)])
+        cs2 = self.fmt_cs(((),) * len(es))
+        iface = tuple(dict.fromkeys(zs.labels()))
+        chk = " ".join(["(by chk)"] * 9)
+        if mode == "zin":
+            ia = tuple(w if lab == o else lab for lab in i1)
+            za = LNode(zn.kind, zn.outs, ia + tuple(t1), zn.dim, zn.ph)
+            zb = LNode(_zk(((),) * len(es)), (), (o, w, *es), zs.dim, 0)
+            fusion = (
+                f"fusionZG {envk} {self.fmt_cs(cs1)} {cs2} {za.ph} {zb.ph} "
+                f"{zs.ph} {zs.dim} {w} {_list(zn.outs)} {_list(ia)} {_list(t1)} [] "
+                f"{_list((o, w))} {_list(es)} {_list(zs.outs)} {_list(i1)} {_list(iface)} "
+                "(by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) "
+                "(by chk) (by phs)"
+            )
+            return za, zb, fusion
+        o1 = tuple(w if lab == o else lab for lab in zn.outs)
+        za = LNode(zn.kind, o1, zn.ins, zn.dim, zn.ph)
+        if mode == "zout":
+            zb = LNode(_zk(((),) * len(es)), (o,), (w, *es), zs.dim, 0)
+            fusion = (
+                f"fusionZG {envk} {self.fmt_cs(cs1)} {cs2} {za.ph} {zb.ph} {zs.ph} "
+                f"{zs.dim} {w} {_list(o1)} {_list(i1)} {_list(t1)} {_list(zb.outs)} {_list((w,))} "
+                f"{_list(es)} {_list(zs.outs)} {_list(i1)} {_list(iface)} {chk} (by phs)"
+            )
+            return za, zb, fusion
+        zb = LNode(_xk((), ((),) * len(es)), (o,), (w, *es), zs.dim, 0)
+        hyp_d = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
+        pos = f"(Fpos {_join(self.args, hyp_d)} _)" if (self.args or hyp_d) else "(Fpos _)"
+        fusion = (
+            f"fusionXG {envk} [] {self.fmt_cs(cs1)} [] {cs2} {za.ph} {zb.ph} "
+            f"{zs.ph} {zs.dim} {w} {_list(o1)} [] {_list(i1)} {_list(t1)} {_list(zb.outs)} [] "
+            f"{_list((w,))} {_list(es)} {_list(zs.outs)} {_list(i1)} {_list(iface)} "
+            "(by chk) (by chk) (by chk) (by chk) "
+            f"(Fam.env_dimv_pos _ _ _ {pos}) (by chk) (by chk) (by chk) (by chk) (by chk) "
+            "(by chk) (by chk) (by chk) (by chk) (by chk) (by phs)"
+        )
+        return za, zb, fusion
+
     def tower(
         self,
         i: int,
@@ -3043,23 +3272,19 @@ class _SymExport:
         lz: str,
         ratios: tuple[Any, Any],
     ) -> str:
-        """The lemma ``P{i}`` for a node box along ``m`` whose copies meet one Z spider of
-        ``x`` at its bundled inputs: zero by the zero networks; ``k + 1`` by splitting a copy
-        off, unfusing the spider (``fusionZG``) so that ``x`` at ``k``, its output renamed to
-        the new wire, is a region, the induction hypothesis plugged there, and the rest
-        normalised against ``y``'s split."""
+        """The lemma ``P{i}`` for a node box along ``m`` whose copies meet Z or X spiders of
+        ``x`` at their bundled inputs: zero by the zero networks; ``k + 1`` by splitting a copy
+        off, unfusing each split spider at a boundary leg (:meth:`tower_fusion`) so that ``x``
+        at ``k``, those legs renamed to the new wires, is a region, the induction hypothesis
+        plugged there, and the rest normalised against ``y``'s split."""
         from archytaszx.semantics.lean_net import (
             LNet,
-            LNode,
             _head,
             _list,
             _pairs,
             _perm_to_bijection,
             _rename_net,
             _split_net,
-            _tail,
-            _xk,
-            _zk,
         )
 
         out = self.out
@@ -3069,55 +3294,17 @@ class _SymExport:
             for n in x.nodes
             if _head(n.kind) in ("ZB", "XB") and any(isb(lab) and lab in x.summed for lab in n.ins)
         ]
-        if len(spiders) != 1:
-            raise NetUnsupported("a node box meeting other than one Z or X spider")
-        zn = spiders[0]
-        xs = _head(zn.kind) == "XB"
-        if xs and zn.kind[1]:
-            raise NetUnsupported("an X spider meeting the node box with bundled outputs")
+        if not spiders:
+            raise NetUnsupported("a node box meeting no Z or X spider")
         if any(_head(n.kind) == "Bun" and n.kind[1] != m for n in x.nodes):
             raise NetUnsupported("towers along two multiplicities")
-        o = next((lab for lab in zn.outs if lab in x.bnd), None)
-        at_in = False
-        if o is None and not xs:
-            plain = zn.ins[: len(zn.ins) - len(zn.kind[-1])]
-            o = next((lab for lab in plain if lab in x.bnd), None)
-            at_in = o is not None
-        if o is None:
-            raise NetUnsupported("the spider meeting the node box has no boundary leg")
         sp0, sp1 = _split_net(x, m, isb, H), _split_net(y, m, isb, H)
-        others = [n for n in x.nodes if n is not zn]
+        others = [n for n in x.nodes if all(n is not z for z in spiders)]
         rest = list(sp0.nodes)
         for n in others:
             if n not in rest:
                 raise NetUnsupported("the split network does not contain the network")
             rest.remove(n)
-        split_z = [n for n in rest if _head(n.kind) == _head(zn.kind) and n.outs == zn.outs]
-        if len(split_z) != 1:
-            raise NetUnsupported("the split spider is not found")
-        zs = split_z[0]
-        copy = [n for n in rest if n is not zs]
-        extra = [lab for lab in zs.ins if lab not in zn.ins]
-        if len(extra) != 1:
-            raise NetUnsupported("the split spider gains other than one leg")
-        e = extra[0]
-        cs1 = tuple(zn.kind[-1])
-        t1 = _tail(zn.ins, cs1)
-        i1 = tuple(zn.ins[: len(zn.ins) - len(cs1)])
-        cs_s = tuple(zs.kind[-1])
-        if tuple(zs.ins) != i1 + tuple(t1) + (e,) or cs_s != cs1 + ((),):
-            raise NetUnsupported("the split spider's legs are not the unfused form")
-        if xs and zs.kind[1]:
-            raise NetUnsupported("the split X spider has bundled outputs")
-        w = out.fresh_like(o)
-        o1 = tuple(w if lab == o else lab for lab in zn.outs)
-        if at_in:
-            ia = tuple(w if lab == o else lab for lab in i1)
-            za = LNode(zn.kind, zn.outs, ia + tuple(t1), zn.dim, zn.ph)
-            zb = LNode(_zk(((),)), (), (o, w, e), zs.dim, 0)
-        else:
-            za = LNode(zn.kind, o1, zn.ins, zn.dim, zn.ph)
-            zb = LNode(_xk((), ((),)) if xs else _zk(((),)), (o,), (w, e), zs.dim, 0)
         spc = f"(SpC {m})"
         kvs = [("k_" if j == m else v) for j, v in enumerate(vs)]
         envk = self.env_at(kvs)
@@ -3134,54 +3321,77 @@ class _SymExport:
         def lit(nodes: Sequence[Any]) -> str:
             return "[" + ", ".join(n.lean() for n in nodes) + "]"
 
-        ctx1 = tuple(copy) + tuple(others)
-        n1 = LNet(ctx1 + (zs,), sp0.summed, bnd)
-        n2 = LNet(ctx1 + (za, zb), sp0.summed + (w,), bnd)
-        n1t, n2t = f"T{i}s", f"T{i}u"
-        self.net_decls += [
-            f"/-- The split network, its spider last. -/\ndef {n1t} : Net := {n1.lean()}",
-            f"/-- The split network with its spider unfused. -/\ndef {n2t} : Net := {n2.lean()}",
-        ]
-        iface = tuple(dict.fromkeys(zs.labels()))
-        fusion = (
-            f"fusionZG {envk} {self.fmt_cs(cs1)} {self.fmt_cs(((),))} {za.ph} {zb.ph} {zs.ph} "
-            f"{zs.dim} {w} {_list(o1)} {_list(i1)} {_list(t1)} {_list(zb.outs)} {_list((w,))} "
-            f"{_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} (by chk) (by chk) "
-            "(by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by phs)"
-        )
-        if at_in:
-            ia = za.ins[: len(i1)]
-            fusion = (
-                f"fusionZG {envk} {self.fmt_cs(cs1)} {self.fmt_cs(((),))} {za.ph} {zb.ph} "
-                f"{zs.ph} {zs.dim} {w} {_list(zn.outs)} {_list(ia)} {_list(t1)} [] "
-                f"{_list((o, w))} {_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} "
-                "(by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) "
-                "(by chk) (by phs)"
+        steps: list[str] = []
+        ints = tuple(sp0.summed)
+        prev_t, prev = f"(Net.split {spc} {H} {xt})", sp0
+        held = [z for z in spiders if self.tower_leg(x, z) is None]
+        for j, zn in enumerate(held):
+            zm = self.tower_target(x, zn, spiders, held)
+            mv = self.tower_move(envk, x, zn, zm, rest, ints, others, bnd)
+            names = [f"T{i}m{j}{c}" for c in "abcd"]
+            notes = [
+                "A split network before a leg move.",
+                "A split network with two spiders fused.",
+                "The fused spider with its legs reordered.",
+                "A split network after a leg move.",
+            ]
+            for nm, note, net in zip(names, notes, (mv[0], mv[3], mv[4], mv[6]), strict=True):
+                self.net_decls.append(f"/-- {note} -/\ndef {nm} : Net := {net.lean()}")
+            steps += [
+                iso_s(prev_t, prev, names[0], mv[0]),
+                mv[2],
+                iso_s(names[1], mv[3], names[2], mv[4]),
+                mv[5],
+            ]
+            prev_t, prev = names[3], mv[6]
+            ints = tuple(mv[6].summed)
+            rest[:] = [n for n in rest if n is not mv[7] and n is not mv[8]] + [mv[9]]
+            others.append(zn)
+        cuts = []
+        for zn in spiders:
+            if any(zn is h for h in held):
+                continue
+            cut = self.tower_cut(x, zn, rest)
+            rest.remove(cut[0])
+            cuts.append((zn, *cut))
+        copy = list(rest)
+        one = len(cuts) == 1
+        done: tuple[Any, ...] = ()
+        mapping: dict[int, int] = {}
+        zbs: list[Any] = []
+        for j, (zn, zs, o, es, mode) in enumerate(cuts):
+            w = out.fresh_like(o)
+            mapping[o] = w
+            za, zb, fusion = self.tower_fusion(envk, zn, zs, o, w, es, mode)
+            zbs.append(zb)
+            ctx = tuple(copy) + tuple(others) + done + tuple(c[1] for c in cuts[j + 1 :])
+            n1 = LNet(ctx + (zs,), ints, bnd)
+            n2 = LNet(ctx + (za, zb), ints + (w,), bnd)
+            n1t, n2t = (f"T{i}s", f"T{i}u") if one else (f"T{i}s{j}", f"T{i}u{j}")
+            self.net_decls += [
+                f"/-- The split network, its spider last. -/\ndef {n1t} : Net := {n1.lean()}",
+                (
+                    f"/-- The split network with its spider unfused. -/\ndef {n2t} : Net := "
+                    f"{n2.lean()}"
+                ),
+            ]
+            iface = tuple(dict.fromkeys(zs.labels()))
+            steps.append(iso_s(prev_t, prev, n1t, n1))
+            steps.append(
+                f"(plug {envk} {lit(ctx)} {lit([zs])} {lit([za, zb])} {_list(ints)} [] "
+                f"[{w}] {bl} {_list(iface)} 1 1 (fun τ hτ => (({fusion}) τ hτ).symm) (by chk) "
+                "(by chk) (by chk))"
             )
-        if xs:
-            hyp_d = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
-            pos = f"(Fpos {_join(self.args, hyp_d)} _)" if (self.args or hyp_d) else "(Fpos _)"
-            fusion = (
-                f"fusionXG {envk} [] {self.fmt_cs(cs1)} [] {self.fmt_cs(((),))} {za.ph} {zb.ph} "
-                f"{zs.ph} {zs.dim} {w} {_list(o1)} [] {_list(i1)} {_list(t1)} {_list(zb.outs)} [] "
-                f"{_list((w,))} {_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} "
-                "(by chk) (by chk) (by chk) (by chk) "
-                f"(Fam.env_dimv_pos _ _ _ {pos}) (by chk) (by chk) (by chk) (by chk) (by chk) "
-                "(by chk) (by chk) (by chk) (by chk) (by chk) (by phs)"
-            )
-        unfuse = (
-            f"(plug {envk} {lit(ctx1)} {lit([zs])} {lit([za, zb])} {_list(sp0.summed)} [] "
-            f"[{w}] {bl} {_list(iface)} 1 1 (fun τ hτ => (({fusion}) τ hτ).symm) (by chk) "
-            "(by chk) (by chk))"
-        )
-        mapping: dict[int, int] = {o: w}
+            done += (za, zb)
+            ints += (w,)
+            prev_t, prev = n2t, n2
         for lab in y.summed:
             mapping.setdefault(lab, out.fresh_like(lab))
         pairs = _perm_to_bijection(mapping)
         pt = _pairs(pairs)
         rx, ry = _rename_net(x, pairs), _rename_net(y, pairs)
-        ctx3 = tuple(copy) + (zb,)
-        ic3 = tuple(lab for lab in n2.summed if lab not in set(rx.summed))
+        ctx3 = tuple(copy) + tuple(zbs)
+        ic3 = tuple(lab for lab in prev.summed if lab not in set(rx.summed))
         n3 = LNet(ctx3 + rx.nodes, ic3 + rx.summed, bnd)
         n4 = LNet(ctx3 + ry.nodes, ic3 + ry.summed, bnd)
 
@@ -3203,13 +3413,16 @@ class _SymExport:
             f"/-- The rest after the hypothesis. -/\ndef {rt} : Net := {n4.lean()}"
         )
         lt = self.fam(n4, rt, sp1, f"(Net.split {spc} {H} {yt})", (al, be, alt, bet))
-        chain = (
-            "Equal.congr_s (Equal.mul_trans (Equal.mul_trans (Equal.mul_trans (Equal.mul_trans "
-            f"(Equal.mul_trans {iso_s(f'(Net.split {spc} {H} {xt})', sp0, n1t, n1)}\n"
-            f"    {unfuse})\n    {iso_s(n2t, n2, plug_text(xt), n3)})\n    {plug})\n"
-            f"    {iso_s(plug_text(yt), n4, rt, n4)})\n    {self.call(lt, *kvs)}) (by ring) "
-            "(by ring)"
-        )
+        steps += [
+            iso_s(prev_t, prev, plug_text(xt), n3),
+            plug,
+            iso_s(plug_text(yt), n4, rt, n4),
+            self.call(lt, *kvs),
+        ]
+        chain = steps[0]
+        for t in steps[1:]:
+            chain = f"(Equal.mul_trans {chain}\n    {t})"
+        chain = f"Equal.congr_s {chain} (by ring) (by ring)"
         ok0, ok1 = _split_ok(m, H, xt), _split_ok(m, H, yt)
         args = self.args
         fam = f"(F {args})" if args else "F"

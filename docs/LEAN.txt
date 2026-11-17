@@ -336,11 +336,20 @@ boundary leg renamed to the new wire, is a region; the induction hypothesis is p
 (Equal.rename, plug) and the rest is proved against the other side's split by the normaliser.
 A node box whose copies meet one X spider at its bundled inputs (no bundled outputs), the
 spider having a boundary output, steps the same way through fusionXG read backwards, the new
-X(2 -> 1) spider taking the new wire and the split copy's leg. This proves the families decided
-by symbolic contraction whose boxes meet a CX target (bernstein_vazirani) or a fan-out spider
-with a boundary input (phase_flip_code encoding) for every n; their point claims then export
-as the family theorem with its corollary (section 4.7), of size independent of n
-(bernstein_vazirani d = 490: 239053 bytes at n = 10^3, 239074 at n = 10^6).
+X(2 -> 1) spider taking the new wire and the split copy's leg. Copies meeting several spiders
+unfuse each split spider in turn at its own boundary leg (one plug per spider), the network
+at k then a region with all those legs renamed. A phaseless spider with no boundary leg that
+meets a phaseless spider of its colour with one (at one summed plain leg, its output into the
+other's input for X) first hands the split's new legs to that spider (tower_move): the two
+split spiders fused (fusionZG or fusionXG), the fused spider's tails reordered (isoB), and
+unfused back into the spider of the network at k and the neighbour with both copies' legs.
+This proves for every n the families decided by symbolic contraction whose boxes meet a CX
+target (bernstein_vazirani), a fan-out spider with a boundary input (phase_flip_code
+encoding), two fan-out spiders with boundary legs (repetition_decoding, phase_flip_decoding)
+or two adjacent spiders one of which has a boundary leg (parity_decoding, X; ghz_disentangle,
+Z); their point claims then export as the family theorem with its corollary (section 4.7), of
+size independent of n (bernstein_vazirani d = 490: 239053 bytes at n = 10^3, 239074 at
+n = 10^6).
 
 4.4 Assumptions
 
@@ -1138,13 +1147,15 @@ grows with the degree of θ: for a non-real root of x^5 - x - 1 (degree 20) the 
 and the Lean check 576 s.
 
 G6 Under the normaliser: node boxes meeting the rest at a wire other than at the bundled
-inputs of one Z spider with a boundary output or plain boundary input, or of one X spider with
-a boundary output; port boxes inside port boxes; chain boxes (cyclic_shift, bv_secret_pattern,
-repeater_chain, teleportation_chain), which neither the bundled networks nor the normaliser
-represent. Families decided by symbolic contraction outside these forms (ghz_x_basis: a fan-out
-spider with no boundary leg; parity_decoding, repetition_decoding, phase_flip_decoding,
-ghz_disentangle: copies meeting two spiders; deutsch_jozsa constant: an inverse phase atom in
-the scalar) keep the instantiated-pair export of a point claim (4.7), whose size grows with n.
+inputs of Z spiders with a boundary output or plain boundary input, or of X spiders with a
+boundary output, or of a spider without one next to such a spider of its colour (4.3); port
+boxes inside port boxes; chain boxes (cyclic_shift, bv_secret_pattern, repeater_chain,
+teleportation_chain) and pair boxes (complete_graph_state), which neither the bundled networks
+nor the normaliser represent. Families decided by symbolic contraction outside these forms keep
+the instantiated-pair export of a point claim (4.7), whose size grows with n: ghz_x_basis (a
+fan-out spider with no boundary leg whose neighbours are Fourier boxes) and deutsch_jozsa
+constant (its scalar exp(-2 pi i/d) is a root of unity of symbolic order, which the
+normaliser's constant monomials CMon do not have).
 
 G7 Deferred dimension constraints in families: a family whose rewrite steps assume dimensions
 equal (d^p = d^q, for example) is proved over the merged bundled networks, and main_diagrams is

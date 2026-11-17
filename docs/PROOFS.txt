@@ -667,12 +667,14 @@ path-sum network proof covers them (LEAN.txt, 4.5), else states it as an axiom.
 
 For a family decided by symbolic contraction the normaliser proves the boxed pair by induction
 on the box multiplicity (LEAN.txt, 4.3) when every node box meets the rest only at the boundary
-or at the bundled inputs of one Z spider (with a boundary output or plain boundary input) or one
-X spider (with a boundary output). A point claim at n = v is then restricted_symbolic of that
-proof, exported as the family theorem with its corollary at n = v, whose size and time do not
-depend on v; bernstein_vazirani (and its restrictions n >= 1, d >= 2) and phase_flip_code
-encoding. The other families of this kind (LEAN.txt, G6) keep the export of
-kernel.instantiated's pair, which grows with v.
+or at the bundled inputs of Z spiders (with a boundary output or plain boundary input) and X
+spiders (with a boundary output), a spider without such a leg allowed next to one of its colour
+that has one. A point claim at n = v is then restricted_symbolic of that proof, exported as the
+family theorem with its corollary at n = v, whose size and time do not depend on v:
+bernstein_vazirani (and its restrictions n >= 1, d >= 2), phase_flip_code encoding,
+repetition_decoding, phase_flip_decoding, parity_decoding and ghz_disentangle. The other
+families of this kind (LEAN.txt, G6) keep the export of kernel.instantiated's pair, which grows
+with v.
 
 When no theorem is built the verdict's proof comes from the later builders of Decision.proof
 (the normaliser, then search) as before.
