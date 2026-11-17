@@ -752,6 +752,9 @@ False, and samples_checked counts step 3 only; prove exhaustive runs only the pa
 A point claim (every clause n = v or d = v) of pure diagrams with no interface mismatch and no
 given samples first runs the oracle on the restricted pair at its sample grid, samples planned
 above 2^20 elements skipped; on a mismatch steps 1 and 2 are skipped as with family_first=False.
+The pair is not built when, read from the box multiplicities at the point without expanding
+them, a side's boundary-dimension product is above 2^20 (every sample would be skipped) or a
+side expands to more than 4096 nodes.
 Certification takes the restricted-pair route. Clauses that are all identities make the flag
 inert. Without clauses the decision is the unrestricted one,
 field for field. Step 1 never uses a concrete-only axiom (its dimensions stay symbolic); they

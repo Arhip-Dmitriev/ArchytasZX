@@ -1838,16 +1838,81 @@ def decide_restricted(
     )
 
 
+def _boundary_bits(diagram: Diagram, values: Mapping[str, Any]) -> float | None:
+    """A lower bound on log2 of the boundary-dimension product of ``diagram`` at ``values``,
+    read from the boxes without expanding them: each boundary port counted by the product of
+    its covering boxes' multiplicities, a dimension that is not an integer at ``values`` taken
+    as 1; None when a port's count is not an integer there or its covering boxes are not one
+    nesting chain."""
+    from archytaszx.diagram.bangbox import _port_multiplicity
+
+    def at(expr: sp.Expr) -> sp.Expr:
+        return expr.xreplace(
+            {s: sp.Integer(int(values[s.name])) for s in expr.free_symbols if s.name in values}
+        )
+
+    total = 0.0
+    try:
+        for ref in (*diagram.boundary_inputs, *diagram.boundary_outputs):
+            mult = _port_multiplicity(diagram, ref)
+            if mult is None:
+                return None
+            count = at(sp.sympify(mult))
+            if not count.is_Integer:
+                return None
+            legs = diagram.nodes[ref.node_id].legs(ref.direction)
+            dim = at(diagram.resolve_dim(legs[ref.index].dim).to_sympy())
+            if dim.is_Integer and dim > 1 and count > 0:
+                total += int(count) * math.log2(int(dim))
+    except (KeyError, IndexError, TypeError, ValueError, DimensionError):
+        return None
+    return total
+
+
+_POINT_NODES = 1 << 12
+"""The most nodes a point claim's restricted pair may expand to for the point oracle."""
+
+
+def _expanded_nodes(diagram: Diagram, values: Mapping[str, Any]) -> int | None:
+    """The node count of ``diagram`` with its boxes expanded at ``values``, read from the box
+    multiplicities: each node counted by the product of its covering boxes' multiplicities;
+    None at a tree box or a multiplicity that is not an integer there."""
+    boxes = diagram.bang_boxes.values()
+    if any(box.is_tree for box in boxes):
+        return None
+    total = 0
+    for node_id in diagram.nodes:
+        count = sp.Integer(1)
+        for box in boxes:
+            if node_id in box.node_scope:
+                count = count * box.multiplicity.to_sympy()
+        count = count.xreplace(
+            {s: sp.Integer(int(values[s.name])) for s in count.free_symbols if s.name in values}
+        )
+        if not count.is_Integer:
+            return None
+        total += max(int(count), 0)
+    return total
+
+
 def _point_refuted(
     left: Diagram, right: Diagram, restriction: Restriction, options: Mapping[str, object]
 ) -> bool:
     """Whether the oracle mismatches on the restricted pair of a point claim at a sample of at
     most ``_DEFERRED_SIZE`` planned elements."""
-    from archytaszx.semantics.restrict import subst_pair
+    from archytaszx.semantics.restrict import DIMENSION, MULTIPLICITY, subst_pair
 
     if options.get("mixed") or not (is_pure(left) and is_pure(right)):
         return False
     if _interface_reason(_family(left), _family(right)) is not None:
+        return False
+    values = {c.symbol: c.c for c in restriction.clauses if c.kind in (MULTIPLICITY, DIMENSION)}
+    bound = math.log2(_DEFERRED_SIZE)
+    if any(
+        (bits or 0.0) > bound + 1e-9 for bits in (_boundary_bits(d, values) for d in (left, right))
+    ):
+        return False
+    if any((_expanded_nodes(d, values) or 0) > _POINT_NODES for d in (left, right)):
         return False
     pair = subst_pair(left, right, restriction)
     family_l, family_r = _family(pair[0]), _family(pair[1])
