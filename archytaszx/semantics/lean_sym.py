@@ -61,6 +61,8 @@ FULL_TERMS = 4096
 BS_NODES = False
 """Whether the translation writes binder and splitter nodes (``bsTerm``)."""
 CHUNK_TEXT = 200_000
+BLOCK_MAX = 8
+"""The most nodes of one ``trBlockG`` theorem."""
 PRE_LITERAL = 32
 """Every how many nodes the labels before a node are written as a literal list."""
 NORM_TERMS = 1 << 14
@@ -3180,7 +3182,7 @@ class _SymExport:
                         f"{tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
                     )
             texts = [_lean_ex(x) for x in st]
-            per = max(1, -(-sum(map(len, texts)) // CHUNK_TEXT))
+            per = min(BLOCK_MAX, max(1, -(-sum(map(len, texts)) // CHUNK_TEXT)))
             marks = sorted({*range(0, m, per), m})
             for k in marks:
                 out.append(f"def {tag}E{k} : List STm := {texts[k]}")
