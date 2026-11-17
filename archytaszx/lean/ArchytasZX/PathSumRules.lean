@@ -1537,6 +1537,72 @@ theorem bsub_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ :
     rwa [hτ] at this
   · rfl
 
+/-! ## Canonical-form pivot with the phase kept -/
+
+/-- `canonS` with the phase unchanged: the first constraint pivotable at `v` made a row, `v`
+substituted out of the other constraints and the rows. -/
+def canonHS (v : ℕ) (s : Data) : Data :=
+  match s.cons.find? (pivotable v) with
+  | none => s
+  | some q =>
+    let B := q.erase [v]
+    { path := s.path, phase := s.phase,
+      cons := (s.cons.erase q).map fun r => normF (substF v B r),
+      rows := (s.rows.map fun r => normF (substF v B r)) ++ [normF q] }
+
+theorem canonH_sound (M : ℕ) (c : ℂ) (v : ℕ) (s : Data) (σ : ℕ → ZMod 2)
+    (h : canonOK v s = true) : val M c s σ = val M c (canonHS v s) σ := by
+  unfold val
+  simp only [canonOK, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    Option.isSome_iff_exists] at h
+  obtain ⟨⟨q, hq⟩, _⟩ := h
+  have hiq : q ∈ s.cons := List.mem_of_find?_eq_some hq
+  have hpq : pivotable v q = true := List.find?_some hq
+  simp only [pivotable, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq] at hpq
+  obtain ⟨hvq, _⟩ := hpq
+  simp only [canonHS, hq]
+  apply bsum_congr
+  intro τ
+  set B := q.erase [v]
+  have hqv : fz τ q = τ v + fz τ B := by
+    rw [fz_perm _ (List.perm_cons_erase hvq), fz_cons]
+    simp [mz, B]
+  have hperm := List.perm_cons_erase hiq
+  unfold summand
+  by_cases h0 : fz τ q = 0
+  · have hv : fz τ B = τ v := (z2_eq_of_add _ _ (by rw [← hqv]; exact h0)).symm
+    have hτ : Function.update τ v (fz τ B) = τ := by rw [hv, Function.update_eq_self]
+    have hsub : ∀ r, fz τ (normF (substF v B r)) = fz τ r := by
+      intro r
+      rw [fz_normF, fz_substF, hτ]
+    have hcond : (∀ r ∈ (s.cons.erase q).map (fun r => normF (substF v B r)) ++
+        ((s.rows.map fun r => normF (substF v B r)) ++ [normF q]), fz τ r = 0) ↔
+        (∀ r ∈ s.cons ++ s.rows, fz τ r = 0) := by
+      simp only [List.mem_append, List.mem_map, List.mem_singleton]
+      constructor
+      · rintro H r (hr | hr)
+        · rcases List.mem_cons.1 (hperm.mem_iff.1 hr) with e | hr'
+          · rw [e]; exact h0
+          · have := H _ (Or.inl ⟨r, hr', rfl⟩)
+            rwa [hsub] at this
+        · have := H _ (Or.inr (Or.inl ⟨r, hr, rfl⟩))
+          rwa [hsub] at this
+      · rintro H r (⟨r', hr', rfl⟩ | ⟨r', hr', rfl⟩ | rfl)
+        · rw [hsub]; exact H r' (Or.inl (List.mem_of_mem_erase hr'))
+        · rw [hsub]; exact H r' (Or.inr hr')
+        · rw [fz_normF]; exact h0
+    exact (if_congr hcond.symm rfl rfl)
+  · have hl : ¬ (∀ r ∈ s.cons ++ s.rows, fz τ r = 0) :=
+      fun H => h0 (H q (List.mem_append_left _ hiq))
+    have hr : ¬ (∀ r ∈ (s.cons.erase q).map (fun r => normF (substF v B r)) ++
+        ((s.rows.map fun r => normF (substF v B r)) ++ [normF q]), fz τ r = 0) := by
+      intro H
+      apply h0
+      have := H (normF q) (by simp)
+      rwa [fz_normF] at this
+    rw [if_neg hl, if_neg hr]
+
 /-! ## Step lists -/
 
 /-- One step of a replayed reduction. -/
@@ -1560,6 +1626,7 @@ inductive Step where
   | dyadicB (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
   | bsub (v : ℕ)
   | front (x : ℕ)
+  | canonH (v : ℕ)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -1582,6 +1649,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .dyadicB ds S fs bs, s => dyadicBOK M ds S fs bs s
   | .bsub v, s => canonOK v s
   | .front x, s => decide (x ∈ s.path)
+  | .canonH v, s => canonOK v s
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -1604,6 +1672,7 @@ def stepS (M : ℕ) : Step → Data → Data
   | .dyadicB ds _ fs bs, s => dyadicBS M ds fs bs s
   | .bsub v, s => bsubS M v s
   | .front x, s => frontS x s
+  | .canonH v, s => canonHS v s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
@@ -1611,7 +1680,7 @@ noncomputable def fac : Step → ℂ
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
   | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
-    | .pdrop | .dyadicB _ _ _ _ | .bsub _ | .front _ => 1
+    | .pdrop | .dyadicB _ _ _ _ | .bsub _ | .front _ | .canonH _ => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -1650,6 +1719,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | dyadicB ds S fs bs => simpa [fac, stepS] using dyadicB_sound M c ds S fs bs s σ h
   | bsub v => simpa [fac, stepS] using bsub_sound M hM c v s σ h
   | front x => simpa [fac, stepS] using front_sound M c x s σ h
+  | canonH v => simpa [fac, stepS] using canonH_sound M c v s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →

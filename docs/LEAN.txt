@@ -661,6 +661,16 @@ gates) and the export raises.
 A Boolean elimination leaving the same support on both sides (PathSumSupport.lean) ends in
 finalS_sound (no atoms) or afinalS_perm (atoms), in export_proof, export_net and net_body; the
 CCZ loop of seven T gadgets against its conjugate (support 1 + a b) is Lean-checked by both.
+Parity terms (PathSumParity.lean). When canonical() raises on an XOR lift past XOR_LIFT_TERMS
+and compare_path_sums finds equal through parity_difference, export_proof and net_body (imported
+through PathSumChain) end each side's trace in canonH v steps at eliminate's pivots instead of canon v: canonHS makes the pivotable
+constraint a row and substitutes v out of the other constraints and the rows, the phase kept
+(canonH_sound). finalP_sound compares two path-free sums with one list of rows: diffP is
+normP M (phase L ++ negP M (phase R)) with each row's pivot substituted in order (substRows,
+pn_substRows: where every row holds the substitution keeps the value mod M); strip diffP = []
+and constK diffP = k give val L = val R from cL * om M ^ k = cR. The equal terms of both phases
+cancel before any pivot is substituted. Boolean eliminations,
+supports and atoms are refused on this route.
 
 Amplitude atoms. ArchytasZX/PathSumAmp.lean: AData is a path sum (Data) with held variables,
 summed outside the inner sum, and atoms (i, f) worth A i where the F_2 polynomial f is 1;

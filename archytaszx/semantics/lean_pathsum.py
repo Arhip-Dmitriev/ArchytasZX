@@ -339,6 +339,125 @@ def _leftover(red: PathSum) -> bool:
     return boolean_eliminate(red.constraints, red.boundary)[1] != ONE
 
 
+class _LiftRaises(PathSumUnsupported):
+    """A canonical form whose XOR lift raises, with both reduced sums."""
+
+    def __init__(self, red_l: PathSum, red_r: PathSum) -> None:
+        super().__init__("an XOR lift of the canonical form raises")
+        self.red_l, self.red_r = red_l, red_r
+
+
+def _parity_turn(red_l: PathSum, red_r: PathSum, m: int) -> int:
+    """The constant of the left phase minus the right one, every row substituted, in units of
+    1 / m; raises :class:`PathSumUnsupported` when the forms differ by more than a constant, a
+    constraint has no pivot or a lift raises."""
+    from archytaszx.algebra.pathsum import EMPTY, eliminate, parity_difference
+
+    can_l, can_r = canonical(red_l, parity=True), canonical(red_r, parity=True)
+    if can_l is None or can_r is None or can_l.zero or can_r.zero:
+        raise PathSumUnsupported("the path sums do not reduce to one canonical form")
+    diff = parity_difference(can_l, can_r)
+    if diff is None or set(diff.terms) - {EMPTY}:
+        raise PathSumUnsupported("the phase difference of the canonical forms is not constant")
+    if can_l.const * Cyclo.root(diff.terms.get(EMPTY, Fraction(0))) != can_r.const:
+        raise PathSumUnsupported("the canonical forms differ in their constants")
+    rows = eliminate(red_l.constraints, red_l.boundary)
+    if rows is None or rows == [None]:
+        raise PathSumUnsupported("a constraint has no pivot")
+    phase = red_l.phase.copy()
+    for mono, c in red_r.phase.terms.items():
+        phase.add(mono, -c)
+    for pivot, rest in cast(list[tuple[int, frozenset[frozenset[int]]]], rows):
+        phase.substitute(pivot, rest)
+    if set(phase.terms) - {EMPTY}:
+        raise PathSumUnsupported("the phase difference is not constant")
+    return int(phase.terms.get(EMPTY, Fraction(0)) * m) % m
+
+
+def _parity_plan(
+    raw_l: PathSum, raw_r: PathSum, held: _LiftRaises, m_min: int = 1
+) -> tuple[int, int, list[int], list[str], list[str]]:
+    """The phase modulus M, the constant turn k of the phase difference, eliminate's pivots and
+    each side's steps ending in canonH steps, for reduced sums whose canonical form takes an
+    XOR lift that raises; raises :class:`PathSumUnsupported` outside that route."""
+    from archytaszx.algebra.pathsum import eliminate
+
+    red_l, red_r = held.red_l, held.red_r
+    if any(eliminate(red.constraints, red.boundary) is None for red in (red_l, red_r)):
+        raise PathSumUnsupported("the parity route has no Boolean elimination")
+    m = math.lcm(4, m_min)
+    for ps in (raw_l, raw_r):
+        for c in ps.phase.terms.values():
+            m = math.lcm(m, c.denominator)
+    if any(st.rule in ("omega", "omega_conj") for st in (*red_l.trace, *red_r.trace)):
+        m = math.lcm(m, 8)
+    k = _parity_turn(red_l, red_r, m)
+    order = _elimination_order(red_l.constraints, red_l.boundary)
+    steps_l, steps_r = (
+        [*_steps(raw, red, (), False), *(f".canonH {v}" for v in order)]
+        for raw, red in ((raw_l, red_l), (raw_r, red_r))
+    )
+    return m, k, order, steps_l, steps_r
+
+
+def _export_parity_proof(raw_l: PathSum, raw_r: PathSum, held: _LiftRaises, name: str) -> str:
+    """:func:`export_proof` for reduced sums whose canonical form takes an XOR lift that raises
+    (ArchytasZX/PathSumParity.lean): canonH steps make the rows with the phase kept, and
+    finalP_sound compares the phases through their difference, each row substituted."""
+    from archytaszx.semantics.lean_scalar import Om
+
+    m, k, order, steps_l, steps_r = _parity_plan(raw_l, raw_r, held)
+    f_l, f_r = _fac_model(steps_l, m), _fac_model(steps_r, m)
+    sc = _scalars()
+    c_l, c_r = _const_model(raw_l.const, raw_l.sqrt2), _const_model(raw_r.const, raw_r.sqrt2)
+    lhs = f_l * c_l * Om(m) ** k
+    rhs = f_r * c_r
+    proof = sc.prove(lhs, rhs)
+    ns = f"ArchytasZX.PathSumProof.{name}"
+    lines = [
+        "import ArchytasZX.PathSumChain",
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}`",
+        "",
+        "Both path sums, each side's steps replayed through checkpoints (`run_chain`), the rows",
+        "made with the phases kept (`canonH`), the constants' identity, and the value equality at",
+        "every boundary assignment through the phase difference (`finalP_sound`).",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        *PROOF_OPTIONS,
+        "",
+        f"def sL : Data := {_data_term(raw_l, m)}",
+        f"def sR : Data := {_data_term(raw_r, m)}",
+        f"def stepsL : List Step := [{', '.join(steps_l)}]",
+        f"def stepsR : List Step := [{', '.join(steps_r)}]",
+        "",
+        *_fac_lines("L", steps_l, m, sc.text(f_l)),
+        *_fac_lines("R", steps_r, m, sc.text(f_r)),
+        f"theorem consts : ({sc.text(f_l)}) * {sc.text(c_l)} * om {m} ^ {k} =",
+        f"    ({sc.text(f_r)}) * {sc.text(c_r)} := by",
+        f"  have key : {sc.text(lhs)} = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        "  linear_combination key",
+        "",
+        *_chain_lines("run", m, "sL", "sR"),
+        "theorem main (σ : ℕ → ZMod 2) :",
+        f"    PSem.val {m} {sc.text(c_l)} sL σ = PSem.val {m} {sc.text(c_r)} sR σ := by",
+        f"  rw [run_sound {m} (by norm_num) stepsL sL _ σ runL_ok, runL_eq,",
+        f"    run_sound {m} (by norm_num) stepsR sR _ σ runR_ok, runR_eq]",
+        f"  apply finalP_sound {m} (by norm_num) _ _ {order} _ _ σ {k} (by decide) (by decide)",
+        "  simpa only [facL, facR] using consts",
+        "",
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _plan(
     raw_l: PathSum, raw_r: PathSum, m_min: int = 1, support: bool = False
 ) -> tuple[PathSum, PathSum, list[int], bool, int, list[str], list[str]]:
@@ -350,7 +469,10 @@ def _plan(
     if raw_l.amps or raw_r.amps:
         raise PathSumUnsupported("export_proof has no amplitude atoms")
     red_l, red_r = reduce(raw_l), reduce(raw_r)
-    can_l, can_r = canonical(red_l), canonical(red_r)
+    try:
+        can_l, can_r = canonical(red_l), canonical(red_r)
+    except PathSumUnsupported as e:
+        raise _LiftRaises(red_l, red_r) from e
     if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
         raise PathSumUnsupported("the path sums do not reduce to one canonical form")
     m = math.lcm(4, m_min)
@@ -408,7 +530,10 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         raise PathSumUnsupported("export_proof covers qubit path sums only")
     if raw_l.amps or raw_r.amps or _quartered(raw_l, raw_r):
         return _export_amp_proof(raw_l, raw_r, name)
-    red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, support=True)
+    try:
+        red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, support=True)
+    except _LiftRaises as held:
+        return _export_parity_proof(raw_l, raw_r, held, name)
     support = _leftover(red_l)
     f_l, f_r = _fac_model(steps_l, m), _fac_model(steps_r, m)
     k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
@@ -1555,10 +1680,14 @@ def net_body(
     if raw_l.boundary != raw_r.boundary:
         raise PathSumUnsupported("the boundaries differ")
     m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
+    parity: tuple[int, list[int]] | None = None
     try:
         red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(
             raw_l, raw_r, m_min, support=True
         )
+    except _LiftRaises as held:
+        m, k_p, order_p, steps_l, steps_r = _parity_plan(raw_l, raw_r, held, m_min)
+        red_l, red_r, boolean, parity = held.red_l, held.red_r, False, (k_p, order_p)
     except PathSumUnsupported:
         zero = _zero_plan(left, right, m_min)
         if zero is None:
@@ -1573,7 +1702,21 @@ def net_body(
     side_l.steps += steps_l
     side_r.steps += steps_r
     f_l, f_r = _fac_model(side_l.steps, m), _fac_model(side_r.steps, m)
-    k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
+    if parity is None:
+        k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
+        final = [
+            (
+                f"  apply {'finalS_sound' if _leftover(red_l) else 'final_sound'} {m} "
+                f"(by norm_num) _ _ _ _ _ {k_l} {k_r} (by decide) (by decide)"
+            ),
+            "    (by decide)",
+        ]
+    else:
+        k_l, k_r = parity[0], 0
+        final = [
+            f"  apply finalP_sound {m} (by norm_num) _ _ {parity[1]} _ _ _ {k_l} (by decide)",
+            "    (by decide)",
+        ]
     sc = _scalars()
     s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
     w_l, w_r = sp.Mul(*side_l.weights), sp.Mul(*side_r.weights)
@@ -1583,6 +1726,7 @@ def net_body(
     bnd = list(range(side_l.bnd_vars))
     d_l = "(netDataD digL NL (psL.map Prod.snd))"
     d_r = "(netDataD digR NR (psR.map Prod.snd))"
+    turn_r = "" if parity is not None else f" * om {m} ^ {k_r}"
     lines = [
         *_net_lines("L", side_l, m),
         *_net_lines("R", side_r, m),
@@ -1597,7 +1741,7 @@ def net_body(
         ),
         (
             f"    ({sc.text(f_r)}) * (({s_r}) * ({_weights_text(side_r)}"
-            f"(rt 2)⁻¹ ^ {side_r.sqrt2_inv})) * om {m} ^ {k_r} := by"
+            f"(rt 2)⁻¹ ^ {side_r.sqrt2_inv})){turn_r} := by"
         ),
         f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
         *("    " + ln for ln in proof.splitlines()),
@@ -1613,11 +1757,7 @@ def net_body(
         f"    run_sound {m} (by norm_num) stepsR {d_r} _ _ runR_ok, runR_eq,",
         f"    val_agree {m} _ runL {bnd} _ _ (by decide) (by decide)",
         f"      (dbits_agree ownL ownR _ {bnd} (by decide))]",
-        (
-            f"  apply {'finalS_sound' if _leftover(red_l) else 'final_sound'} {m} (by norm_num) "
-            f"_ _ _ _ _ {k_l} {k_r} (by decide) (by decide)"
-        ),
-        "    (by decide)",
+        *final,
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
     ]
