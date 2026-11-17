@@ -299,19 +299,29 @@ equal wherever the listed bound variables lie in their ranges have equal sums) g
 splitDel_ok and splitStep_ok; the free labels need no range. The hint list reads a split as
 rule 4 (elimStepH, splitH). The mirror is lean_sym.split_del / split_step / elim_choice.
 
-SymFourier (not yet used by the exporter) proves a sum-free residual zero through its
-characters. expTerm writes a term with constant moduli dividing N and constant q ex r (r N an
-integer) as characters w omega_N^P: each root of unity omega_M^p as omega_N^((N/M) p), each delta
-[M | p] as (1/M) Sum_{k<M} omega_N^(k (N/M) p) (delV_avg from sum_om_lin). A certificate (vs,
-rows) lists cycles (K, p, a, lambda), each lambda Sum_{i<p} omega_N^(K + a + i N/p) = 0 for
-1 < p | N (om_geom). fzOK packs each character linear over vs into a slot, the digits of its
-coefficients mod N read in base N (slotOf; slot_eq: equal slots give equal characters, by
-Nat.ofDigits_inj_of_len_eq), sorts the characters and the negated cycles by slot and checks
-that every run of one slot sums to zero (runsGo, runs_ok); fz_zero gives exDen e = 0 at every
-valuation. fzNf / fzNf_den wrap a normaliser; symCheckF / equal_symF are symCheck / equal_sym
-with the check beside the empty normal form. On draper_adder n=1 d=10 the residual has 13900
-characters and the kernel's decide exceeds 600 s (4000 characters: expansion 5 s, slots 57 s,
-sort 80 s), so the exporter does not emit it.
+When the normal form of a sum-free difference is not empty, SymFourier proves it zero
+(fzOK, fz_zero). Every modulus divides N (modOK). Each label pinned alone by some delta
+([s x + c], pv) is split into its residues mod N: t = Sum_{v<N} [N | x - v] t[x := v]
+(den_split, by fac_congr), deltas with a constant argument evaluated (pruneTm), so pinned
+terms stay one term (explode, explode_ok). expTerm writes each split term, constant q ex r
+with r N an integer, as characters w omega_N^P: each root of unity omega_M^p as
+omega_N^((N/M) p), each remaining delta [M | p] as (1/M) Sum_{k<M} omega_N^(k (N/M) p)
+(delV_avg). The certificate (pv, vs, rows) lists cycles (vv, K, p, a, lambda) with 1 < p | N,
+each lambda [residues vv] Sum_{i<p} omega_N^(K + a + i N/p) = 0 (om_geom, itV_cert). Each item
+gets a slot, its residues then the digits of its coefficients mod N over vs read in base N
+(slot2; slot2_eq by Nat.ofDigits_inj_of_len_eq: equal slots give equal indicator and
+character); fzOK sorts the items and the negated cycles by slot and checks that every run of
+one slot sums to zero (runsGo, runs_ok). fzNf / fzNf_den wrap the hint normaliser
+(equal_symS); symCheckF / equal_symF add the check beside the empty normal form of symCheck.
+lean_sym.fz_cert builds the certificate (cycles by exact solving over Q per group);
+sym_check accepts such a residual and the export writes FZN / FZC or chkFN / chkFC. Binder and
+splitter nodes are translated (as in BS_NODES) for pairs of at most BS_SMALL = 64 nodes
+(_bs_small in export_symbolic). tab_ph proves envP for a flat rational phase table l / c in
+one step: one kernel check ptOK (distinct keys, each stored phase phC (l_i / c) [], every l_i
+off the keys a multiple of c) gives ex (l_j / c) = phF rho pt j at every j (sum_key,
+sum_nokey, phC_den0); lean_sym.tab_row emits it when ptOK holds, else the by_cases chain,
+whose entries off the listed indices tab_zero / tab_zeroZ close. draper_adder n=1 d=10: 139 residual terms, pv = [0, 2], 157 split terms, 337
+characters, 41 cycles; fzOK decides in 12 s.
 
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a

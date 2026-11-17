@@ -60,6 +60,11 @@ ROUNDS = 3
 FULL_TERMS = 4096
 BS_NODES = False
 """Whether the translation writes binder and splitter nodes (``bsTerm``)."""
+BS_SMALL = 64
+"""The most nodes of both networks for which :func:`export_symbolic` writes binder and
+splitter nodes with BS_NODES off."""
+_BS_ON = False
+"""Whether the current export writes binder and splitter nodes."""
 BLOCK_MAX = 8
 """The most nodes of one ``trBlockM`` theorem."""
 BLOCK_TERMS = 24
@@ -889,6 +894,167 @@ def nf_ex(fl: Sequence[int], e: Sequence[STm]) -> tuple[STm, ...]:
     return tuple(acc.values())
 
 
+# characters of sum-free residuals (SymFourier)
+
+FZCert = tuple[
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[tuple[tuple[int, ...], IPoly, int, int, Fraction], ...],
+]
+
+
+def _fz_mod(e: Sequence[STm]) -> int | None:
+    """The modulus N of :func:`fz_cert`: the lcm of the constant moduli and the denominators of
+    the constant phases; None when a term has a sum, a symbolic modulus or another constant."""
+    n = 1
+    for t in e:
+        c = t[0]
+        if t[1] or c[2] or c[3] or c[4] or c[5]:
+            return None
+        for f in (*t[2], *t[3]):
+            if not dm_const(f[0]) or f[0][0] <= 0:
+                return None
+            n = math.lcm(n, f[0][0])
+        n = math.lcm(n, Fraction(c[1]).denominator)
+    return n
+
+
+def exp_term(n: int, t: STm) -> list[tuple[Fraction, IPoly]] | None:
+    """``expTerm``: a sum-free term as characters ``w omega_N^P``."""
+    c = t[0]
+    if t[1] or c[2] or c[3] or c[4] or c[5]:
+        return None
+    if not all(dm_const(f[0]) and f[0][0] > 0 and n % f[0][0] == 0 for f in (*t[2], *t[3])):
+        return None
+    rn = Fraction(c[1]) * n
+    if rn.denominator != 1:
+        return None
+    out = [(Fraction(c[0]), ip_c(rn.numerator))]
+    for f in reversed(t[2]):
+        m = f[0][0]
+        out = [(w / m, ip_add(p, ip_smul(k * (n // m), f[1]))) for w, p in out for k in range(m)]
+    for f in reversed(t[3]):
+        m = f[0][0]
+        out = [(w, ip_add(p, ip_smul(n // m, f[1]))) for w, p in out]
+    return out
+
+
+def _cycle_cert(n: int, v: dict[int, Fraction]) -> tuple[tuple[int, int, Fraction], ...] | None:
+    """Coefficients of the cycles ``Sum_{i<p} omega_N^(a + i N/p)`` (primes ``p | N``, ``a <
+    N/p``) summing to the vector ``v``; None when there are none."""
+    rels = [(p, a) for p in sp.primefactors(n) for a in range(n // p)]
+    if not rels:
+        return () if not any(v.values()) else None
+    mat = sp.zeros(n, len(rels))
+    for col, (p, a) in enumerate(rels):
+        for i in range(p):
+            mat[a + i * (n // p), col] = 1
+    rhs = sp.Matrix([sp.Rational(v.get(j, Fraction(0))) for j in range(n)])
+    try:
+        sol, params = mat.gauss_jordan_solve(rhs)
+    except ValueError:
+        return None
+    sol = sol.subs({s: 0 for s in params})
+    out = []
+    for (p, a), x in zip(rels, sol, strict=True):
+        q = Fraction(int(sp.fraction(x)[0]), int(sp.fraction(x)[1]))
+        if q:
+            out.append((p, a, q))
+    return tuple(out)
+
+
+def _cdel(f: Fac) -> bool | None:
+    """``cdel``: whether a delta with a constant argument over a positive constant modulus
+    holds; None for any other delta."""
+    c = ip_const(f[1])
+    if c is None or not (dm_const(f[0]) and f[0][0] > 0):
+        return None
+    return c % f[0][0] == 0
+
+
+def _prune(t: STm) -> STm | None:
+    """``pruneTm``."""
+    if any(_cdel(f) is False for f in t[2]):
+        return None
+    return (t[0], t[1], tuple(f for f in t[2] if _cdel(f) is not True), t[3])
+
+
+def _explode(
+    n: int, pv: Sequence[int], vv: tuple[int, ...], e: Sequence[STm]
+) -> list[tuple[tuple[int, ...], STm]]:
+    """``explode``: every pinned label split into its residues mod ``n``."""
+    if not pv:
+        return [(vv, t) for t in e]
+    x, rest = pv[0], pv[1:]
+    out: list[tuple[tuple[int, ...], STm]] = []
+    for v in range(n):
+        sub = []
+        for t in e:
+            s = (
+                t[0],
+                t[1],
+                tuple(fac_sub(x, ip_c(v), f) for f in t[2]),
+                tuple(fac_sub(x, ip_c(v), f) for f in t[3]),
+            )
+            p = _prune(s)
+            if p is not None:
+                sub.append(p)
+        out += _explode(n, rest, (*vv, v), sub)
+    return out
+
+
+def _pinned(e: Sequence[STm]) -> list[int]:
+    """The labels some delta pins alone: ``[s x + c]`` with ``s = +-1``."""
+    out = set()
+    for t in e:
+        for _m, p in t[2]:
+            xs = {m[0] for m, _c in p if m}
+            if len(xs) == 1 and all(len(m) <= 1 and (not m or abs(c) == 1) for m, c in p):
+                out |= xs
+    return sorted(out)
+
+
+def fz_cert(e: Sequence[STm]) -> tuple[int, FZCert] | None:
+    """``fzOK``'s modulus and certificate for a sum-free expression: the labels pinned alone
+    split into residues, the rest as characters grouped by residues and non-constant exponent
+    mod N, each group vanishing by cycles; None otherwise."""
+    if not e:
+        return None
+    n = _fz_mod(e)
+    if n is None or n < 2:
+        return None
+    pv = _pinned(e)
+    groups: dict[tuple[tuple[int, ...], IPoly], dict[int, Fraction]] = {}
+    for vv, t in _explode(n, pv, (), e):
+        chars = exp_term(n, t)
+        if chars is None:
+            return None
+        for w, p in chars:
+            if any(len(m) > 1 for m, _c in p):
+                return None
+            key = ip_modc(n, tuple(s for s in p if s[0]))
+            idx = _emod(sum(c for m, c in p if not m), n)
+            g = groups.setdefault((vv, key), {})
+            g[idx] = g.get(idx, Fraction(0)) + w
+    rows = []
+    for (vv, key), v in groups.items():
+        cyc = _cycle_cert(n, v)
+        if cyc is None:
+            return None
+        rows += [(vv, key, p, a, q) for p, a, q in cyc]
+    vs = tuple(sorted({m[0] for _vv, key in groups for m, _c in key}))
+    return n, (tuple(pv), vs, tuple(rows))
+
+
+def _lean_cert(cert: FZCert) -> str:
+    """A certificate literal."""
+    rows = ", ".join(
+        f"({_lean_ints(list(vv))}, {_lean_ip(k)}, {_rn(p)}, {_rn(a)}, {_rq(q)})"
+        for vv, k, p, a, q in cert[2]
+    )
+    return f"(({_lean_ints(list(cert[0]))}, {_lean_ints(list(cert[1]))}, [{rows}]) : FzCert)"
+
+
 # networks
 
 
@@ -991,9 +1157,9 @@ def tr_node(
         return w_s(d, i, (), os) + [(of_q(1 - len(os)), (), ((d, ip_v(i)),) + w_zeros(d, os), ())]
     if kind == "I" and len(os) == 1 and len(is_) == 1:
         return [(of_q(1), (), ((d, ip_sub(ip_v(os[0]), ip_v(is_[0]))),), ())]
-    if BS_NODES and kind == "B" and len(os) == 1 and len(is_) == 2:
+    if (BS_NODES or _BS_ON) and kind == "B" and len(os) == 1 and len(is_) == 2:
         return bs_term(d, dt(ph), os[0], is_[0], is_[1])
-    if BS_NODES and kind == "S" and len(os) == 2 and len(is_) == 1:
+    if (BS_NODES or _BS_ON) and kind == "S" and len(os) == 2 and len(is_) == 1:
         return bs_term(d, dt(ph), is_[0], os[0], os[1])
     return None
 
@@ -1177,11 +1343,14 @@ def sym_check(
     n1: Any,
     s0: Sequence[STm],
     s1: Sequence[STm],
+    fz: list[tuple[int, FZCert]] | None = None,
 ) -> bool:
-    """``symCheck``; a network is ``(nodes, internal, boundary)``."""
+    """``symCheck``; a network is ``(nodes, internal, boundary)``. With ``fz``, a sum-free
+    residual whose characters vanish (:func:`fz_cert`) also passes (``symCheckF``), its
+    modulus and certificate appended to ``fz``."""
     if sorted(n0[2]) != sorted(n1[2]):
         return False
-    if not BS_NODES and any(n[0] in ("B", "S") for n in (*n0[0], *n1[0])):
+    if not (BS_NODES or _BS_ON) and any(n[0] in ("B", "S") for n in (*n0[0], *n1[0])):
         return False
     if not (net_chk(fl, dt, pt, labs, ix, *n0) and net_chk(fl, dt, pt, labs, ix, *n1)):
         return False
@@ -1195,12 +1364,16 @@ def sym_check(
         if e0 is None or e1 is None:
             continue
         neg = ex_neg(s1)
-        if (
-            ex_mul_ok(s0, e0)
-            and ex_mul_ok(neg, e1)
-            and not nf_ex(fl, ex_mul(s0, e0) + ex_mul(neg, e1))
-        ):
+        if not (ex_mul_ok(s0, e0) and ex_mul_ok(neg, e1)):
+            continue
+        rest = nf_ex(fl, ex_mul(s0, e0) + ex_mul(neg, e1))
+        if not rest:
             return True
+        if fz is not None:
+            got = fz_cert(rest)
+            if got is not None:
+                fz.append(got)
+                return True
     return False
 
 
@@ -1822,6 +1995,7 @@ class _SymExport:
         self.fixed: Sequence[tuple[str, int] | tuple[str, int, bool]] | None = None
         self.fixed_steps: Any = None
         self.q: Any = None
+        self.fz: list[tuple[int, FZCert]] = []
 
     # tables as Python
 
@@ -1901,6 +2075,7 @@ class _SymExport:
             assert self.s0 is not None and self.s1 is not None
             if self.q_plan():
                 return True
+            self.fz = []
             return sym_check(
                 self.fl,
                 self.dtf,
@@ -1911,6 +2086,7 @@ class _SymExport:
                 self.net(self.b.net),
                 self.s0,
                 self.s1,
+                self.fz,
             )
         if self.planned is None:
             try:
@@ -2238,9 +2414,10 @@ class _SymExport:
         """``equal_sym`` at the environment ``envt``, multiplicities ``ks``; ``equal_symS`` on the
         parts of ``chk`` when :meth:`check_decls` wrote it node by node."""
         g = self.g_args.get(chk)
-        lemma = "equal_symS" if g else "equal_sym"
+        lemma = "equal_symS" if g else "equal_symF" if self.fz else "equal_sym"
+        fzargs = " FZN FZC" if self.fz and not g else ""
         return (
-            f"{lemma} {envt} {self.rho} {self.hr} FL {self.call('flOK')} DT PT RL labs IX "
+            f"{lemma} {envt} {self.rho} {self.hr} FL {self.call('flOK')}{fzargs} DT PT RL labs IX "
             f"{self.call('envD', ks)} {self.call('envP', ks)} rfl {n0} {n1} {a0} {a1} _ _ "
             f"{self.call(l0)} {self.call(l1)} {g or chk}"
         )
@@ -3128,11 +3305,34 @@ class _SymExport:
             f"({dm}, {cs}) from rfl]\n    congr 1\n    "
         )
 
+    def tab_row(self, p: int, row: list[tuple[int, CMon, sp.Expr]]) -> bool:
+        """Whether ``ptOK`` holds for phase vector ``p``'s flat table and stored ``row``."""
+        from archytaszx.semantics.lean_net import TABLE_CHUNK
+
+        tab = getattr(self.out, "phase_tables", {}).get(p)
+        if tab is None or len(tab[0]) > TABLE_CHUNK:
+            return False
+        nums, den = tab
+        keys = [j for j, _, _ in row]
+        if len(set(keys)) != len(keys):
+            return False
+        for j, m, _ in row:
+            n = nums[j] if j < len(nums) else 0
+            if m != ph_c(Fraction(n, den), []):
+                return False
+        return all(n % den == 0 or i in keys for i, n in enumerate(nums))
+
     def ph_proof(
         self, p: int, row: list[tuple[int, CMon, sp.Expr]], unfold: str, rho: str, gsa: str
     ) -> str:
         if not row:
             return f"simp [{unfold}, Φ, PT, phF, ex_zero]"
+        if self.tab_row(p, row):
+            den = self.out.phase_tables[p][1]
+            return (
+                f"simp only [{unfold}, Φ]\n    exact tab_ph {rho} _ {den} _ (by norm_num) _ "
+                "(by decide +kernel) j"
+            )
         lines = [
             (
                 f"simp only [{unfold}, Φ, PT, phF, List.getD_cons_succ, List.getD_cons_zero, "
@@ -3149,7 +3349,7 @@ class _SymExport:
             )
             lines.append(
                 f"{indent}· subst h{idx}; simp only [{others}eq_self_iff_true, if_true, "
-                "if_false, add_zero]"
+                "if_false, add_zero, List.getD_cons_succ, List.getD_cons_zero]"
             )
             if z == 0:
                 lines.append(
@@ -3167,7 +3367,12 @@ class _SymExport:
             lines.append(f"{indent}· ")
             indent += "  "
         hs = ", ".join(f"h{i}" for i in range(len(row)))
-        lines[-1] += f"simp [{hs}, ex_zero]"
+        idxs = "[" + ", ".join(str(j) for j, _, _ in row) + "]"
+        lines[-1] += (
+            f"first | (simp [{hs}, ex_zero]; done) | (simp [{hs}, ex_zero]; first "
+            f"| refine tab_zeroZ _ {idxs} _ j ?_ ?_ | refine tab_zero _ {idxs} _ j ?_ ?_) "
+            f"<;> first | decide | simp [{hs}]"
+        )
         return "\n    ".join(lines)
 
     def chk_decls(self, a: str, b: str) -> list[str]:
@@ -3198,12 +3403,26 @@ class _SymExport:
         through the stated intermediate expressions, when ``tr_net`` decides the pair; else
         one ``decide`` of the whole check."""
         (ta, a, na), (tb, b, nb) = nets
-        whole = [
-            "set_option maxHeartbeats 0 in\n"
-            + doc
-            + f"theorem {name} : symCheck FL DT PT RL labs IX {a} {b} {s0t} {s1t} = true := by "
-            "decide +kernel"
-        ]
+        if self.fz and name == "chk":
+            fzn, fzc = self.fz[0]
+            whole = [
+                f"/-- The characters' modulus. -/\ndef FZN : ℕ := {fzn}",
+                (
+                    f"/-- The cycles each character group vanishes by. -/\ndef FZC : "
+                    f"FzCert := {_lean_cert(fzc)}"
+                ),
+                "set_option maxHeartbeats 0 in\n"
+                + doc
+                + f"theorem {name} : symCheckF FZN FZC FL DT PT RL labs IX {a} {b} {s0t} {s1t} = "
+                "true := by decide +kernel",
+            ]
+        else:
+            whole = [
+                "set_option maxHeartbeats 0 in\n"
+                + doc
+                + f"theorem {name} : symCheck FL DT PT RL labs IX {a} {b} {s0t} {s1t} = true := "
+                "by decide +kernel"
+            ]
         labs = dict(self.out.labs)
         own = {ta: (a, na)} if a == b else {ta: (a, na), tb: (b, nb)}
         steps: dict[str, list[list[STm]]] = {}
@@ -3219,13 +3438,18 @@ class _SymExport:
             e[tag] = [(t[0], sums + t[1], t[2], t[3]) for t in st[0]]
         eb = e[tb] if tb in e else e[ta]
         neg = ex_neg(s1)
-        if not (
-            ex_mul_ok(s0, e[ta])
-            and ex_mul_ok(neg, eb)
-            and not nf_ex(self.fl, ex_mul(s0, e[ta]) + ex_mul(neg, eb))
-        ):
+        if not (ex_mul_ok(s0, e[ta]) and ex_mul_ok(neg, eb)):
+            return whole
+        rest = nf_ex(self.fl, ex_mul(s0, e[ta]) + ex_mul(neg, eb))
+        fzs = fz_cert(rest) if rest and self.fz and name == "chk" else None
+        if rest and fzs is None:
             return whole
         out: list[str] = []
+        if fzs is not None:
+            out += [
+                f"def {name}FN : ℕ := {fzs[0]}",
+                f"def {name}FC : FzCert := {_lean_cert(fzs[1])}",
+            ]
         texts_e: dict[str, str] = {}
         nets_ok: dict[str, str] = {}
         for tag, (text, lnet) in own.items():
@@ -3315,11 +3539,17 @@ class _SymExport:
         e0, e1 = texts_e[ta], texts_e[tb2]
         zh = [term_hint(self.fl, t) for t in ex_mul(s0, e[ta]) + ex_mul(neg, eb)]
         out.append(f"def {name}ZH (_ : ℕ) : List THint := [" + ", ".join(map(_lean_th, zh)) + "]")
+        fl_ok = self.call("flOK")
+        nfz = f"(nfH FL {name}ZH 0)"
+        hnfz = f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {name}ZH 0)"
+        if fzs is not None:
+            nfz = f"(fzNf {name}FN {name}FC (nfH FL {name}ZH 0))"
+            hnfz = f"(fzNf_den {self.rho} {self.hr} {name}FN {name}FC _ {hnfz})"
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
             ("k", f"(exConst {s0t} && exConst {s1t})"),
             ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
-            ("z", f"(nfH FL {name}ZH 0 (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
+            ("z", f"({nfz[1:-1]} (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
         ]
         for k, (sfx, stmt) in enumerate(parts):
             out.append(
@@ -3327,13 +3557,11 @@ class _SymExport:
                 + (doc if k == len(parts) - 1 else "")
                 + f"theorem {name}{sfx} : {stmt} = true := by decide +kernel"
             )
-        fl_ok = self.call("flOK")
         self.g_args[name] = (
             f"(nfH FL {ta}H) (nfH FL {tb2}H) (nfH_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
             f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
             f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
-            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m (nfH FL {name}ZH 0) "
-            f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {name}ZH 0) {name}z"
+            f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {nfz} {hnfz} {name}z"
         )
         return ["noncomputable section", *out, "end"]
 
@@ -3372,6 +3600,21 @@ def export_symbolic(
     ex.shift = shift
     ex.fixed = fixed
     ex.out.original = original
-    if not ex.check():
-        raise NetUnsupported(getattr(ex, "why", "the normal forms of the two networks differ"))
-    return ex.source(name)
+    global _BS_ON
+    saved = _BS_ON
+    _BS_ON = _bs_small(ex)
+    try:
+        if not ex.check():
+            raise NetUnsupported(getattr(ex, "why", "the normal forms of the two networks differ"))
+        return ex.source(name)
+    finally:
+        _BS_ON = saved
+
+
+def _bs_small(ex: _SymExport) -> bool:
+    """Whether a pair without multiplicities has binder or splitter nodes and at most BS_SMALL
+    nodes in all."""
+    if ex.mults:
+        return False
+    nodes = [n for lnet in (ex.a.net, ex.b.net) for n in ex.net(lnet)[0]]
+    return len(nodes) <= BS_SMALL and any(n[0] in ("B", "S") for n in nodes)

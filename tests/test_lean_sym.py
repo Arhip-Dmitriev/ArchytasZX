@@ -494,6 +494,39 @@ def test_a_digit_split_keeps_the_value(delta: S.IPoly) -> None:
         assert abs(_value(t, [], nu) - _value(split, [], nu)) < 1e-9
 
 
+def _residual() -> list[S.STm]:
+    """``[x0 = 1 mod 4] w4^(x1) + [x0 = 1 mod 4] w4^(x1 + 2) + [x0 = x1 mod 4] - [x0 = x1 mod
+    4]``: zero, the first two terms by the cycle of p = 2."""
+    four = (4, ())
+    pin = ((four, _lin(-1, (0, 1))),)
+    return [
+        (S.of_q(1), (), pin, ((four, _lin(0, (1, 1))),)),
+        (S.of_q(1), (), pin, ((four, _lin(2, (1, 1))),)),
+        (S.of_q(1), (), ((four, _lin(0, (0, 1), (1, -1))),), ()),
+        (S.of_q(-1), (), ((four, _lin(0, (0, 1), (1, -1))),), ()),
+    ]
+
+
+def test_a_sum_free_residual_gets_a_cycle_certificate() -> None:
+    got = S.fz_cert(_residual())
+    assert got is not None
+    n, (pv, vs, rows) = got
+    assert n == 4 and pv == (0,) and vs == (1,)
+    assert all(p == 2 for _vv, _k, p, _a, _q in rows)
+    assert S.fz_cert(_residual()[:1]) is None
+
+
+def test_a_rational_table_is_matched_by_ptok() -> None:
+    from types import SimpleNamespace
+
+    nums = [0, 2, 1, 14] + [0] * 61
+    me = SimpleNamespace(out=SimpleNamespace(phase_tables={1: (nums, 14)}))
+    row = [(1, S.ph_c(Fraction(1, 7), []), sp.S(0)), (2, S.ph_c(Fraction(15, 14), []), sp.S(0))]
+    assert S._SymExport.tab_row(me, 1, row)  # type: ignore[arg-type]
+    assert not S._SymExport.tab_row(me, 1, row[:1])  # type: ignore[arg-type]
+    assert not S._SymExport.tab_row(me, 0, row)  # type: ignore[arg-type]
+
+
 # Lean
 
 
@@ -502,6 +535,25 @@ def _mathlib() -> bool:
 
 
 needs_lean = pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+
+
+@needs_lean
+def test_lean_decides_a_cycle_certificate(tmp_path: Path) -> None:
+    got = S.fz_cert(_residual())
+    assert got is not None
+    source = "\n".join(
+        [
+            "import ArchytasZX.SymFourier",
+            "open ArchytasZX.Sym",
+            f"def R : List STm := {S._lean_ex(_residual())}",
+            f"def C : FzCert := {S._lean_cert(got[1])}",
+            f"theorem fz : fzOK {got[0]} C R = true := by decide +kernel",
+            "theorem zero (ρ : Val) (hρ : ρ.OK) (ν : ℕ → ℤ) : exDen ρ ν R = 0 :=",
+            f"  fz_zero ρ hρ {got[0]} C R fz ν",
+        ]
+    )
+    passed, message = L.check(source, str(tmp_path / "fz.lean"))
+    assert passed, message
 
 
 @pytest.mark.slow
