@@ -264,6 +264,86 @@ theorem trNetG_of (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt :
   subst hn
   rfl
 
+/-! ## Node translation on label masks -/
+
+theorem maskOf_append (a b : List ℕ) : maskOf (a ++ b) = maskOf a ||| maskOf b := by
+  apply Nat.eq_of_testBit_eq
+  intro l
+  rw [Nat.testBit_or, testBit_maskOf, testBit_maskOf, testBit_maskOf, List.contains_append]
+
+/-- `trStepG` with the labels before the node as the bit mask `pm`. -/
+def trStepM (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ) (pm i : ℕ) (n : Node)
+    (b : List STm) : Option (List STm) :=
+  match trNode dt pt rl (OFF + i) n with
+  | some a =>
+    if exMulOK a b then
+      some (nf i (exSums (labSums dt labs
+        (int.filter fun l => (n.outs ++ n.ins).contains l && !pm.testBit l)) (exMul a b)))
+    else none
+  | none => none
+
+theorem trStepM_eq (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int pre : List ℕ) (i : ℕ) (n : Node)
+    (b : List STm) :
+    trStepM nf dt pt rl labs int (maskOf pre) i n b = trStepG nf dt pt rl labs int pre i n b := by
+  simp only [trStepM, trStepG, firstAt, testBit_maskOf]
+
+/-- `trNodesG` with the labels before the nodes as the bit mask `pm`. -/
+def trNodesM (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ) :
+    ℕ → ℕ → List Node → Option (List STm)
+  | _, _, [] => some [⟨CMon.ofQ 1, [], [], []⟩]
+  | pm, i, n :: ns =>
+    match trNodesM nf dt pt rl labs int (pm ||| maskOf (n.outs ++ n.ins)) (i + 1) ns with
+    | some b => trStepM nf dt pt rl labs int pm i n b
+    | none => none
+
+theorem trNodesM_eq (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ) :
+    ∀ (ns : List Node) (pre : List ℕ) (i : ℕ),
+    trNodesM nf dt pt rl labs int (maskOf pre) i ns = trNodesG nf dt pt rl labs int pre i ns
+  | [], _, _ => by simp [trNodesM, trNodesG]
+  | n :: ns, pre, i => by
+    rw [trNodesG_cons']
+    simp only [trNodesM]
+    rw [← maskOf_append, trNodesM_eq nf dt pt rl labs int ns (pre ++ (n.outs ++ n.ins)) (i + 1)]
+    cases trNodesG nf dt pt rl labs int (pre ++ (n.outs ++ n.ins)) (i + 1) ns with
+    | none => rfl
+    | some b => exact trStepM_eq nf dt pt rl labs int pre i n b
+
+/-- `trNodesM` on the nodes `xs` with the tail's expression `b0`. -/
+def trBlockM (nf : ℕ → List STm → List STm) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ) (b0 : List STm) :
+    ℕ → ℕ → List Node → Option (List STm)
+  | _, _, [] => some b0
+  | pm, i, n :: ns =>
+    match trBlockM nf dt pt rl labs int b0 (pm ||| maskOf (n.outs ++ n.ins)) (i + 1) ns with
+    | some b => trStepM nf dt pt rl labs int pm i n b
+    | none => none
+
+/-- The mask `pm` with the labels of the nodes `ns` added. -/
+def blockPreM : ℕ → List Node → ℕ
+  | pm, [] => pm
+  | pm, n :: ns => blockPreM (pm ||| maskOf (n.outs ++ n.ins)) ns
+
+theorem trNodesM_block (nf : ℕ → List STm → List STm) (dt : ℕ → DMon)
+    (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ)) (int : List ℕ)
+    (b : List STm) : ∀ (xs ys : List Node) (pm pm' i : ℕ), blockPreM pm xs = pm' →
+    trNodesM nf dt pt rl labs int pm' (i + xs.length) ys = some b →
+    trNodesM nf dt pt rl labs int pm i (xs ++ ys) = trBlockM nf dt pt rl labs int b pm i xs := by
+  intro xs
+  induction xs with
+  | nil => intro ys pm pm' i hp h; subst hp; simpa [blockPreM, trBlockM] using h
+  | cons n xs ih =>
+    intro ys pm pm' i hp h
+    have h' : trNodesM nf dt pt rl labs int pm' (i + 1 + xs.length) ys = some b := by
+      have e : i + (n :: xs).length = i + 1 + xs.length := by simp [List.length_cons]; omega
+      rw [← e]
+      exact h
+    simp only [List.cons_append, trNodesM, trBlockM]
+    rw [ih ys _ pm' (i + 1) hp h']
+
 /-! ## Hinted pivot passes -/
 
 /-- Each delta of the third list pivoting only the first list and the phases. -/

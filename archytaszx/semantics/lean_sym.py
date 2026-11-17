@@ -61,11 +61,9 @@ FULL_TERMS = 4096
 BS_NODES = False
 """Whether the translation writes binder and splitter nodes (``bsTerm``)."""
 BLOCK_MAX = 8
-"""The most nodes of one ``trBlockG`` theorem."""
+"""The most nodes of one ``trBlockM`` theorem."""
 BLOCK_TERMS = 24
-"""The most nodes times terms of the largest stated expression in one ``trBlockG`` theorem."""
-PRE_LITERAL = 32
-"""Every how many nodes the labels before a node are written as a literal list."""
+"""The most nodes times terms of the largest stated expression in one ``trBlockM`` theorem."""
 NORM_TERMS = 1 << 14
 """The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
 
@@ -3185,19 +3183,14 @@ class _SymExport:
             out.append(f"def {tag}D{m} : List Node := []")
             for k in range(m - 1, -1, -1):
                 out.append(f"def {tag}D{k} : List Node := {tag}n{k} :: {tag}D{k + 1}")
-            out.append(f"def {tag}P0 : List ℕ := []")
-            pre: list[int] = []
-            for k in range(m):
-                pre += [*nodes[k][1], *nodes[k][2]]
-                if (k + 1) % PRE_LITERAL == 0:
-                    out.append(f"def {tag}P{k + 1} : List ℕ := {pre}")
-                else:
-                    out.append(
-                        f"def {tag}P{k + 1} : List ℕ := "
-                        f"{tag}P{k} ++ ({tag}n{k}.outs ++ {tag}n{k}.ins)"
-                    )
             per = min(BLOCK_MAX, max(1, BLOCK_TERMS // max(1, *map(len, st))))
             marks = sorted({*range(0, m, per), m})
+            pm = 0
+            for k in range(m + 1):
+                if k in marks:
+                    out.append(f"def {tag}M{k} : ℕ := {hex(pm)}")
+                if k < m:
+                    pm |= _mask((*nodes[k][1], *nodes[k][2]))
             fac_names: dict[Fac, str] = {}
 
             def fac_name(f: Fac, tag: str = tag, names: dict[Fac, str] = fac_names) -> str:
@@ -3210,19 +3203,20 @@ class _SymExport:
             for k, text in zip(marks, stated, strict=True):
                 out.append(f"def {tag}E{k} : List STm := {text}")
             out.append(
-                f"theorem {tag}B{m} : trNodesG {args} {nt}.int {tag}P{m} {m} {tag}D{m} = "
+                f"theorem {tag}B{m} : trNodesM {args} {nt}.int {tag}M{m} {m} {tag}D{m} = "
                 f"some {tag}E{m} := by decide +kernel"
             )
             for k, k2 in reversed(list(itertools.pairwise(marks))):
                 xs = "[" + ", ".join(f"{tag}n{j}" for j in range(k, k2)) + "]"
                 out.append(
-                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trBlockG {args} {nt}.int "
-                    f"{tag}E{k2} {tag}P{k} {k} {xs} = some {tag}E{k} := by decide +kernel"
+                    f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trBlockM {args} {nt}.int "
+                    f"{tag}E{k2} {tag}M{k} {k} {xs} = some {tag}E{k} := by decide +kernel"
                 )
                 out.append(
-                    f"theorem {tag}B{k} : trNodesG {args} {nt}.int {tag}P{k} {k} {tag}D{k} = "
-                    f"some {tag}E{k} :=\n  (trNodesG_block {args} {nt}.int {tag}E{k2} {xs} "
-                    f"{tag}D{k2} {tag}P{k} {k} {tag}B{k2}).trans {tag}T{k}"
+                    f"theorem {tag}B{k} : trNodesM {args} {nt}.int {tag}M{k} {k} {tag}D{k} = "
+                    f"some {tag}E{k} :=\n  (trNodesM_block {args} {nt}.int {tag}E{k2} {xs} "
+                    f"{tag}D{k2} {tag}M{k} {tag}M{k2} {k} (by decide +kernel) {tag}B{k2}).trans "
+                    f"{tag}T{k}"
                 )
             e_text = (
                 f"(exSums (labSums DT labs ({nt}.int.filter fun l => "
@@ -3230,7 +3224,8 @@ class _SymExport:
             )
             out.append(
                 f"theorem {tag}R : trNetG {args} {nt} = some {e_text} :=\n"
-                f"  trNetG_of {args} {nt} {tag}D0 {tag}E0 rfl {tag}B0"
+                f"  trNetG_of {args} {nt} {tag}D0 {tag}E0 rfl\n"
+                f"    ((trNodesM_eq {args} {nt}.int {tag}D0 [] 0).symm.trans {tag}B0)"
             )
             used = {lab for n in nodes for lab in (*n[1], *n[2])}
             free = [lab for lab in internal if lab not in used]
