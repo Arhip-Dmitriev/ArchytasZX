@@ -2322,7 +2322,7 @@ class _SymExport:
         unfold = "Fam.env, F, bundL, Fam.dimv, List.lookup" if family else "E"
         decls = [
             "open ArchytasZX.Sym\n\nset_option linter.unusedSimpArgs false",
-            "set_option Elab.async false",
+            "set_option Elab.async false\nset_option linter.all false",
         ]
         decls.append(
             "/-- Each dimension index as a monomial in the dimension symbols. -/\n"
@@ -3274,7 +3274,7 @@ class _SymExport:
             f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m (nfH FL {name}ZH 0) "
             f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {name}ZH 0) {name}z"
         )
-        return out
+        return ["noncomputable section", *out, "end"]
 
     def scalar_proof(self, model: sp.Expr, rho: str, tab: str = "S0, S1") -> str:
         return (
