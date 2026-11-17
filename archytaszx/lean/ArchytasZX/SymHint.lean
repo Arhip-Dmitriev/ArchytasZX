@@ -521,8 +521,23 @@ theorem elimVarH_ok (ρ : Val) (hρ : ρ.OK) (x : ℕ) (D : DMon) (ds ps : List 
       exact this
     · simp at h
 
-/-- The elimination of the sum at `i` by `elimVarH r j`. -/
+/-- The delta at `j` split by the sum at `i` (`splitApply`). -/
+def splitH (t : STm) (i j : ℕ) : Option STm :=
+  match t.sums.drop i, t.dels.drop j with
+  | (y, D) :: _, f :: post => splitApply t y D (t.dels.take j) f post
+  | _, _ => none
+
+theorem splitH_ok (ρ : Val) (t t' : STm) (i j : ℕ) (h : splitH t i j = some t')
+    (ν : ℕ → ℤ) : t'.den ρ ν = t.den ρ ν := by
+  unfold splitH at h
+  split at h
+  · next y D _ f post _ hd =>
+    exact splitApply_ok ρ t t' y D _ f post (by rw [← hd, List.take_append_drop]) h ν
+  · simp at h
+
+/-- The elimination of the sum at `i` by `elimVarH r j`; rule 4 the split `splitH i j`. -/
 def elimStepH (t : STm) (i r j : ℕ) : Option STm :=
+  if r = 4 then splitH t i j else
   match t.sums.drop i with
   | (x, D) :: post =>
     if ((t.sums.take i ++ post).map (·.1)).contains x then none
@@ -535,6 +550,10 @@ def elimStepH (t : STm) (i r j : ℕ) : Option STm :=
 theorem elimStepH_ok (ρ : Val) (hρ : ρ.OK) (t t' : STm) (i r j : ℕ)
     (h : elimStepH t i r j = some t') (ν : ℕ → ℤ) : t'.den ρ ν = t.den ρ ν := by
   unfold elimStepH at h
+  by_cases h4 : r = 4
+  · rw [if_pos h4] at h
+    exact splitH_ok ρ t t' i j h ν
+  rw [if_neg h4] at h
   split at h
   · next x D post hd =>
     split_ifs at h with hx

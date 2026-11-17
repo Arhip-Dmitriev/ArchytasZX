@@ -289,6 +289,16 @@ and phase parameters. The normaliser removes one bound variable per move:
         sum_k omega_D^(k A + B) = D [D | A] omega_D^B;
   - a variable read only through one delta of its range, counted by gcd(a, D).
 
+When no variable can be removed, a delta is split by the range of a bound variable (splitStep,
+SymNorm): [M | s y + c + D U] with y bound once over the constant range D, s = +-1, D | M and
+every other coefficient divisible by D becomes [D | s y + (c mod D)] [M / D | U + k], k = (c - c
+mod D) / D plus 1 when s = 1 and c mod D != 0; [M | s y - s z + c + D U] with z also bound once
+over D and D | c becomes [D | s y - s z] [M / D | U + c / D]. dvd_split (D Q | L + D U iff D | L
+and Q | U + m, where m D is the only multiple of D in L's range) and sumsV_congr_rng (two bodies
+equal wherever the listed bound variables lie in their ranges have equal sums) give
+splitDel_ok and splitStep_ok; the free labels need no range. The hint list reads a split as
+rule 4 (elimStepH, splitH). The mirror is lean_sym.split_del / split_step / elim_choice.
+
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.

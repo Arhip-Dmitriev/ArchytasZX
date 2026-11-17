@@ -502,6 +502,60 @@ def elim_var(x: int, d: DMon, ds: tuple[Fac, ...], ps: tuple[Fac, ...]) -> Any:
     return None
 
 
+def ip_quo(k: int, p: IPoly) -> IPoly:
+    return tuple((m, c // k) for m, c in p)
+
+
+def split_del(r: Sequence[tuple[int, DMon]], y: int, d: DMon, f: Fac) -> tuple[Fac, Fac] | None:
+    """``splitDel``: the deltas ``[D | L]`` and ``[M / D | U + m]`` of ``f``."""
+    rv = [x for x, _ in r]
+    if not (dm_const(d) and d[0] >= 2 and dm_dvd(d, f[0]) and rv.count(y) == 1 and (y, d) in r):
+        return None
+    lin = ip_lin(y, f[1])
+    if lin is None:
+        return None
+    s = ip_const(lin[0])
+    if s not in (1, -1):
+        return None
+    b = lin[1]
+    k = d[0]
+    c = sum(t[1] for t in b if not t[0])
+    rest = tuple(t for t in b if t[0])
+    zs = [t[0][0] for t in rest if t[1] == -s and len(t[0]) == 1]
+    for z in zs:
+        if (
+            z != y
+            and rv.count(z) == 1
+            and (z, d) in r
+            and [t for t in rest if t[0] == (z,)] == [((z,), -s)]
+        ):
+            rem = tuple(t for t in rest if t[0] != (z,))
+            if ip_divby(k, rem) and c % k == 0:
+                return (
+                    (d, ip_add(ip_smul(s, ip_v(y)), ip_smul(-s, ip_v(z)))),
+                    (dm_div(f[0], d), ip_add(ip_quo(k, rem), ip_c(c // k))),
+                )
+            return None
+    if not ip_divby(k, rest):
+        return None
+    cp = c % k
+    m = 1 if (s == 1 and cp != 0) else 0
+    return (
+        (d, ip_add(ip_smul(s, ip_v(y)), ip_c(cp))),
+        (dm_div(f[0], d), ip_add(ip_quo(k, rest), ip_c((c - cp) // k + m))),
+    )
+
+
+def split_step(t: STm) -> STm | None:
+    """``splitStep``: the first delta split by a bound variable, in place."""
+    for pre, f, post in _splits(t[2]):
+        for y, d in t[1]:
+            got = split_del(t[1], y, d, f)
+            if got is not None:
+                return (t[0], t[1], (*pre, got[0], got[1], *post), t[3])
+    return None
+
+
 def elim_step(t: STm) -> STm | None:
     for pre, (x, d), post in _splits(t[1]):
         if x in [y for y, _ in (*pre, *post)]:
@@ -509,7 +563,7 @@ def elim_step(t: STm) -> STm | None:
         e = elim_var(x, d, t[2], t[3])
         if e is not None:
             return (cm_mul(t[0], e[0]), pre + post, e[1], e[2])
-    return None
+    return split_step(t)
 
 
 def elim_all(n: int, t: STm) -> STm:
@@ -1233,7 +1287,7 @@ def canon_hint(t: STm) -> int:
 
 def elim_choice(t: STm) -> tuple[STm, tuple[int, int, int]] | None:
     """``elim_step`` with its choice as ``elimStepH`` reads it: sum index, rule (0 unused,
-    1 delta, 2 characters, 3 gcd) and delta index."""
+    1 delta, 2 characters, 3 gcd, 4 split) and delta index."""
     for i, (pre, (x, d), post) in enumerate(_splits(t[1])):
         if x in [y for y, _ in (*pre, *post)]:
             continue
@@ -1255,6 +1309,11 @@ def elim_choice(t: STm) -> tuple[STm, tuple[int, int, int]] | None:
                     break
         if e is not None:
             return (cm_mul(t[0], e[0]), pre + post, e[1], e[2]), (i, r, j)
+    for j, (pd, f, qd) in enumerate(_splits(t[2])):
+        for i, (y, d) in enumerate(t[1]):
+            got = split_del(t[1], y, d, f)
+            if got is not None:
+                return (t[0], t[1], (*pd, got[0], got[1], *qd), t[3]), (i, 4, j)
     return None
 
 

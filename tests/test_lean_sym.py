@@ -466,6 +466,34 @@ def test_the_translation_is_the_tensor() -> None:
     assert S.rnorm(Fraction(1), Fraction(3, 4)) == (Fraction(-1), Fraction(1, 4))
 
 
+def _lin(c: int, *terms: tuple[int, int]) -> S.IPoly:
+    """``c + Sum a x`` as an IPoly."""
+    out = S.ip_c(c)
+    for x, a in terms:
+        out = S.ip_add(out, S.ip_smul(a, S.ip_v(x)))
+    return out
+
+
+@pytest.mark.parametrize(
+    "delta",
+    [
+        _lin(11, (0, -10), (5, -1)),
+        _lin(13, (0, 10), (5, 1)),
+        _lin(20, (0, 10), (5, 1)),
+        _lin(0, (0, 10), (1, -10), (5, -1), (6, 1)),
+    ],
+)
+def test_a_digit_split_keeps_the_value(delta: S.IPoly) -> None:
+    one = S.of_q(1)
+    ten = (10, ())
+    t: S.STm = (one, ((5, ten), (6, ten)), (((100, ()), delta),), (((10, ()), _lin(0, (5, 3))),))
+    split = S.split_step(t)
+    assert split is not None and len(split[2]) == 2
+    for x0, x1 in itertools.product(range(-3, 13), range(0, 10, 3)):
+        nu = {0: x0, 1: x1}
+        assert abs(_value(t, [], nu) - _value(split, [], nu)) < 1e-9
+
+
 # Lean
 
 

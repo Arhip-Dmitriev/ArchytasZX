@@ -552,15 +552,326 @@ theorem elimVar_ok (ρ : Val) (hρ : ρ.OK) (x : ℕ) (D : DMon) (ds ps : List F
         simp only [Option.some.injEq] at h; subst h; exact elimChar_ok ρ hρ x D ds ps _ he
       · exact elimGcd_ok ρ hρ x D ds ps e h
 
+/-! ## Splitting a delta by the ranges of bound variables -/
+
+/-- Every pair `(x, D)` of `R` has `0 ≤ ν x < D`. -/
+def InR (dv : ℕ → ℕ) (R : List (ℕ × DMon)) (ν : ℕ → ℤ) : Prop :=
+  ∀ p ∈ R, 0 ≤ ν p.1 ∧ ν p.1 < ((p.2.den dv : ℕ) : ℤ)
+
+theorem sumsV_congr_rng (dv : ℕ → ℕ) : ∀ (s R : List (ℕ × DMon)) (f g : (ℕ → ℤ) → ℂ)
+    (ν : ℕ → ℤ),
+    (∀ p ∈ R, p.1 ∈ s.map (·.1) → p ∈ s ∧ (s.map (·.1)).count p.1 = 1) →
+    (∀ p ∈ R, p.1 ∉ s.map (·.1) → 0 ≤ ν p.1 ∧ ν p.1 < ((p.2.den dv : ℕ) : ℤ)) →
+    (∀ ν', InR dv R ν' → f ν' = g ν') → sumsV dv s f ν = sumsV dv s g ν
+  | [], R, f, g, ν, _, hout, hfg => hfg ν fun p hp => hout p hp (by simp)
+  | q :: s, R, f, g, ν, hin, hout, hfg => by
+    simp only [sumsV]
+    refine Finset.sum_congr rfl fun j hj => sumsV_congr_rng dv s R f g _ ?_ ?_ hfg
+    · intro p hp hps
+      obtain ⟨hmem, hc⟩ := hin p hp (by simp only [List.map_cons, List.mem_cons]; exact Or.inr hps)
+      have hpos : 0 < (s.map (·.1)).count p.1 := List.count_pos_iff.2 hps
+      have hne : p.1 ≠ q.1 := by
+        intro e
+        rw [List.map_cons, List.count_cons, e] at hc
+        simp only [beq_self_eq_true, ite_true] at hc
+        rw [e] at hpos
+        omega
+      refine ⟨?_, ?_⟩
+      · rcases List.mem_cons.1 hmem with e | h
+        · exact absurd (by rw [e]) hne
+        · exact h
+      · rw [List.map_cons, List.count_cons] at hc
+        simpa [Ne.symm hne] using hc
+    · intro p hp hps
+      by_cases e : p.1 = q.1
+      · have hq : p.1 ∈ (q :: s).map (·.1) := by simp [e]
+        obtain ⟨hmem, hc⟩ := hin p hp hq
+        have hpq : p = q := by
+          rcases List.mem_cons.1 hmem with h | h
+          · exact h
+          · exact absurd (List.mem_map_of_mem (f := (·.1)) h) hps
+        subst hpq
+        rw [Function.update_self]
+        have := List.mem_range.1 hj
+        exact ⟨by positivity, by exact_mod_cast this⟩
+      · rw [Function.update_of_ne e]
+        exact hout p hp (by simp only [List.map_cons, List.mem_cons, not_or]; exact ⟨e, hps⟩)
+
+/-- Every coefficient divided by `k`. -/
+def ipQuo (k : ℤ) (p : IPoly) : IPoly := p.map fun t => (t.1, t.2 / k)
+
+theorem ipDen_quo (ν : ℕ → ℤ) (k : ℤ) (hk : k ≠ 0) (p : IPoly) (h : ipDivBy k p = true) :
+    k * ipDen ν (ipQuo k p) = ipDen ν p := by
+  induction p with
+  | nil => simp [ipQuo, ipDen]
+  | cons t p ih =>
+    simp only [ipDivBy, List.all_cons, Bool.and_eq_true, beq_iff_eq] at h
+    have ih' := ih h.2
+    simp only [ipQuo, List.map_cons, ipDen, List.sum_cons] at ih' ⊢
+    rw [mul_add, ih']
+    obtain ⟨q, hq⟩ := Int.dvd_of_emod_eq_zero h.1
+    rw [hq, Int.mul_ediv_cancel_left _ hk]
+    ring
+
+theorem ipDen_filter (ν : ℕ → ℤ) (q : IMon × ℤ → Bool) (p : IPoly) :
+    ipDen ν p = ipDen ν (p.filter q) + ipDen ν (p.filter fun t => !q t) := by
+  induction p with
+  | nil => simp [ipDen]
+  | cons t p ih =>
+    by_cases h : q t = true
+    · simp only [List.filter_cons, h, ite_true, Bool.not_true, Bool.false_eq_true, ite_false,
+        ipDen, List.map_cons, List.sum_cons] at ih ⊢
+      rw [ih]; ring
+    · simp only [Bool.not_eq_true] at h
+      simp only [List.filter_cons, h, Bool.false_eq_true, ite_false, Bool.not_false, ite_true,
+        ipDen, List.map_cons, List.sum_cons] at ih ⊢
+      rw [ih]; ring
+
+theorem ipDen_consts (ν : ℕ → ℤ) (p : IPoly) :
+    ipDen ν (p.filter fun t => decide (t.1 = [])) =
+      ((p.filter fun t => decide (t.1 = [])).map (·.2)).sum := by
+  induction p with
+  | nil => simp [ipDen]
+  | cons t p ih =>
+    by_cases h : t.1 = []
+    · simp only [List.filter_cons, h, decide_true, ite_true, ipDen, List.map_cons,
+        List.sum_cons] at ih ⊢
+      rw [ih]; simp [imDen]
+    · simp only [List.filter_cons, h, decide_false, Bool.false_eq_true, ite_false] at ih ⊢
+      exact ih
+
+/-- `D ∣ L`, `L` in a range holding the multiple `m D` only: `D Q ∣ L + D U ↔ D ∣ L ∧ Q ∣ U + m`. -/
+theorem dvd_split (D Q L U m : ℤ) (hD : 0 < D) (hm : D ∣ L → L = m * D) :
+    D * Q ∣ L + D * U ↔ D ∣ L ∧ Q ∣ U + m := by
+  constructor
+  · intro h
+    have hL : D ∣ L := by
+      have := (Dvd.intro Q rfl : D ∣ D * Q).trans h
+      have h2 : D ∣ D * U := Dvd.intro U rfl
+      simpa using dvd_sub this h2
+    refine ⟨hL, ?_⟩
+    rw [hm hL, show m * D + D * U = D * (U + m) by ring] at h
+    exact (mul_dvd_mul_iff_left hD.ne').1 h
+  · rintro ⟨hL, hQ⟩
+    rw [hm hL, show m * D + D * U = D * (U + m) by ring]
+    exact mul_dvd_mul_left D hQ
+
+/-- The two deltas `[D ∣ L]`, `[M / D ∣ U + m]` of `f = [M ∣ s y + c + D U]` (or
+`s y - s z + c + D U`, `D ∣ c`), `y` (and `z`) bound once over the constant range `D`. -/
+def splitDel (R : List (ℕ × DMon)) (y : ℕ) (D : DMon) (f : Fac) :
+    Option (Fac × Fac × List (ℕ × DMon)) :=
+  if D.isConst && decide (2 ≤ D.c) && D.dvd f.1 && (R.map (·.1)).count y == 1 && R.contains (y, D)
+  then
+    match ipLin y f.2 with
+    | some (a, b) =>
+      match ipConst a with
+      | some s =>
+        if s == 1 || s == -1 then
+          let k : ℤ := D.c
+          let c := ((b.filter fun t => decide (t.1 = [])).map (·.2)).sum
+          let rest := b.filter fun t => !decide (t.1 = [])
+          let zs := (rest.filter fun t => t.2 == -s && t.1.length == 1).map fun t => t.1.headD 0
+          match zs.find? (fun z => z != y && (R.map (·.1)).count z == 1 && R.contains (z, D) &&
+              (rest.filter fun t => decide (t.1 = [z])) == [([z], -s)]) with
+          | some z =>
+            let rem := rest.filter fun t => !decide (t.1 = [z])
+            if ipDivBy k rem && c % k == 0 then
+              some ((D, ipAdd (ipSmul s (ipV y)) (ipSmul (-s) (ipV z))),
+                (f.1.div D, ipAdd (ipQuo k rem) (ipC (c / k))), [(y, D), (z, D)])
+            else none
+          | none =>
+            if ipDivBy k rest then
+              let cp := c % k
+              let m : ℤ := if s == 1 && cp != 0 then 1 else 0
+              some ((D, ipAdd (ipSmul s (ipV y)) (ipC cp)),
+                (f.1.div D, ipAdd (ipQuo k rest) (ipC ((c - cp) / k + m))), [(y, D)])
+            else none
+        else none
+      | none => none
+    | none => none
+  else none
+
+/-- The delta `f` between `pre` and `post` split by `y` over `D`, in place. -/
+def splitApply (t : STm) (y : ℕ) (D : DMon) (pre : List Fac) (f : Fac) (post : List Fac) :
+    Option STm :=
+  match splitDel t.sums y D f with
+  | some (f1, f2, _) => some ⟨t.c, t.sums, pre ++ f1 :: f2 :: post, t.phs⟩
+  | none => none
+
+/-- The first delta split by a bound variable: in place, the delta replaced by the two. -/
+def splitStep (t : STm) : Option STm :=
+  firstSome (fun p => firstSome (fun q => splitApply t q.1 q.2 p.1 p.2.1 p.2.2) t.sums)
+    (splits t.dels)
+
+theorem den_const_c (dv : ℕ → ℕ) (m : DMon) (h : m.isConst = true) : m.den dv = m.c := by
+  rw [DMon.den_const dv (fun _ => 1) m h]; simp [DMon.den, npow_one]
+
+/-- The only multiple of `k` strictly between `lo k` and `(lo + 2) k` is `(lo + 1) k`. -/
+theorem mult_between (k t lo : ℤ) (hk : 0 < k) (h1 : lo * k < k * t) (h2 : k * t < (lo + 2) * k) :
+    t = lo + 1 := by
+  have a : lo < t := lt_of_mul_lt_mul_left (by linarith [mul_comm lo k]) hk.le
+  have b : t < lo + 2 := lt_of_mul_lt_mul_left (by linarith [mul_comm (lo + 2) k]) hk.le
+  omega
+
+theorem delV_two (dv : ℕ → ℕ) (ν : ℕ → ℤ) (f f1 f2 : Fac)
+    (h : ((f.1.den dv : ℕ) : ℤ) ∣ ipDen ν f.2 ↔
+      ((f1.1.den dv : ℕ) : ℤ) ∣ ipDen ν f1.2 ∧ ((f2.1.den dv : ℕ) : ℤ) ∣ ipDen ν f2.2) :
+    delV dv ν f = delV dv ν f1 * delV dv ν f2 := by
+  unfold delV
+  by_cases h1 : ((f1.1.den dv : ℕ) : ℤ) ∣ ipDen ν f1.2 <;>
+    by_cases h2 : ((f2.1.den dv : ℕ) : ℤ) ∣ ipDen ν f2.2 <;> simp [h, h1, h2]
+
+theorem splitDel_ok (dv : ℕ → ℕ) (R : List (ℕ × DMon)) (y : ℕ) (D : DMon) (f f1 f2 : Fac)
+    (U : List (ℕ × DMon)) (h : splitDel R y D f = some (f1, f2, U)) :
+    (∀ p ∈ U, p ∈ R ∧ (R.map (·.1)).count p.1 = 1) ∧
+      ∀ ν, InR dv U ν → delV dv ν f = delV dv ν f1 * delV dv ν f2 := by
+  unfold splitDel at h
+  split_ifs at h with hc
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.contains_iff_mem] at hc
+  obtain ⟨⟨⟨⟨hcon, h2⟩, hdvd⟩, hcy⟩, hyR⟩ := hc
+  have hDk : D.den dv = D.c := den_const_c dv D hcon
+  have hM := DMon.den_div dv D f.1 hdvd
+  set k : ℤ := (D.c : ℤ) with hkdef
+  have hk : 0 < k := by rw [hkdef]; exact_mod_cast (by omega : 0 < D.c)
+  split at h
+  · next a b hlin =>
+    obtain ⟨_, _, hp⟩ := ipLin_spec y f.2 a b hlin
+    split at h
+    · next s hs =>
+      split_ifs at h with hs1
+      have hsv : ∀ ν, ipDen ν a = s := fun ν => ipConst_spec a s hs ν
+      have hs' : s = 1 ∨ s = -1 := by simpa using hs1
+      set c := ((b.filter fun t => decide (t.1 = [])).map (·.2)).sum with hcdef
+      set rest := b.filter fun t => !decide (t.1 = []) with hrest
+      have hb : ∀ ν, ipDen ν b = c + ipDen ν rest := by
+        intro ν
+        have := ipDen_filter ν (fun t => decide (t.1 = [])) b
+        rw [ipDen_consts] at this
+        exact this
+      have hQ : ((f.1.den dv : ℕ) : ℤ) = k * (((f.1.div D).den dv : ℕ) : ℤ) := by
+        rw [hM, hDk]; push_cast; rfl
+      simp only [] at h
+      split at h
+      · next z hz =>
+        have hzp := List.find?_some hz
+        simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq, List.contains_iff_mem]
+          at hzp
+        obtain ⟨⟨⟨hzy, hcz⟩, hzR⟩, hfz⟩ := hzp
+        split_ifs at h with hdiv
+        simp only [Bool.and_eq_true, beq_iff_eq] at hdiv
+        obtain ⟨hdiv, hc0⟩ := hdiv
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl⟩ := h
+        refine ⟨?_, ?_⟩
+        · intro p hp
+          simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+          rcases hp with rfl | rfl
+          · exact ⟨hyR, hcy⟩
+          · exact ⟨hzR, hcz⟩
+        · intro ν hR
+          have hy := hR (y, D) (by simp)
+          have hzr := hR (z, D) (by simp)
+          simp only [hDk] at hy hzr
+          have hrz : ipDen ν rest = -s * ν z + ipDen ν (rest.filter fun t => !decide (t.1 = [z])) := by
+            have := ipDen_filter ν (fun t => decide (t.1 = [z])) rest
+            rw [hfz] at this
+            rw [this]; simp [ipDen, imDen]
+          have hq := ipDen_quo ν k hk.ne' _ hdiv
+          obtain ⟨cq, hcq⟩ := Int.dvd_of_emod_eq_zero hc0
+          apply delV_two
+          simp only [ipDen_add, ipDen_smul, ipDen_V, ipDen_C, hDk, hQ]
+          rw [hp, hsv, hb, hrz, ← hq, hcq, Int.mul_ediv_cancel_left _ hk.ne']
+          have e : s * ν y + (k * cq + (-s * ν z + k * ipDen ν (ipQuo k
+              (rest.filter fun t => !decide (t.1 = [z]))))) =
+              (s * ν y + -s * ν z) + k * (ipDen ν (ipQuo k
+              (rest.filter fun t => !decide (t.1 = [z]))) + cq) := by ring
+          rw [e, dvd_split k _ _ _ 0 hk ?_]
+          · rw [← hkdef, add_zero]
+          · rintro ⟨t, ht⟩
+            have : t = 0 := by
+              rcases hs' with rfl | rfl
+              · have := mult_between k t (-1) hk (by linarith) (by linarith); omega
+              · have := mult_between k t (-1) hk (by linarith) (by linarith); omega
+            rw [ht, this]; ring
+      · by_cases hdiv : ipDivBy k rest = true
+        swap
+        · simp [hdiv] at h
+        rw [if_pos hdiv] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl⟩ := h
+        refine ⟨?_, ?_⟩
+        · intro p hp
+          simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+          subst hp
+          exact ⟨hyR, hcy⟩
+        · intro ν hR
+          have hy := hR (y, D) (by simp)
+          simp only [hDk] at hy
+          have hq := ipDen_quo ν k hk.ne' _ hdiv
+          have hcp0 : 0 ≤ c % k := Int.emod_nonneg _ hk.ne'
+          have hcp1 : c % k < k := Int.emod_lt_of_pos _ hk
+          have hcd : c - c % k = k * (c / k) := by rw [Int.emod_def]; ring
+          apply delV_two
+          simp only [ipDen_add, ipDen_smul, ipDen_V, ipDen_C, hDk, hQ]
+          rw [hp, hsv, hb, ← hq, hcd, Int.mul_ediv_cancel_left _ hk.ne']
+          set m : ℤ := if (s == 1 && c % k != 0) = true then 1 else 0 with hmdef
+          have e : s * ν y + (c + k * ipDen ν (ipQuo k rest)) =
+              (s * ν y + c % k) + k * (ipDen ν (ipQuo k rest) + c / k) := by
+            linear_combination hcd
+          rw [e, dvd_split k _ _ _ m hk ?_]
+          · rw [← hkdef, add_assoc]
+          · rintro ⟨t, ht⟩
+            rcases hs' with rfl | rfl
+            · by_cases hc : c % k = 0
+              · have hm0 : m = 0 := by simp [hmdef, hc]
+                have := mult_between k t (-1) hk (by linarith) (by linarith)
+                rw [ht, hm0, this]; ring
+              · have hm1 : m = 1 := by simp [hmdef, hc]
+                have hc' : 0 < c % k := lt_of_le_of_ne hcp0 (Ne.symm hc)
+                have := mult_between k t 0 hk (by linarith) (by linarith)
+                rw [ht, hm1, this]; ring
+            · have hm0 : m = 0 := by simp [hmdef]
+              have := mult_between k t (-1) hk (by linarith) (by linarith)
+              rw [ht, hm0, this]; ring
+    · simp at h
+  · simp at h
+
+theorem splitApply_ok (ρ : Val) (t t' : STm) (y : ℕ) (D : DMon) (pre : List Fac) (f : Fac)
+    (post : List Fac) (hd : t.dels = pre ++ f :: post) (h : splitApply t y D pre f post = some t')
+    (ν : ℕ → ℤ) : t'.den ρ ν = t.den ρ ν := by
+  unfold splitApply at h
+  split at h
+  · next f1 f2 U hs =>
+    simp only [Option.some.injEq] at h
+    subst h
+    obtain ⟨hU, hval⟩ := splitDel_ok ρ.dv t.sums y D f f1 f2 U hs
+    unfold STm.den
+    congr 1
+    refine sumsV_congr_rng ρ.dv t.sums U _ _ ν (fun p hp _ => hU p hp) ?_ ?_
+    · intro r hr hnot
+      exact absurd (List.mem_map_of_mem (f := (·.1)) (hU r hr).1) hnot
+    · intro ν' hR
+      simp only [body, hd, List.map_append, List.map_cons, List.prod_append, List.prod_cons,
+        hval ν' hR]
+      ring
+  · simp at h
+
+theorem splitStep_ok (ρ : Val) (t t' : STm) (h : splitStep t = some t') (ν : ℕ → ℤ) :
+    t'.den ρ ν = t.den ρ ν := by
+  obtain ⟨p, hp, he⟩ := firstSome_spec _ _ _ h
+  obtain ⟨q, _, he'⟩ := firstSome_spec _ _ _ he
+  exact splitApply_ok ρ t t' q.1 q.2 p.1 p.2.1 p.2.2 (splits_spec t.dels p hp) he' ν
+
+
 /-- One elimination of a bound variable, the first that applies. -/
-def elimStep (t : STm) : Option STm :=
+def elimFirst (t : STm) : Option STm :=
   firstSome (fun p => if (p.1 ++ p.2.2).map (·.1) |>.contains p.2.1.1 then none else
     match elimVar p.2.1.1 p.2.1.2 t.dels t.phs with
     | some e => some ⟨CMon.mul t.c e.k, p.1 ++ p.2.2, e.ds, e.ps⟩
     | none => none) (splits t.sums)
 
-theorem elimStep_ok (ρ : Val) (hρ : ρ.OK) (t t' : STm) (h : elimStep t = some t') (ν : ℕ → ℤ) :
-    t'.den ρ ν = t.den ρ ν := by
+theorem elimFirst_ok (ρ : Val) (hρ : ρ.OK) (t t' : STm) (h : elimFirst t = some t')
+    (ν : ℕ → ℤ) : t'.den ρ ν = t.den ρ ν := by
   obtain ⟨p, hp, he⟩ := firstSome_spec _ _ _ h
   obtain ⟨a, ⟨x, D⟩, b⟩ := p
   simp only at he
@@ -578,6 +889,22 @@ theorem elimStep_ok (ρ : Val) (hρ : ρ.OK) (t t' : STm) (h : elimStep t = some
     rw [sumsV_congr _ _ _ _ hok, sumsV_mul_left, CMon.den_mul ρ hρ]
     ring
   · simp at he
+
+/-- One elimination of a bound variable, the first that applies; else a split. -/
+def elimStep (t : STm) : Option STm :=
+  match elimFirst t with
+  | some t' => some t'
+  | none => splitStep t
+
+theorem elimStep_ok (ρ : Val) (hρ : ρ.OK) (t t' : STm) (h : elimStep t = some t') (ν : ℕ → ℤ) :
+    t'.den ρ ν = t.den ρ ν := by
+  unfold elimStep at h
+  split at h
+  · next t'' h' =>
+    simp only [Option.some.injEq] at h
+    subst h
+    exact elimFirst_ok ρ hρ t t'' h' ν
+  · exact splitStep_ok ρ t t' h ν
 
 /-- Eliminations repeated, at most `n` of them. -/
 def elimAll : ℕ → STm → STm
