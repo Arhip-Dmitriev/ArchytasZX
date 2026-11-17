@@ -864,11 +864,11 @@ class _Refuter:
         return all(sp.sympify(v) == 0 for v in entries.values())
 
     def wide(self) -> bool:
-        """The order chosen has a cyclotomic field above `MAX_CYCLOTOMIC_DEGREE` or a phase
-        vector is sparse."""
+        """A phased node is wider than `MAX_TERMS`, the order chosen has a cyclotomic field
+        above `MAX_CYCLOTOMIC_DEGREE` or a phase vector is sparse."""
         m = getattr(self, "M", None)
         if m is None:
-            return False
+            return bool(getattr(self, "wide_node", False))
         return bool(getattr(self, "sparse", {})) or sp.totient(m) > MAX_CYCLOTOMIC_DEGREE
 
     def sparse_of(self, ph: int) -> dict[int, sp.Rational] | None:
@@ -908,6 +908,7 @@ class _Refuter:
                         needs.update(int(t.q) for t in sv.values())
                         continue
                 if d > MAX_TERMS:
+                    self.wide_node = True
                     raise NetUnsupported(f"a node of dimension {d}, above {MAX_TERMS}")
                 if _weighted(n.kind):
                     for j in range(d):

@@ -199,7 +199,8 @@ def test_large_fourier_chains_sum_by_substitution() -> None:
 def test_large_orders_use_sparse_phases_and_x_steps() -> None:
     source = _refutation("tiny_phase")
     assert "| 1, k => if k = 1 then (1, []) else (0, [])" in source
-    assert "sym_xstep" in source and "sym_dstepU" in source and "prime_lucas" in source
+    assert "sym_run" in source and "SStep.x" in source and "SStep.d" in source
+    assert "prime_lucas" in source
 
 
 def test_normalised_expressions_drop_multiples() -> None:

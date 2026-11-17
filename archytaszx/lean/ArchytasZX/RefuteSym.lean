@@ -1250,6 +1250,93 @@ theorem sym_xstep (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   subst hst
   exact sumR_congr S.dim R _ _ σ fun τ _ _ => xstep_pt S M P C p w hw hM st n ns' h τ
 
+/-! ## Chains of steps -/
+
+/-- A pinned delta step or an X step. -/
+inductive SStep where
+  | d : ℕ → Src → LX → SStep
+  | x : Node → SStep
+  deriving DecidableEq, Repr
+
+/-- The summed labels and state after one step, when it checks. -/
+def stepS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p : ℕ) (U : List ℕ) (σ : ℕ → ℕ)
+    (R : List ℕ) (st : SSt) : SStep → Option (List ℕ × SSt)
+  | .d l src e => if dOK S S.dim U R st l src e then some (R.erase l, dapplyU U σ l e st) else none
+  | .x n => if xOK S M P st n (st.ns.erase n) then some (R, xapply S p n (st.ns.erase n) st)
+      else none
+
+/-- The summed labels and state after the steps, when each checks. -/
+def runS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p : ℕ) (U : List ℕ) (σ : ℕ → ℕ) :
+    List ℕ → SSt → List SStep → Option (List ℕ × SSt)
+  | R, st, [] => some (R, st)
+  | R, st, s :: ss =>
+    match stepS S M P p U σ R st s with
+    | some (R', st') => runS S M P p U σ R' st' ss
+    | none => none
+
+theorem stepS_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (U : List ℕ) (σ : ℕ → ℕ) (hU : ∀ x ∈ U, σ x < S.dim x) (R R' : List ℕ) (st st' : SSt)
+    (s : SStep) (hUR : ∀ x ∈ U, x ∉ R) (h : stepS S M P p U σ R st s = some (R', st')) :
+    sumR S.dim R (sval S M P C p w st) σ = sumR S.dim R' (sval S M P C p w st') σ ∧
+      ∀ x ∈ U, x ∉ R' := by
+  cases s with
+  | d l src e =>
+    simp only [stepS] at h
+    split_ifs at h with hd
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    have hl : l ∈ R := by
+      simp only [dOK, Bool.and_eq_true, List.contains_iff_mem] at hd
+      exact hd.1.1.1.1.1.1
+    have hR : R.Perm (R.erase l ++ [l]) :=
+      (List.perm_cons_erase hl).trans (List.perm_append_singleton _ _).symm
+    refine ⟨sym_dstepU S M P C p w U R (R.erase l) st _ l src e σ hU ?_ hR hd rfl, ?_⟩
+    · exact List.all_eq_true.2 fun x hx => by simpa using hUR x hx
+    · intro x hx hm
+      exact hUR x hx (List.mem_of_mem_erase hm)
+  | x n =>
+    simp only [stepS] at h
+    split_ifs at h with hx
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact ⟨sym_xstep S M P C p w hw hM R st _ n _ σ hx rfl, hUR⟩
+
+theorem runS_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (U : List ℕ) (σ : ℕ → ℕ) (hU : ∀ x ∈ U, σ x < S.dim x) :
+    ∀ (ss : List SStep) (R R' : List ℕ) (st st' : SSt), (∀ x ∈ U, x ∉ R) →
+      runS S M P p U σ R st ss = some (R', st') →
+      sumR S.dim R (sval S M P C p w st) σ = sumR S.dim R' (sval S M P C p w st') σ := by
+  intro ss
+  induction ss with
+  | nil =>
+    intro R R' st st' _ h
+    simp only [runS, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    rfl
+  | cons s ss ih =>
+    intro R R' st st' hUR h
+    simp only [runS] at h
+    cases h1 : stepS S M P p U σ R st s with
+    | none => rw [h1] at h; simp at h
+    | some q =>
+      obtain ⟨R1, st1⟩ := q
+      rw [h1] at h
+      obtain ⟨e1, hUR1⟩ := stepS_sound S M P C p w hw hM U σ hU R R1 st st1 s hUR h1
+      rw [e1]
+      exact ih R1 R' st1 st' hUR1 h
+
+/-- A chain of steps over sums, checked at once. -/
+theorem sym_run (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (U R R' : List ℕ) (st st' : SSt) (ss : List SStep) (σ : ℕ → ℕ)
+    (hU : ∀ x ∈ U, σ x < S.dim x) (hUR : U.all (fun x => !R.contains x) = true)
+    (h : runS S M P p U σ R st ss = some (R', st')) :
+    sumR S.dim R (sval S M P C p w st) σ = sumR S.dim R' (sval S M P C p w st') σ :=
+  runS_sound S M P C p w hw hM U σ hU ss R R' st st'
+    (fun x hx => by simpa using List.all_eq_true.1 hUR x hx) h
+
 /-- `p` is prime by Lucas's test with the witness `g` and the prime factors `ps` of `p - 1`. -/
 theorem prime_lucas (p g : ℕ) (hp : 1 < p) (hpb : p < 2 ^ 64) (ps : List (ℕ × ℕ))
     (hfac : (ps.map fun x => x.1 ^ x.2).prod = p - 1) (hps : ∀ x ∈ ps, x.1.Prime)

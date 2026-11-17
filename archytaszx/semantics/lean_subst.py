@@ -34,6 +34,7 @@ Ex = tuple[Any, ...]
 
 MAX_SYM_STEPS = 4000
 MAX_XSTEP = 4096
+RUN_STEPS = 64
 
 
 def ev(e: Ex, t: Callable[[int], int]) -> int:
@@ -567,6 +568,29 @@ def _reduce(
     return tuple(scope), tab
 
 
+def _segments(steps: Sequence[tuple[Any, ...]], pinned: bool) -> list[tuple[int, int]]:
+    """The steps as ranges ``(a, b)``: with ``pinned`` the runs of at most `RUN_STEPS` delta and
+    X steps between geometric steps, else one step each."""
+    out: list[tuple[int, int]] = []
+    k = 0
+    while k < len(steps):
+        b = k + 1
+        if pinned and steps[k][0] != "G":
+            while b < len(steps) and steps[b][0] != "G" and b - k < RUN_STEPS:
+                b += 1
+        out.append((k, b))
+        k = b
+    return out
+
+
+def _sstep_text(tag: str, step: tuple[Any, ...]) -> str:
+    """A delta or X step as a Lean `SStep`."""
+    if step[0] == "X":
+        return f"SStep.x {tag}k{step[1]}"
+    _, l, src, e = step
+    return f"SStep.d {l} {_src_text(tag, src)} {text(e)}"
+
+
 def _src_text(tag: str, src: tuple[Any, ...]) -> str:
     """A delta step's source as a Lean `Src`."""
     if src[0] == "zz":
@@ -606,36 +630,31 @@ def sym_decls(
     def nat_list(xs: Sequence[int]) -> str:
         return "[" + ", ".join(str(x) for x in xs) + "]" if xs else "([] : List ℕ)"
 
+    segs = _segments(plan.steps, pinned)
+    keep = {0, len(plan.steps)} | {a for a, _ in segs} | {b for _, b in segs}
     for k, (s, fr) in enumerate(zip(plan.states, plan.frees, strict=True)):
+        if k not in keep:
+            continue
         body = f"⟨{bs_text(s.bs)}, {ns_text(s.ns)}, {cs_text(s.cs)}, {s.c}⟩"
         out.append(f"def {tag}s{k} : SSt := {body}")
         out.append(f"def {tag}R{k} : List ℕ := {nat_list(fr)}")
     out.append(f"theorem {tag}hU : ∀ x ∈ ({unbnd} : List ℕ), σ0 x < {dim} x := by decide +kernel")
     links = [f"(sym_start {shape} {M} Pt Ct {p} {w} {tag} σ0)"]
-    for k, step in enumerate(plan.steps):
+    for k, b in segs:
+        step = plan.steps[k]
         head = (
-            f"sumR {dim} {tag}R{k} ({sv} {tag}s{k}) σ0 = "
-            f"sumR {dim} {tag}R{k + 1} ({sv} {tag}s{k + 1}) σ0"
+            f"sumR {dim} {tag}R{k} ({sv} {tag}s{k}) σ0 = sumR {dim} {tag}R{b} ({sv} {tag}s{b}) σ0"
         )
-        if step[0] == "X":
-            _, i, rest = step
+        if pinned and step[0] != "G":
+            run = ", ".join(_sstep_text(tag, st) for st in plan.steps[k:b])
             out.append(
                 f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} [Fact (Nat.Prime {p})] "
                 f"(hw : IsPrimitiveRoot (({w} : ℕ) : ZMod {p}) {M}) : {head} :=\n"
-                f"  sym_xstep {shape} {M} Pt Ct {p} {w} hw (by norm_num) {tag}R{k} "
-                f"{tag}s{k} {tag}s{k + 1} {tag}k{i} {ns_text(rest)} σ0 (by decide +kernel) "
+                f"  sym_run {shape} {M} Pt Ct {p} {w} hw (by norm_num) {unbnd} {tag}R{k} "
+                f"{tag}R{b} {tag}s{k} {tag}s{b} [{run}] σ0 {tag}hU (by decide +kernel) "
                 "(by decide +kernel)"
             )
             links.append(f"({tag}t{k} hw)")
-        elif step[0] == "D" and pinned:
-            _, l, src, e = step
-            out.append(
-                f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} : {head} :=\n"
-                f"  sym_dstepU {shape} {M} Pt Ct {p} {w} {unbnd} {tag}R{k} {tag}R{k + 1} "
-                f"{tag}s{k} {tag}s{k + 1} {l} {_src_text(tag, src)} {text(e)} σ0 {tag}hU "
-                "(by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)"
-            )
-            links.append(f"{tag}t{k}")
         elif step[0] == "D":
             _, l, src, e = step
             if src[0] == "zz":
