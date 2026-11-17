@@ -1127,6 +1127,8 @@ def sym_check(
     """``symCheck``; a network is ``(nodes, internal, boundary)``."""
     if sorted(n0[2]) != sorted(n1[2]):
         return False
+    if not BS_NODES and any(n[0] in ("B", "S") for n in (*n0[0], *n1[0])):
+        return False
     if not (net_chk(fl, dt, pt, labs, ix, *n0) and net_chk(fl, dt, pt, labs, ix, *n1)):
         return False
     if not (ex_const(s0) and ex_const(s1)):
