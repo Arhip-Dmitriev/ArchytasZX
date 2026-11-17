@@ -19,6 +19,12 @@ carry `x`'s node chain as copy index, its leg `c` only at boundary place `i`, `g
 node chain. `GhostOK.evalG_ghost`: dropping `x` with the ghost `(g, i, x.dim)` keeps the digit
 sum when `x`'s phase index reads zero; `evalG_ghostAt`: the same with `x` moved last first
 (`evalG_withNodes`).
+
+`evalGX` is `evalG` over `evalX`: digit dimensions read by `dimAt`, the pairs of `dpairsX`
+(`evalGX_nil`: with no ghost it is `evalX`). `ghostDropX` is `ghostDrop` keeping `cdim` and
+`aligned`. `GhostOKX`: `GhostOK` of `L.strip`, no aligned wires, and no copy-indexed phase of `x`
+or leg dimension of its legs. `GhostOKX.evalGX_ghost` and `evalGX_ghostAt` are
+`GhostOK.evalG_ghost` and `evalG_ghostAt` over `evalGX`.
 -/
 
 namespace ArchytasZX
@@ -607,6 +613,345 @@ theorem evalG_ghostAt {L : LDiagram} {gs : Ghosts} {x : DNode} {a c g : Port} {i
   have hid : (L.base.nodes.map (·.id)).Nodup := (hp.map _).nodup_iff.1 h.ids
   rw [← evalG_withNodes L _ hp hid]
   exact h.evalG_ghost E hE ks σ
+
+/-! ## Ghosts over `evalX` -/
+
+/-- `pinsG` over the pairs of `dpairsX`. -/
+def pinsGX (L : LDiagram) (gs : Ghosts) (E : Env) (ks : ℕ → ℕ) (ν : ℕ → ℕ) : Prop :=
+  (∀ x ∈ L.dpairsX ks, ν (labG gs x.1.1 x.1.2) = ν (labG gs x.2.1 x.2.2)) ∧
+    (∀ q ∈ L.base.bnd.zipIdx, ∀ t ∈ cidx ks (L.base.legChain q.1),
+      ν (labG gs q.1 t) = ν (slab q.2 t)) ∧
+    ∀ q ∈ gs, ∀ t ∈ cidx ks (L.base.legChain q.1), ν (slab q.2.1 t) < E.dimv q.2.2
+
+/-- The integrand of `L`'s digit sum `evalX` with the ghosts `gs`. -/
+noncomputable def integGX (L : LDiagram) (gs : Ghosts) (E : Env) (ks : ℕ → ℕ) (ν : ℕ → ℕ) : ℂ :=
+  open Classical in if L.pinsGX gs E ks ν then L.prodL E ks ν else 0
+
+/-- The digit sum `evalX` with the ghosts `gs`. -/
+noncomputable def evalGX (L : LDiagram) (gs : Ghosts) (E : Env) (ks : ℕ → ℕ)
+    (σ : ℕ → List ℕ → ℕ) : ℂ :=
+  sumOver (fun l => E.dimv (L.dimAt ks (dport l) (dtup l))) (L.base.dlabs ks) (L.integGX gs E ks)
+    (slotsD σ)
+
+/-- With no ghost the digit sum is `evalX`. -/
+theorem evalGX_nil (L : LDiagram) (E : Env) (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ) :
+    L.evalGX [] E ks σ = L.evalX E ks σ := by
+  unfold evalGX evalX
+  congr 1
+  funext ν
+  have h : L.pinsGX [] E ks ν ↔ L.pinsX ks ν := by
+    simp only [pinsGX, pinsX, labG_nil]
+    exact ⟨fun h => ⟨h.1, h.2.1⟩, fun h => ⟨h.1, h.2, fun q hq => absurd hq List.not_mem_nil⟩⟩
+  unfold integGX
+  classical
+  exact if_congr h rfl rfl
+
+theorem pinsGX_strip (L : LDiagram) (hal : L.aligned = []) (gs : Ghosts) (E : Env)
+    (ks : ℕ → ℕ) (ν : ℕ → ℕ) : L.pinsGX gs E ks ν ↔ L.strip.pinsG gs E ks ν := by
+  simp only [pinsGX, dpairsX, hal, List.flatMap_nil, List.append_nil]
+  exact Iff.rfl
+
+theorem integGX_strip (L : LDiagram) (hal : L.aligned = []) (gs : Ghosts) (E : Env)
+    (ks : ℕ → ℕ) (ν : ℕ → ℕ) :
+    L.integGX gs E ks ν =
+      (open Classical in if L.strip.pinsG gs E ks ν then L.prodL E ks ν else 0) := by
+  unfold integGX
+  classical
+  exact if_congr (pinsGX_strip L hal gs E ks ν) rfl rfl
+
+/-- `ghostDrop` keeping the copy-indexed leg dimensions and the aligned wires. -/
+def ghostDropX (L : LDiagram) (x : ℕ) (a c g : Port) : LDiagram :=
+  { L.ghostDrop x a c g with cdim := L.cdim, aligned := L.aligned }
+
+theorem strip_gdX (L : LDiagram) (x : ℕ) (a c g : Port) :
+    (L.ghostDropX x a c g).strip = L.strip.ghostDrop x a c g := rfl
+
+theorem dnodeL_nt (L : LDiagram) (hp : ∀ y ∈ L.base.boxes, y.ports = [])
+    (hw : ∀ w ∈ L.base.wires, L.base.nodeChain w.1.node = L.base.nodeChain w.2.node)
+    (ks : ℕ → ℕ) (n : DNode) (t : List ℕ) :
+    L.dnodeL ks n t = ⟨n.kind, (List.range n.outs.length).map fun i => dlab ⟨n.id, true, i⟩ t,
+      (List.range n.ins.length).map fun i => dlab ⟨n.id, false, i⟩ t, n.dim, L.phAt ks n t⟩ := by
+  simp only [dnodeL]
+  rw [L.base.dnode_notail hp hw]
+
+/-- `GhostOK` of `L` without its readings, no aligned wires, and no reading of `x` or its legs. -/
+structure GhostOKX (L : LDiagram) (gs : Ghosts) (x : DNode) (a c g : Port) (i : ℕ) : Prop where
+  ok : GhostOK L.strip gs x a c g i
+  al : L.aligned = []
+  xph : ∀ q ∈ L.cph, q.1 ≠ x.id
+  xdm : ∀ q ∈ L.cdim, q.1.node ≠ x.id
+
+section ghostX
+
+variable {L : LDiagram} {gs : Ghosts} {x : DNode} {a c g : Port} {i : ℕ}
+
+local notation "Lx" => L.ghostDropX x.id a c g
+
+theorem depth_gdX (y b z : ℕ) (a c g : Port) : (L.ghostDropX y a c g).depth b z = L.depth b z :=
+  depth_gd (L := L) y b z a c g
+
+theorem rdVal_gdX (y : ℕ) (a c g : Port) (ks : ℕ → ℕ) (z k : ℕ) (t : List ℕ)
+    (o : Option (ℕ × ℕ × ℕ)) : (L.ghostDropX y a c g).rdVal ks z k t o = L.rdVal ks z k t o := by
+  cases o with
+  | none => rfl
+  | some q => simp only [rdVal, depth_gdX]
+
+theorem phAt_gdX (y : ℕ) (a c g : Port) (ks : ℕ → ℕ) (n : DNode) (t : List ℕ) :
+    (L.ghostDropX y a c g).phAt ks n t = L.phAt ks n t := by
+  rw [phAt_rdVal, phAt_rdVal, rdVal_gdX]
+  rfl
+
+theorem GhostOKX.alX (h : GhostOKX L gs x a c g i) : (Lx).aligned = [] := h.al
+
+theorem GhostOKX.dimAt_x (h : GhostOKX L gs x a c g i) (ks : ℕ → ℕ) (b : Bool) (t : List ℕ) :
+    L.dimAt ks ⟨x.id, b, 0⟩ t = x.dim := by
+  have hn : L.cdim.find? (fun q => decide (q.1 = ⟨x.id, b, 0⟩)) = none :=
+    List.find?_eq_none.2 fun q hq e => h.xdm q hq (by rw [of_decide_eq_true e])
+  rw [dimAt_rdVal, hn]
+  exact h.ok.portDim_x b
+
+theorem GhostOKX.dimAt_gd (h : GhostOKX L gs x a c g i) (ks : ℕ → ℕ) (p : Port)
+    (hp : p.node ≠ x.id) (t : List ℕ) : (Lx).dimAt ks p t = L.dimAt ks p t := by
+  have e : (Lx).base.portDim p = L.base.portDim p := h.ok.portDim_gd p hp
+  rw [dimAt_rdVal, dimAt_rdVal, rdVal_gdX, e]
+  rfl
+
+theorem GhostOKX.prodL_eq (h : GhostOKX L gs x a c g i) (E : Env) (ks : ℕ → ℕ) (ν : ℕ → ℕ) :
+    L.prodL E ks ν = (Lx).prodL E ks ν * ((cidx ks (L.base.nodeChain x.id)).map fun t =>
+      tZ (E.dimv x.dim) (E.phase x.ph)
+        [ν (dlab ⟨x.id, true, 0⟩ t), ν (dlab ⟨x.id, false, 0⟩ t)]).prod := by
+  have ho := h.ok
+  have hlast : L.base.nodes = (L.base.nodes.filter fun n => n.id ≠ x.id) ++ [x] := ho.last
+  have hx : ∀ t, L.phAt ks x t = x.ph := fun t => by
+    have hn : L.cph.find? (fun q => decide (q.1 = x.id)) = none :=
+      List.find?_eq_none.2 fun q hq e => h.xph q hq (of_decide_eq_true e)
+    rw [phAt_rdVal, hn]
+    rfl
+  unfold prodL
+  conv_lhs => rw [hlast]
+  rw [List.map_append, List.prod_append, List.map_singleton, List.prod_singleton]
+  congr 1
+  · refine congrArg List.prod (List.map_congr_left fun n _ => ?_)
+    rw [show (Lx).base.nodeChain n.id = L.base.nodeChain n.id from nodeChain_gd (L := L) x.id n.id a c g]
+    refine congrArg List.prod (List.map_congr_left fun t _ => ?_)
+    rw [L.dnodeL_nt ho.ports ho.wch, (Lx).dnodeL_nt ho.ports ho.wch', phAt_gdX]
+  · refine congrArg List.prod (List.map_congr_left fun t _ => ?_)
+    rw [L.dnodeL_nt ho.ports ho.wch, hx]
+    simp [val, ho.kind, ho.outs, ho.ins]
+
+theorem GhostOKX.integ_reads (h : GhostOKX L gs x a c g i) (E : Env) (ks : ℕ → ℕ)
+    (ν ν' : ℕ → ℕ) (hag : ∀ l ∉ L.xdigs ks x, ν l = ν' l) :
+    (Lx).integGX ((g, i, x.dim) :: gs) E ks ν = (Lx).integGX ((g, i, x.dim) :: gs) E ks ν' := by
+  have ho := h.ok
+  have hl : ∀ p t, p ≠ a → p ≠ c → ∀ gs' : Ghosts, ν (labG gs' p t) = ν' (labG gs' p t) := by
+    intro p t ha hc gs'
+    unfold labG
+    split
+    · exact hag _ (slab_not_xdigs L ks x _ _)
+    · exact hag _ (ho.not_xdigs' ks p ha hc t)
+  have hs : ∀ j t, ν (slab j t) = ν' (slab j t) := fun j t => hag _ (slab_not_xdigs L ks x j t)
+  have hne : ∀ p, substG a c g p ≠ a ∧ substG a c g p ≠ c := by
+    intro p
+    unfold substG
+    split_ifs with hp
+    · exact ⟨ho.ga, ho.gc⟩
+    · exact ⟨fun e => hp (Or.inl e), fun e => hp (Or.inr e)⟩
+  have hpins : (L.strip.ghostDrop x.id a c g).pinsG ((g, i, x.dim) :: gs) E ks ν ↔
+      (L.strip.ghostDrop x.id a c g).pinsG ((g, i, x.dim) :: gs) E ks ν' := by
+    unfold pinsG
+    refine and_congr (forall₂_congr fun y hy => ?_) (and_congr (forall₂_congr fun q hq =>
+      forall₂_congr fun t _ => ?_) (forall₂_congr fun q _ => forall₂_congr fun t _ => by rw [hs]))
+    · rw [ho.dpairs_gd, List.mem_map] at hy
+      obtain ⟨y0, -, rfl⟩ := hy
+      simp only [portsP]
+      rw [hl _ _ (hne _).1 (hne _).2, hl _ _ (hne _).1 (hne _).2]
+    · have hq' : q.1 ∈ (L.strip.ghostDrop x.id a c g).base.bnd :=
+        (List.mem_zipIdx hq).2.2 ▸ List.getElem_mem _
+      rw [ho.bnd_gd, List.mem_map] at hq'
+      obtain ⟨q0, -, e⟩ := hq'
+      rw [← e, hl _ _ (hne _).1 (hne _).2, hs]
+  have hprod : (Lx).prodL E ks ν = (Lx).prodL E ks ν' := by
+    unfold prodL
+    refine congrArg List.prod (List.map_congr_left fun n hn => ?_)
+    refine congrArg List.prod (List.map_congr_left fun t _ => ?_)
+    rw [(Lx).dnodeL_nt ho.ports ho.wch']
+    have hn' : n.id ≠ x.id := by
+      have hn'' : n ∈ L.base.nodes.filter fun n => n.id ≠ x.id := hn
+      rw [List.mem_filter, decide_eq_true_eq] at hn''
+      exact hn''.2
+    apply val_congr
+    · simp only [List.map_map]
+      exact List.map_congr_left fun j _ => hag _ (ho.not_xdigs ks _ hn' _)
+    · simp only [List.map_map]
+      exact List.map_congr_left fun j _ => hag _ (ho.not_xdigs ks _ hn' _)
+  rw [integGX_strip _ h.alX, integGX_strip _ h.alX, strip_gdX, hprod]
+  classical
+  exact if_congr hpins rfl rfl
+
+theorem GhostOKX.integ_point (h : GhostOKX L gs x a c g i) (E : Env)
+    (hE : ∀ k, E.phase x.ph k = 0) (ks : ℕ → ℕ) (ν : ℕ → ℕ) :
+    L.integGX gs E ks ν =
+      if ∀ l ∈ L.xdigs ks x, ν l = ν (slab i (dtup l)) then
+        (Lx).integGX ((g, i, x.dim) :: gs) E ks ν
+      else 0 := by
+  have ho := h.ok
+  have hox : ∀ t ∈ cidx ks (L.base.nodeChain x.id), dlab ⟨x.id, true, 0⟩ t ∈ L.xdigs ks x :=
+    fun t ht => (mem_xdigs _ _ _ _).2 ⟨t, ht, Or.inl rfl⟩
+  have hix : ∀ t ∈ cidx ks (L.base.nodeChain x.id), dlab ⟨x.id, false, 0⟩ t ∈ L.xdigs ks x :=
+    fun t ht => (mem_xdigs _ _ _ _).2 ⟨t, ht, Or.inr rfl⟩
+  have hax : ∀ t ∈ cidx ks (L.base.nodeChain x.id), dlab a t ∈ L.xdigs ks x := fun t ht => by
+    rcases ho.ac with ⟨rfl, -⟩ | ⟨rfl, -⟩
+    · exact hox t ht
+    · exact hix t ht
+  have hcx : ∀ t ∈ cidx ks (L.base.nodeChain x.id), dlab c t ∈ L.xdigs ks x := fun t ht => by
+    rcases ho.ac with ⟨-, rfl⟩ | ⟨-, rfl⟩
+    · exact hix t ht
+    · exact hox t ht
+  rw [integGX_strip _ h.al, integGX_strip _ h.alX, strip_gdX]
+  by_cases hA : ∀ l ∈ L.xdigs ks x, ν l = ν (slab i (dtup l))
+  · rw [if_pos hA]
+    have hv : ∀ t p, dlab p t ∈ L.xdigs ks x → ν (dlab p t) = ν (slab i t) :=
+      fun t p hp => by rw [hA _ hp, dtup_dlab]
+    by_cases hd : ∀ t ∈ cidx ks (L.base.nodeChain x.id), ν (slab i t) < E.dimv x.dim
+    · have hone : ((cidx ks (L.base.nodeChain x.id)).map fun t =>
+          tZ (E.dimv x.dim) (E.phase x.ph)
+            [ν (dlab ⟨x.id, true, 0⟩ t), ν (dlab ⟨x.id, false, 0⟩ t)]).prod = 1 := by
+        refine List.prod_eq_one fun z hz => ?_
+        obtain ⟨t, ht, rfl⟩ := List.mem_map.1 hz
+        rw [tZ_id_pair, if_pos ⟨by rw [hv t _ (hox t ht), hv t _ (hix t ht)],
+          by rw [hv t _ (hox t ht)]; exact hd t ht⟩, hE]
+        simp [ex]
+      rw [h.prodL_eq, hone, mul_one]
+      classical
+      exact if_congr (ho.pins_iff E ks ν (fun t ht => hv t _ (hax t ht))
+        (fun t ht => hv t _ (hcx t ht)) hd) rfl rfl
+    · obtain ⟨t, ht, hlt⟩ : ∃ t ∈ cidx ks (L.base.nodeChain x.id),
+          ¬ ν (slab i t) < E.dimv x.dim := by
+        by_contra hc
+        exact hd fun t ht => by_contra fun hn => hc ⟨t, ht, hn⟩
+      have h1 : ¬ (L.strip.ghostDrop x.id a c g).pinsG ((g, i, x.dim) :: gs) E ks ν := fun hp =>
+        hlt (hp.2.2 _ List.mem_cons_self t (by rw [ho.gchain]; exact ht))
+      rw [if_neg h1]
+      split_ifs with hp
+      · rw [h.prodL_eq]
+        refine mul_eq_zero_of_right _ (List.prod_eq_zero (List.mem_map.2 ⟨t, ht, ?_⟩))
+        rw [tZ_id_pair, if_neg]
+        rintro ⟨-, hl⟩
+        exact hlt (by rw [← hv t _ (hox t ht)]; exact hl)
+      · rfl
+  · rw [if_neg hA]
+    split_ifs with hp
+    · rw [h.prodL_eq]
+      obtain ⟨l, hl, hne⟩ : ∃ l ∈ L.xdigs ks x, ¬ ν l = ν (slab i (dtup l)) := by
+        by_contra hc
+        exact hA fun l hl => by_contra fun hn => hc ⟨l, hl, hn⟩
+      obtain ⟨t, ht, hlt⟩ := (mem_xdigs _ _ _ _).1 hl
+      refine mul_eq_zero_of_right _ (List.prod_eq_zero (List.mem_map.2 ⟨t, ht, ?_⟩))
+      rw [tZ_id_pair, if_neg]
+      rintro ⟨heq, -⟩
+      apply hne
+      have hc' := ho.c_pin E ks ν hp t ht
+      rcases ho.ac with ⟨-, rfl⟩ | ⟨-, rfl⟩ <;> rcases hlt with rfl | rfl <;> rw [dtup_dlab]
+      · rw [heq]; exact hc'
+      · exact hc'
+      · exact hc'
+      · rw [← heq]; exact hc'
+    · rfl
+
+/-- Dropping `x` for the ghost `(g, i, x.dim)` keeps the digit sum `evalX`. -/
+theorem GhostOKX.evalGX_ghost (h : GhostOKX L gs x a c g i) (E : Env)
+    (hE : ∀ k, E.phase x.ph k = 0) (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ) :
+    L.evalGX gs E ks σ = (Lx).evalGX ((g, i, x.dim) :: gs) E ks σ := by
+  have ho := h.ok
+  have hX := xdigs_nodup L ks x
+  have hdimX : ∀ l ∈ L.xdigs ks x, E.dimv (L.dimAt ks (dport l) (dtup l)) = E.dimv x.dim := by
+    intro l hl
+    obtain ⟨t, -, rfl | rfl⟩ := (mem_xdigs L ks x l).1 hl <;>
+      rw [dport_dlab, dtup_dlab, h.dimAt_x]
+  have hdims : ∀ l ∈ (Lx).base.dlabs ks, E.dimv (L.dimAt ks (dport l) (dtup l)) =
+      E.dimv ((Lx).dimAt ks (dport l) (dtup l)) := by
+    intro l hl
+    obtain ⟨p, hp, t, -, rfl⟩ := (mem_dlabs _ ks l).1 hl
+    rw [dport_dlab, dtup_dlab, h.dimAt_gd ks p (ho.node_ne p hp)]
+  have hdl : L.base.dlabs ks = (Lx).base.dlabs ks ++ L.xdigs ks x := ho.dlabs_eq ks
+  unfold evalGX
+  rw [hdl, sumOver_append, sumOver_dim_congr _ _ _ hdims]
+  refine sumOver_congr _ _ _ _ _ fun τ hτ hr => ?_
+  rw [sumOver_congr _ _ _ (fun ν => if ∀ l ∈ L.xdigs ks x, ν l = τ (slab i (dtup l)) then
+      (Lx).integGX ((g, i, x.dim) :: gs) E ks τ else 0) _ fun ν hν hνr => by
+    rw [h.integ_point E hE ks ν]
+    have he : ∀ l, ν (slab i (dtup l)) = τ (slab i (dtup l)) :=
+      fun l => hν _ (slab_not_xdigs L ks x _ _)
+    simp only [he]
+    exact if_congr Iff.rfl (h.integ_reads E ks ν τ hν) rfl]
+  by_cases hd : ∀ t ∈ cidx ks (L.base.nodeChain x.id), τ (slab i t) < E.dimv x.dim
+  · rw [sumOver_pinV _ hX _ fun l hl => by
+      rw [hdimX l hl]
+      obtain ⟨t, ht, e⟩ := (mem_xdigs L ks x l).1 hl
+      have ht' : dtup l = t := by rcases e with rfl | rfl <;> exact dtup_dlab _ _
+      rw [ht']
+      exact hd t ht]
+  · have h0 : (Lx).integGX ((g, i, x.dim) :: gs) E ks τ = 0 := by
+      rw [integGX_strip _ h.alX, strip_gdX]
+      rw [if_neg fun hp => hd fun t ht => hp.2.2 _ List.mem_cons_self t
+        (by rw [ho.gchain]; exact ht)]
+    rw [h0]
+    simp only [ite_self]
+    exact sumOver_zero _ _ _
+
+end ghostX
+
+theorem dimAt_wn (L : LDiagram) (ns : List DNode) (hp : ns.Perm L.base.nodes)
+    (hid : (L.base.nodes.map (·.id)).Nodup) (ks : ℕ → ℕ) (p : Port) (t : List ℕ) :
+    (L.withNodes ns).dimAt ks p t = L.dimAt ks p t := by
+  have e : (L.withNodes ns).base.portDim p = L.base.portDim p := portDim_withNodes L.base ns hp hid p
+  unfold dimAt
+  rw [e, depth_wn]
+  rfl
+
+theorem pinsGX_wn (L : LDiagram) (ns : List DNode) : (L.withNodes ns).pinsGX = L.pinsGX := by
+  funext gs E ks ν
+  unfold pinsGX dpairsX alignPairs dpairs linkPairs
+  rw [legChain_wn, depth_wn]
+  rfl
+
+/-- A permutation of the nodes keeps the digit sum `evalX` with ghosts. -/
+theorem evalGX_withNodes (L : LDiagram) (ns : List DNode) (hp : ns.Perm L.base.nodes)
+    (hid : (L.base.nodes.map (·.id)).Nodup) (gs : Ghosts) (E : Env) (ks : ℕ → ℕ)
+    (σ : ℕ → List ℕ → ℕ) : (L.withNodes ns).evalGX gs E ks σ = L.evalGX gs E ks σ := by
+  have hl : ((L.withNodes ns).base.dlabs ks).Perm (L.base.dlabs ks) := by
+    unfold Diagram.dlabs Diagram.legs
+    rw [legChain_wn]
+    exact (hp.flatMap_right DNode.legs).flatMap_right
+      (fun p => (cidx ks (L.base.legChain p)).map (dlab p))
+  have hd : (fun l => E.dimv ((L.withNodes ns).dimAt ks (dport l) (dtup l))) =
+      fun l => E.dimv (L.dimAt ks (dport l) (dtup l)) :=
+    funext fun l => by rw [dimAt_wn L ns hp hid]
+  have hP : ∀ ν, (L.withNodes ns).prodL E ks ν = L.prodL E ks ν := fun ν => by
+    unfold prodL
+    rw [dnodeL_wn, nodeChain_wn]
+    exact (hp.map fun (n : DNode) => ((cidx ks (L.base.nodeChain n.id)).map fun t =>
+      val E ν (L.dnodeL ks n t)).prod).prod_eq
+  unfold evalGX
+  rw [sumOver_perm _ hl, hd]
+  congr 1
+  funext ν
+  unfold integGX
+  rw [hP ν, pinsGX_wn]
+
+/-- `x` moved last, then dropped for the ghost `g`, the readings kept. -/
+def ghostAtX (L : LDiagram) (x : DNode) (a c g : Port) : LDiagram :=
+  (L.moveLast x.id).ghostDropX x.id a c g
+
+/-- Dropping `x` for a ghost after moving it last keeps the digit sum `evalX`. -/
+theorem evalGX_ghostAt {L : LDiagram} {gs : Ghosts} {x : DNode} {a c g : Port} {i : ℕ}
+    (h : GhostOKX (L.moveLast x.id) gs x a c g i) (E : Env) (hE : ∀ k, E.phase x.ph k = 0)
+    (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ) :
+    L.evalGX gs E ks σ = (L.ghostAtX x a c g).evalGX ((g, i, x.dim) :: gs) E ks σ := by
+  have hp := moveLast_perm L x.id
+  have hid : (L.base.nodes.map (·.id)).Nodup := (hp.map _).nodup_iff.1 h.ok.ids
+  rw [← evalGX_withNodes L _ hp hid]
+  exact h.evalGX_ghost E hE ks σ
 
 end LDiagram
 

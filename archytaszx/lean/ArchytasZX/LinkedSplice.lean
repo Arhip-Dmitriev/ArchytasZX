@@ -24,7 +24,8 @@ slot by slot), a peel keeps the digit sum read through the flat positions of bot
 `evalL_peel_first`: a peel of the first copy (`evalL_rev`, `evalL_peel` of the reversal,
 `evalL_rev`) does the same under `PeelFirst`.
 `evalG_flatAt`: equal digit sums and equal slot data give equal digit sums read through the flat
-positions.
+positions. `evalX_congr`, `evalX_peel_flat` (under `PeelX`) and `evalGX_flatAt` are the same over
+`evalX` and `evalGX`.
 -/
 
 namespace ArchytasZX
@@ -260,6 +261,39 @@ theorem evalL_congr (L : LDiagram) (E : Env) (ks : ℕ → ℕ) (σ σ' : ℕ �
   · have hd : ∀ p t, τ (dlab p t) = τ' (dlab p t) := fun p t => hτ _ (Or.inl (dlab_even p t))
     have hp : L.pinsL ks τ ↔ L.pinsL ks τ' := by
       unfold pinsL
+      refine and_congr (forall₂_congr fun y _ => by rw [hd, hd])
+        (forall₂_congr fun q hq => forall₂_congr fun t ht => ?_)
+      obtain ⟨p, i⟩ := q
+      obtain ⟨hi, e⟩ := (mem_zipIdx' _ _ _).1 hq
+      subst e
+      rw [hd, hτ _ (Or.inr ⟨i, hi, t, ht, rfl⟩)]
+    have hP : L.prodL E ks τ = L.prodL E ks τ' := by
+      unfold prodL
+      refine congrArg List.prod (List.map_congr_left fun n _ =>
+        congrArg List.prod (List.map_congr_left fun t _ => ?_))
+      apply val_congr
+      · exact List.map_congr_left fun x hx => hτ _ (Or.inl ((dnodeL_even L ks n t).1 x hx))
+      · exact List.map_congr_left fun x hx => hτ _ (Or.inl ((dnodeL_even L ks n t).2 x hx))
+    rw [hP]
+    classical
+    exact if_congr hp rfl rfl
+  · rcases hx with hx | ⟨i, hi, t, ht, rfl⟩
+    · simp [slotsD, hx]
+    · rw [slotsD_slab, slotsD_slab]
+      exact h i hi t ht
+
+/-- The digit sum `evalX` reads only the slot digits of its boundary legs' copies. -/
+theorem evalX_congr (L : LDiagram) (E : Env) (ks : ℕ → ℕ) (σ σ' : ℕ → List ℕ → ℕ)
+    (h : ∀ i (hi : i < L.base.bnd.length), ∀ t ∈ cidx ks (L.base.legChain L.base.bnd[i]),
+      σ i t = σ' i t) :
+    L.evalX E ks σ = L.evalX E ks σ' := by
+  unfold evalX
+  refine sumOver_extP _ _ (fun x => x % 2 = 0 ∨ ∃ i, ∃ hi : i < L.base.bnd.length,
+    ∃ t ∈ cidx ks (L.base.legChain L.base.bnd[i]), x = slab i t) _ (fun τ τ' hτ => ?_) _ _
+    (fun x hx _ => ?_)
+  · have hd : ∀ p t, τ (dlab p t) = τ' (dlab p t) := fun p t => hτ _ (Or.inl (dlab_even p t))
+    have hp : L.pinsX ks τ ↔ L.pinsX ks τ' := by
+      unfold pinsX
       refine and_congr (forall₂_congr fun y _ => by rw [hd, hd])
         (forall₂_congr fun q hq => forall₂_congr fun t ht => ?_)
       obtain ⟨p, i⟩ := q
@@ -662,6 +696,20 @@ theorem evalL_peel_flat {L L' : LDiagram} {bid mb c : ℕ} {B : List ℕ} {cp : 
     L'.evalL E ks (flatAt sd' ks y) = L.evalL E ks (flatAt sd ks y) := by
   rw [evalL_peel h E ks hk]
   refine evalL_congr L E ks _ _ fun i hi t ht => ?_
+  rw [bndMap_psi]
+  have hv : (i, t) ∈ slots sd ks := by
+    refine (mem_slots _ _ _ _).2 ⟨hf.n ▸ hi, ?_⟩
+    rw [hf.ch i hi, bndAt, List.getD_eq_getElem _ _ hi]
+    exact ht
+  exact congrArg y (hf.fpos_psi hk hv)
+
+/-- A peel keeps the digit sum `evalX` read through the flat positions of both sides. -/
+theorem evalX_peel_flat {L L' : LDiagram} {bid mb c : ℕ} {B : List ℕ} {cp : ℕ → ℕ}
+    {sd sd' : SlotData} (h : PeelX L L' bid mb c B cp) (hf : PeelFlat L L' B cp mb c sd sd')
+    (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1) (y : ℕ → ℕ) :
+    L'.evalX E ks (flatAt sd' ks y) = L.evalX E ks (flatAt sd ks y) := by
+  rw [evalX_peel h E ks hk]
+  refine evalX_congr L E ks _ _ fun i hi t ht => ?_
   rw [bndMap_psi]
   have hv : (i, t) ∈ slots sd ks := by
     refine (mem_slots _ _ _ _).2 ⟨hf.n ▸ hi, ?_⟩
@@ -1204,6 +1252,14 @@ theorem evalG_flatAt {L L' : LDiagram} {gs gs' : Ghosts} {G G' : List (ℕ × Li
     (h : ∀ σ, L'.evalG gs' E ks σ = L.evalG gs E ks σ) (y : ℕ → ℕ) :
     L'.evalG gs' E ks (flatAt (L'.slotData G') ks y) =
       L.evalG gs E ks (flatAt (L.slotData G) ks y) := by
+  rw [hs, h]
+
+/-- `evalG_flatAt` for the digit sums `evalGX`. -/
+theorem evalGX_flatAt {L L' : LDiagram} {gs gs' : Ghosts} {G G' : List (ℕ × List (List ℕ))}
+    (hs : L'.slotData G' = L.slotData G) (E : Env) (ks : ℕ → ℕ)
+    (h : ∀ σ, L'.evalGX gs' E ks σ = L.evalGX gs E ks σ) (y : ℕ → ℕ) :
+    L'.evalGX gs' E ks (flatAt (L'.slotData G') ks y) =
+      L.evalGX gs E ks (flatAt (L.slotData G) ks y) := by
   rw [hs, h]
 
 end LDiagram

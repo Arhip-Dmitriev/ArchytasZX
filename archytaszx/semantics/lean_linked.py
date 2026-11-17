@@ -27,17 +27,22 @@ positions of its ``slotData`` (``flatAt``, the engine's boundary splice). ``expo
 the copy map ``cp`` from the peeled box's nodes to the copy's, ``PeelOK``, ``PeelFlat`` and
 ``main`` through ``evalL_peel_flat``. ``export_slide`` checks equal ``slotData`` and proves
 ``main`` through two chains to one diagram (``C``) and ``evalG_flatAt``. Both exports assume the
-phaseless phase index ``zero`` (also that of a zero phase vector) reads the zero phase."""
+phaseless phase index ``zero`` (also that of a zero phase vector) reads the zero phase. A peel of a
+box with an index is written over ``evalX`` (:func:`linked` with ``readings``): ``PeelX``,
+``GhostOKX``, ``evalX_peel_flat`` and ``main`` over ``evalGX``, the copies the engine writes with
+literal dimensions written with their template's indices read at the constant copy
+(:func:`_read_copies`)."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.phase import PhaseVector
-from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, PortRef
 
 _KINDS = {"Z": "Z", "X": "X", "F": "F", "T": "T", "Ti": "Ti", "W": "W", "B": "B", "S": "S"}
 
@@ -82,9 +87,16 @@ class LLink:
     e2: Port
 
 
+Cph = tuple[int, int, int, int]
+"""A copy-indexed phase: node, box, coefficient, multiplicity index."""
+
+CDim = tuple[Port, int, int, int]
+"""A copy-indexed leg dimension: leg, box, coefficient, multiplicity index."""
+
+
 @dataclass
 class LDiag:
-    """A linked diagram, mirroring the Lean ``LDiagram``."""
+    """A linked diagram, mirroring the Lean ``LDiagram`` without aligned wires."""
 
     nodes: list[LNode]
     wires: list[tuple[Port, Port]]
@@ -92,6 +104,8 @@ class LDiag:
     ins: list[Port]
     boxes: list[LBox]
     links: list[LLink]
+    cph: list[Cph] = field(default_factory=list)
+    cdim: list[CDim] = field(default_factory=list)
 
     def walk(self, pred: Callable[[LBox], bool], fuel: int, start: int | None) -> list[LBox]:
         out: list[LBox] = []
@@ -154,21 +168,134 @@ def _phase_key(phase: object) -> str:
     return repr(None) if isinstance(phase, PhaseVector) and phase.is_zero else repr(phase)
 
 
+_NAME = re.compile(r"[A-Za-z_]\w*")
+
+
+def _reads(text: str, sym: str) -> bool:
+    return sym in _NAME.findall(text)
+
+
+def _sym(text: str) -> sp.Expr:
+    """``text`` as a sympy expression, every name a plain symbol."""
+    return sp.sympify(text, locals={n: sp.Symbol(n) for n in _NAME.findall(text)})
+
+
+def _index_names(d: Diagram) -> set[str]:
+    return {b.index for b in d.bang_boxes.values() if b.index is not None}
+
+
+def _seed(ds: Sequence[Diagram], tables: _Tables) -> None:
+    """Number every dimension and phase of ``ds`` reading no box index first."""
+    names = set().union(*map(_index_names, ds))
+    for d in ds:
+        for x in sorted(d.nodes):
+            node = d.nodes[x]
+            for leg in [*node.outputs, *node.inputs]:
+                if not any(_reads(str(leg.dim), s) for s in names):
+                    _Tables.index(tables.dims, str(leg.dim))
+            if node.phase is None or not (set(map(str, node.phase.free_symbols)) & names):
+                _Tables.index(tables.phases, _phase_key(node.phase))
+    _Tables.index(tables.dims, "")
+
+
+def _readings(d: Diagram) -> tuple[list[Cph], list[CDim]]:
+    """The box index readings of ``d``, each ``(_, box, 0, 0)``: per node a phase or second
+    dimension of a binder or splitter reading one index (``cph``), per leg a dimension reading one
+    (``cdim``). Raises :class:`LinkedUnsupported` when a node or leg reads two, a node's first
+    dimension reads one, or a node reads the index of a box off its node chain."""
+    cph: list[Cph] = []
+    cdim: list[CDim] = []
+
+    def depth(b: BangBoxId) -> int:
+        n, q = 0, d.bang_boxes[b].parent
+        while q is not None:
+            n, q = n + 1, d.bang_boxes[q].parent
+        return n
+
+    names = _index_names(d)
+    for x in sorted(d.nodes):
+        node = d.nodes[x]
+        kind = node.generator_type.name
+        legs = [((int(x), True, i), str(p.dim)) for i, p in enumerate(node.outputs)]
+        legs += [((int(x), False, i), str(p.dim)) for i, p in enumerate(node.inputs)]
+        first = legs[0][1] if legs else ""
+        second = None
+        if kind == "B" and len(node.inputs) == 2:
+            first, second = str(node.inputs[0].dim), str(node.inputs[1].dim)
+        elif kind == "S" and len(node.outputs) == 2:
+            second = str(node.outputs[1].dim)
+        held = sorted((b for b, box in d.bang_boxes.items() if x in box.node_scope), key=depth)
+        for sym in sorted(names):
+            phase = node.phase is not None and sym in set(map(str, node.phase.free_symbols))
+            sec = second is not None and _reads(second, sym)
+            dims = [p for p, text in legs if _reads(text, sym)]
+            if not (phase or sec or dims):
+                continue
+            binders = [b for b in held if d.bang_boxes[b].index == sym]
+            if not binders or _reads(first, sym):
+                raise LinkedUnsupported("a box index read outside the linked form")
+            bid = int(binders[-1])
+            if phase or sec:
+                if any(q[0] == int(x) for q in cph) or (phase and sec):
+                    raise LinkedUnsupported("a node reading two box indices")
+                cph.append((int(x), bid, 0, 0))
+            if any(q[0] == p for q in cdim for p in dims):
+                raise LinkedUnsupported("a leg reading two box indices")
+            cdim += [(p, bid, 0, 0) for p in dims]
+    return cph, cdim
+
+
+def _equal(a: sp.Expr, b: sp.Expr) -> bool:
+    return bool(sp.simplify(a - b) == 0)
+
+
+def _value_key(tables: _Tables, value: sp.Expr, names: set[str]) -> str:
+    """The dimension key of ``value``: a numbered key reading none of ``names`` of equal value,
+    else its text."""
+    for key in tables.dims:
+        if key and not any(_reads(key, s) for s in names) and _equal(_sym(key), value):
+            return key
+    return str(value)
+
+
+def _end_dim(d: Diagram, bp: Port, text: str, tables: _Tables) -> str:
+    """The dimension key of the boundary link port ``bp`` of dimension ``text`` at the copy the
+    boundary meets: the index of the link's box at its last copy for a first port, at 0 for a
+    second. Raises :class:`LinkedUnsupported` when ``text`` reads another box index."""
+    read = sorted(s for s in _index_names(d) if _reads(text, s))
+    if not read:
+        return text
+    for b in d.bang_boxes.values():
+        for p, q in b.links:
+            if bp not in (_port(p), _port(q)):
+                continue
+            if read != [b.index]:
+                raise LinkedUnsupported("a link port reading another box index")
+            at = _sym(str(b.multiplicity.to_sympy())) - 1 if bp == _port(p) else sp.Integer(0)
+            value = _sym(text).subs(sp.Symbol(read[0]), at)
+            return _value_key(tables, value, _index_names(d))
+    raise LinkedUnsupported("an identity end reading a box index off a link")
+
+
 def linked(
     d: Diagram,
     tables: _Tables,
     idents: Mapping[Port, int] | None = None,
     ghost: int | None = None,
     held: Mapping[Port, LBox] | None = None,
+    readings: bool = False,
 ) -> LDiag:
     """``d`` as a linked diagram, each boundary leg ``p`` of ``idents`` behind a phaseless
     Z(1 -> 1) of id ``idents[p]`` (wired to ``p``, its other leg in ``p``'s boundary place), with
     ``ghost`` every other boundary link port written as the ghost ``(ghost, True, i)`` of its slot
     ``i`` (its boundary place and its link end); a boundary link port ``p`` of ``held`` has its
     identity, or with ``ghost`` the ghost ``(x, True, i + 1)``, held as the node ``x`` of the box
-    ``held[p]`` (appended after ``d``'s boxes). Raises :class:`LinkedUnsupported` outside plain
-    node boxes with links whose ports are wired."""
+    ``held[p]`` (appended after ``d``'s boxes). With ``readings`` a box may have an index, read
+    through ``cph`` and ``cdim`` (:func:`_readings`), and an identity takes its leg's dimension at
+    the copy the boundary meets (:func:`_end_dim`). Raises :class:`LinkedUnsupported` outside
+    plain node boxes with links whose ports are wired."""
     held = held or {}
+    cph, cdim = _readings(d) if readings else ([], [])
     nodes = []
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
@@ -194,7 +321,8 @@ def linked(
         side = bouts if bp in bouts else bins
         owner = d.nodes[bp[0]]  # type: ignore[index]
         leg = (owner.outputs if bp[1] else owner.inputs)[bp[2]]
-        k = _Tables.index(tables.dims, str(leg.dim))
+        text = _end_dim(d, bp, str(leg.dim), tables) if readings else str(leg.dim)
+        k = _Tables.index(tables.dims, text)
         nodes.append(LNode(iid, "Z", k, _Tables.index(tables.phases, repr(None)), (k,), (k,)))
         side[side.index(bp)] = (iid, bp[1], 0)
         wires.append((bp, (iid, not bp[1], 0)))
@@ -214,7 +342,7 @@ def linked(
             not b.port_scope
             and b.node_scope
             and not b.cyclic
-            and b.index is None
+            and (b.index is None or readings)
             and b.copy_scalar is None
             and b.pair_of is None
             and not b.tree
@@ -239,7 +367,7 @@ def linked(
             links.append(LLink(int(bid), _port(p), _port(q), ends[0], ends[1]))
     boxes += [held[bp] for bp in sorted(held)]
     kept = [w for i, w in enumerate(wires) if i not in used]
-    out = LDiag(nodes, kept, bouts, bins, boxes, links)
+    out = LDiag(nodes, kept, bouts, bins, boxes, links, cph, cdim)
     for w in kept:
         a, c = ([b.id for b in out.node_boxes(e[0])] for e in w)
         if a[: len(c)] != c and c[: len(a)] != a:
@@ -343,7 +471,9 @@ def _kept(L: LDiag, R: LDiag, lk: LLink) -> bool:
 def flip(D: LDiag, bid: int) -> LDiag:
     """The Lean ``flipLinks``: ``D`` with the links of the box ``bid`` flipped."""
     links = [LLink(lk.box, lk.l2, lk.l1, lk.e2, lk.e1) if lk.box == bid else lk for lk in D.links]
-    return LDiag(list(D.nodes), list(D.wires), list(D.outs), list(D.ins), list(D.boxes), links)
+    return LDiag(
+        list(D.nodes), list(D.wires), list(D.outs), list(D.ins), list(D.boxes), links, D.cph, D.cdim
+    )
 
 
 def _links_ok(L: LDiag) -> bool:
@@ -517,6 +647,119 @@ def peel_ok(
     return all(q in L.bnd() or any(p[0] in inB and q == cpp(p) for p in L.bnd()) for q in R.bnd())
 
 
+def _find(
+    entries: Sequence[tuple[object, int, int, int]], key: object
+) -> tuple[int, int, int] | None:
+    """The Lean ``(entries.find? (·.1 = key)).map (·.2)``."""
+    return next(((y, c, m) for k, y, c, m in entries if k == key), None)
+
+
+def _rdc(
+    L: LDiag,
+    R: LDiag,
+    bid: int,
+    c: int,
+    x: int,
+    x2: int,
+    o: tuple[int, int, int] | None,
+    o2: tuple[int, int, int] | None,
+) -> bool:
+    """The Lean ``rdC L R bid c x x2 o o2``."""
+    if o is None or o2 is None:
+        return o is None and o2 is None
+    if o[0] == bid:
+        return o[1] == 0 and o2[1:] == (1, c) and R.depth(o2[0], x2) == len(R.chain(x2))
+    return o2[1:] == o[1:] and R.depth(o2[0], x2) + 1 == L.depth(o[0], x)
+
+
+def peel_x_ok(
+    L: LDiag, R: LDiag, bid: int, mb: int, c: int, B: Sequence[int], cp: dict[int, int]
+) -> bool:
+    """The Lean ``PeelX L R bid mb c B cp``, field by field."""
+    if not peel_ok(L, R, bid, mb, c, B, cp):
+        return False
+    inB = set(B)
+    for n in L.nodes:
+        o = _find(L.cph, n.id)
+        if n.id in inB and L.depth(bid, n.id) != 0:
+            return False
+        if _find(R.cph, n.id) != o or (
+            o is not None and R.depth(o[0], n.id) != L.depth(o[0], n.id)
+        ):
+            return False
+        if n.id in inB and not _rdc(L, R, bid, c, n.id, cp[n.id], o, _find(R.cph, cp[n.id])):
+            return False
+    for p in L.legs():
+        o = _find(L.cdim, p)
+        if _find(R.cdim, p) != o or (o is not None and R.depth(o[0], p[0]) != L.depth(o[0], p[0])):
+            return False
+        cq = _cpp(cp, p)
+        if p[0] in inB and not _rdc(L, R, bid, c, p[0], cq[0], o, _find(R.cdim, cq)):
+            return False
+    return True
+
+
+def _read_copies(
+    L: LDiag,
+    R: LDiag,
+    tables: _Tables,
+    sym: str,
+    value: sp.Expr,
+    bid: int,
+    cp: dict[int, int],
+    c: int,
+) -> LDiag | None:
+    """``R`` with each copy ``cp[x]`` of a node ``x`` of ``L`` reading the index ``sym`` of the
+    peeled box ``bid`` written with ``x``'s dimension and phase indices there and the readings
+    ``(_, bid, 1, c)``, each literal of the copy checked equal to ``x``'s with ``sym`` at
+    ``value``; None when one differs."""
+    keys = {v: k for k, v in tables.dims.items()}
+
+    def same(template: int, copy: int) -> bool:
+        return _equal(_sym(keys[template]).subs(sp.Symbol(sym), value), _sym(keys[copy]))
+
+    nodes, cph, cdim = list(R.nodes), list(R.cph), list(R.cdim)
+    for n in L.nodes:
+        if n.id not in cp:
+            continue
+        j = next(i for i, m in enumerate(nodes) if m.id == cp[n.id])
+        m = nodes[j]
+        outs, ins, ph = list(m.outs), list(m.ins), m.ph
+        for q, y, _, _ in L.cdim:
+            if q[0] != n.id or y != bid:
+                continue
+            side, own = (outs, n.outs) if q[1] else (ins, n.ins)
+            if not same(own[q[2]], side[q[2]]):
+                return None
+            side[q[2]] = own[q[2]]
+            cdim.append(((m.id, q[1], q[2]), bid, 1, c))
+        if any(x == n.id and y == bid for x, y, _, _ in L.cph):
+            if n.kind not in ("B", "S") or not same(n.ph, m.ph):
+                return None
+            ph = n.ph
+            cph.append((m.id, bid, 1, c))
+        nodes[j] = LNode(m.id, m.kind, m.dim, ph, tuple(outs), tuple(ins))
+    return LDiag(
+        nodes, list(R.wires), list(R.outs), list(R.ins), list(R.boxes), list(R.links), cph, cdim
+    )
+
+
+def _apart(*Ds: LDiag) -> bool:
+    """Whether every dimension and phase index read at a copy lies above every one read plain."""
+    read: dict[bool, set[int]] = {True: set(), False: set()}
+    plain: dict[bool, set[int]] = {True: set(), False: set()}
+    for D in Ds:
+        legs = {q[0] for q in D.cdim}
+        nodes = {q[0] for q in D.cph}
+        for n in D.nodes:
+            plain[True].add(n.dim)
+            for o, side in ((True, n.outs), (False, n.ins)):
+                for i, k in enumerate(side):
+                    (read if (n.id, o, i) in legs else plain)[True].add(k)
+            (read if n.id in nodes else plain)[n.kind in ("B", "S")].add(n.ph)
+    return all(not read[t] or max(plain[t], default=-1) < min(read[t]) for t in (True, False))
+
+
 def _lport(p: Port) -> str:
     return f"⟨{p[0]}, {'true' if p[1] else 'false'}, {p[2]}⟩"
 
@@ -540,11 +783,16 @@ def literal(D: LDiag) -> str:
         f"⟨{x.box}, {_lport(x.l1)}, {_lport(x.l2)}, {_lport(x.e1)}, {_lport(x.e2)}⟩"
         for x in D.links
     )
+    reads = ""
+    if D.cph or D.cdim:
+        cph = ", ".join(f"({x}, {y}, {c}, {m})" for x, y, c, m in D.cph)
+        cdim = ", ".join(f"({_lport(p)}, {y}, {c}, {m})" for p, y, c, m in D.cdim)
+        reads = f",\n    cph := [{cph}],\n    cdim := [{cdim}]"
     return (
         "{ base :=\n      { nodes := [" + nodes + "],\n        wires := [" + wires + "],\n"
         "        outs := [" + ", ".join(map(_lport, D.outs)) + "],\n"
         "        ins := [" + ", ".join(map(_lport, D.ins)) + "],\n"
-        "        boxes := [" + boxes + "] },\n    links := [" + links + "] }"
+        "        boxes := [" + boxes + "] },\n    links := [" + links + "]" + reads + " }"
     )
 
 
@@ -556,6 +804,12 @@ _FLAT_FIELDS = 10
 
 _REV_FIELDS = 16
 """The fields of ``RevOK``."""
+
+_PEELX_FIELDS = 7
+"""The fields of ``PeelX`` past ``PeelOK``."""
+
+_GHOSTX_FIELDS = 3
+"""The fields of ``GhostOKX`` past ``GhostOK``."""
 
 
 @dataclass
@@ -624,16 +878,22 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
 
 
 def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
-    """:func:`export_peel` of the last copy, or with ``first`` of the first copy."""
+    """:func:`export_peel` of the last copy, or with ``first`` of the first copy; over ``evalX``
+    (``PeelX``, ``GhostOKX``) when a box has an index."""
     tables = _Tables()
+    xm = bool(_index_names(before) | _index_names(after))
+    if xm and first:
+        return None
+    if xm:
+        _seed([before, after], tables)
     pe = peel_ends(before, after, tables, first)
     if pe is None:
         return None
     shifted, B, fresh, cp = [pe.box], pe.B, pe.fresh, pe.cp
     ends_l, ends_r, held = pe.ends_l, pe.ends_r, pe.held
     try:
-        L = linked(before, tables, ends_l, held=held)
-        R = linked(after, tables, ends_r)
+        L = linked(before, tables, ends_l, held=held, readings=xm)
+        R = linked(after, tables, ends_r, readings=xm)
     except LinkedUnsupported:
         return None
     box = next(b for b in L.boxes if b.id == int(shifted[0]))
@@ -644,7 +904,16 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     R.nodes = [order[n.id] for n in L.nodes] + [
         order[cp[x]] for x in (n.id for n in L.nodes) if x in cp
     ]
+    sym = before.bang_boxes[BangBoxId(pe.box)].index
+    value = _sym(str(after.bang_boxes[BangBoxId(pe.box)].multiplicity.to_sympy()))
+    if xm and sym is not None:
+        read = _read_copies(L, R, tables, sym, value, box.id, cp, c)
+        if read is None:
+            return None
+        R = read
     if not first and not peel_ok(L, R, box.id, box.mult, c, B, cp):
+        return None
+    if xm and not peel_x_ok(L, R, box.id, box.mult, c, B, cp):
         return None
     Lr, Rr = flip(L, box.id), flip(R, box.id)
     if first and not (
@@ -658,16 +927,23 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
         return None
     G = 1 + max(n.id for n in [*L.nodes, *R.nodes])
     ids_l, ids_r = set(ends_l.values()), set(ends_r.values())
-    Dl, gl, sl = _reduce(L, ids_l, set(), G)
-    Dr, gr, sr = _reduce(R, ids_r, ids_r, G)
+    Dl, gl, sl = _reduce(L, ids_l, set(), G, xm)
+    Dr, gr, sr = _reduce(R, ids_r, ids_r, G, xm)
     if gl is None or gr is None:
         return None
     try:
-        Tl = linked(before, tables, ghost=G, held=held)
-        Tr = linked(after, tables, ghost=G)
+        Tl = linked(before, tables, ghost=G, held=held, readings=xm)
+        Tr = linked(after, tables, ghost=G, readings=xm)
     except LinkedUnsupported:
         return None
+    if xm and sym is not None:
+        read = _read_copies(L, Tr, tables, sym, value, box.id, cp, c)
+        if read is None:
+            return None
+        Tr = read
     if not (_same_up_to_order(Tl, Dl) and _same_up_to_order(Tr, Dr)):
+        return None
+    if xm and not _apart(L, R, Dl, Dr):
         return None
     Gl, Gr = groups(before), groups(after)
     sl_d, sr_d = slot_data(L, Gl), slot_data(R, Gr)
@@ -680,6 +956,8 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     zero = _Tables.index(tables.phases, repr(None))
     table = ", ".join(f"({x}, {y})" for x, y in cp.items())
     proof = ",\n    ".join(["by decide +kernel"] * _FIELDS)
+    if xm:
+        proof = "⟨" + proof + "⟩,\n    " + ",\n    ".join(["by decide +kernel"] * _PEELX_FIELDS)
     flat = ",\n    ".join(["by decide +kernel"] * (_FLAT_FIELDS + first))
     rev = ",\n    ".join(["by decide +kernel"] * _REV_FIELDS)
     pre, post = ("Lb", "Lk") if not first else ("Lbr", "Lkr")
@@ -709,9 +987,10 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     step = (
         "(evalL_peel_first rb rb' rk rk' ok flat hcp E ks hk y)"
         if first
-        else "(evalL_peel_flat ok flat E ks hk y)"
+        else f"(eval{'X' if xm else 'L'}_peel_flat ok flat E ks hk y)"
     )
     kind = "PeelFirst" if first else "PeelFlat"
+    ev = "evalGX" if xm else "evalG"
     return (
         "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
         "open ArchytasZX ArchytasZX.LDiagram\n\n"
@@ -726,13 +1005,13 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
         + _alias("Lb", L, sl, "L")
         + "/-- `L'` with a phaseless Z(1 -> 1) behind each boundary link port and its copy. -/\n"
         + _alias("Lk", R, sr, "L'")
-        + _chain("b", "Lb", "L", "gsL", sl, gl)
-        + _chain("k", "Lk", "L'", "gsL'", sr, gr)
+        + _chain("b", "Lb", "L", "gsL", sl, gl, x=xm)
+        + _chain("k", "Lk", "L'", "gsL'", sr, gr, x=xm)
         + "/-- Each node of the peeled box to its node in the copy. -/\n"
         f"def cp (x : ℕ) : ℕ := (([{table}] : List (ℕ × ℕ)).lookup x).getD 0\n\n"
         + revs
-        + f"theorem ok : PeelOK {pre} {post} {box.id} {box.mult} {c} {_lnat(B)} cp :=\n"
-        f"  ⟨{proof}⟩\n\n"
+        + f"theorem ok : {'PeelX' if xm else 'PeelOK'} {pre} {post} {box.id} {box.mult} {c} "
+        f"{_lnat(B)} cp :=\n  ⟨{proof}⟩\n\n"
         "/-- The box groups before the peel, node lists by box. -/\n"
         f"def G : List (ℕ × List (List ℕ)) := {_lgroups(Gl)}\n\n"
         "/-- The box groups after the peel, node lists by box. -/\n"
@@ -745,8 +1024,8 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
         + "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
         "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
         f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 → ∀ y : ℕ → ℕ,\n"
-        "      L'.evalG gsL' E ks (flatAt (L'.slotData G') ks y) =\n"
-        "        L.evalG gsL E ks (flatAt (L.slotData G) ks y) := by\n"
+        f"      L'.{ev} gsL' E ks (flatAt (L'.slotData G') ks y) =\n"
+        f"        L.{ev} gsL E ks (flatAt (L.slotData G) ks y) := by\n"
         "  intro E hE ks hk y\n"
         "  rw [← sdb, ← sdk]\n"
         "  exact (chain_k E hE ks _).symm.trans\n"
@@ -765,7 +1044,14 @@ Step = tuple[str, LNode, tuple[Port, ...], int]
 
 def _move_last(D: LDiag, x: LNode) -> LDiag:
     return LDiag(
-        [n for n in D.nodes if n.id != x.id] + [x], D.wires, D.outs, D.ins, D.boxes, D.links
+        [n for n in D.nodes if n.id != x.id] + [x],
+        D.wires,
+        D.outs,
+        D.ins,
+        D.boxes,
+        D.links,
+        D.cph,
+        D.cdim,
     )
 
 
@@ -802,8 +1088,17 @@ def ghost_ok(D: LDiag, gs: Sequence[Ghost], x: LNode, a: Port, c: Port, g: Port,
     )
 
 
+def ghost_x_ok(D: LDiag, gs: Sequence[Ghost], x: LNode, a: Port, c: Port, g: Port, i: int) -> bool:
+    """The Lean ``GhostOKX D gs x a c g i``, field by field."""
+    return (
+        ghost_ok(D, gs, x, a, c, g, i)
+        and all(q[0] != x.id for q in D.cph)
+        and all(q[0][0] != x.id for q in D.cdim)
+    )
+
+
 def ghost_drop(D: LDiag, x: int, a: Port, c: Port, g: Port) -> LDiag:
-    """The Lean ``ghostDrop D x a c g``."""
+    """The Lean ``ghostDropX D x a c g`` (``ghostDrop`` keeping the readings)."""
 
     def s(p: Port) -> Port:
         return g if p in (a, c) else p
@@ -815,24 +1110,27 @@ def ghost_drop(D: LDiag, x: int, a: Port, c: Port, g: Port) -> LDiag:
         [s(p) for p in D.ins],
         D.boxes,
         [LLink(lk.box, s(lk.l1), s(lk.l2), s(lk.e1), s(lk.e2)) for lk in D.links],
+        D.cph,
+        D.cdim,
     )
 
 
 def _reduce(
-    D: LDiag, ids: set[int], drops: set[int], G: int
+    D: LDiag, ids: set[int], drops: set[int], G: int, xm: bool = False
 ) -> tuple[LDiag, list[Ghost] | None, list[Step]]:
     """``D`` with each node of ``drops`` meeting :func:`drop_ok` dropped (moved last first),
     then each node of ``ids`` meeting :func:`ghost_ok` dropped for the ghost ``(G, True, i)`` of
     its slot ``i``; the ghosts (most recent first; None when a node of ``ids`` stays) and the
-    steps."""
+    steps. With ``xm`` nothing is dropped by :func:`drop_ok` and the ghosts meet
+    :func:`ghost_x_ok`."""
     steps: list[Step] = []
     left = set(ids)
-    for x in [n for n in D.nodes if n.id in drops]:
+    for x in [n for n in D.nodes if n.id in drops and not xm]:
         found = _drops(D, x)
         if found:
             w, u, v, P, (nodes, wires, outs, ins, links) = found[0]
             steps.append(("drop", x, (*w, u, v, P), -1))
-            D = LDiag(nodes, wires, outs, ins, D.boxes, links)
+            D = LDiag(nodes, wires, outs, ins, D.boxes, links, D.cph, D.cdim)
             left.discard(x.id)
     gs: list[Ghost] = []
     for x in [n for n in D.nodes if n.id in left]:
@@ -843,7 +1141,7 @@ def _reduce(
                 continue
             a, i = legs[1 - legs.index(c)], M.bnd().index(c)
             g = (x.id, True, i + 1) if M.chain(x.id) else (G, True, i)
-            if ghost_ok(M, gs, x, a, c, g, i):
+            if (ghost_x_ok if xm else ghost_ok)(M, gs, x, a, c, g, i):
                 steps.append(("ghost", x, (a, c, g), i))
                 D = ghost_drop(M, x.id, a, c, g)
                 gs.insert(0, (g, i, x.dim))
@@ -870,19 +1168,28 @@ def _chain(
     steps: Sequence[Step],
     gs: Sequence[Ghost],
     define: bool = True,
+    x: bool = False,
 ) -> str:
     """Lean source: the ghosts ``gname`` (with ``define``), the ``DropOK`` or ``GhostOK`` of each
     step (``x<tag><j>``, ``ok<tag><j>``) from ``start``, the last diagram equal to ``end``
     (``eq_<tag>``) and ``chain_<tag>``: ``start``'s linked digit sum equals ``end``'s with the
-    ghosts when ``zero`` reads the zero phase."""
+    ghosts when ``zero`` reads the zero phase; with ``x`` the same over ``evalX`` and ``evalGX``
+    (``GhostOKX``, ``ghostAtX``)."""
     out, at, terms = "", start, list[str]()
     held: list[str] = []
     drop_proof = ",\n    ".join(["by decide +kernel"] * 18)
     ghost_proof = ",\n    ".join(["by decide +kernel"] * 23)
+    gk, ga, ge, sx = "GhostOK", "ghostAt", "evalG", "evalL"
+    if x:
+        ghost_proof = "⟨" + ghost_proof + "⟩,\n    "
+        ghost_proof += ",\n    ".join(["by decide +kernel"] * _GHOSTX_FIELDS)
+        gk, ga, ge, sx = "GhostOKX", "ghostAtX", "evalGX", "evalX"
     switched = False
-    for j, (kind, x, ports, i) in enumerate(steps, 1):
+    for j, (kind, node, ports, i) in enumerate(steps, 1):
         xn = f"x{tag}{j}"
-        out += f"/-- The identity dropped at step {j}. -/\nabbrev {xn} : DNode := {_lnode(x)}\n\n"
+        out += (
+            f"/-- The identity dropped at step {j}. -/\nabbrev {xn} : DNode := {_lnode(node)}\n\n"
+        )
         if kind == "drop":
             w0, w1, u, v, P = ports
             wl = f"({_lport(w0)}, {_lport(w1)})"
@@ -894,18 +1201,18 @@ def _chain(
             at = f"({at}.dropAt {xn} {wl} {_lport(v)} {_lport(P)})"
             continue
         if not switched:
-            terms.append(f"(evalG_nil {at} E ks σ).symm")
+            terms.append(f"({ge}_nil {at} E ks σ).symm")
             switched = True
         a, c, g = ports
         out += (
-            f"theorem ok{tag}{j} : GhostOK ({at}.moveLast {xn}.id) {_lghosts(held)} {xn} "
+            f"theorem ok{tag}{j} : {gk} ({at}.moveLast {xn}.id) {_lghosts(held)} {xn} "
             f"{_lport(a)} {_lport(c)} {_lport(g)} {i} :=\n  ⟨{ghost_proof}⟩\n\n"
         )
-        terms.append(f"(evalG_ghostAt ok{tag}{j} E hE ks σ)")
-        held.insert(0, f"({_lport(g)}, {i}, {x.dim})")
-        at = f"({at}.ghostAt {xn} {_lport(a)} {_lport(c)} {_lport(g)})"
+        terms.append(f"({ge}_ghostAt ok{tag}{j} E hE ks σ)")
+        held.insert(0, f"({_lport(g)}, {i}, {node.dim})")
+        at = f"({at}.{ga} {xn} {_lport(a)} {_lport(c)} {_lport(g)})"
     if not switched:
-        terms.append(f"(evalG_nil {at} E ks σ).symm")
+        terms.append(f"({ge}_nil {at} E ks σ).symm")
     body = terms[-1]
     for t in reversed(terms[:-1]):
         body = f"{t}.trans ({body})"
@@ -920,7 +1227,7 @@ def _chain(
         + f"/-- `{start}`'s digit sum is `{end}`'s with its ghosts. -/\n"
         f"theorem chain_{tag} : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
         "    ∀ (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ),\n"
-        f"      {start}.evalL E ks σ = {end}.evalG {gname} E ks σ :=\n"
+        f"      {start}.{sx} E ks σ = {end}.{ge} {gname} E ks σ :=\n"
         f"  fun E {hE} ks σ => ({body}){tail}\n\n"
     )
 
@@ -928,12 +1235,18 @@ def _chain(
 def _same_up_to_order(A: LDiag, B: LDiag) -> bool:
     """``A`` and ``B`` alike but for the order of their nodes."""
     key = sorted(A.nodes, key=lambda n: n.id) == sorted(B.nodes, key=lambda n: n.id)
-    return key and (A.wires, A.outs, A.ins, A.boxes, A.links) == (
-        B.wires,
-        B.outs,
-        B.ins,
-        B.boxes,
-        B.links,
+    reads = (sorted(A.cph), sorted(A.cdim)) == (sorted(B.cph), sorted(B.cdim))
+    return (
+        key
+        and reads
+        and (A.wires, A.outs, A.ins, A.boxes, A.links)
+        == (
+            B.wires,
+            B.outs,
+            B.ins,
+            B.boxes,
+            B.links,
+        )
     )
 
 
@@ -987,7 +1300,7 @@ def drop_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Port)
 
 def _drops(D: LDiag, x: LNode) -> list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]]:
     """Each ``(w, u, v, P, dropped)`` of ``x`` in ``D`` meeting :func:`drop_ok`."""
-    D = LDiag([n for n in D.nodes if n.id != x.id] + [x], D.wires, D.outs, D.ins, D.boxes, D.links)
+    D = _move_last(D, x)
     out: list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]] = []
     legs = [(x.id, True, 0), (x.id, False, 0)]
     for u in legs:

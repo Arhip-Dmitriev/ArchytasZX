@@ -22,7 +22,9 @@ in the key order of ``LinkedSplice.lean`` (``flatAt``), peels and slides read at
 positions, a peel whose copy slots moved refused here and in Lean (79.16h, 79.16i); peels of the
 open grids, the chain end on the boundary held in the box of the identity the peel puts behind
 it, at the engine's flat positions, checked in Lean, and peels of the reversed row chain
-(the first copy peeled) through ``evalL_peel_first`` (79.16l)."""
+(the first copy peeled) through ``evalL_peel_first`` (79.16l); a peel of the binder chains of
+BINDERS, whose box index is read through ``cph`` and ``cdim`` and whose copies read their template
+at the constant copy, through ``evalX_peel_flat`` and ``evalGX_ghostAt`` (79.16l)."""
 
 from __future__ import annotations
 
@@ -44,7 +46,7 @@ from archytaszx.semantics.decide import decide_equal
 from archytaszx.semantics.induction import rename_multiplicity
 from archytaszx.semantics.lean_net import check, lean_project
 from archytaszx.semantics.prove import InductionSide, _with_scalar_index
-from tests.test_nested_chain import GRID, _grid_pair, _open_grid
+from tests.test_nested_chain import BINDERS, GRID, _grid_pair, _open_grid
 
 
 def _peels(t: kernel.Theorem, seen: set[int] | None = None) -> Iterator[kernel.Theorem]:
@@ -427,6 +429,51 @@ def test_lean_checks_an_open_grid_peel_and_refuses_a_wrong_copy_count(tmp_path: 
     bad = source.replace("+ 1 →", "+ 2 →")
     assert bad != source
     ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
+
+
+def _binders_peel() -> tuple[Diagram, Diagram]:
+    """BINDERS at ``s + 1`` rows and its peel of the row box."""
+    d = rename_multiplicity(parse_dsl(BINDERS), "n", Mult("s") + 1)
+    row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
+    return d, bangbox.peel_one(d, row.id).diagram
+
+
+def test_a_binder_chain_peel_exports_through_evalX_peel_flat() -> None:
+    before, after = _binders_peel()
+    source = lean_linked.export_peel(before, after)
+    assert source is not None and "(evalX_peel_flat ok flat E ks hk y)" in source
+    assert "theorem ok : PeelX Lb Lk" in source and "evalGX_ghostAt okb1" in source
+    assert "L'.evalGX gsL' E ks (flatAt (L'.slotData G') ks y)" in source
+    copies = re.findall(r"\(⟨\d+, \w+, \d+⟩, \d+, 1, \d+\)", source.split("def L' ")[1])
+    assert len(copies) >= 2
+    assert lean_linked.export_peel(after, before) is None
+
+
+def test_a_binder_copy_whose_literal_is_not_its_template_at_the_copy_is_not_exported() -> None:
+    before, after = _binders_peel()
+    copy = next(x for x, n in after.nodes.items() if x not in before.nodes and len(n.inputs) == 2)
+    node = after.nodes[copy]
+    after.set_port_dims(copy, [node.inputs[0].dim, node.outputs[0].dim], [node.outputs[0].dim])
+    assert lean_linked.export_peel(before, after) is None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_a_binder_chain_peel_and_refuses_a_copy_read_at_zero(tmp_path: object) -> None:
+    source = lean_linked.export_peel(*_binders_peel())
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/binders.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    head, tail = source.split("def L' : LDiagram :=", 1)
+    found = re.search(r"\((⟨\d+, \w+, \d+⟩), (\d+), 1, (\d+)\)", tail)
+    assert found is not None
+    bad = f"({found[1]}, {found[2]}, 0, {found[3]})"
+    ok, output = check(
+        head + "def L' : LDiagram :=" + tail.replace(found[0], bad, 1), f"{tmp_path}/bad.lean"
+    )
     assert not ok
 
 

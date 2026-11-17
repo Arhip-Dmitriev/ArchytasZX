@@ -431,13 +431,30 @@ through psi0. A slide, namespace <N>.S<i>, writes C, the diagram both identity f
 (chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G, and S<i>.main is
 evalG_flatAt: the two digit sums read at the flat positions of their slot data agree.
 
-Peels over evalX (LinkedPeel.lean, library only, no export writes them yet): PeelX holds PeelOK
-of the two sides stripped of their readings (strip), no aligned wires, and the copy-indexed phases
-and leg dimensions of every node and leg read alike on both sides (phK, dmK) and on the copies by
-rdC: a reading of the peeled box of coefficient 0 becomes the constant ks c (coefficient 1 at a
-box off the copy, whose coordinate reads 0), a reading of an inner box the same at the copy's box
-one level up. evalX_peel: L'.evalX equals L.evalX read through peelφ (evalX_relabelφ; phAt and
-dimAt through rdVal).
+Peels over evalX (LinkedPeel.lean): PeelX holds PeelOK of the two sides stripped of their
+readings (strip), no aligned wires, and the copy-indexed phases and leg dimensions of every node
+and leg read alike on both sides (phK, dmK) and on the copies by rdC: a reading of the peeled box
+of coefficient 0 becomes the constant ks c (coefficient 1 at a box off the copy, whose coordinate
+reads 0), a reading of an inner box the same at the copy's box one level up. evalX_peel:
+L'.evalX equals L.evalX read through peelφ (evalX_relabelφ; phAt and dimAt through rdVal).
+Ghosts over evalX (LinkedGhost.lean): evalGX is evalG with each digit's dimension read by dimAt
+and the pairs of dpairsX (evalGX_nil: evalX with no ghost); GhostOKX holds GhostOK of the
+stripped diagram, no aligned wires, and no reading of the identity or its legs, and
+evalGX_ghostAt drops the identity for its ghost (ghostAtX keeps cph and cdim). LinkedSplice.lean
+adds evalX_congr, evalX_peel_flat (PeelX and PeelFlat) and evalGX_flatAt. A peel of a box with an
+index (BINDERS of tests/test_nested_chain.py: B(2, 2^m) chained through the row box of index m)
+is exported over them: lean_linked.linked with readings writes each index read as (x, box, 0, 0)
+in cph (a phase, or a binder's or splitter's second dimension) or cdim (a leg dimension), and an
+identity behind a boundary link port takes its leg's dimension at the copy the boundary meets (the
+box's last copy for a first link port, 0 for a second), the key of an equal plain dimension; the
+engine writes each copy of a node of the peeled box with literal dimensions (2**s, 2**(s + 1)), and
+the export writes it with its template's indices and the reading (_, box, 1, c), each literal
+checked by sympy equal to its template at the box's count after the peel. Plain dimension and
+phase indices are numbered below every one read at a copy (seeded first, checked on both sides).
+Lb and L' are then written with cph and cdim, ok is PeelX Lb Lk, chain_b drops the identities by
+GhostOKX and evalGX_ghostAt, and main states L'.evalGX gsL' and L.evalGX gsL read at their flat
+positions equal through evalX_peel_flat. A reversed chain of a box with an index, and an identity
+wired to a node leg on such a side, are not exported.
 
 A power split (kernel.power_split) is proved the same way when both sides are linked diagrams
 (ArchytasZX/LinkedSplit.lean), over the digit sum evalX (Linked.lean): evalL with copy-indexed
