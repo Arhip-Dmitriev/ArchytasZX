@@ -258,6 +258,10 @@ def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
             *(f".front {v}" for v in reversed(step.group)),
             f".dyadicB {list(step.group)} [{poly}] {list(step.fresh)} {bits}",
         ], [*step.fresh, *rest]
+    if step.rule == "dyadic_columns":
+        rest = [v for v in cur if v not in step.group]
+        fronts = [f".front {v}" for v in reversed(step.group)]
+        return [*fronts, f".columns {list(step.group)}"], rest
     if step.rule in _PAIR_STEP and z is not None:
         rest = [v for v in cur if v not in (y, z)]
         return [f".front {z}", f".front {y}", _PAIR_STEP[step.rule]], (
@@ -303,13 +307,18 @@ def _fac_model(steps: Sequence[str], m: int) -> sp.Expr:
             out *= Rt(2) * Om(m) ** (m // 8)
         elif st == ".omegaConj":
             out *= Rt(2) * Om(m) ** (7 * m // 8)
+        elif st.startswith(".columns "):
+            out *= 2 ** (st.count(",") + 1)
     return out
 
 
 def _fac_lines(side: str, steps: Sequence[str], m: int, text: str) -> list[str]:
     """The theorem that side ``side``'s step factors multiply to ``text``."""
     lines = [f"theorem fac{side} : facs steps{side} = {text} := by"]
-    lines.append(f"  simp only [steps{side}, facs, fac]")
+    if any(st.startswith(".columns ") for st in steps):
+        lines.append(f"  simp only [steps{side}, facs, fac, List.length_cons, List.length_nil]")
+    else:
+        lines.append(f"  simp only [steps{side}, facs, fac]")
     if m != 8 and any(st in (".omega", ".omegaConj") for st in steps):
         lines.append(f"  rw [om_sub {m} 8 {m // 8} (by norm_num) (by norm_num)]")
     return [*lines, "  ring", ""]
@@ -523,11 +532,16 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     """The Lean file proving that both diagrams' path sums agree at every boundary assignment;
     raises :class:`PathSumUnsupported` when they do not reduce to one canonical form or a
     trace step has no PathSumRules step."""
-    from archytaszx.semantics.lean_scalar import Om
-
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("export_proof covers qubit path sums only")
+    return export_sums(raw_l, raw_r, name)
+
+
+def export_sums(raw_l: PathSum, raw_r: PathSum, name: str = "pair") -> str:
+    """:func:`export_proof` of two qubit path sums."""
+    from archytaszx.semantics.lean_scalar import Om
+
     if raw_l.amps or raw_r.amps or _quartered(raw_l, raw_r):
         return _export_amp_proof(raw_l, raw_r, name)
     try:
@@ -2643,6 +2657,7 @@ __all__ = [
     "export_proof",
     "export_qudit_net",
     "export_qudit_proof",
+    "export_sums",
     "net_body",
     "net_env",
     "qnet_body",

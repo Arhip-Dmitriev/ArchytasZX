@@ -671,6 +671,23 @@ pn_substRows: where every row holds the substitution keeps the value mod M); str
 and constK diffP = k give val L = val R from cL * om M ^ k = cR. The equal terms of both phases
 cancel before any pivot is substituted. Boolean eliminations,
 supports and atoms are refused on this route.
+[Dyadic] by columns (PathSumRules, step columns ds). colData reads S from the head digit's
+terms (coefficients over M / 2^k, normP 2^k) and picks the chosen variables c_i as reduce's
+_try_columns does: the least variable off the path, the constraints, rows, the phase terms off
+the digits and S's monomials of degree two or more whose singleton term of S is 2^i (pos) or
+-2^i mod 2^k. colCheck checks the chosen terms are C or -C mod 2^k (C = Sum 2^i c_i, cpoly);
+colBits are the rows normF ([c_i] + digit i) with the digits of -R or R (colsOf: column j holds
+the monomials whose coefficient has bit j; colRun: per column a binary counter of F_2 digits,
+cntAdd, its low digit kept and its higher digits carried to the next columns; colRun_spec,
+cval_colsOf). col_bits gives 2^k | S iff every row vanishes (inum_bounds, dvd_iff_eq);
+dycol_core sums the digits (bsum_dy, dyProd_geom): the digits and their terms dropped, the rows
+appended to the constraints, factor 2^k (columns_sound). lean_pathsum traces dyadic_columns as
+.front steps and .columns; an export takes it only when reduce runs in a
+pathsum.dyadic_columns() scope (export_sums takes path sums), so exports keep the [HH] + [BSub]
+route. An 8-digit group over 16 variables checks in 182 s at 2.1 GB (kernel evaluation of
+colRun); cuccaro_adder n = 8 export_proof exceeds 600 s of Lean on both routes (59627 B and
+59563 B); at n = 14 the Python export takes 20.8 s on the old route and 6.7 s with columns
+(132964 B and 132810 B).
 
 Amplitude atoms. ArchytasZX/PathSumAmp.lean: AData is a path sum (Data) with held variables,
 summed outside the inner sum, and atoms (i, f) worth A i where the F_2 polynomial f is 1;

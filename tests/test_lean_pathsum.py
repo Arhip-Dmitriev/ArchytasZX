@@ -474,3 +474,47 @@ def test_lean_rejects_a_tampered_support_pair(weight: bool, tmp_path: object) ->
     assert "([4], 7)" in source
     ok, _ = L.check(source.replace("([4], 7)", "([4], 1)", 1), f"{tmp_path}/t.lean")
     assert not ok
+
+
+def _adder(c5: int = 2) -> object:
+    """Digits 6, 7 with phase Y S / 4, S = x0 + 2 x1 + 3 x2 + 2 x3 + 3 x4 + c5 x5."""
+    from fractions import Fraction
+
+    from archytaszx.algebra.pathsum import Cyclo, PathSum, PhasePoly
+
+    phase = PhasePoly()
+    for v, c in {0: 1, 1: 2, 2: 3, 3: 2, 4: 3, 5: c5}.items():
+        phase.add({6, v}, Fraction(c, 4))
+        phase.add({7, v}, Fraction(2 * c % 4, 4))
+    return PathSum((0, 1, 2, 3, 4, 5), {6, 7}, phase, Cyclo.rational(1))
+
+
+def _columns(monkeypatch: pytest.MonkeyPatch) -> str:
+    """The adder against itself, both reduced by dyadic_columns, exported."""
+    from typing import cast
+
+    from archytaszx.algebra import pathsum
+    from archytaszx.semantics.lean_pathsum import export_sums
+
+    monkeypatch.setattr(pathsum, "COLUMN_DIGITS", 1)
+    with pathsum.dyadic_columns():
+        return export_sums(cast(pathsum.PathSum, _adder()), cast(pathsum.PathSum, _adder()), "c")
+
+
+def test_a_dyadic_columns_trace_becomes_a_columns_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _columns(monkeypatch)
+    assert ".front 7, .front 6, .columns [6, 7]" in source
+    assert "List.length_cons" in source
+
+
+@needs_lean
+@pytest.mark.parametrize("tamper", [False, True])
+def test_lean_checks_a_columns_step(
+    monkeypatch: pytest.MonkeyPatch, tamper: bool, tmp_path: object
+) -> None:
+    source = _columns(monkeypatch)
+    if tamper:
+        assert "([5, 6], 2)" in source
+        source = source.replace("([5, 6], 2)", "([5, 6], 1)", 1)
+    ok, output = L.check(source, f"{tmp_path}/columns.lean")
+    assert ok != tamper, output

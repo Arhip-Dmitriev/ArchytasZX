@@ -1436,6 +1436,464 @@ theorem dyadicB_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List 
   exact dyadic_core M c ds S fs bs s σ hl (fun τ => bits_iff τ _ S bs h.1) h.2
 
 
+/-! ## [Dyadic] by column addition -/
+
+/-- `x` added to a binary counter of F_2 digits, low digit first, the carry past the top
+dropped. -/
+def cntAdd : List F2 → F2 → List F2
+  | [], _ => []
+  | b :: bs, x => normF (b ++ x) :: cntAdd bs (f2mulN b x)
+
+/-- The integer that F_2 digits spell, low digit first. -/
+def inum (τ : ℕ → ZMod 2) : List F2 → ℤ
+  | [] => 0
+  | b :: bs => zq (fz τ b) + 2 * inum τ bs
+
+/-- The number of the items of a column that are 1. -/
+def csum (τ : ℕ → ZMod 2) (col : List F2) : ℤ := (col.map fun q => zq (fz τ q)).sum
+
+theorem cntAdd_length : ∀ (bs : List F2) (x : F2), (cntAdd bs x).length = bs.length
+  | [], _ => rfl
+  | _ :: bs, _ => by simp [cntAdd, cntAdd_length bs]
+
+theorem inum_cntAdd (τ : ℕ → ZMod 2) : ∀ (bs : List F2) (x : F2),
+    peq (2 ^ bs.length) (inum τ (cntAdd bs x)) (inum τ bs + zq (fz τ x))
+  | [], x => ⟨-zq (fz τ x), by simp [cntAdd, inum]⟩
+  | b :: bs, x => by
+    obtain ⟨n, hn⟩ := inum_cntAdd τ bs (f2mulN b x)
+    simp only [cntAdd, inum, fz_normF, fz_append, zq_add, List.length_cons]
+    refine ⟨n, ?_⟩
+    rw [hn, fz_f2mulN, zq_mul]
+    push_cast
+    ring
+
+theorem foldl_cntAdd_length : ∀ (col bs : List F2), (col.foldl cntAdd bs).length = bs.length
+  | [], _ => rfl
+  | x :: col, bs => by rw [List.foldl_cons, foldl_cntAdd_length col, cntAdd_length]
+
+theorem inum_foldl (τ : ℕ → ZMod 2) : ∀ (col bs : List F2),
+    peq (2 ^ bs.length) (inum τ (col.foldl cntAdd bs)) (inum τ bs + csum τ col)
+  | [], bs => ⟨0, by simp [csum]⟩
+  | x :: col, bs => by
+    obtain ⟨a, ha⟩ := inum_cntAdd τ bs x
+    have h2 := inum_foldl τ col (cntAdd bs x)
+    rw [cntAdd_length] at h2
+    obtain ⟨b, hb⟩ := h2
+    rw [List.foldl_cons]
+    refine ⟨a + b, ?_⟩
+    simp only [csum, List.map_cons, List.sum_cons] at hb ⊢
+    rw [hb, ha]
+    ring
+
+theorem inum_zero (τ : ℕ → ZMod 2) : ∀ w : ℕ, inum τ (List.replicate w []) = 0
+  | 0 => rfl
+  | w + 1 => by
+    simp only [List.replicate_succ, inum, inum_zero τ w]
+    have : fz τ [] = 0 := rfl
+    rw [this, zq0]
+    ring
+
+/-- Carries appended to the columns, the first carry to the first column. -/
+def carry : List F2 → List (List F2) → List (List F2)
+  | c :: cs, col :: cols => (col ++ [c]) :: carry cs cols
+  | _, cols => cols
+
+/-- The weighted count `Sum_i 2^i (column i's count)`. -/
+def cval (τ : ℕ → ZMod 2) : List (List F2) → ℤ
+  | [] => 0
+  | col :: cols => csum τ col + 2 * cval τ cols
+
+theorem carry_length : ∀ (cs : List F2) (cols : List (List F2)),
+    (carry cs cols).length = cols.length
+  | [], _ => by simp [carry]
+  | _ :: _, [] => by simp [carry]
+  | _ :: cs, _ :: cols => by simp [carry, carry_length cs cols]
+
+theorem cval_carry (τ : ℕ → ZMod 2) : ∀ (cs : List F2) (cols : List (List F2)),
+    cs.length ≤ cols.length → cval τ (carry cs cols) = cval τ cols + inum τ cs
+  | [], cols, _ => by simp [carry, inum]
+  | _ :: _, [], h => by simp at h
+  | c :: cs, col :: cols, h => by
+    simp only [carry, cval, inum]
+    rw [cval_carry τ cs cols (by simpa using h)]
+    simp only [csum, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil]
+    ring
+
+/-- The binary digits below `2^n` of `cval` of `n` columns: each column's counter low digit,
+its higher digits carried to the next columns. -/
+def colRun : ℕ → List (List F2) → List F2
+  | 0, _ => []
+  | _ + 1, [] => []
+  | n + 1, col :: rest =>
+    match col.foldl cntAdd (List.replicate (n + 1) []) with
+    | [] => []
+    | b :: bt => b :: colRun n (carry bt rest)
+
+theorem colRun_spec (τ : ℕ → ZMod 2) : ∀ (n : ℕ) (cols : List (List F2)), cols.length = n →
+    peq (2 ^ n) (cval τ cols) (inum τ (colRun n cols)) ∧ (colRun n cols).length = n
+  | 0, cols, _ => ⟨⟨cval τ cols, by simp [colRun, inum]⟩, by simp [colRun]⟩
+  | n + 1, [], h => by simp at h
+  | n + 1, col :: rest, h => by
+    have hl : rest.length = n := by simpa using h
+    have hb := inum_foldl τ col (List.replicate (n + 1) [])
+    have hlen := foldl_cntAdd_length col (List.replicate (n + 1) [])
+    rw [List.length_replicate, inum_zero, zero_add] at hb
+    rw [List.length_replicate] at hlen
+    rcases hbits : col.foldl cntAdd (List.replicate (n + 1) []) with _ | ⟨b0, bt⟩
+    · rw [hbits] at hlen; simp at hlen
+    rw [hbits] at hb hlen
+    have hbt : bt.length = n := by simpa using hlen
+    have hc := cval_carry τ bt rest (by omega)
+    obtain ⟨⟨y, hy⟩, hrl⟩ := colRun_spec τ n (carry bt rest) (by rw [carry_length, hl])
+    obtain ⟨x, hx⟩ := hb
+    simp only [colRun, hbits, cval, inum]
+    refine ⟨⟨y - x, ?_⟩, by simp [hrl]⟩
+    simp only [inum] at hx
+    push_cast at hx hy ⊢
+    linear_combination -hx + 2 * hy - 2 * hc
+
+/-- The columns of `T`'s coefficients below `2^k`: column j holds `[m]` for each term whose
+coefficient has bit j set. -/
+def colsOf : ℕ → Poly → List (List F2)
+  | 0, _ => []
+  | k + 1, T => ((T.filter fun t => t.2 % 2 == 1).map fun t => [t.1]) ::
+      colsOf k (T.map fun t => (t.1, t.2 / 2))
+
+theorem pn_halves (τ : ℕ → ZMod 2) : ∀ T : Poly,
+    pn τ T = csum τ ((T.filter fun t => t.2 % 2 == 1).map fun t => [t.1]) +
+      2 * pn τ (T.map fun t => (t.1, t.2 / 2))
+  | [] => by simp [pn, csum]
+  | t :: T => by
+    have ih := pn_halves τ T
+    have hd := Nat.mod_add_div t.2 2
+    have hm : fz τ [t.1] = mz τ t.1 := by simp [fz]
+    by_cases h : t.2 % 2 = 1
+    · rw [List.filter_cons_of_pos (by simpa using h)]
+      simp only [List.map_cons, pn_cons, csum, List.sum_cons] at ih ⊢
+      rw [ih, hm]
+      have e : (t.2 : ℤ) = 1 + 2 * ((t.2 / 2 : ℕ) : ℤ) := by
+        rw [h] at hd; exact_mod_cast hd.symm
+      rw [e]
+      ring
+    · rw [List.filter_cons_of_neg (by simpa using h)]
+      simp only [List.map_cons, pn_cons] at ih ⊢
+      rw [ih]
+      have h0 : t.2 % 2 = 0 := by omega
+      have e : (t.2 : ℤ) = 2 * ((t.2 / 2 : ℕ) : ℤ) := by
+        rw [h0, zero_add] at hd; exact_mod_cast hd.symm
+      rw [e]
+      ring
+
+theorem cval_colsOf (τ : ℕ → ZMod 2) : ∀ (k : ℕ) (T : Poly),
+    peq (2 ^ k) (cval τ (colsOf k T)) (pn τ T) ∧ (colsOf k T).length = k
+  | 0, T => ⟨⟨-pn τ T, by simp [colsOf, cval]⟩, rfl⟩
+  | k + 1, T => by
+    obtain ⟨⟨y, hy⟩, hl⟩ := cval_colsOf τ k (T.map fun t => (t.1, t.2 / 2))
+    refine ⟨⟨y, ?_⟩, by simp [colsOf, hl]⟩
+    simp only [colsOf, cval]
+    rw [pn_halves τ T, hy]
+    push_cast
+    ring
+
+theorem inum_bounds (τ : ℕ → ZMod 2) : ∀ L : List F2, 0 ≤ inum τ L ∧ inum τ L < 2 ^ L.length
+  | [] => by simp [inum]
+  | b :: L => by
+    obtain ⟨h0, h1⟩ := inum_bounds τ L
+    rcases zq_le (fz τ b) with h | h <;>
+      · simp only [inum, h, List.length_cons, pow_succ]; constructor <;> omega
+
+theorem pair_iff (a b : ZMod 2) (x y : ℤ) :
+    (a + b = 0 ∧ x = y) ↔ zq a + 2 * x = zq b + 2 * y := by
+  rcases z2_cases a with rfl | rfl <;> rcases z2_cases b with rfl | rfl
+  · simp only [zq0, show (0 : ZMod 2) + 0 = 0 by decide, true_and]
+    constructor <;> intro h <;> omega
+  · simp only [zq0, zq1, show ¬ ((0 : ZMod 2) + 1 = 0) by decide, false_and, false_iff]
+    omega
+  · simp only [zq0, zq1, show ¬ ((1 : ZMod 2) + 0 = 0) by decide, false_and, false_iff]
+    omega
+  · simp only [zq1, show (1 : ZMod 2) + 1 = 0 by decide, true_and]
+    constructor <;> intro h <;> omega
+
+/-- The rows `[c] + d` of the chosen variables and the column digits. -/
+def colRows (cs : List ℕ) (ds : List F2) : List F2 :=
+  List.zipWith (fun c d => normF ([c] :: d)) cs ds
+
+theorem rows_iff (τ : ℕ → ZMod 2) : ∀ (cs : List ℕ) (ds : List F2), cs.length = ds.length →
+    ((∀ r ∈ colRows cs ds, fz τ r = 0) ↔ inum τ (cs.map fun c => [[c]]) = inum τ ds)
+  | [], [], _ => by simp [colRows, inum]
+  | [], _ :: _, h => by simp at h
+  | _ :: _, [], h => by simp at h
+  | c :: cs, d :: ds, h => by
+    have ih := rows_iff τ cs ds (by simpa using h)
+    simp only [colRows] at ih
+    simp only [colRows, List.zipWith_cons_cons, List.forall_mem_cons, List.map_cons, inum]
+    rw [ih, fz_normF, fz_cons]
+    have hc : fz τ [[c]] = mz τ [c] := by simp [fz]
+    rw [hc]
+    exact pair_iff _ _ _ _
+
+/-- The terms `[c_i]` with weights doubling from `w`. -/
+def cpoly : ℕ → List ℕ → Poly
+  | _, [] => []
+  | w, c :: cs => ([c], w) :: cpoly (2 * w) cs
+
+theorem pn_cpoly (τ : ℕ → ZMod 2) : ∀ (w : ℕ) (cs : List ℕ),
+    pn τ (cpoly w cs) = w * inum τ (cs.map fun c => [[c]])
+  | _, [] => by simp [cpoly, pn, inum]
+  | w, c :: cs => by
+    simp only [cpoly, pn_cons, List.map_cons, inum, pn_cpoly τ (2 * w) cs]
+    have hc : fz τ [[c]] = mz τ [c] := by simp [fz]
+    rw [hc]
+    push_cast
+    ring
+
+/-- The terms of `S` on a chosen `[c]`. -/
+def colP (cs : List ℕ) (S : Poly) : Poly := S.filter fun t => decide (t.1 ∈ cs.map fun c => [c])
+
+/-- The terms of `S` off the chosen `[c]`. -/
+def colR (cs : List ℕ) (S : Poly) : Poly := S.filter fun t => !decide (t.1 ∈ cs.map fun c => [c])
+
+/-- Whether `cs` has length `k` and the terms of `S` on the chosen `[c]` are `C` (`pos`) or
+`-C` modulo `2^k`, `C = Sum_i 2^i c_i`. -/
+def colCheck (k : ℕ) (S : Poly) (cs : List ℕ) (pos : Bool) : Bool :=
+  decide (cs.length = k) && decide (normP (2 ^ k)
+    (if pos then colP cs S else negP (2 ^ k) (colP cs S)) = normP (2 ^ k) (cpoly 1 cs))
+
+/-- The rows `c_i + digit i of -R` (`pos`) or `R`, `R` the terms of `S` off the chosen `[c]`. -/
+def colBits (k : ℕ) (S : Poly) (cs : List ℕ) (pos : Bool) : List F2 :=
+  colRows cs (colRun k (colsOf k (if pos then negP (2 ^ k) (colR cs S) else colR cs S)))
+
+theorem dvd_iff_eq (K C D x n : ℤ) (hC : 0 ≤ C ∧ C < K) (hD : 0 ≤ D ∧ D < K)
+    (h : x = C - D + n * K) : K ∣ x ↔ C = D := by
+  have hK : 0 < K := by linarith [hC.1, hC.2]
+  constructor
+  · rintro ⟨q, hq⟩
+    have hr : C - D = K * (q - n) := by linarith
+    rcases lt_trichotomy (q - n) 0 with hr0 | hr0 | hr0
+    · have := mul_le_mul_of_nonneg_left (show q - n ≤ -1 by omega) hK.le
+      linarith
+    · rw [hr0, mul_zero] at hr; linarith
+    · have := mul_le_mul_of_nonneg_left (show 1 ≤ q - n by omega) hK.le
+      linarith
+  · intro hE
+    exact ⟨n, by rw [h, hE]; ring⟩
+
+theorem col_bits (τ : ℕ → ZMod 2) (k : ℕ) (S : Poly) (cs : List ℕ) (pos : Bool)
+    (h : colCheck k S cs pos = true) :
+    (((2 ^ k : ℕ) : ℤ) ∣ pn τ S ↔ ∀ b ∈ colBits k S cs pos, fz τ b = 0) := by
+  simp only [colCheck, Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨hl, hn⟩ := h
+  have hK0 : 0 < 2 ^ k := by positivity
+  have hsplit : pn τ S = pn τ (colR cs S) + pn τ (colP cs S) := pn_filter_split τ _ S
+  obtain ⟨⟨a, ha⟩, hcl⟩ := cval_colsOf τ k
+    (if pos then negP (2 ^ k) (colR cs S) else colR cs S)
+  obtain ⟨⟨b, hb⟩, hrl⟩ := colRun_spec τ k _ hcl
+  have hrows := rows_iff τ cs
+    (colRun k (colsOf k (if pos then negP (2 ^ k) (colR cs S) else colR cs S)))
+    (by rw [hl, hrl])
+  rw [show colBits k S cs pos = colRows cs
+    (colRun k (colsOf k (if pos then negP (2 ^ k) (colR cs S) else colR cs S))) from rfl, hrows]
+  obtain ⟨e, he⟩ : ∃ e : ℤ, (if pos then (1 : ℤ) else -1) * pn τ (colP cs S) =
+      inum τ (cs.map fun c => [[c]]) + e * ((2 ^ k : ℕ) : ℤ) := by
+    obtain ⟨u, hu⟩ := pn_normP τ (2 ^ k)
+      (if pos then colP cs S else negP (2 ^ k) (colP cs S))
+    obtain ⟨v, hv⟩ := pn_normP τ (2 ^ k) (cpoly 1 cs)
+    rw [hn] at hu
+    rw [pn_cpoly] at hv
+    cases pos
+    · obtain ⟨g, hg⟩ := pn_negP τ (2 ^ k) hK0 (colP cs S)
+      simp only [Bool.false_eq_true, if_false] at hu ⊢
+      exact ⟨v - u - g, by push_cast at hu hv hg ⊢; linarith⟩
+    · simp only [if_true] at hu ⊢
+      exact ⟨v - u, by push_cast at hu hv ⊢; linarith⟩
+  obtain ⟨f, hf⟩ : ∃ f : ℤ, pn τ (if pos then negP (2 ^ k) (colR cs S) else colR cs S) =
+      -(if pos then (1 : ℤ) else -1) * pn τ (colR cs S) + f * ((2 ^ k : ℕ) : ℤ) := by
+    cases pos
+    · exact ⟨0, by simp⟩
+    · obtain ⟨g, hg⟩ := pn_negP τ (2 ^ k) hK0 (colR cs S)
+      exact ⟨g, by simpa using hg⟩
+  have hs2 : (if pos then (1 : ℤ) else -1) * (if pos then (1 : ℤ) else -1) = 1 := by
+    cases pos <;> simp
+  have hu : ((2 ^ k : ℕ) : ℤ) ∣ pn τ S ↔
+      ((2 ^ k : ℕ) : ℤ) ∣ (if pos then (1 : ℤ) else -1) * pn τ S := by
+    cases pos <;> simp
+  have hCb := inum_bounds τ (cs.map fun c => [[c]])
+  have hDb := inum_bounds τ
+    (colRun k (colsOf k (if pos then negP (2 ^ k) (colR cs S) else colR cs S)))
+  rw [List.length_map, hl] at hCb
+  rw [hrl] at hDb
+  rw [hu]
+  apply dvd_iff_eq _ _ _ _ (a - b + f + e) (by push_cast; exact hCb) (by push_cast; exact hDb)
+  linear_combination (if pos then (1 : ℤ) else -1) * hsplit + hf + he + ha - hb
+
+/-! ### The step -/
+
+/-- The side conditions of [Dyadic] by columns: the head `k = ds.length` path variables are
+digits `ds` with phase `Y S / 2^k`, `S` free of them, `2^k ∣ M`, the digits in no constraint or
+row. -/
+def colRest (M : ℕ) (ds : List ℕ) (S : Poly) (s : Data) : Bool :=
+  decide (0 < M) && decide (M % (2 ^ ds.length) = 0) &&
+    decide (s.path.take ds.length = ds) && decide s.path.Nodup &&
+    ds.all (fun d => !decide (d ∈ fvars (s.cons ++ s.rows))) &&
+    S.all (fun t => !hasAny ds t.1) &&
+    decide (normP M (s.phase.filter fun t => hasAny ds t.1) =
+      normP M (dyTerms M (2 ^ ds.length) S ds 1))
+
+/-- [Dyadic] with the digit constraints `bs` given by their divisibility fact: the digits
+summed, `bs` appended to the constraints, factor `2^k`. -/
+theorem dycol_core (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (bs : List F2)
+    (s : Data) (σ : ℕ → ZMod 2)
+    (hbits : ∀ τ : ℕ → ZMod 2, (((2 ^ ds.length : ℕ) : ℤ) ∣ pn τ S ↔ ∀ b ∈ bs, fz τ b = 0))
+    (h : colRest M ds S s = true) :
+    val M c s σ = val M ((2 : ℂ) ^ ds.length * c) ⟨s.path.drop ds.length,
+      s.phase.filter (fun t => !hasAny ds t.1), s.cons ++ bs, s.rows⟩ σ := by
+  unfold colRest at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, Bool.not_eq_true',
+    decide_eq_false_iff_not] at h
+  obtain ⟨⟨⟨⟨⟨⟨hM, hKM⟩, htake⟩, hnd⟩, hdc⟩, hSd⟩, hP⟩ := h
+  set k := ds.length with hk
+  set K := 2 ^ k with hK
+  set ys := s.path.drop k with hys
+  have hpath : s.path = ds ++ ys := by rw [← htake, List.take_append_drop]
+  have hK0 : 0 < K := by positivity
+  obtain ⟨q, hq⟩ : ∃ q, M = K * q :=
+    ⟨M / K, (Nat.mul_div_cancel' (Nat.dvd_of_mod_eq_zero hKM)).symm⟩
+  have hdsnd : ds.Nodup := by rw [hpath] at hnd; exact (List.nodup_append.1 hnd).1
+  have hSfree : ∀ t ∈ S, ∀ d ∈ ds, d ∉ t.1 := fun t ht => not_hasAny (by simpa using hSd t ht)
+  set R := s.phase.filter (fun t => !hasAny ds t.1) with hR
+  set Pd := s.phase.filter (fun t => hasAny ds t.1) with hPd
+  have hRfree : ∀ t ∈ R, ∀ d ∈ ds, d ∉ t.1 := by
+    intro t ht
+    simp only [hR, List.mem_filter, Bool.not_eq_true'] at ht
+    exact not_hasAny ht.2
+  set G : (ℕ → ZMod 2) → ℂ := fun τ => if ∀ q ∈ s.cons ++ s.rows, fz τ q = 0 then
+    c * ex ((pn τ R : ℝ) / M) else 0 with hG
+  have hsplitL : ∀ τ, summand M c s τ = G τ * ex ((pn τ Pd : ℝ) / M) := by
+    intro τ
+    unfold summand
+    simp only [hG]
+    rw [pn_filter_split τ (fun t => hasAny ds t.1) s.phase]
+    split_ifs
+    · push_cast; rw [add_div, ex_add]; ring
+    · ring
+  have hGds : ∀ τ, ∀ y ∈ ds, ∀ b, G (Function.update τ y b) = G τ := by
+    intro τ y hy b
+    simp only [hG]
+    rw [pn_update_not τ y b R (fun t ht => hRfree t ht y hy)]
+    simp only [holds_update_not τ y b _ (hdc y hy)]
+  have hpeq : ∀ τ, peq M (pn τ Pd) (pn τ (dyTerms M K S ds 1)) := by
+    intro τ
+    have h1 := pn_normP τ M Pd
+    have h2 := pn_normP τ M (dyTerms M K S ds 1)
+    rw [hP] at h1
+    obtain ⟨a1, ha1⟩ := h1
+    obtain ⟨b1, hb1⟩ := h2
+    exact ⟨b1 - a1, by linarith⟩
+  unfold val
+  dsimp only
+  rw [hpath, bsum_perm _ List.perm_append_comm σ, bsum_append]
+  apply bsum_congr
+  intro τ
+  rw [bsum_congr _ _ hsplitL, bsum_mul_left _ _ ds hGds]
+  have hL : bsum ds (fun τ' => ex ((pn τ' Pd : ℝ) / M)) τ =
+      bsum ds (fun τ' => ex ((pn τ' (dyTerms M K S ds 1) : ℝ) / M)) τ :=
+    bsum_congr _ _ (fun τ' => ex_peq hM (hpeq τ')) ds τ
+  rw [hL, bsum_dy M K q hM hK0 hq S ds 1 hdsnd hSfree τ, dyProd_geom]
+  have h3 := hbits τ
+  rw [hK] at h3
+  unfold summand
+  simp only [hG]
+  have hcond : (∀ q ∈ s.cons ++ bs ++ s.rows, fz τ q = 0) ↔
+      ((∀ q ∈ s.cons ++ s.rows, fz τ q = 0) ∧ ∀ b ∈ bs, fz τ b = 0) := by
+    simp only [List.mem_append]
+    constructor
+    · intro H
+      exact ⟨fun q hq => hq.elim (fun h => H q (Or.inl (Or.inl h))) (fun h => H q (Or.inr h)),
+        fun b hb => H b (Or.inl (Or.inr hb))⟩
+    · rintro ⟨H1, H2⟩ q ((hq | hq) | hq)
+      · exact H1 q (Or.inl hq)
+      · exact H2 q hq
+      · exact H1 q (Or.inr hq)
+  simp only [hcond]
+  by_cases hC : ∀ q ∈ s.cons ++ s.rows, fz τ q = 0
+  · by_cases hB : ∀ b ∈ bs, fz τ b = 0
+    · rw [if_pos hC, if_pos (h3.2 hB), if_pos ⟨hC, hB⟩]
+      push_cast
+      simp only [div_eq_mul_inv]
+      ring
+    · have hn1 : ¬ (((2 ^ k : ℕ) : ℤ) ∣ pn τ S) := fun e => hB (h3.1 e)
+      have hn2 : ¬ ((∀ q ∈ s.cons ++ s.rows, fz τ q = 0) ∧ ∀ b ∈ bs, fz τ b = 0) :=
+        fun e => hB e.2
+      simp only [if_pos hC, if_neg hn1, if_neg hn2, mul_zero]
+  · have hn2 : ¬ ((∀ q ∈ s.cons ++ s.rows, fz τ q = 0) ∧ ∀ b ∈ bs, fz τ b = 0) :=
+      fun e => hC e.1
+    simp only [if_neg hC, if_neg hn2, zero_mul]
+
+/-- The least `u` with a term `([u], a)` of `S`, `a % K = w`, `u` not in `bad`. -/
+def pickU (K w : ℕ) (bad : List ℕ) (S : Poly) : Option ℕ :=
+  (((S.filter fun t => decide (t.1.length = 1) && decide (t.2 % K = w)).map
+    fun t => t.1.headD 0).filter fun u => !decide (u ∈ bad)).min?
+
+/-- The chosen variables of weights `2^i` (`pos`) or `-2^i` modulo `K`, `n` more after `acc`. -/
+def pickCs (K : ℕ) (pos : Bool) (bad : List ℕ) (S : Poly) : ℕ → List ℕ → Option (List ℕ)
+  | 0, acc => some acc
+  | n + 1, acc =>
+    let w := 2 ^ acc.length % K
+    match pickU K (if pos then w else (K - w) % K) (bad ++ acc) S with
+    | none => none
+    | some u => pickCs K pos bad S n (acc ++ [u])
+
+/-- The variables no chosen variable may be: the path, the constraints' and rows' variables,
+those of the phase terms off the digits and those of the monomials of `S` of degree two or
+more. -/
+def colBad (ds : List ℕ) (S : Poly) (s : Data) : List ℕ :=
+  s.path ++ fvars (s.cons ++ s.rows) ++ pvars (s.phase.filter fun t => !hasAny ds t.1) ++
+    pvars (S.filter fun t => decide (2 ≤ t.1.length))
+
+/-- `S` read from the head digit's terms (coefficients over `M / 2^k`, modulo `2^k`), the chosen
+variables and their sign; none without digits or a choice. -/
+def colData (M : ℕ) (ds : List ℕ) (s : Data) : Option (Poly × List ℕ × Bool) :=
+  match ds with
+  | [] => none
+  | d :: _ =>
+    let K := 2 ^ ds.length
+    let S := normP K ((yTerms d s.phase).map fun t => (t.1.filter (· != d), t.2 / (M / K)))
+    let bad := colBad ds S s
+    match pickCs K true bad S ds.length [] with
+    | some cs => some (S, cs, true)
+    | none =>
+      match pickCs K false bad S ds.length [] with
+      | some cs => some (S, cs, false)
+      | none => none
+
+/-- Whether [Dyadic] by columns applies to the head digits `ds`. -/
+def columnsOK (M : ℕ) (ds : List ℕ) (s : Data) : Bool :=
+  match colData M ds s with
+  | none => false
+  | some (S, cs, pos) => colRest M ds S s && colCheck ds.length S cs pos
+
+/-- The head digits `ds` summed: their terms dropped, the rows `c_i + digit i` appended to the
+constraints. -/
+def columnsS (M : ℕ) (ds : List ℕ) (s : Data) : Data :=
+  match colData M ds s with
+  | none => s
+  | some (S, cs, pos) =>
+    ⟨s.path.drop ds.length, s.phase.filter (fun t => !hasAny ds t.1),
+      s.cons ++ colBits ds.length S cs pos, s.rows⟩
+
+theorem columns_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (s : Data) (σ : ℕ → ZMod 2)
+    (h : columnsOK M ds s = true) :
+    val M c s σ = val M ((2 : ℂ) ^ ds.length * c) (columnsS M ds s) σ := by
+  unfold columnsOK at h
+  unfold columnsS
+  rcases hd : colData M ds s with _ | ⟨S, cs, pos⟩
+  · simp [hd] at h
+  simp only [hd, Bool.and_eq_true] at h
+  dsimp only
+  exact dycol_core M c ds S _ s σ (fun τ => col_bits τ _ S cs pos h.2) h.1
+
+
 /-! ## Phase terms off the constraints -/
 
 /-- Whether `m (1 + q) = 0` for some constraint `q`, on masks over the variables of `q`. -/
@@ -1627,6 +2085,7 @@ inductive Step where
   | bsub (v : ℕ)
   | front (x : ℕ)
   | canonH (v : ℕ)
+  | columns (ds : List ℕ)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -1650,6 +2109,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .bsub v, s => canonOK v s
   | .front x, s => decide (x ∈ s.path)
   | .canonH v, s => canonOK v s
+  | .columns ds, s => columnsOK M ds s
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -1673,12 +2133,14 @@ def stepS (M : ℕ) : Step → Data → Data
   | .bsub v, s => bsubS M v s
   | .front x, s => frontS x s
   | .canonH v, s => canonHS v s
+  | .columns ds, s => columnsS M ds s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
   | .elim | .hhCons | .hhPivot | .hhNl => 2
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
+  | .columns ds => 2 ^ ds.length
   | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
     | .pdrop | .dyadicB _ _ _ _ | .bsub _ | .front _ | .canonH _ => 1
 
@@ -1720,6 +2182,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | bsub v => simpa [fac, stepS] using bsub_sound M hM c v s σ h
   | front x => simpa [fac, stepS] using front_sound M c x s σ h
   | canonH v => simpa [fac, stepS] using canonH_sound M c v s σ h
+  | columns ds => simpa [fac, stepS] using columns_sound M c ds s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →
