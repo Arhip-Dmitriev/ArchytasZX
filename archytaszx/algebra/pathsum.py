@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from functools import lru_cache
@@ -1150,7 +1152,7 @@ def _try_low_digit(
             ps.trace.append(Step("bsub", u, None, value))
             done += 1
         return done > 0
-    if len(digits) >= COLUMN_DIGITS and _try_columns(ps, occ, digits, s):
+    if _COLUMNS.get() and len(digits) >= COLUMN_DIGITS and _try_columns(ps, occ, digits, s):
         return True
     v = _boundary_pivot(ps, b0)
     if v is None:
@@ -1179,6 +1181,20 @@ def _try_low_digit(
 
 COLUMN_DIGITS = 8
 """The fewest digits of a group :func:`_try_low_digit` sums by :func:`_try_columns`."""
+
+_COLUMNS: ContextVar[bool] = ContextVar("pathsum_columns", default=False)
+"""Whether :func:`_try_low_digit` may take :func:`_try_columns`."""
+
+
+@contextmanager
+def dyadic_columns() -> Iterator[None]:
+    """A scope in which :func:`reduce` sums dyadic groups of at least :data:`COLUMN_DIGITS`
+    digits by :func:`_try_columns`."""
+    token = _COLUMNS.set(True)
+    try:
+        yield
+    finally:
+        _COLUMNS.reset(token)
 
 
 def _column_digits(columns: list[list[F2Poly]]) -> list[F2Poly]:

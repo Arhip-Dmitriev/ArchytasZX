@@ -299,7 +299,7 @@ def test_column_digits_are_the_digits_of_the_column_sum() -> None:
 
 def test_dyadic_columns_give_the_low_digit_canonical_form(monkeypatch: pytest.MonkeyPatch) -> None:
     from archytaszx.algebra import pathsum
-    from archytaszx.algebra.pathsum import Cyclo, PathSum, canonical, reduce
+    from archytaszx.algebra.pathsum import Cyclo, PathSum, canonical, dyadic_columns, reduce
 
     def adder() -> PathSum:
         phase = PhasePoly()
@@ -309,9 +309,12 @@ def test_dyadic_columns_give_the_low_digit_canonical_form(monkeypatch: pytest.Mo
             phase.add({7, v}, Fraction(2 * c % 4, 4))
         return PathSum((0, 1, 2, 3, 4, 5), {6, 7}, phase, Cyclo.rational(1))
 
-    want = canonical(reduce(adder()))
     monkeypatch.setattr(pathsum, "COLUMN_DIGITS", 1)
-    out = reduce(adder())
+    want = reduce(adder())
+    assert all(step.rule != "dyadic_columns" for step in want.trace)
+    with dyadic_columns():
+        out = reduce(adder())
     assert any(step.rule == "dyadic_columns" for step in out.trace)
-    got = canonical(out)
-    assert want is not None and got is not None and got.same(want)
+    assert all(step.rule != "dyadic_columns" for step in reduce(adder()).trace)
+    got, base = canonical(out), canonical(want)
+    assert got is not None and base is not None and got.same(base)

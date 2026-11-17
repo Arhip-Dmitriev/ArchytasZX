@@ -2516,7 +2516,7 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     left, the phase as one exponential and each amplitude atom ``a^F`` as
     ``[F even] + a [F odd]``; None outside that class, when its reduction or canonical form is
     refused, or when the simplifier exceeds its budget."""
-    from archytaszx.algebra.pathsum import PathSum, PathSumUnsupported, reduce
+    from archytaszx.algebra.pathsum import PathSum, PathSumUnsupported, dyadic_columns, reduce
     from archytaszx.semantics.pathsum_diagram import diagram_base, from_diagram
 
     refs = (*diagram.boundary_outputs, *diagram.boundary_inputs)
@@ -2532,7 +2532,8 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     if not isinstance(raw, PathSum):
         return None
     try:
-        ps = reduce(raw)
+        with dyadic_columns():
+            ps = reduce(raw)
     except PathSumUnsupported:
         return None
     axes = tuple(
