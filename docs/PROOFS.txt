@@ -583,8 +583,13 @@ these functions construct a Theorem:
                                      first piece that does not check
     RestrictedProof(proof, restriction, left, right, family, floors_used)
                                      a family proof (family=True), checked and specialised by
-                                     one subst per substituting clause, or a proof of the
-                                     restricted pair, checked and read by restricted
+                                     one subst per substituting clause but n = v on a box
+                                     multiplicity, which stays in the domain over the family
+                                     sides (stated "at n = v", no box unrolled); or a proof of
+                                     the restricted pair, checked and read by restricted
+    instantiated(theorem) -> (Diagram, Diagram)
+                                     the sides with every substituting clause of the domain
+                                     applied to the family pair (origin)
     restricted_symbolic(proof) -> Symbolic
                                      the same for a normaliser proof
     from_decision(decision, left, right) -> Theorem

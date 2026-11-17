@@ -200,7 +200,7 @@ def statement(
     clauses; empty when nothing is quantified or restricted."""
     from archytaszx.semantics.restrict import DIMENSION, EQ, FINITE, GE, SHIFT, SIDE
 
-    fresh = {c.fresh for c in domain if c.fresh}
+    fresh = {c.fresh for c in domain if c.fresh} | {c.symbol for c in domain if c.form == EQ}
     free = [v for v in variables if v not in fresh]
     parts: list[str] = []
     for c in domain:
@@ -1199,7 +1199,7 @@ def check(artefact: object) -> Theorem:
             raise KernelError("a family proof holds only under a restriction")
         out = inner
         for clause in artefact.restriction.clauses:
-            if clause.substitutes:
+            if clause.substitutes and not _pinned_box(inner, clause):
                 out = subst(out, clause)
         return Theorem(
             _TOKEN,
@@ -1244,6 +1244,31 @@ def check(artefact: object) -> Theorem:
             check(artefact.step),
         )
     raise KernelError(f"cannot check a {type(artefact).__name__}")
+
+
+def _pinned_box(t: Theorem, clause: Clause) -> bool:
+    """Whether ``clause`` is ``n = v`` on a box multiplicity of ``t``'s sides."""
+    from archytaszx.semantics.restrict import EQ, MULTIPLICITY
+
+    if clause.kind != MULTIPLICITY or clause.form != EQ:
+        return False
+    return clause.symbol in free_mult_symbols(t.lhs) | free_mult_symbols(t.rhs)
+
+
+def instantiated(theorem: Theorem) -> tuple[Diagram, Diagram]:
+    """``theorem``'s sides with every substituting clause of its domain applied to its family
+    pair ``origin`` in order, as :func:`subst` applies them; its own sides without an origin."""
+    from archytaszx.semantics.restrict import apply_clause
+
+    if theorem.origin is None:
+        return theorem.lhs, theorem.rhs
+    left, right = theorem.origin
+    for c in theorem.domain:
+        if c.substitutes:
+            wide = c.c < 0
+            left = apply_clause(left, c, everywhere=wide)
+            right = apply_clause(right, c, everywhere=wide)
+    return left, right
 
 
 @dataclass(frozen=True, eq=False)
@@ -2466,12 +2491,17 @@ _OPAQUE_AXIOM = re.compile(r"^axiom ", re.MULTILINE)
 
 
 def _concrete_export(theorem: Theorem, text: str) -> str | None:
-    """The network proof of a restricted theorem's own sides when they have no free
-    multiplicity and no bang box, with the restriction in its header; else None."""
+    """The network proof of a restricted theorem's :func:`instantiated` sides when they have
+    no free multiplicity and no bang box, with the restriction in its header; else None."""
     from archytaszx.semantics.lean_restrict import header
 
     lhs, rhs = theorem.lhs, theorem.rhs
     if theorem.variables or lhs.bang_boxes or rhs.bang_boxes:
+        try:
+            lhs, rhs = instantiated(theorem)
+        except _INDUCTION_ERRORS:
+            return None
+    if free_mult_symbols(lhs) | free_mult_symbols(rhs) or lhs.bang_boxes or rhs.bang_boxes:
         return None
     source = _semantic_pair(lhs, rhs)
     if source is None:
