@@ -18,6 +18,9 @@ once on the copy.
 `evalL_rev`: for `L'` the diagram `L` with the links of the outermost box `bid` flipped
 (`RevOK`, both ways), `L'` is `L` with the box's copy `t` read at `revT t`, the first coordinate
 counted from the far end.
+
+`evalX_peel`: `evalL_peel` for `evalX` under `PeelX`, copy-indexed phases and leg dimensions
+carried to the copy by `rdC`.
 -/
 
 namespace ArchytasZX
@@ -1286,6 +1289,418 @@ theorem evalL_rev (h : RevOK L L' bid mb B) (h' : RevOK L' L bid mb B) (E : Env)
     · exact ⟨q, hq, u, hu, by simp only [revφ, if_neg hB]⟩
 
 end rev
+
+/-! ## Peels with copy-indexed phases and leg dimensions -/
+
+/-- `L` without copy-indexed phases, leg dimensions or aligned wires. -/
+def strip (L : LDiagram) : LDiagram := { L with cph := [], cdim := [], aligned := [] }
+
+/-- The copy's reading `o'` of a reading `o` (box, coefficient, multiplicity index) of the node `x`
+of the box `bid` peeled into `x'`: none for none; a reading of `bid` of coefficient `0` becomes
+`ks c` at a box off `x'`, a reading of an inner box the same at a box one level up. -/
+def rdC (L L' : LDiagram) (bid c x x' : ℕ) : Option (ℕ × ℕ × ℕ) → Option (ℕ × ℕ × ℕ) → Bool
+  | none, none => true
+  | some q, some q' =>
+    if q.1 = bid then
+      decide (q.2.1 = 0) && decide (q'.2 = (1, c)) &&
+        decide (L'.depth q'.1 x' = (L'.base.nodeChain x').length)
+    else decide (q'.2 = q.2) && decide (L'.depth q'.1 x' + 1 = L.depth q.1 x)
+  | _, _ => false
+
+/-- `PeelOK` of the two sides without their readings, no aligned wires, the readings of every
+node and leg kept, those of the copies by `rdC`. -/
+structure PeelX (L L' : LDiagram) (bid mb c : ℕ) (B : List ℕ) (cp : ℕ → ℕ) : Prop where
+  ok : PeelOK L.strip L'.strip bid mb c B cp
+  al : L.aligned = []
+  al' : L'.aligned = []
+  d0 : ∀ n ∈ L.base.nodes, n.id ∈ B → L.depth bid n.id = 0
+  phK : ∀ n ∈ L.base.nodes, (L'.cph.find? fun q => decide (q.1 = n.id)) =
+      (L.cph.find? fun q => decide (q.1 = n.id)) ∧
+    ((L.cph.find? fun q => decide (q.1 = n.id)).all fun q =>
+      decide (L'.depth q.2.1 n.id = L.depth q.2.1 n.id)) = true
+  phC : ∀ n ∈ L.base.nodes, n.id ∈ B → rdC L L' bid c n.id (cp n.id)
+    ((L.cph.find? fun q => decide (q.1 = n.id)).map (·.2))
+    ((L'.cph.find? fun q => decide (q.1 = cp n.id)).map (·.2)) = true
+  dmK : ∀ p ∈ L.base.legs, (L'.cdim.find? fun q => decide (q.1 = p)) =
+      (L.cdim.find? fun q => decide (q.1 = p)) ∧
+    ((L.cdim.find? fun q => decide (q.1 = p)).all fun q =>
+      decide (L'.depth q.2.1 p.node = L.depth q.2.1 p.node)) = true
+  dmC : ∀ p ∈ L.base.legs, p.node ∈ B → rdC L L' bid c p.node (cp p.node)
+    ((L.cdim.find? fun q => decide (q.1 = p)).map (·.2))
+    ((L'.cdim.find? fun q => decide (q.1 = cpP cp p)).map (·.2)) = true
+
+section peelx
+
+variable {L L' : LDiagram} {bid mb c : ℕ} {B : List ℕ} {cp : ℕ → ℕ}
+
+theorem PeelOK.portDim_keep (h : PeelOK L L' bid mb c B cp) (p : Port) (hp : p ∈ L.base.legs) :
+    L'.base.portDim p = L.base.portDim p := by
+  obtain ⟨n, hn, en⟩ := node_of_legs _ p hp
+  have hc : n ∈ L'.base.nodes := by rw [h.nodes]; exact List.mem_append_left _ hn
+  rw [portDim_of _ h.ids _ hc p en, portDim_of _ h.idsL _ hn p en]
+
+theorem PeelOK.portDim_cp (h : PeelOK L L' bid mb c B cp) (p : Port) (hp : p ∈ L.base.legs)
+    (hB : p.node ∈ B) : L'.base.portDim (cpP cp p) = L.base.portDim p := by
+  obtain ⟨n, hn, en⟩ := node_of_legs _ p hp
+  have hnB : n.id ∈ B := en ▸ hB
+  have hc : cpNode cp n ∈ L'.base.nodes := by
+    rw [h.nodes]
+    exact List.mem_append_right _
+      (List.mem_map.2 ⟨n, List.mem_filter.2 ⟨hn, by simpa using hnB⟩, rfl⟩)
+  rw [portDim_of _ h.ids _ hc (cpP cp p) (by simp [cpP, cpNode, en]), portDim_of _ h.idsL _ hn p en]
+  simp [cpP, cpNode]
+
+/-- The value of a reading `o` at `t`: `Nat.pair k (t at the reading's box + coefficient times
+its multiplicity)`, or `k` with none. -/
+def rdVal (L : LDiagram) (ks : ℕ → ℕ) (x k : ℕ) (t : List ℕ) : Option (ℕ × ℕ × ℕ) → ℕ
+  | some q => Nat.pair k (t.getD (L.depth q.1 x) 0 + q.2.1 * ks q.2.2)
+  | none => k
+
+theorem rdVal_copy (L L' : LDiagram) (bid c x x' : ℕ) (hd : L.depth bid x = 0) (ks : ℕ → ℕ)
+    (k : ℕ) (u : List ℕ) (hu : u.length = (L'.base.nodeChain x').length)
+    (o o' : Option (ℕ × ℕ × ℕ)) (h : rdC L L' bid c x x' o o' = true) :
+    L'.rdVal ks x' k u o' = L.rdVal ks x k (ks c :: u) o := by
+  cases o with
+  | none =>
+    cases o' with
+    | none => rfl
+    | some q' => simp [rdC] at h
+  | some q =>
+    cases o' with
+    | none => simp [rdC] at h
+    | some q' =>
+      obtain ⟨y, a, m⟩ := q
+      obtain ⟨y', a', m'⟩ := q'
+      simp only [rdVal]
+      by_cases hb : y = bid
+      · subst hb
+        simp only [rdC, ite_true, Bool.and_eq_true, decide_eq_true_eq, Prod.mk.injEq] at h
+        obtain ⟨⟨h1, h2, h3⟩, h4⟩ := h
+        rw [h4, ← hu, hd, h1, h2, h3, List.getD_eq_default _ _ (le_refl _)]
+        simp
+      · simp only [rdC, if_neg hb, Bool.and_eq_true, decide_eq_true_eq, Prod.mk.injEq] at h
+        obtain ⟨⟨h1, h2⟩, h3⟩ := h
+        rw [← h3, h1, h2, List.getD_cons_succ]
+
+theorem phAt_rdVal (L : LDiagram) (ks : ℕ → ℕ) (n : DNode) (t : List ℕ) :
+    L.phAt ks n t = L.rdVal ks n.id n.ph t ((L.cph.find? fun q => decide (q.1 = n.id)).map (·.2)) := by
+  unfold phAt
+  cases L.cph.find? (fun q => decide (q.1 = n.id)) <;> rfl
+
+theorem dimAt_rdVal (L : LDiagram) (ks : ℕ → ℕ) (p : Port) (t : List ℕ) :
+    L.dimAt ks p t =
+      L.rdVal ks p.node (L.base.portDim p) t ((L.cdim.find? fun q => decide (q.1 = p)).map (·.2)) := by
+  unfold dimAt
+  cases L.cdim.find? (fun q => decide (q.1 = p)) <;> rfl
+
+theorem rdVal_keep (L L' : LDiagram) (ks : ℕ → ℕ) (x k : ℕ) (t : List ℕ)
+    (o : Option (ℕ × ℕ × ℕ)) (h : (o.all fun q => decide (L'.depth q.1 x = L.depth q.1 x)) = true) :
+    L'.rdVal ks x k t o = L.rdVal ks x k t o := by
+  cases o with
+  | none => rfl
+  | some q =>
+    simp only [Option.all_some, decide_eq_true_eq] at h
+    simp only [rdVal, h]
+
+theorem PeelX.phAt_keep (h : PeelX L L' bid mb c B cp) (n : DNode) (hn : n ∈ L.base.nodes)
+    (ks : ℕ → ℕ) (t : List ℕ) : L'.phAt ks n t = L.phAt ks n t := by
+  obtain ⟨e1, e2⟩ := h.phK n hn
+  rw [phAt_rdVal, phAt_rdVal, e1]
+  refine rdVal_keep L L' ks _ _ t _ ?_
+  cases e : L.cph.find? (fun q => decide (q.1 = n.id)) with
+  | none => rfl
+  | some q => rw [e] at e2; simpa using e2
+
+theorem PeelX.phAt_copy (h : PeelX L L' bid mb c B cp) (n : DNode) (hn : n ∈ L.base.nodes)
+    (hB : n.id ∈ B) (ks : ℕ → ℕ) (u : List ℕ)
+    (hu : u.length = (L'.base.nodeChain (cp n.id)).length) :
+    L'.phAt ks (cpNode cp n) u = L.phAt ks n (ks c :: u) := by
+  rw [phAt_rdVal, phAt_rdVal]
+  exact rdVal_copy L L' bid c n.id (cp n.id) (h.d0 n hn hB) ks n.ph u hu _ _ (h.phC n hn hB)
+
+theorem PeelX.dimAt_keep (h : PeelX L L' bid mb c B cp) (p : Port) (hp : p ∈ L.base.legs)
+    (ks : ℕ → ℕ) (t : List ℕ) : L'.dimAt ks p t = L.dimAt ks p t := by
+  obtain ⟨e1, e2⟩ := h.dmK p hp
+  rw [dimAt_rdVal, dimAt_rdVal, e1, show L'.base.portDim p = L.base.portDim p from
+    h.ok.portDim_keep p hp]
+  refine rdVal_keep L L' ks _ _ t _ ?_
+  cases e : L.cdim.find? (fun q => decide (q.1 = p)) with
+  | none => rfl
+  | some q => rw [e] at e2; simpa using e2
+
+theorem PeelX.dimAt_copy (h : PeelX L L' bid mb c B cp) (p : Port) (hp : p ∈ L.base.legs)
+    (hB : p.node ∈ B) (ks : ℕ → ℕ) (u : List ℕ)
+    (hu : u.length = (L'.base.nodeChain (cp p.node)).length) :
+    L'.dimAt ks (cpP cp p) u = L.dimAt ks p (ks c :: u) := by
+  obtain ⟨n, hn, en⟩ := node_of_legs _ p hp
+  have hd : L.depth bid p.node = 0 := by rw [en]; exact h.d0 n hn (en ▸ hB)
+  rw [dimAt_rdVal, dimAt_rdVal, show L'.base.portDim (cpP cp p) = L.base.portDim p from
+    h.ok.portDim_cp p hp hB]
+  exact rdVal_copy L L' bid c p.node (cp p.node) hd ks _ u hu _ _ (h.dmC p hp hB)
+
+end peelx
+
+section peelx2
+
+variable {L L' : LDiagram} {bid mb c : ℕ} {B : List ℕ} {cp : ℕ → ℕ}
+
+/-- The node products agree under the peel's relabelling, copy-indexed phases read alike. -/
+theorem PeelX.prod (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ)
+    (hk : ks mb = ks c + 1) (τ τ' : ℕ → ℕ)
+    (hτ : ∀ x ∈ L.base.dlabs ks, τ' x = τ (relab (peelφ B cp (ks c)) x)) :
+    L'.prodL E ks τ = L.prodL E ks τ' := by
+  have ho := h.ok
+  have lcL : ∀ q, L.base.legChain q = L.base.nodeChain q.node := ho.lc
+  have lcL' : ∀ q, L'.base.legChain q = L'.base.nodeChain q.node := ho.lc'
+  have legsEq : L'.base.legs = L.base.legs ++
+      ((L.base.nodes.filter fun n => n.id ∈ B).flatMap fun n => n.legs.map (cpP cp)) := ho.legs_eq
+  have chBL : ∀ p ∈ L.base.legs, p.node ∈ B →
+      L.base.nodeChain p.node = mb :: L'.base.nodeChain (cp p.node) ∧
+        L'.base.nodeChain p.node = c :: L'.base.nodeChain (cp p.node) := ho.chB'
+  have chOL : ∀ p ∈ L.base.legs, p.node ∉ B →
+      L'.base.nodeChain p.node = L.base.nodeChain p.node := ho.chO'
+  set φ := peelφ B cp (ks c)
+  have hv : ∀ n ∈ L.base.nodes, ∀ t ∈ cidx ks (L.base.nodeChain n.id),
+      val E τ' (L.dnodeL ks n t) = val E τ ⟨n.kind,
+        (List.range n.outs.length).map (fun i => dlab (φ ⟨n.id, true, i⟩ t).1 (φ ⟨n.id, true, i⟩ t).2),
+        (List.range n.ins.length).map (fun i => dlab (φ ⟨n.id, false, i⟩ t).1 (φ ⟨n.id, false, i⟩ t).2),
+        n.dim, L.phAt ks n t⟩ := by
+    intro n hn t ht
+    have hd : L.dnodeL ks n t = ⟨n.kind,
+        (List.range n.outs.length).map fun i => dlab ⟨n.id, true, i⟩ t,
+        (List.range n.ins.length).map fun i => dlab ⟨n.id, false, i⟩ t, n.dim, L.phAt ks n t⟩ := by
+      simp only [dnodeL]
+      rw [L.base.dnode_notail ho.ports ho.wch]
+    have e : (⟨n.kind,
+        (List.range n.outs.length).map (fun i => dlab (φ ⟨n.id, true, i⟩ t).1 (φ ⟨n.id, true, i⟩ t).2),
+        (List.range n.ins.length).map (fun i => dlab (φ ⟨n.id, false, i⟩ t).1 (φ ⟨n.id, false, i⟩ t).2),
+        n.dim, L.phAt ks n t⟩ : Node) = (L.dnodeL ks n t).rename (relab φ) := by
+      rw [hd]
+      simp [Node.rename, List.map_map, Function.comp_def, relab_dlab]
+    rw [e, val_rename]
+    refine val_reads E _ _ _ fun x hx => ?_
+    rw [hd] at hx
+    simp only [Node.labels, List.mem_append, List.mem_map, List.mem_range] at hx
+    have hmem : x ∈ L.base.dlabs ks := by
+      rcases hx with ⟨i, hi, rfl⟩ | ⟨i, hi, rfl⟩
+      · refine (mem_dlabs _ _ _).2 ⟨_, List.mem_flatMap.2 ⟨n, hn, ?_⟩, t, by rw [lcL]; exact ht, rfl⟩
+        simp [DNode.legs, hi]
+      · refine (mem_dlabs _ _ _).2 ⟨_, List.mem_flatMap.2 ⟨n, hn, ?_⟩, t, by rw [lcL]; exact ht, rfl⟩
+        simp [DNode.legs, hi]
+    exact hτ x hmem
+  have hd' : ∀ m : DNode, ∀ t, L'.dnodeL ks m t = ⟨m.kind,
+      (List.range m.outs.length).map (fun i => dlab ⟨m.id, true, i⟩ t),
+      (List.range m.ins.length).map (fun i => dlab ⟨m.id, false, i⟩ t), m.dim,
+      L'.phAt ks m t⟩ := by
+    intro m t
+    simp only [dnodeL]
+    rw [L'.base.dnode_notail ho.ports' ho.wch']
+  set F' : DNode → ℂ := fun m =>
+    ((cidx ks (L'.base.nodeChain m.id)).map fun t => val E τ (L'.dnodeL ks m t)).prod
+  have key : ∀ n ∈ L.base.nodes,
+      ((cidx ks (L.base.nodeChain n.id)).map fun t => val E τ' (L.dnodeL ks n t)).prod =
+        F' n * (if n.id ∈ B then F' (cpNode cp n) else 1) := by
+    intro n hn
+    by_cases hB : n.id ∈ B
+    · obtain ⟨c1, c1'⟩ := ho.chB n hn hB
+      rw [if_pos hB]
+      simp only [F']
+      rw [show L'.base.nodeChain n.id = c :: L'.base.nodeChain (cp n.id) from c1',
+        show L.base.nodeChain n.id = mb :: L'.base.nodeChain (cp n.id) from c1,
+        cidx_succ ks mb c _ hk, List.map_append, List.prod_append, List.map_map]
+      have hcn : (cpNode cp n).id = cp n.id := rfl
+      rw [hcn]
+      congr 1
+      · refine congrArg List.prod (List.map_congr_left fun t ht => ?_)
+        obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks c _ t).1 ht
+        rw [hv n hn _ (by
+          rw [show L.base.nodeChain n.id = mb :: L'.base.nodeChain (cp n.id) from c1,
+            cidx_succ ks mb c _ hk]; exact List.mem_append_left _ ht), hd',
+          h.phAt_keep n hn ks]
+        simp [φ, peelφ_ne (ks c) _ j u (by omega)]
+      · refine congrArg List.prod (List.map_congr_left fun u hu => ?_)
+        simp only [Function.comp_apply]
+        have hm : ks c :: u ∈ cidx ks (L.base.nodeChain n.id) := by
+          rw [show L.base.nodeChain n.id = mb :: L'.base.nodeChain (cp n.id) from c1,
+            cidx_succ ks mb c _ hk]
+          exact List.mem_append_right _ (List.mem_map.2 ⟨u, hu, rfl⟩)
+        rw [hv n hn _ hm, hd', h.phAt_copy n hn hB ks u ((mem_cidx ks _ u).1 hu).length_eq]
+        have hp : ∀ o i, φ ⟨n.id, o, i⟩ (ks c :: u) = (⟨cp n.id, o, i⟩, u) := fun o i =>
+          peelφ_B (ks c) ⟨n.id, o, i⟩ hB u
+        simp [hp, cpNode]
+    · rw [if_neg hB, mul_one]
+      simp only [F']
+      rw [show L'.base.nodeChain n.id = L.base.nodeChain n.id from ho.chO n hn hB]
+      refine congrArg List.prod (List.map_congr_left fun t ht => ?_)
+      rw [hv n hn _ ht, hd', h.phAt_keep n hn ks]
+      have hp : ∀ o i, φ ⟨n.id, o, i⟩ t = (⟨n.id, o, i⟩, t) := fun o i =>
+        peelφ_O (ks c) ⟨n.id, o, i⟩ hB t
+      simp [hp]
+  unfold prodL
+  rw [List.map_congr_left key, List.prod_map_mul, prod_ite_filter,
+    show L'.base.nodes = L.base.nodes ++ (L.base.nodes.filter fun n => n.id ∈ B).map (cpNode cp)
+      from ho.nodes, List.map_append, List.prod_append, List.map_map]
+  rfl
+
+theorem dpairsX_nil (L : LDiagram) (h : L.aligned = []) (ks : ℕ → ℕ) :
+    L.dpairsX ks = L.dpairs ks := by
+  simp [dpairsX, h]
+
+/-- Peeling the last copy of an outermost chain box keeps the digit sum `evalX`, `L`'s slots read
+from `L'`'s through `peelφ`. -/
+theorem evalX_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1)
+    (σ' : ℕ → List ℕ → ℕ) :
+    L'.evalX E ks σ' = L.evalX E ks (bndMap L.base L'.base (peelφ B cp (ks c)) σ') := by
+  have ho := h.ok
+  have lcL : ∀ q, L.base.legChain q = L.base.nodeChain q.node := ho.lc
+  have lcL' : ∀ q, L'.base.legChain q = L'.base.nodeChain q.node := ho.lc'
+  have legsEq : L'.base.legs = L.base.legs ++
+      ((L.base.nodes.filter fun n => n.id ∈ B).flatMap fun n => n.legs.map (cpP cp)) := ho.legs_eq
+  have chBL : ∀ p ∈ L.base.legs, p.node ∈ B →
+      L.base.nodeChain p.node = mb :: L'.base.nodeChain (cp p.node) ∧
+        L'.base.nodeChain p.node = c :: L'.base.nodeChain (cp p.node) := ho.chB'
+  have chOL : ∀ p ∈ L.base.legs, p.node ∉ B →
+      L'.base.nodeChain p.node = L.base.nodeChain p.node := ho.chO'
+  have wchL : ∀ w ∈ L.base.wires, L.base.nodeChain w.1.node = L.base.nodeChain w.2.node := ho.wch
+  have lwfL : ∀ l ∈ L.links, l.l1 ∈ L.base.legs ∧ l.l2 ∈ L.base.legs ∧ l.e1 ∈ L.base.legs ∧
+      l.e2 ∈ L.base.legs ∧ L.base.nodeChain l.l2.node = L.base.nodeChain l.l1.node ∧
+      L.depth l.box l.l1.node < (L.base.nodeChain l.l1.node).length ∧
+      (L.base.nodeChain l.l1.node).getD (L.depth l.box l.l1.node) 0 = L.multOf l.box ∧
+      L.base.nodeChain l.e1.node = (L.base.nodeChain l.l1.node).eraseIdx (L.depth l.box l.l1.node) ∧
+      L.base.nodeChain l.e2.node = (L.base.nodeChain l.l1.node).eraseIdx (L.depth l.box l.l1.node) :=
+    ho.lwf
+  have hpl0 : ∀ x ∈ L.dpairs ks, x.1.1 ∈ L.base.legs ∧ x.1.2 ∈ cidx ks (L.base.legChain x.1.1) ∧
+      x.2.1 ∈ L.base.legs ∧ x.2.2 ∈ cidx ks (L.base.legChain x.2.1) := by
+    intro x hx
+    rcases (mem_dpairs L ks x).1 hx with ⟨w, hw, t, ht, rfl⟩ | ⟨l, hl, hx⟩
+    · obtain ⟨hw1, hw2, -⟩ := ho.wires w hw
+      refine ⟨hw1, ht, hw2, ?_⟩
+      rw [lcL] at ht ⊢
+      rw [← wchL w hw]
+      exact ht
+    · obtain ⟨hl1, hl2, he1, he2, hc2, hdl, hgd, hce1, hce2⟩ := lwfL l hl
+      have hx' : x ∈ lp ks (L.depth l.box l.l1.node) (ks (L.multOf l.box))
+          (L.base.nodeChain l.l1.node) l := by
+        have := hx
+        simp only [linkPairs] at this
+        rw [lcL] at this
+        exact this
+      rcases (mem_lp ks _ _ _ l x).1 hx' with ⟨t, ht, h1, rfl⟩ | ⟨t, ht, h1, rfl⟩ |
+        ⟨t, ht, h1, rfl⟩ | ⟨-, u, hu, rfl⟩
+      · refine ⟨hl1, by rw [lcL]; exact ht, hl2, ?_⟩
+        rw [lcL, hc2]
+        exact cidx_set ks _ t _ _ ht (by rw [hgd]; exact h1) hdl
+      · exact ⟨hl1, by rw [lcL]; exact ht, he1,
+          by rw [lcL, hce1]; exact cidx_eraseIdx ks _ t _ ht⟩
+      · exact ⟨he2, by rw [lcL, hce2]; exact cidx_eraseIdx ks _ t _ ht, hl2,
+          by rw [lcL, hc2]; exact ht⟩
+      · exact ⟨he2, by rw [lcL, hce2]; exact hu, he1, by rw [lcL, hce1]; exact hu⟩
+  refine evalX_relabelφ L L' E ks ks σ' (peelφ B cp (ks c)) (Diagram.dlabs_nodup _ _ ho.legsL)
+    (Diagram.dlabs_nodup _ _ ho.legs) ho.bnd ?_ ?_ ?_ ?_ (fun x hx => hpl0 x (by
+      rw [dpairsX_nil L h.al] at hx; exact hx)) (fun x hx => by
+      rw [dpairsX_nil L h.al] at hx
+      rw [dpairsX_nil L' h.al']
+      exact ho.fwd ks hk x hx) (fun y hy => by
+      rw [dpairsX_nil L' h.al'] at hy
+      obtain ⟨x, hx, e⟩ := ho.bwd ks hk y hy
+      exact ⟨x, by rw [dpairsX_nil L h.al]; exact hx, e⟩)
+    (fun p hp => (ho.bndL p hp).1) ?_ ?_ (fun τ τ' hτ => h.prod E ks hk τ τ' hτ)
+  · intro p hp t ht
+    rw [lcL] at ht
+    by_cases hB : p.node ∈ B
+    · obtain ⟨c1, c1'⟩ := chBL p hp hB
+      rw [c1] at ht
+      obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks mb _ _).1 ht
+      by_cases hjs : j = ks c
+      · subst hjs
+        rw [peelφ_B (ks c) p hB u]
+        exact ⟨ho.memC p hp hB, by rw [lcL']; exact hu⟩
+      · rw [peelφ_ne (ks c) p j u hjs]
+        exact ⟨ho.mem' p hp, by rw [lcL', c1']; exact cons_mem_cidx ks c j _ u (by omega) hu⟩
+    · rw [peelφ_O (ks c) p hB t]
+      exact ⟨ho.mem' p hp, by rw [lcL', chOL p hp hB]; exact ht⟩
+  · intro q hq u hu
+    rw [legsEq, List.mem_append] at hq
+    rcases hq with hq | hq
+    · by_cases hB : q.node ∈ B
+      · obtain ⟨c1, c1'⟩ := chBL q hq hB
+        rw [lcL', c1'] at hu
+        obtain ⟨j, v, rfl, hj, hv⟩ := (mem_cidx_cons ks c _ _).1 hu
+        exact ⟨q, hq, j :: v, by rw [lcL, c1]; exact cons_mem_cidx ks mb j _ v (by omega) hv,
+          peelφ_ne (ks c) q j v (by omega)⟩
+      · exact ⟨q, hq, u, by rw [lcL, ← chOL q hq hB, ← lcL']; exact hu, peelφ_O (ks c) q hB u⟩
+    · obtain ⟨n, hn, hq⟩ := List.mem_flatMap.1 hq
+      obtain ⟨p, hp, rfl⟩ := List.mem_map.1 hq
+      obtain ⟨hn, hnB⟩ := List.mem_filter.1 hn
+      have hpn := node_of_leg n p hp
+      have hpB : p.node ∈ B := by rw [hpn]; simpa using hnB
+      have hpL : p ∈ L.base.legs := List.mem_flatMap.2 ⟨n, hn, hp⟩
+      obtain ⟨c1, -⟩ := chBL p hpL hpB
+      refine ⟨p, hpL, ks c :: u, ?_, peelφ_B (ks c) p hpB u⟩
+      rw [lcL, c1]
+      exact cons_mem_cidx ks mb _ _ u (by omega) (by rw [lcL'] at hu; exact hu)
+  · intro p hp t ht p' hp' t' ht' he
+    have nodeB : ∀ q ∈ L.base.legs, q.node ∈ B → ∃ n ∈ L.base.nodes, q.node = n.id ∧ n.id ∈ B :=
+      fun q hq hB => by
+        obtain ⟨n, hn, e⟩ := node_of_legs _ q hq
+        exact ⟨n, hn, e, e ▸ hB⟩
+    unfold peelφ at he
+    split_ifs at he with h1 h2 h2
+    · obtain ⟨n, hn, en, hnB⟩ := nodeB p hp h1.1
+      obtain ⟨n', hn', en', hnB'⟩ := nodeB p' hp' h2.1
+      simp only [cpP, Prod.mk.injEq, Port.mk.injEq] at he
+      obtain ⟨⟨e1, e2, e3⟩, e4⟩ := he
+      have := ho.cp_inj n hn hnB n' hn' hnB' (by rw [← en, ← en']; exact e1)
+      refine ⟨by cases p; cases p'; simp_all, ?_⟩
+      obtain ⟨-, ht1⟩ := h1
+      obtain ⟨-, ht2⟩ := h2
+      cases t <;> cases t' <;> simp_all
+    · obtain ⟨n, hn, en, hnB⟩ := nodeB p hp h1.1
+      obtain ⟨m, hm, em⟩ := node_of_legs _ p' hp'
+      simp only [Prod.mk.injEq] at he
+      exact (ho.cp_fresh n hn hnB m hm (by rw [← em, ← he.1, ← en]; rfl)).elim
+    · obtain ⟨n, hn, en, hnB⟩ := nodeB p' hp' h2.1
+      obtain ⟨m, hm, em⟩ := node_of_legs _ p hp
+      simp only [Prod.mk.injEq] at he
+      exact (ho.cp_fresh n hn hnB m hm (by rw [← em, he.1, ← en]; rfl)).elim
+    · simp only [Prod.mk.injEq] at he
+      exact he
+  · intro p hp t ht
+    by_cases hB : p.node ∈ B
+    · obtain ⟨c1, -⟩ := chBL p hp hB
+      rw [lcL, c1] at ht
+      obtain ⟨j, u, rfl, hj, hu⟩ := (mem_cidx_cons ks mb _ _).1 ht
+      by_cases hjs : j = ks c
+      · subst hjs
+        rw [peelφ_B (ks c) p hB u]
+        exact congrArg E.dimv (h.dimAt_copy p hp hB ks u ((mem_cidx ks _ u).1 hu).length_eq)
+      · rw [peelφ_ne (ks c) p j u hjs]
+        exact congrArg E.dimv (h.dimAt_keep p hp ks _)
+    · rw [peelφ_O (ks c) p hB t]
+      exact congrArg E.dimv (h.dimAt_keep p hp ks t)
+  · intro p hp t ht
+    obtain ⟨-, h2, h3⟩ := ho.bndL p hp
+    unfold peelφ
+    split_ifs with h1
+    · exact h3 h1.1
+    · exact h2
+  · intro q hq u hu
+    rcases ho.bnd' q hq with hq' | ⟨p, hp, hB, rfl⟩
+    · have hql := (ho.bndL q hq').1
+      by_cases hB : q.node ∈ B
+      · obtain ⟨c1, c1'⟩ := chBL q hql hB
+        rw [lcL', c1'] at hu
+        obtain ⟨j, v, rfl, hj, hv⟩ := (mem_cidx_cons ks c _ _).1 hu
+        exact ⟨q, hq', j :: v, by rw [lcL, c1]; exact cons_mem_cidx ks mb j _ v (by omega) hv,
+          peelφ_ne (ks c) q j v (by omega)⟩
+      · exact ⟨q, hq', u, by rw [lcL, ← chOL q hql hB, ← lcL']; exact hu, peelφ_O (ks c) q hB u⟩
+    · have hpl := (ho.bndL p hp).1
+      obtain ⟨c1, -⟩ := chBL p hpl hB
+      refine ⟨p, hp, ks c :: u, ?_, peelφ_B (ks c) p hB u⟩
+      rw [lcL, c1]
+      exact cons_mem_cidx ks mb _ _ u (by omega) (by rw [lcL'] at hu; exact hu)
+
+end peelx2
 
 end LDiagram
 

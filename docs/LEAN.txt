@@ -431,6 +431,14 @@ through psi0. A slide, namespace <N>.S<i>, writes C, the diagram both identity f
 (chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G, and S<i>.main is
 evalG_flatAt: the two digit sums read at the flat positions of their slot data agree.
 
+Peels over evalX (LinkedPeel.lean, library only, no export writes them yet): PeelX holds PeelOK
+of the two sides stripped of their readings (strip), no aligned wires, and the copy-indexed phases
+and leg dimensions of every node and leg read alike on both sides (phK, dmK) and on the copies by
+rdC: a reading of the peeled box of coefficient 0 becomes the constant ks c (coefficient 1 at a
+box off the copy, whose coordinate reads 0), a reading of an inner box the same at the copy's box
+one level up. evalX_peel: L'.evalX equals L.evalX read through peelφ (evalX_relabelφ; phAt and
+dimAt through rdVal).
+
 A power split (kernel.power_split) is proved the same way when both sides are linked diagrams
 (ArchytasZX/LinkedSplit.lean), over the digit sum evalX (Linked.lean): evalL with copy-indexed
 leg dimensions cdim (an entry (p, y, c, m) gives leg p at copy t the dimension index
