@@ -2313,6 +2313,25 @@ def _decide(
             saturation_limits=saturation_limits,
             floors=floors,
         )
+        if isinstance(settled, str) and nf_l is not None and nf_r is not None:
+            settled = _induction_on_normal_forms(
+                settled,
+                nf_l,
+                nf_r,
+                certificates,
+                evaluated=oracle.evaluated,
+                samples=samples,
+                rules=rules,
+                guard=guard,
+                max_samples=max_samples,
+                use_symbolic=use_symbolic,
+                max_depth=max_depth,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                use_saturation=use_saturation,
+                saturation_limits=saturation_limits,
+                floors=floors,
+            )
         stops.extend(_induction_stops(settled if isinstance(settled, str) else settled[2]))
         if isinstance(settled, str):
             notes.append(f"induction: {settled}")
@@ -2374,6 +2393,47 @@ def _decide_by_induction(
 
 
 _INDUCING: contextvars.ContextVar[bool] = contextvars.ContextVar("decide_inducing", default=False)
+
+
+def _induction_on_normal_forms(
+    unsettled: str,
+    nf_l: NormalForm,
+    nf_r: NormalForm,
+    certificates: Sequence[Certificate],
+    **options: Any,
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """:func:`_decide_by_induction` on the two normal forms when either side reduced; an EQUAL
+    keeps its kernel theorem as left -> left normal form = right normal form <- right (the
+    normal-form certificates around the induction theorem); otherwise ``unsettled``."""
+    if not (nf_l.results or nf_r.results) or len(certificates) != 2:
+        return unsettled
+    with _trace.span("decide.induction.normal_forms"):
+        settled = _decide_by_induction(nf_l.diagram, nf_r.diagram, **options)
+    if isinstance(settled, str) or settled[0] is not EqualityVerdict.EQUAL:
+        return unsettled
+    verdict, method, reason, evidence = settled
+    theorem = evidence.get("induction_proof")
+    if theorem is not None:
+        from archytaszx.semantics import kernel
+
+        try:
+            to_l, to_r = (kernel.check(c) for c in certificates)
+            proved = cast("kernel.Theorem", theorem)
+            theorem = kernel.trans(
+                kernel.trans(to_l, kernel.iso(to_l.rhs, proved.lhs)),
+                kernel.trans(
+                    proved, kernel.trans(kernel.iso(proved.rhs, to_r.rhs), kernel.symm(to_r))
+                ),
+            )
+        except kernel.KernelError as exc:
+            theorem = None
+            reason = f"{reason}; the normal-form certificates do not join it: {exc}"
+    return (
+        verdict,
+        method,
+        f"on the normal forms: {reason}",
+        {**evidence, "induction_proof": theorem},
+    )
 
 
 def _induction_rung(

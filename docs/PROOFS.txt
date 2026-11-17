@@ -116,7 +116,13 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             chain (carry_open.open_carry, section 4.4): the open pair by this
                             rung, then the closed pair by decide_equal without induction; then
                             the chain ends cut on both sides (carry_open.open_chain_ends,
-                            section 4.4); then the periodic test (section 4.5).
+                            section 4.4); then the periodic test (section 4.5). When the rung
+                            leaves the pair unsettled and either side's normal form took a
+                            step, the rung runs once more on the two normal forms (reason
+                            "on the normal forms: ..."); only an EQUAL is kept, its kernel
+                            theorem the left normal-form certificate, the induction theorem
+                            between the normal forms and the reversed right normal-form
+                            certificate joined by trans and iso.
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -462,6 +468,12 @@ holding a boundary slot becomes a hub (its phase, its legs off the copy but the 
 slot's place wired to a leaf) and a phaseless leaf (the slot and the legs into the copy); the
 kernel induction exposes the split by the reversed spider fusion of hub and leaf.
 
+When no chain attempt settles, the chain window takes a plain box (no links) carrying the
+step index the same way: that side's successor peeled, its residual read as its hypothesis
+through cut wires (expose_cut) and replaced by the other side's, the result compared with the
+other successor peeled, then unpeeled (iso, else symbolic contraction). The kernel theorem is
+the chain_window one of section 6 (window cut).
+
 4.5 Periodic chains: decide._decide_periodic
 
 When each side reads the index only in its scalar and in the multiplicity of at most one
@@ -629,7 +641,8 @@ The induction rung of decide_equal builds Decision.induction_proof itself
                         inside both successors
   chain_window,         an induction theorem: the base as for induction rewrite; one side's
   tree_window           peeled successor exposed (refl), its residual through cut wires
-                        (chain) or without the fed box (tree) as the region; the step from the
+                        (chain or plain box) or without the fed box (tree) as the region;
+                        the step from the
                         replaced diagram to the other peeled successor by iso, else by their
                         normal forms meeting, else by local_contraction over the two regions,
                         else by contraction; the start side tried first, then the goal side

@@ -2143,11 +2143,11 @@ def _chain_owned(diagram: Diagram, index: str) -> bool:
 def discharge_chain_window(
     obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
 ) -> TierOutcome:
-    """Settle the step case on a chain box: peel the last copy off one successor, read the
-    residual as that side's hypothesis diagram through its cut wires, replace it by the other
-    side's hypothesis diagram, and compare the result with the other successor (peeled or
-    not) structurally or by symbolic contraction. A chain that peels its first copy and reads
-    an index is tried again on :func:`offset_obligation`."""
+    """Settle the step case on a chain box, then on a plain (linkless) box: peel the last copy
+    off one successor, read the residual as that side's hypothesis diagram through its cut
+    wires, replace it by the other side's hypothesis diagram, and compare the result with the
+    other successor (peeled or not) structurally or by symbolic contraction. A chain that peels
+    its first copy and reads an index is tried again on :func:`offset_obligation`."""
     settled, why = _chain_window(obligation, max_steps)
     if settled:
         return TierOutcome(StepDischarge.CHAIN_WINDOW, True, why)
@@ -2264,6 +2264,26 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
                 f"{why}"
             )
         reasons.append(why)
+    for own_successor, own_k, other_k, other_successor in sides:
+        if _chain_owned(own_successor, index) or not index_owners(own_successor, index):
+            continue
+        replaced = _side_replaced(own_successor, own_k, other_k, index)
+        if isinstance(replaced, str):
+            reasons.append(f"plain box: {replaced}")
+            continue
+        targets = [other_successor]
+        try:
+            targets.insert(0, peel_owners(other_successor, index).diagram)
+        except BangBoxError:
+            pass
+        for target in targets:
+            settled, why = _close_window(replaced, target, max_steps)
+            if settled:
+                return True, (
+                    "peeled one copy of a plain box; the residual is the hypothesis diagram "
+                    f"through its cut wires, replaced by the other side's; {why}"
+                )
+            reasons.append(f"plain box: {why}")
     return False, "; ".join(reasons)
 
 
