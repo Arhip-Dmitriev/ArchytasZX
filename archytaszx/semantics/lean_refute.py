@@ -59,6 +59,7 @@ MAX_CYCLOTOMIC_DEGREE = 512
 MAX_PRIMES = 4
 MAX_PINNED = 16
 SYM_FIRST = 10_000
+ELIM_CHUNK = 2_000
 MAX_RES_ENTRIES = 2_000_000
 RES_PRIME_FLOOR = 1 << 20
 
@@ -1430,10 +1431,7 @@ class _Refuter:
         out[-1] += f"\n  chainR_nil {p} {dim} {tag}F{n}"
         for k in range(n - 1, -1, -1):
             l, new = news[k]
-            out.append(
-                f"set_option maxHeartbeats 0 in\ntheorem {tag}E{k} : "
-                f"elimR {p} {dim} {l} {tag}F{k} {new} = true := by decide +kernel"
-            )
+            out += self.elim_decls(f"{tag}E{k}", l, f"{tag}F{k}", new, scopes[new], dim)
             head = f"chainR {p} {dim} {tag}F{k} {tag}S{k} {tag}F{n} = true"
             out.append(
                 f"theorem {tag}C{k} : {head} :=\n  chainR_step {p} {dim} {l} {tag}F{k} "
@@ -1630,6 +1628,41 @@ class _Refuter:
         if len(nums) > TABLE_CHUNK:
             return str(self.out.table_get(nums))
         return f"(({_ints(nums)}) : List ℤ).getD k 0"
+
+    def elim_decls(
+        self, name: str, l: int, fs: str, new: str, scope: Sequence[int], dim: str
+    ) -> list[str]:
+        """The theorem ``name`` that `elimR` holds: one `decide +kernel`, or through
+        `elimR_chunks` one theorem per value list of the shortest prefix of ``scope`` whose
+        chunks hold at most `ELIM_CHUNK` entry sums each."""
+        p = self.p
+        head = f"elimR {p} {dim} {l} {fs} {new} = true"
+        d = [self.labdim(x) for x in scope]
+        k = 0
+        while k < len(scope) and math.prod(d[k:]) * self.labdim(l) > ELIM_CHUNK:
+            k += 1
+        if k == 0:
+            return [f"set_option maxHeartbeats 0 in\ntheorem {name} : {head} := by decide +kernel"]
+        pre, rest = list(scope[:k]), list(scope[k:])
+        vss: list[list[int]] = [[]]
+        for x in reversed(pre):
+            vss = [[j, *vs] for vs in vss for j in range(self.labdim(x))]
+        pt, rt = _ints_nat(pre), _ints_nat(rest)
+        out = []
+        for i, vs in enumerate(vss):
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {name}c{i} : elimC {p} {dim} {l} {fs} "
+                f"{new} {pt} {rt} {_ints_nat(vs)} = true := by decide +kernel"
+            )
+        lst = "[" + ", ".join(_ints_nat(vs) for vs in vss) + "]"
+        chunks = ", ".join(f"{name}c{i}" for i in range(len(vss)))
+        out.append(
+            f"set_option maxHeartbeats 0 in\ntheorem {name} : {head} :=\n"
+            f"  elimR_chunks {p} {dim} {l} {fs} {new} {pt} {rt} rfl (by decide +kernel) {lst} "
+            f"(by decide +kernel)\n    (by simp only [List.all_cons, List.all_nil, Bool.and_true, "
+            f"Bool.true_and, {chunks}])"
+        )
+        return out
 
     def res_count(self, size: int) -> None:
         """Counts ``size`` residue entries against `MAX_TERMS` and `MAX_RES_ENTRIES`."""

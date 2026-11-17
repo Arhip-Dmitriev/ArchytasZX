@@ -758,6 +758,64 @@ def elimR (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac) : 
     (assigns D new.scope).all fun τ => new.at τ ==
       ((List.range (D l)).map fun j => rfold p ins (Function.update τ l j)).sum % p
 
+/-- The scope conditions of `elimR`. -/
+def elimS (l : ℕ) (Fs : List RFac) (new : RFac) : Bool :=
+  let ins := Fs.filter fun F => F.scope.contains l
+  !new.scope.contains l &&
+    (new.scope.all fun x => ins.any fun F => F.scope.contains x) &&
+    (ins.all fun F => F.scope.all fun x => x == l || new.scope.contains x)
+
+/-- The entry condition of `elimR` at `τ`. -/
+def elimV (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac) (τ : ℕ → ℕ) : Bool :=
+  new.at τ == ((List.range (D l)).map fun j =>
+    rfold p (Fs.filter fun F => F.scope.contains l) (Function.update τ l j)).sum % p
+
+theorem elimR_split (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac) :
+    elimR p D l Fs new = (elimS l Fs new && (assigns D new.scope).all (elimV p D l Fs new)) :=
+  rfl
+
+/-- `τ` with the labels `ls` set to the values `vs`, the first label set last. -/
+def setL : List ℕ → List ℕ → (ℕ → ℕ) → ℕ → ℕ
+  | l :: ls, v :: vs, τ => Function.update (setL ls vs τ) l v
+  | _, _, τ => τ
+
+/-- Every list of values of the labels `ls` below their dimensions. -/
+def combos (D : ℕ → ℕ) : List ℕ → List (List ℕ)
+  | [] => [[]]
+  | l :: ls => (combos D ls).flatMap fun vs => (List.range (D l)).map fun j => j :: vs
+
+theorem assigns_append_mem (D : ℕ → ℕ) (rest : List ℕ) :
+    ∀ (pre : List ℕ) (τ' : ℕ → ℕ), τ' ∈ assigns D (pre ++ rest) →
+      ∃ vs ∈ combos D pre, ∃ τ ∈ assigns D rest, τ' = setL pre vs τ := by
+  intro pre
+  induction pre with
+  | nil => intro τ' h; exact ⟨[], by simp [combos], τ', by simpa using h, rfl⟩
+  | cons l ls ih =>
+    intro τ' h
+    simp only [List.cons_append, assigns, List.mem_flatMap, List.mem_map, List.mem_range] at h
+    obtain ⟨τ1, h1, j, hj, rfl⟩ := h
+    obtain ⟨vs, hvs, τ, hτ, rfl⟩ := ih τ1 h1
+    refine ⟨j :: vs, ?_, τ, hτ, rfl⟩
+    simp only [combos, List.mem_flatMap, List.mem_map, List.mem_range]
+    exact ⟨vs, hvs, j, hj, rfl⟩
+
+/-- The entry conditions of `elimR` at the assignments of `rest` with `pre` set to `vs`. -/
+def elimC (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac) (pre rest vs : List ℕ) :
+    Bool :=
+  (assigns D rest).all fun τ => elimV p D l Fs new (setL pre vs τ)
+
+theorem elimR_chunks (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac)
+    (pre rest : List ℕ) (hs : new.scope = pre ++ rest) (h0 : elimS l Fs new = true)
+    (vss : List (List ℕ)) (hv : combos D pre = vss)
+    (h : vss.all (fun vs => elimC p D l Fs new pre rest vs) = true) :
+    elimR p D l Fs new = true := by
+  rw [elimR_split, h0, Bool.true_and, hs, List.all_eq_true]
+  intro τ' hτ'
+  obtain ⟨vs, hvs, τ, hτ, rfl⟩ := assigns_append_mem D rest pre τ' hτ'
+  rw [hv] at hvs
+  have := (List.all_eq_true.1 h) vs hvs
+  exact (List.all_eq_true.1 this) τ hτ
+
 /-- The factors of `Fs` without `l`, then `new`. -/
 def elimStepR (l : ℕ) (Fs : List RFac) (new : RFac) : List RFac :=
   Fs.filter (fun F => !F.scope.contains l) ++ [new]
