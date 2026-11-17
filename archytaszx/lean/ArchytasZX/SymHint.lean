@@ -531,26 +531,147 @@ theorem normTmH_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ
       | none => intro h' ν; rw [← he ν, ← hc ν, h' ν]
       | some t'' => intro h' ν; rw [h' ν, hc ν, he ν]
 
+/-- The factors of `l` at the set bits of `k`, positions from `i`. -/
+def selK (k : ℕ) : ℕ → List Fac → List Fac
+  | _, [] => []
+  | i, f :: l => if k.testBit i then f :: selK k (i + 1) l else selK k (i + 1) l
+
+/-- The factors of `l` at the clear bits of `k`, positions from `i`. -/
+def selN (k : ℕ) : ℕ → List Fac → List Fac
+  | _, [] => []
+  | i, f :: l => if k.testBit i then selN k (i + 1) l else f :: selN k (i + 1) l
+
+theorem sel_perm (k : ℕ) : ∀ (l : List Fac) (i : ℕ), (selK k i l ++ selN k i l).Perm l
+  | [], _ => by simp [selK, selN]
+  | f :: l, i => by
+    have ih := sel_perm k l (i + 1)
+    by_cases h : k.testBit i
+    · simp only [selK, selN, h, ite_true, List.cons_append]
+      exact ih.cons f
+    · simp only [selK, selN, h]
+      exact (List.perm_middle).trans (ih.cons f)
+
+/-- No variable of the sums `s` occurs in the factors `l`. -/
+def freeOfSums (s : List (ℕ × DMon)) (l : List Fac) : Bool :=
+  l.all fun g => s.all fun p => !facHas p.1 g
+
+theorem delIns_fold (dv : ℕ → ℕ) (ν : ℕ → ℤ) (l m : List Fac) :
+    ((l.foldr delIns m).map (delV dv ν)).prod = (l.map (delV dv ν)).prod * (m.map (delV dv ν)).prod := by
+  induction l with
+  | nil => simp
+  | cons f l ih => simp only [List.foldr_cons, delIns_ok, ih, List.map_cons, List.prod_cons]; ring
+
+/-- `t` with the factors `keep` taken out of its summand. -/
+theorem den_keep (ρ : Val) (c : CMon) (s : List (ℕ × DMon)) (keep ds ps : List Fac)
+    (h : freeOfSums s keep = true) (ν : ℕ → ℤ) :
+    STm.den ρ ν ⟨c, s, keep ++ ds, ps⟩ = (keep.map (delV ρ.dv ν)).prod * STm.den ρ ν ⟨c, s, ds, ps⟩ := by
+  have hr := body_reads ρ.dv ⟨CMon.ofQ 1, [], keep, []⟩
+  have hS : ∀ x ∈ tmVars ⟨CMon.ofQ 1, [], keep, []⟩, x ∉ s.map (·.1) := by
+    intro x hx hm
+    simp only [tmVars, List.append_nil, List.mem_flatMap] at hx
+    obtain ⟨g, hg, hxg⟩ := hx
+    obtain ⟨p, hp, rfl⟩ := List.mem_map.1 hm
+    simp only [freeOfSums, List.all_eq_true, Bool.not_eq_true'] at h
+    exact facVars_has _ g (h g hg p hp) hxg
+  have hm := sumsV_const_mul ρ.dv s _ _ (body ρ.dv ⟨c, s, ds, ps⟩) hr hS ν
+  have hk : ∀ ν', body ρ.dv ⟨CMon.ofQ 1, [], keep, []⟩ ν' = (keep.map (delV ρ.dv ν')).prod := by
+    intro ν'; simp [body]
+  have hb : ∀ ν', body ρ.dv ⟨c, s, keep ++ ds, ps⟩ ν' =
+      body ρ.dv ⟨CMon.ofQ 1, [], keep, []⟩ ν' * body ρ.dv ⟨c, s, ds, ps⟩ ν' := by
+    intro ν'; simp only [body, List.map_append, List.prod_append, List.map_nil, List.prod_nil]; ring
+  simp only [STm.den]
+  rw [sumsV_congr _ _ _ _ hb, hm, hk]; ring
+
+theorem den_perm (ρ : Val) (c : CMon) (s : List (ℕ × DMon)) (ds ds' ps : List Fac)
+    (h : ds.Perm ds') (ν : ℕ → ℤ) : STm.den ρ ν ⟨c, s, ds, ps⟩ = STm.den ρ ν ⟨c, s, ds', ps⟩ := by
+  have : body ρ.dv ⟨c, s, ds, ps⟩ = body ρ.dv ⟨c, s, ds', ps⟩ :=
+    funext fun ν => by simp only [body, (h.map _).prod_eq]
+  simp only [STm.den, this]
+
+/-- `a` and `b` interleaved: the next factor from `a` at the set bits of `m`, positions from `i`. -/
+def ilv (m : ℕ) : ℕ → ℕ → List Fac → List Fac → List Fac
+  | 0, _, a, b => a ++ b
+  | _ + 1, _, [], b => b
+  | _ + 1, _, x :: a, [] => x :: a
+  | n + 1, i, x :: a, y :: b =>
+    if m.testBit i then x :: ilv m n (i + 1) a (y :: b) else y :: ilv m n (i + 1) (x :: a) b
+
+theorem ilv_perm (m : ℕ) : ∀ (n i : ℕ) (a b : List Fac), (ilv m n i a b).Perm (a ++ b)
+  | 0, _, a, b => by simp [ilv]
+  | _ + 1, _, [], b => by simp [ilv]
+  | _ + 1, _, x :: a, [] => by simp [ilv]
+  | n + 1, i, x :: a, y :: b => by
+    simp only [ilv]
+    split
+    · exact (ilv_perm m n (i + 1) a (y :: b)).cons x
+    · have h := (ilv_perm m n (i + 1) (x :: a) b).cons y
+      exact h.trans ((List.Perm.swap x y _).trans (List.perm_middle.symm.cons x))
+
+/-- `normTmH` on the term without the factors at the set bits of `k`, those interleaved back
+by `m`. -/
+def normTmK (fl : List ℕ) (k m : ℕ) (hs : List RHint) (t : STm) : Option STm :=
+  if freeOfSums t.sums (selK k 0 t.dels) then
+    match normTmH fl hs ⟨t.c, t.sums, selN k 0 t.dels, t.phs⟩ with
+    | none => none
+    | some r =>
+      if freeOfSums r.sums (selK k 0 t.dels) then
+        some ⟨r.c, r.sums, ilv m ((selK k 0 t.dels).length + r.dels.length) 0 (selK k 0 t.dels)
+          r.dels, r.phs⟩
+      else some t
+  else normTmH fl hs t
+
+theorem normTmK_ok (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ) (k m : ℕ)
+    (hs : List RHint) (t : STm) : TmRes ρ t (normTmK fl k m hs t) := by
+  unfold normTmK
+  split
+  · next h1 =>
+    have ht : ∀ ν, t.den ρ ν = ((selK k 0 t.dels).map (delV ρ.dv ν)).prod *
+        STm.den ρ ν ⟨t.c, t.sums, selN k 0 t.dels, t.phs⟩ := fun ν => by
+      rw [← den_keep ρ t.c t.sums _ _ t.phs h1 ν,
+        den_perm ρ t.c t.sums _ t.dels t.phs (sel_perm k t.dels 0) ν]
+    have hn := normTmH_ok ρ hρ fl hfl hs ⟨t.c, t.sums, selN k 0 t.dels, t.phs⟩
+    revert hn
+    cases normTmH fl hs ⟨t.c, t.sums, selN k 0 t.dels, t.phs⟩ with
+    | none => intro hn ν; rw [ht, hn ν, mul_zero]
+    | some r =>
+      intro hn
+      simp only
+      split
+      · next h2 =>
+        intro ν
+        rw [den_perm ρ r.c r.sums _ _ r.phs (ilv_perm m _ 0 (selK k 0 t.dels) r.dels) ν,
+          den_keep ρ r.c r.sums _ r.dels r.phs h2 ν]
+        exact (congrArg _ (hn ν)).trans (ht ν).symm
+      · intro ν; rfl
+  · exact normTmH_ok ρ hρ fl hfl hs t
+
+/-- A term's hint: the mask of its factors set aside, the mask interleaving them back, the
+rounds. -/
+abbrev THint := ℕ × ℕ × List RHint
+
 /-- The terms normalised with their hint lists, in order, and summed into `acc`. -/
-def nfGoH (fl : List ℕ) : List (List RHint) → List STm → List STm → List STm
+def nfGoH (fl : List ℕ) : List THint → List STm → List STm → List STm
   | _, acc, [] => acc
   | hs, acc, t :: ts =>
-    match fTm t (normTmH fl (hs.headD [])) with
+    match fTm t (normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
+      (hs.headD (0, 0, [])).2.2) with
     | none => nfGoH fl hs.tail acc ts
     | some t' => fL fTm (tmAdd t' acc) fun acc => nfGoH fl hs.tail acc ts
 
 theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ) (ν : ℕ → ℤ) :
-    ∀ (e : List STm) (hs : List (List RHint)) (acc : List STm),
+    ∀ (e : List STm) (hs : List THint) (acc : List STm),
     exDen ρ ν (nfGoH fl hs acc e) = exDen ρ ν acc + exDen ρ ν e := by
   intro e
   induction e with
   | nil => intro hs acc; simp [nfGoH, exDen]
   | cons t ts ih =>
     intro hs acc
-    have hn := normTmH_ok ρ hρ fl hfl (hs.headD []) t
+    have hn := normTmK_ok ρ hρ fl hfl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
+      (hs.headD (0, 0, [])).2.2 t
     simp only [nfGoH, fTm_eq]
     revert hn
-    cases normTmH fl (hs.headD []) t with
+    cases normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
+        (hs.headD (0, 0, [])).2.2 t with
     | none =>
       intro hn
       dsimp only
@@ -565,11 +686,11 @@ theorem nfGoH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
       rw [hn ν]; ring
 
 /-- The hinted normaliser of node `i`, its hints `H i`. -/
-def nfH (fl : List ℕ) (H : ℕ → List (List RHint)) (i : ℕ) (e : List STm) : List STm :=
+def nfH (fl : List ℕ) (H : ℕ → List THint) (i : ℕ) (e : List STm) : List STm :=
   nfGoH fl (H i) [] e
 
 theorem nfH_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
-    (H : ℕ → List (List RHint)) (i : ℕ) (e : List STm) (ν : ℕ → ℤ) :
+    (H : ℕ → List THint) (i : ℕ) (e : List STm) (ν : ℕ → ℤ) :
     exDen ρ ν (nfH fl H i e) = exDen ρ ν e := by
   unfold nfH
   rw [nfGoH_den ρ hρ fl hfl ν e (H i) []]

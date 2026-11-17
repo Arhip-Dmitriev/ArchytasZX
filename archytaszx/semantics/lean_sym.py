@@ -1292,6 +1292,47 @@ def _mask(labels: Iterable[int]) -> int:
     return m
 
 
+THint = tuple[int, int, list[tuple[int, list[tuple[int, int, int]]]]]
+
+
+def ilv_mask(a: Sequence[Fac], b: Sequence[Fac], out: Sequence[Fac]) -> int | None:
+    """The mask with which ``ilv`` interleaves ``a`` and ``b`` into ``out``, if one does."""
+    i = j = 0
+    m = 0
+    for pos, g in enumerate(out):
+        if i < len(a) and a[i] == g:
+            m |= 1 << pos
+            i += 1
+        elif j < len(b) and b[j] == g:
+            j += 1
+        else:
+            return None
+    return m if i == len(a) and j == len(b) else None
+
+
+def term_hint(fl: Sequence[int], t: STm) -> THint:
+    """``normTmK``'s hint for ``t``: the mask of the deltas set aside, those without a summed
+    variable that the full normalisation keeps, the mask interleaving them back, and the
+    rounds of the rest; empty masks when that does not give the full result."""
+    key = tuple(fl)
+    full = _norm_cached(key, t)
+    if full is not None:
+        sv = {x for x, _ in t[1]}
+        kept = set(full[2])
+        idx = [j for j, g in enumerate(t[2]) if g in kept and not (ip_varset(g[1]) & sv)]
+        if idx:
+            iset = set(idx)
+            keep = tuple(t[2][j] for j in idx)
+            tw = (t[0], t[1], tuple(g for j, g in enumerate(t[2]) if j not in iset), t[3])
+            r = _norm_cached(key, tw)
+            if r is not None and (r[0], r[1], r[3]) == (full[0], full[1], full[3]):
+                rv = {x for x, _ in r[1]}
+                m = ilv_mask(keep, r[2], full[2])
+                if m is not None and not any(ip_varset(g[1]) & rv for g in keep):
+                    return _mask(idx), m, norm_hints(fl, tw)
+    return 0, 0, norm_hints(fl, t)
+
+
 def tr_hints(
     fl: Sequence[int],
     dt: Callable[[int], DMon],
@@ -1300,7 +1341,7 @@ def tr_hints(
     nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
     internal: Sequence[int],
     steps: Sequence[Sequence[STm]],
-) -> list[list[list[tuple[int, list[tuple[int, int, int]]]]]]:
+) -> list[list[THint]]:
     """For node ``k``, the hints of each term of its product with ``steps[k + 1]``."""
     pres: list[tuple[int, ...]] = []
     pre: tuple[int, ...] = ()
@@ -1316,7 +1357,7 @@ def tr_hints(
             (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in pres[k]
         )
         prods = [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, steps[k + 1])]
-        out.append([norm_hints(fl, t) for t in prods])
+        out.append([term_hint(fl, t) for t in prods])
     return out
 
 
@@ -3118,8 +3159,7 @@ class _SymExport:
             hints = tr_hints(self.fl, self.dtf, self.ptf, labs, nodes, internal, st)
             table = "[" + ", ".join(str(h).replace(" ", "") for h in hints) + "]"
             out.append(
-                f"def {tag}H (i : ℕ) : List (List RHint) := "
-                f"(({table} : List (List (List RHint)))).getD i []"
+                f"def {tag}H (i : ℕ) : List THint := (({table} : List (List THint))).getD i []"
             )
             args = f"(nfH FL {tag}H) DT PT RL labs"
             m = len(lnet.nodes)
@@ -3192,9 +3232,9 @@ class _SymExport:
                 nets_ok[tag] = f"{name}c{tag}"
         tb2 = tb if tb in own else ta
         e0, e1 = texts_e[ta], texts_e[tb2]
-        zh = [norm_hints(self.fl, t) for t in ex_mul(s0, e[ta]) + ex_mul(neg, eb)]
+        zh = [term_hint(self.fl, t) for t in ex_mul(s0, e[ta]) + ex_mul(neg, eb)]
         out.append(
-            f"def {name}ZH (_ : ℕ) : List (List RHint) := "
+            f"def {name}ZH (_ : ℕ) : List THint := "
             "[" + ", ".join(str(h).replace(" ", "") for h in zh) + "]"
         )
         parts = [
