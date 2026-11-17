@@ -823,14 +823,19 @@ def f2_add(a: F2Poly, b: F2Poly) -> F2Poly:
 
 def f2_substitute(p: F2Poly, var: int, value: F2Poly) -> F2Poly:
     """``p`` with ``var`` replaced by ``value``, over F_2."""
-    out: set[Mono] = set()
-    for m in p:
-        if var not in m:
-            out ^= {m}
-            continue
+    hit = [m for m in p if var in m]
+    if not hit:
+        return p if isinstance(p, frozenset) else frozenset(p)
+    out = {m for m in p if var not in m}
+    add, remove = out.add, out.remove
+    for m in hit:
         rest = m - {var}
         for v in value:
-            out ^= {rest | v}
+            k = rest | v
+            if k in out:
+                remove(k)
+            else:
+                add(k)
     return frozenset(out)
 
 
@@ -964,16 +969,59 @@ def _drop_terms(ps: PathSum, terms: Sequence[tuple[Mono, Fraction]]) -> None:
         ps.phase.terms.pop(m, None)
 
 
-def _try_hh_pivot(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
-    for y in sorted(ps.path):
-        terms = occ.get(y, [])
-        q = _hh_quotient(y, terms)
+def _pivot_cost(
+    y: int, z: int, value: F2Poly, occ: Mapping[int, list[tuple[Mono, Fraction]]]
+) -> int:
+    """An upper bound on the (hit term, lift term) pairs substituting ``z`` by ``value`` costs
+    once the ``y`` terms are dropped."""
+    size = len(value)
+    out = 0
+    for m, c in occ.get(z, []):
+        if y not in m:
+            out += min(_lift_bound(size, c.denominator), 1 << 40)
+    return out
+
+
+def _hh_choice(
+    ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]
+) -> tuple[int, int, F2Poly] | None:
+    """The [HH] (y, pivot, value): the lowest y whose quotient reads only path variables with
+    a pivot of :func:`_pivot_cost` at most :data:`PIVOT_COST`, its lowest such pivot; else the
+    lowest y with a pivot, its lowest pivot; else None."""
+    path = ps.path
+    found: list[tuple[int, F2Poly]] = []
+    for y in sorted(path):
+        q = _hh_quotient(y, occ.get(y, []))
         if q is None:
             continue
-        z = _pivot(q, ps.path, y)
-        if z is None:
+        found.append((y, q))
+        if not all(v in path for m in q for v in m):
             continue
-        value = frozenset(q - {frozenset({z})})
+        count: dict[int, int] = {}
+        for m in q:
+            for v in m:
+                count[v] = count.get(v, 0) + 1
+        for z in sorted(v for m in q if len(m) == 1 for v in m):
+            if z != y and count[z] == 1:
+                value = frozenset(q - {frozenset({z})})
+                if _pivot_cost(y, z, value, occ) <= PIVOT_COST:
+                    return y, z, value
+    for y, q in found:
+        pivot = _pivot(q, path, y)
+        if pivot is not None:
+            return y, pivot, frozenset(q - {frozenset({pivot})})
+    return None
+
+
+PIVOT_COST = 1 << 12
+"""The most :func:`_pivot_cost` a pivot of the first pass of :func:`_hh_choice` has."""
+
+
+def _try_hh_pivot(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
+    choice = _hh_choice(ps, occ)
+    if choice is not None:
+        y, z, value = choice
+        terms = occ.get(y, [])
         _drop_terms(ps, terms)
         ps.phase.substitute(z, value)
         ps.constraints = [f2_substitute(c, z, value) for c in ps.constraints]
@@ -1106,18 +1154,22 @@ def _try_low_digit(
         return False
     top = digits[-1]
     hit = [c.denominator for m, c in ps.phase.terms.items() if v in m and top not in m]
+    saved = None
     if hit and _lift_bound(len(b0) - 1, math.lcm(*hit)) > XOR_LIFT_TERMS:
-        try:
-            _xor_lift(sorted(b0 - {frozenset({v})}, key=_mono_key), math.lcm(*hit))
-        except PathSumUnsupported:
-            return False
+        saved = dict(ps.phase.terms)
     _drop_terms(ps, occ[top])
+    value = frozenset(b0 - {frozenset({v})})
+    try:
+        ps.phase.substitute(v, value)
+    except PathSumUnsupported:
+        if saved is None:
+            raise
+        ps.phase.terms = saved
+        return False
     ps.constraints.append(b0)
     ps.path.discard(top)
     ps.sqrt2 += 2
     ps.trace.append(Step("hh_constraint", top, None, b0))
-    value = frozenset(b0 - {frozenset({v})})
-    ps.phase.substitute(v, value)
     ps.trace.append(Step("bsub", v, None, value))
     return True
 

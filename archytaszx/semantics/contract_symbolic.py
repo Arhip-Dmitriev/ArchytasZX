@@ -2377,7 +2377,14 @@ def _cyclo_expr(value: object) -> sp.Expr:
 
 
 def _parity_expr(poly: frozenset[frozenset[int]], var: Mapping[int, sp.Expr]) -> sp.Expr:
-    """An F_2 polynomial as the integer sum of its monomials, whose parity is its value."""
+    """An F_2 polynomial as the integer sum of its monomials, whose parity is its value; over
+    distinct symbols built by scalar._terms_expr."""
+    from archytaszx.algebra.scalar import _terms_expr
+
+    used = {v for mono in poly for v in mono}
+    symbols = {var[v] for v in used}
+    if len(symbols) == len(used) and all(s.is_Symbol for s in symbols):
+        return _terms_expr({frozenset((var[v], 1) for v in mono): 1 for mono in poly})
     return sp.Add(*(sp.Mul(*(var[v] for v in sorted(mono))) for mono in sorted(poly, key=sorted)))
 
 

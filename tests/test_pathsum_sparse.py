@@ -222,3 +222,48 @@ def test_occurrences_on_the_path_are_the_full_ones() -> None:
     path = {1, 4, 7}
     full, some = _occurrences(p), _occurrences(p, path)
     assert some == {v: full[v] for v in full if v in path}
+
+
+def test_f2_substitute_is_the_xor_fold() -> None:
+    from archytaszx.algebra.pathsum import f2_substitute
+
+    rng = random.Random(41)
+    for _ in range(300):
+        p = frozenset(frozenset(rng.sample(range(6), rng.randint(0, 3))) for _m in range(8))
+        var = rng.randrange(6)
+        value = frozenset(frozenset(rng.sample(range(8), rng.randint(0, 2))) for _m in range(4))
+        want: set[frozenset[int]] = set()
+        for m in p:
+            if var not in m:
+                want ^= {m}
+                continue
+            for v in value:
+                want ^= {(m - {var}) | v}
+        assert f2_substitute(p, var, value) == frozenset(want)
+
+
+def test_hh_takes_a_cheap_pivot_on_path_variables_first() -> None:
+    from archytaszx.algebra.pathsum import Cyclo, PathSum, _hh_choice, _occurrences
+
+    half = Fraction(1, 2)
+    phase = PhasePoly()
+    for mono, c in (({1, 0}, half), ({1, 2}, half), ({3, 4}, half), ({3, 2}, half)):
+        phase.add(mono, c)
+    phase.add({2}, Fraction(1, 8))
+    ps = PathSum((0,), {1, 2, 3, 4}, phase, Cyclo.rational(1))
+    assert _hh_choice(ps, _occurrences(ps.phase, ps.path)) == (3, 2, frozenset({frozenset({4})}))
+    ps.path.discard(4)
+    assert _hh_choice(ps, _occurrences(ps.phase, ps.path)) == (1, 2, frozenset({frozenset({0})}))
+
+
+def test_parity_expr_is_the_evaluated_sum() -> None:
+    from archytaszx.semantics.contract_symbolic import _engine_index, _parity_expr
+
+    rng = random.Random(43)
+    var = {v: _engine_index(f"_i{v}") for v in range(12)}
+    for _ in range(100):
+        poly = frozenset(
+            frozenset(rng.sample(range(12), rng.randint(0, 5))) for _m in range(rng.randint(0, 20))
+        )
+        want = sp.Add(*(sp.Mul(*(var[v] for v in sorted(m))) for m in sorted(poly, key=sorted)))
+        assert sp.srepr(_parity_expr(poly, var)) == sp.srepr(want)
