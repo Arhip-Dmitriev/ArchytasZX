@@ -56,6 +56,7 @@ MAX_POINTS = 16
 BRUTE_LIMIT = 256
 MAX_TERMS = 200_000
 MAX_CYCLOTOMIC_DEGREE = 512
+MAX_SPARSE = 64
 MAX_PRIMES = 4
 MAX_PINNED = 16
 SYM_FIRST = 10_000
@@ -110,7 +111,16 @@ def export_refutation(
             refuter = _Refuter(left, right, candidate, describe)
             if index is not None and candidate == seen[0]:
                 refuter.hint = tuple(index)
-            return refuter.run(name)
+            try:
+                return refuter.run(name)
+            except (ScalarUnsupported, NetUnsupported):
+                if not refuter.wide():
+                    raise
+                big = _Refuter(left, right, candidate, describe)
+                big.hint, big.sparse_all = refuter.hint, True
+                with contextlib.suppress(ScalarUnsupported, NetUnsupported):
+                    return big.run(name)
+                raise
         except ScalarUnsupported as exc:
             first = first or NetUnsupported(str(exc))
         except NetUnsupported as exc:
@@ -406,6 +416,8 @@ class _Refuter:
         return int(v)
 
     weights_ok = True
+    sparse_all = False
+    lmul: sp.Expr = sp.Integer(1)
 
     def setup_env(self) -> None:
         if any(_weighted(n.kind) for lab in (self.a, self.b) for n in lab.net.nodes):
@@ -851,12 +863,32 @@ class _Refuter:
             return False
         return all(sp.sympify(v) == 0 for v in entries.values())
 
+    def wide(self) -> bool:
+        """The order chosen has a cyclotomic field above `MAX_CYCLOTOMIC_DEGREE` or a phase
+        vector is sparse."""
+        m = getattr(self, "M", None)
+        if m is None:
+            return False
+        return bool(getattr(self, "sparse", {})) or sp.totient(m) > MAX_CYCLOTOMIC_DEGREE
+
+    def sparse_of(self, ph: int) -> dict[int, sp.Rational] | None:
+        """The entries of the phase vector ``ph`` at the point, when its Lean body is a chain of
+        at most `MAX_SPARSE` cases and it has no rule."""
+        specs = self.out.phase_specs
+        entries, rule = specs[ph] if ph < len(specs) else ({}, None)
+        if rule is not None or self.out.family or ph in self.out.phase_tables:
+            return None
+        if len(entries) > MAX_SPARSE:
+            return None
+        return {k: self.phase(ph, k) for k in sorted(entries)}
+
     def choose_m(self) -> None:
         needs = {1}
         self.keys: list[tuple[int, int]] = []
         self.ckeys: list[tuple[int, int]] = []
         self.zs: list[int] = []
         self.tabs: dict[int, tuple[list[int], int]] = {}
+        self.sparse: dict[int, dict[int, sp.Rational]] = {}
         seen: set[tuple[int, int]] = set()
         dens: list[sp.Rational] = []
         for net in (self.a.net, self.b.net):
@@ -869,6 +901,12 @@ class _Refuter:
                 needs.add(d)
                 if not _phased(n.kind):
                     continue
+                if self.sparse_all and not _weighted(n.kind) and not self.zero_vector(n.ph):
+                    sv = self.sparse.get(n.ph) or self.sparse_of(n.ph)
+                    if sv is not None:
+                        self.sparse[n.ph] = sv
+                        needs.update(int(t.q) for t in sv.values())
+                        continue
                 if d > MAX_TERMS:
                     raise NetUnsupported(f"a node of dimension {d}, above {MAX_TERMS}")
                 if _weighted(n.kind):
@@ -932,6 +970,9 @@ class _Refuter:
         if tab is not None:
             nums, den = tab
             return ((nums[k] if k < len(nums) else 0) * (self.M // den)) % self.M, ()
+        sv = getattr(self, "sparse", {}).get(ph)
+        if sv is not None:
+            return int((sv.get(k, sp.Integer(0)) * self.M) % self.M), ()
         return self.ptab.get((ph, k), (0, ()))
 
     def at_point(self, model: sp.Expr) -> sp.Expr:
@@ -1283,7 +1324,9 @@ class _Refuter:
         sq0, sq1 = self.sqw_list(self.a.net), self.sqw_list(self.b.net)
         k0, k1 = _kw(sq0), _kw(sq1)
         s0, s1 = self.at_point(self.s0), self.at_point(self.s1)
-        f0, f1 = self.poly(s0 * k0), self.poly(s1 * k1)
+        if self.sparse_all:
+            self.lmul = _root_factor([s0 * k0, s1 * k1])
+        f0, f1 = self.poly(self.lmul * s0 * k0), self.poly(self.lmul * s1 * k1)
         lcd = math.lcm(*(int(sp.Rational(c).q) for f in (f0, f1) for c in f.coeffs()))
         vecs = [_coeff_list(f, lcd) for f in (f0, f1)]
         found = None
@@ -1299,7 +1342,7 @@ class _Refuter:
         self.init_cert()
         hfs = []
         for s, k, v in ((s0, k0, vecs[0]), (s1, k1, vecs[1])):
-            goal = lcd * self.symbolize(s) * self.symbolize(k) - sum(
+            goal = lcd * self.symbolize(self.lmul * s) * self.symbolize(k) - sum(
                 c * _Z**i for i, c in enumerate(v)
             )
             hfs.append(self.combination(sp.expand(goal), []))
@@ -1478,12 +1521,13 @@ class _Refuter:
         qt = ", ".join(f"({ph}, {q})" for ph, q in sorted(self.qtab.items()))
         sig = ", ".join(f"({x}, {v})" for x, v in sorted(sigma.items()))
         unfold = "Fam.env, F, Φ" if out.family else "E, Φ"
-        fs = [*self.zs, *self.tabs]
+        fs = [*self.zs, *self.tabs, *self.sparse]
         fsl = _ints_nat(fs)
         cases = "".join(f"  | {ph}, _ => (0, [])\n" for ph in self.zs) + "".join(
             f"  | {ph}, k => ((({self.table_get(nums)} * {M // den}) % {M}).toNat, []" + ")\n"
             for ph, (nums, den) in self.tabs.items()
         )
+        cases += "".join(self.sparse_cases(ph) for ph in self.sparse)
         phok = ", ".join(self.phase_proof(ph, j, unfold) for ph, j in self.keys)
         coefok = ", ".join(
             f"by rw [show Qt {ph} = {self.qtab[ph]} from rfl]; norm_num, {self.coef_proof(ph, j)}"
@@ -1524,12 +1568,14 @@ class _Refuter:
                     f"\n      exact (ex_tab {M} {den} {M // den} (by norm_num) (by norm_num) _ "
                     f"({den} : ℝ) (by norm_num)).trans (mul_one _).symm"
                 )
+            for ph in self.sparse:
+                fproof += self.sparse_proof(ph, unfold)
         else:
             fproof = "by intro i hi; simp at hi"
         body = [
             "  intro h",
             f"  have he := h {' '.join(args)}" if args and binders else "  have he := h",
-            f"  have hp : Fact (Nat.Prime {p}) := ⟨by norm_num⟩",
+            f"  have hp : Fact (Nat.Prime {p}) := ⟨{self.prime_proof()}⟩",
             (
                 f"  have hw := prim_of {p} {w} {M} (by norm_num) (by norm_num) {_fac_list(M)} "
                 f"{K} (by norm_num) {K} {K}"
@@ -1567,7 +1613,7 @@ class _Refuter:
         body.append(
             f"  refine refute_res σ0 (inRange_of _ _ _ {K}) {M} {p} {w} (by norm_num) "
             f"(by norm_num) hw "
-            f"_ _ _ _ _ _ ⟨e0, r0⟩ ⟨e{two}, r{two}⟩ he ({lcd} : ℂ) {_ints(vecs[0])} "
+            f"_ _ _ _ _ _ ⟨e0, r0⟩ ⟨e{two}, r{two}⟩ he {self.l_text(lcd)} {_ints(vecs[0])} "
             f"{_ints(vecs[1])} ?_ ?_ {K}"
         )
         for (tag, sq, _plan), hf in zip([nets[0], nets[-1]], hfs, strict=True):
@@ -1609,6 +1655,41 @@ class _Refuter:
                 negated=True,
             )
         return out.source(lead=f"  refutation at {self.point_note()}, ζ = om {M}, mod {p}")
+
+    def l_text(self, lcd: int) -> str:
+        """The multiplier `L` of `refute_res`: ``lcd`` times :attr:`lmul`."""
+        if self.lmul == 1:
+            return f"({lcd} : ℂ)"
+        return f"(({lcd} : ℂ) * {self.out.sc.text(self.lmul)})"
+
+    def prime_proof(self) -> str:
+        """`Nat.Prime p`: by `norm_num`, or with :attr:`sparse_all` by `prime_lucas` with a
+        primitive root and the factorisation of `p - 1`."""
+        p = self.p
+        if not self.sparse_all:
+            return "by norm_num"
+        g = int(sp.primitive_root(p))
+        return (
+            f"prime_lucas {p} {g} (by norm_num) (by norm_num) {_fac_list(p - 1)} (by norm_num) "
+            f"(by norm_num) {K} {K}"
+        )
+
+    def sparse_cases(self, ph: int) -> str:
+        """The `Pt` case of the sparse phase vector ``ph``: an `if` chain over its entries."""
+        body = "(0, [])"
+        for k, t in reversed(list(self.sparse[ph].items())):
+            body = f"if k = {k} then ({int((t * self.M) % self.M)}, []) else {body}"
+        return f"  | {ph}, k => {body}\n"
+
+    def sparse_proof(self, ph: int, unfold: str) -> str:
+        """The `hF` case of the sparse phase vector ``ph``, one `ex_atoms` per entry."""
+        M = self.M
+        out = f"\n    · simp only [{unfold}, Pt, List.map_nil, mono_nil]\n      split_ifs"
+        for t in self.sparse[ph].values():
+            e = int((t * M) % M)
+            z = int((t * M - e) / M)
+            out += f"\n      · rw [ex_atoms {M} {e} ({z}) [] [] (by norm_num) (by norm_num)]; rfl"
+        return out + "\n      · simp [ex_zero, mono_nil]"
 
     def coef_proof(self, ph: int, j: int) -> str:
         """`Qt ph * coef ph j = tv (om M) [] (Ct ph j)` by the atom facts."""
@@ -1872,6 +1953,24 @@ def _rational(e: sp.Expr) -> sp.Rational | None:
     v = v.replace(lambda a: isinstance(a, NC), lambda a: a.args[0])
     v = sp.simplify(v)
     return sp.Rational(v) if v.is_Rational else None
+
+
+def _root_factor(es: Sequence[sp.Expr]) -> sp.Expr:
+    """``√x`` for the squarefree ``x`` with ``√x · e`` rational for every ``e`` of ``es``, or 1
+    when there is none."""
+    x = 1
+    for e in es:
+        if _rational(e) is not None:
+            continue
+        sq = _rational(e * e)
+        if sq is None or sq <= 0:
+            return sp.Integer(1)
+        _, x = _square_split(int(sq.p * sq.q))
+        break
+    if x == 1:
+        return sp.Integer(1)
+    r = Rt(x)
+    return r if all(_rational(r * e) is not None for e in es) else sp.Integer(1)
 
 
 def _fac_list(m: int) -> str:

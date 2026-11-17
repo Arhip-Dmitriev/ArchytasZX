@@ -15,7 +15,9 @@
 
 A plan sums out the labels a binder, splitter, Z spider or constraint fixes (delta steps) and
 the labels shared by exactly two Fourier boxes (geometric steps), then contracts the remaining
-labels with residue tables. :func:`sym_plan` builds the plan at one boundary assignment and
+labels with residue tables. With the refuter's ``sparse_all`` the plan first replaces each X
+spider with zero phases by its divisibility constraint (X steps) and its bindings read the
+boundary labels from the assignment. :func:`sym_plan` builds the plan at one boundary assignment and
 :func:`sym_decls` writes its Lean declarations.
 """
 
@@ -31,6 +33,7 @@ from archytaszx.semantics.lean_net import LNet, NetUnsupported, _head
 Ex = tuple[Any, ...]
 
 MAX_SYM_STEPS = 4000
+MAX_XSTEP = 4096
 
 
 def ev(e: Ex, t: Callable[[int], int]) -> int:
@@ -274,9 +277,14 @@ def _csolve(n: int, a: Ex, b: Ex, l: int, d: Callable[[int], int]) -> Ex | None:
     return None
 
 
-def _solve(st: State, net: LNet, dimv: Any, d: Any, l: int, src: tuple[Any, ...]) -> Ex | None:
+def _solve(
+    st: State, net: LNet, dimv: Any, d: Any, l: int, src: tuple[Any, ...], bare: bool = False
+) -> Ex | None:
+    """Mirror of `solve`; ``bare`` admits a constraint on one label."""
     if src[0] == "cn":
         n, e = src[1]
+        if e[0] == "v" and bare:
+            return _csolve(n, e, ("c", 0), l, d)
         if e[0] != "add":
             return None
         return _csolve(n, e[1], e[2], l, d) or _csolve(n, e[2], e[1], l, d)
@@ -308,6 +316,23 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     states: list[State] = [st]
     frees: list[list[int]] = [list(free)]
     steps: list[tuple[Any, ...]] = []
+    pinned = bool(getattr(refuter, "sparse_all", False))
+    pu: set[int] = bset if pinned else set()
+    psig: Mapping[int, int] = sigma if pinned else {}
+    if pinned:
+        for i in list(st.ns):
+            n = net.nodes[i]
+            dn = dimv(n.dim)
+            if _head(n.kind) != "X" or not 0 < dn <= MAX_XSTEP or m % dn:
+                continue
+            if any(refuter.P(n.ph, k)[0] for k in range(dn)):
+                continue
+            rest = [j for j in st.ns if j != i]
+            e = _xexpr(st, n, dn)
+            st = State(list(st.bs), rest, [*st.cs, (dn, e)], st.c * dn % p)
+            steps.append(("X", i, rest))
+            states.append(st)
+            frees.append(list(free))
 
     def opened(s: State, a: Ex) -> bool:
         if a[0] == "neg" and a[1][0] == "v":
@@ -332,7 +357,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     def dok(s: State, l: int, src: tuple[Any, ...]) -> Ex | None:
         if l not in fset or s.bound(l):
             return None
-        e = _solve(s, net, dimv, d, l, src)
+        e = _solve(s, net, dimv, d, l, src, pinned)
         if e is None or l in vars_(e):
             return None
         if any(x not in fset and x not in bset for x in vars_(e)):
@@ -344,6 +369,8 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     def leg_label(s: State, src: tuple[Any, ...]) -> int | None:
         if src[0] == "cn":
             e = src[1][1]
+            if e[0] == "v":
+                return int(e[1]) if pinned and e[1] in fset else None
             if e[0] != "add":
                 return None
             for a in (e[1], e[2]):
@@ -423,9 +450,12 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
         if step[0] == "D":
             e = step[3]
             st = State(
-                [(l, lnorm(e, (), {})), *((a, lnorm(subst(v, l, e), (), {})) for a, v in st.bs)],
+                [
+                    (l, lnorm(e, pu, psig)),
+                    *((a, lnorm(subst(v, l, e), pu, psig)) for a, v in st.bs),
+                ],
                 list(st.ns),
-                [(nq, lnorm(subst(v, l, e), (), {})) for nq, v in st.cs],
+                [(nq, lnorm(subst(v, l, e), pu, psig)) for nq, v in st.cs],
                 st.c,
             )
         else:
@@ -437,6 +467,16 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
         states.append(st)
         frees.append(list(free))
     return _finish(refuter, net, sigma, st, states, frees, steps, free)
+
+
+def _xexpr(st: State, n: Any, d: int) -> Ex:
+    """Mirror of `xexpr`."""
+    es = [st.texpr(x) for x in n.outs]
+    es += [st.texpr(x) if d == 2 else ("mul", d - 1, st.texpr(x)) for x in n.ins]
+    out: Ex = ("c", 0)
+    for e in reversed(es):
+        out = ("add", e, out)
+    return out
 
 
 def _finish(
@@ -527,12 +567,22 @@ def _reduce(
     return tuple(scope), tab
 
 
+def _src_text(tag: str, src: tuple[Any, ...]) -> str:
+    """A delta step's source as a Lean `Src`."""
+    if src[0] == "zz":
+        return f"(Src.zz {tag}k{src[1]} {src[2]} {src[3]})"
+    if src[0] == "bs":
+        return f"(Src.bs {tag}k{src[1]} {src[2]})"
+    return f"(Src.cn ({src[1][0]}, {text(src[1][1])}))"
+
+
 def sym_decls(
     refuter: Any, tag: str, net: LNet, plan: Plan, env: str, unbnd: str
 ) -> tuple[list[str], str]:
     """The declarations of ``plan`` and the term proving the network's formal entry mod `p`
     equal to its final residue."""
     M, p, w = refuter.M, refuter.p, refuter.w
+    pinned = bool(getattr(refuter, "sparse_all", False))
     shape = f"{env}.shape"
     dim = f"{shape}.dim"
     sv = f"sval {shape} {M} Pt Ct {p} {w}"
@@ -567,7 +617,26 @@ def sym_decls(
             f"sumR {dim} {tag}R{k} ({sv} {tag}s{k}) σ0 = "
             f"sumR {dim} {tag}R{k + 1} ({sv} {tag}s{k + 1}) σ0"
         )
-        if step[0] == "D":
+        if step[0] == "X":
+            _, i, rest = step
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} [Fact (Nat.Prime {p})] "
+                f"(hw : IsPrimitiveRoot (({w} : ℕ) : ZMod {p}) {M}) : {head} :=\n"
+                f"  sym_xstep {shape} {M} Pt Ct {p} {w} hw (by norm_num) {tag}R{k} "
+                f"{tag}s{k} {tag}s{k + 1} {tag}k{i} {ns_text(rest)} σ0 (by decide +kernel) "
+                "(by decide +kernel)"
+            )
+            links.append(f"({tag}t{k} hw)")
+        elif step[0] == "D" and pinned:
+            _, l, src, e = step
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} : {head} :=\n"
+                f"  sym_dstepU {shape} {M} Pt Ct {p} {w} {unbnd} {tag}R{k} {tag}R{k + 1} "
+                f"{tag}s{k} {tag}s{k + 1} {l} {_src_text(tag, src)} {text(e)} σ0 {tag}hU "
+                "(by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)"
+            )
+            links.append(f"{tag}t{k}")
+        elif step[0] == "D":
             _, l, src, e = step
             if src[0] == "zz":
                 stext = f"(Src.zz {tag}k{src[1]} {src[2]} {src[3]})"

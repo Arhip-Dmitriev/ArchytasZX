@@ -159,6 +159,14 @@ REFUTATIONS: dict[str, tuple[str, str]] = {
         ),
         "a = Z(1 -> 1, literal 600); scalar 2",
     ),
+    "tiny_phase": (
+        (
+            "g0 = X(0 -> 1, literal 120); g1 = F(literal 120); "
+            "g2 = Z(1 -> 1, literal 120) phase {1: 1/1728000}; "
+            "wire g0.out0 -- g1.in0, g1.out0 -- g2.in0; outputs g2.out0; scalar sqrt(30)/60"
+        ),
+        "p0 = Z(0 -> 1, literal 120); scalar sqrt(30)/60",
+    ),
 }
 
 
@@ -186,6 +194,12 @@ def test_weighted_spiders_have_coefficient_tables(name: str) -> None:
 def test_large_fourier_chains_sum_by_substitution() -> None:
     source = _refutation("fourier_power")
     assert "sym_gstep" in source and "sym_dstep" in source and "sym_final" in source
+
+
+def test_large_orders_use_sparse_phases_and_x_steps() -> None:
+    source = _refutation("tiny_phase")
+    assert "| 1, k => if k = 1 then (1, []) else (0, [])" in source
+    assert "sym_xstep" in source and "sym_dstepU" in source and "prime_lucas" in source
 
 
 def test_normalised_expressions_drop_multiples() -> None:

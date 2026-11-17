@@ -3,6 +3,7 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.RefuteMod
+import Mathlib.NumberTheory.LucasPrimality
 
 /-!
 # Residues by substitution and geometric sums
@@ -11,7 +12,9 @@ A substitution state (`SSt`) binds summed labels to label expressions (`LX`) in 
 ones, and carries nodes, divisibility constraints and a constant. A delta step sums out a label
 that a binder, splitter, Z spider, wire or constraint fixes; a geometric step sums out a label
 shared by exactly two Fourier boxes by `Σ_j u^{j a} = N [N ∣ a]` and adds that constraint.
-`sym_final` contracts the remaining labels with residue tables.
+An X step replaces an X spider with zero phases by its constraint the same way; `sym_dstepU`
+is a delta step whose bindings read the boundary labels from `σ`. `sym_final` contracts the
+remaining labels with residue tables. `prime_lucas` proves the residue prime by Lucas's test.
 -/
 
 namespace ArchytasZX
@@ -416,6 +419,7 @@ def csolve (D : ℕ → ℕ) (l N : ℕ) : LX → LX → Option LX
 /-- The value `l` takes where the source is nonzero. -/
 def solve (S : Shape) (D : ℕ → ℕ) (bs : List (ℕ × LX)) (l : ℕ) : Src → Option LX
   | .cn (N, .add a b) => (csolve D l N a b).orElse fun _ => csolve D l N b a
+  | .cn (N, .v x) => csolve D l N (.v x) (.c 0)
   | .cn _ => none
   | .zz n x y => solveP D l (spair S bs (.zz n x y))
   | .bs n pos => solveP D l (spair S bs (.bs n pos))
@@ -598,6 +602,9 @@ theorem solve_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) 
         | none =>
           rw [h1] at h
           exact csolve_sound D l N b a _ h τ hl (by rwa [add_comm])
+      | v x =>
+        simp only [solve] at h
+        exact csolve_sound D l N (.v x) (.c 0) _ h τ hl (by simpa [LX.eval] using hd)
       | _ => simp [solve] at h
     · exact absurd rfl hv
 
@@ -1079,5 +1086,185 @@ theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   simp only [rprod, List.map_append, List.prod_append, List.map_cons, List.map_nil,
     List.prod_cons, List.prod_nil, mul_one, kleaf, RFac.at, RT.get, ZMod.natCast_mod]
   ring
+
+/-! ## Pinned delta steps and X steps -/
+
+theorem pin_of_agree (U : List ℕ) (σ τ : ℕ → ℕ) (h : ∀ y ∈ U, τ y = σ y) : pin U σ τ = τ := by
+  funext y
+  unfold pin
+  split_ifs with hy
+  · exact (h y (by simpa using hy)).symm
+  · rfl
+
+theorem LX.norm_eval_of (U : List ℕ) (σ τ : ℕ → ℕ) (h : ∀ y ∈ U, τ y = σ y) (e : LX) :
+    (e.norm U σ).eval τ = e.eval τ := by
+  rw [LX.norm_eval, pin_of_agree U σ τ h]
+
+/-- Bindings with each expression simplified and the labels of `U` read from `σ`. -/
+def bnu (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) : List (ℕ × LX) :=
+  bs.map fun b => (b.1, b.2.norm U σ)
+
+theorem tval_bnu (U : List ℕ) (σ τ : ℕ → ℕ) (h : ∀ y ∈ U, τ y = σ y) (bs : List (ℕ × LX)) :
+    tval (bnu U σ bs) τ = tval bs τ := by
+  have hb : ∀ x, blook (bnu U σ bs) x = (blook bs x).map (LX.norm U σ) := by
+    intro x
+    induction bs with
+    | nil => rfl
+    | cons b t ih =>
+      simp only [bnu, List.map_cons, blook] at ih ⊢
+      split_ifs
+      · rfl
+      · exact ih
+  funext x
+  unfold tval texpr
+  rw [hb]
+  cases blook bs x <;> simp [LX.norm_eval_of U σ τ h]
+
+/-- The state after binding `l` to `e`, its expressions simplified with `U` read from `σ`. -/
+def dapplyU (U : List ℕ) (σ : ℕ → ℕ) (l : ℕ) (e : LX) (st : SSt) : SSt :=
+  ⟨bnu U σ ((l, e) :: bsubst l e st.bs), st.ns,
+    st.cs.map fun q => (q.1, (q.2.subst l e).norm U σ), st.c⟩
+
+theorem sval_dapplyU (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) (U : List ℕ) (σ τ : ℕ → ℕ) (h : ∀ y ∈ U, τ y = σ y) (l : ℕ) (e : LX) (st : SSt) :
+    sval S M P C p w (dapplyU U σ l e st) τ = sval S M P C p w (dapply l e st) τ := by
+  simp only [sval, dapplyU, dapply, tval_bnu U σ τ h, tval_bnz, List.map_map, Function.comp_def,
+    cval, LX.norm_eval_of U σ τ h, LX.nz_eval]
+
+/-- A delta step over sums, the bindings pinned on the labels `U` outside `R`. -/
+theorem sym_dstepU (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) (U R R' : List ℕ) (st st' : SSt) (l : ℕ) (src : Src) (e : LX) (σ : ℕ → ℕ)
+    (hU : ∀ x ∈ U, σ x < S.dim x) (hUR : U.all (fun x => !R.contains x) = true)
+    (hR : R.Perm (R' ++ [l]))
+    (h : dOK S S.dim U R st l src e = true) (hst : dapplyU U σ l e st = st') :
+    sumR S.dim R (sval S M P C p w st) σ = sumR S.dim R' (sval S M P C p w st') σ := by
+  subst hst
+  simp only [List.all_eq_true, Bool.not_eq_true'] at hUR
+  have hUR' : ∀ y ∈ U, y ∉ R := fun y hy => by simpa using hUR y hy
+  apply sumR_step S.dim p _ _ R R' l σ hR
+  intro τ hτ hr
+  have hUτ : ∀ y ∈ U, τ y = σ y := fun y hy =>
+    hτ y fun h' => hUR' y hy (hR.symm.subset (List.mem_append_left _ h'))
+  rw [sval_dapplyU S M P C p w U σ τ hUτ]
+  apply dstep_pt S M P C p w S.dim U R st l src e h τ
+  intro x hx hxl
+  by_cases hm : x ∈ R'
+  · exact hr x hm
+  · rw [hτ x hm]
+    rcases hx with hx | hx
+    · have := hR.subset hx
+      simp only [List.mem_append, List.mem_singleton] at this
+      rcases this with h' | h'
+      · exact absurd h' hm
+      · exact absurd h' hxl
+    · exact hU x hx
+
+/-- The sum of expressions. -/
+def LX.lsum : List LX → LX
+  | [] => .c 0
+  | e :: es => .add e (LX.lsum es)
+
+theorem LX.lsum_eval (τ : ℕ → ℕ) : ∀ es : List LX, (LX.lsum es).eval τ = (es.map (LX.eval τ)).sum
+  | [] => rfl
+  | e :: es => by simp [LX.lsum, LX.eval, LX.lsum_eval τ es]
+
+/-- An X spider's output legs plus `d - 1` times its input legs under bindings. -/
+def xexpr (bs : List (ℕ × LX)) (d : ℕ) (n : Node) : LX :=
+  LX.lsum (n.outs.map (texpr bs) ++
+    n.ins.map fun x => if d = 2 then texpr bs x else .mul (d - 1) (texpr bs x))
+
+theorem xexpr_eval (bs : List (ℕ × LX)) (d : ℕ) (n : Node) (τ : ℕ → ℕ) :
+    (xexpr bs d n).eval τ = (n.outs.map (tval bs τ)).sum + (d - 1) * (n.ins.map (tval bs τ)).sum := by
+  rw [xexpr, LX.lsum_eval, List.map_append, List.sum_append, List.map_map, List.map_map]
+  congr 1
+  rw [← List.sum_map_mul_left]
+  congr 1
+  apply List.map_congr_left
+  intro x _
+  by_cases hd : d = 2
+  · subst hd; simp [tval]
+  · simp [hd, LX.eval, tval]
+
+/-- An X step on the node `n`, the others `ns'`: its phases are zero. -/
+def xOK (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (st : SSt) (n : Node) (ns' : List Node) :
+    Bool :=
+  n.kind == .X && decide (0 < S.dimv n.dim) && M % S.dimv n.dim == 0 &&
+    (List.range (S.dimv n.dim)).all (fun k => (P n.ph k).1 == 0) && st.ns.isPerm (n :: ns')
+
+/-- The state after an X step: the node replaced by its divisibility constraint. -/
+def xapply (S : Shape) (p : ℕ) (n : Node) (ns' : List Node) (st : SSt) : SSt :=
+  ⟨st.bs, ns', st.cs ++ [(S.dimv n.dim, xexpr st.bs (S.dimv n.dim) n)], st.c * S.dimv n.dim % p⟩
+
+theorem valX_eq (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (τ : ℕ → ℕ) (outs ins : List ℕ) (dim ph : ℕ) (hd : 0 < S.dimv dim)
+    (hMd : M % S.dimv dim = 0) (hP : ∀ k < S.dimv dim, (P ph k).1 = 0) :
+    tmv p w (valW S M P C τ ⟨.X, outs, ins, dim, ph⟩) =
+      if S.dimv dim ∣ (outs.map τ).sum + (S.dimv dim - 1) * (ins.map τ).sum
+      then (S.dimv dim : ZMod p) else 0 := by
+  set d := S.dimv dim with hdd
+  obtain ⟨r, hr⟩ := Nat.dvd_of_mod_eq_zero hMd
+  have hu : IsPrimitiveRoot ((w : ZMod p) ^ (M / d)) d := by
+    have hMr : M / d = r := by rw [hr, Nat.mul_div_cancel_left _ hd]
+    rw [hMr]
+    exact hw.pow hM (by rw [hr, mul_comm])
+  have hv : tmv p w (valW S M P C τ ⟨.X, outs, ins, dim, ph⟩) =
+      ∑ k ∈ range d, ((w : ZMod p) ^ (M / d)) ^ (k * ((outs.map τ).sum +
+        (d - 1) * (ins.map τ).sum)) := by
+    have hb : isBS ⟨.X, outs, ins, dim, ph⟩ = false := rfl
+    simp only [valW, hb, Bool.false_eq_true, ite_false]
+    simp only [tensorW, tensorT, tXT, tmv, List.map_map, Function.comp_def]
+    rw [fsum_listR]
+    congr 1
+    apply List.map_congr_left
+    intro k hk
+    rw [hP k (List.mem_range.1 hk), ← pow_mul]
+    push_cast
+    ring
+  rw [hv, geom_root p d _ _ hu hd]
+
+theorem xstep_pt (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (st : SSt) (n : Node) (ns' : List Node) (h : xOK S M P st n ns' = true) (τ : ℕ → ℕ) :
+    sval S M P C p w st τ = sval S M P C p w (xapply S p n ns' st) τ := by
+  simp only [xOK, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, List.isPerm_iff,
+    List.all_eq_true] at h
+  obtain ⟨⟨⟨⟨hX, hd⟩, hMd⟩, hP⟩, hperm⟩ := h
+  obtain ⟨kind, outs, ins, dim, ph⟩ := n
+  simp only at hX hd hMd hP
+  subst hX
+  have hval := valX_eq S M P C p w hw hM (tval st.bs τ) outs ins dim ph hd hMd
+    (fun k hk => by simpa using hP k (List.mem_range.2 hk))
+  unfold sval xapply
+  rw [(hperm.map _).prod_eq, List.map_cons, List.prod_cons, hval]
+  simp only [List.map_append, List.map_cons, List.map_nil, List.prod_append, List.prod_cons,
+    List.prod_nil, cval, xexpr_eval, ZMod.natCast_mod, Nat.cast_mul]
+  split_ifs <;> ring
+
+/-- An X step over sums. -/
+theorem sym_xstep (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (R : List ℕ) (st st' : SSt) (n : Node) (ns' : List Node) (σ : ℕ → ℕ)
+    (h : xOK S M P st n ns' = true) (hst : xapply S p n ns' st = st') :
+    sumR S.dim R (sval S M P C p w st) σ = sumR S.dim R (sval S M P C p w st') σ := by
+  subst hst
+  exact sumR_congr S.dim R _ _ σ fun τ _ _ => xstep_pt S M P C p w hw hM st n ns' h τ
+
+/-- `p` is prime by Lucas's test with the witness `g` and the prime factors `ps` of `p - 1`. -/
+theorem prime_lucas (p g : ℕ) (hp : 1 < p) (hpb : p < 2 ^ 64) (ps : List (ℕ × ℕ))
+    (hfac : (ps.map fun x => x.1 ^ x.2).prod = p - 1) (hps : ∀ x ∈ ps, x.1.Prime)
+    (h1 : pm p 64 g (p - 1) = 1) (h2 : ps.all (fun x => pm p 64 g ((p - 1) / x.1) != 1) = true) :
+    p.Prime := by
+  have key : ∀ l, l < 2 ^ 64 → ((g : ZMod p) ^ l = 1 ↔ pm p 64 g l = 1) := by
+    intro l hl
+    rw [pm_eq p 64 g l hl, ← Nat.cast_pow, ← Nat.cast_one, ZMod.natCast_eq_natCast_iff',
+      Nat.mod_eq_of_lt hp]
+  have hlt : p - 1 < 2 ^ 64 := by omega
+  refine lucas_primality p (g : ZMod p) ((key _ hlt).2 h1) ?_
+  intro q hq hqd
+  obtain ⟨x, hx, rfl⟩ := prime_mem_of_dvd q hq ps hps (hfac ▸ hqd)
+  have := List.all_eq_true.1 h2 x hx
+  simp only [bne_iff_ne, ne_eq] at this
+  exact fun h => this ((key _ (lt_of_le_of_lt (Nat.div_le_self _ _) hlt)).1 h)
 
 end ArchytasZX
