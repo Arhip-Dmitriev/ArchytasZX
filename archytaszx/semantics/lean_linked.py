@@ -16,17 +16,18 @@ LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSpli
 diagram is written as
 an ``LDiagram``: its nodes, its wires without those at chain link ports, its boundary, its node
 boxes and its links, each link's ends the partners of its two ports; a link port on the boundary
-is the ghost ``(G, True, i)`` of its slot ``i``, its boundary place and its link end (``evalG``).
-Each export also writes each side with a phaseless Z(1 -> 1) behind every boundary link port
-(``Lb``, ``Lk``) and proves its linked digit sum equal to the ghost form's (``chain_<tag>``:
-``evalL_dropAt`` for an identity wired to a node leg, ``evalG_ghostAt`` for one at a link end,
-each step's conditions checked here on a mirror of the Lean definitions, then in Lean by
-``decide +kernel``). Both exports write both sides' box groups and state ``main`` over each
-side's digits read at the flat positions of its ``slotData`` (``flatAt``, the engine's boundary
-splice). ``export_peel`` writes the copy map ``cp`` from the peeled box's nodes to the copy's,
-``PeelOK``, ``PeelFlat`` and ``main`` through ``evalL_peel_flat``. ``export_slide`` checks equal
-``slotData`` and proves ``main`` through two chains to one diagram (``C``) and ``evalG_flatAt``.
-Both exports assume the phaseless phase index ``zero`` reads the zero phase."""
+is the ghost ``(G, True, i)`` of its slot ``i``, its boundary place and its link end (``evalG``),
+or ``(x, True, i + 1)`` held in the box of the identity ``x`` a peel puts behind it. Each export
+also writes each side with a phaseless Z(1 -> 1) behind every boundary link port (``Lb``, ``Lk``)
+and proves its linked digit sum equal to the ghost form's (``chain_<tag>``: ``evalL_dropAt`` for
+an identity wired to a node leg, ``evalG_ghostAt`` for one at a link end, each step's conditions
+checked here on a mirror of the Lean definitions, then in Lean by ``decide +kernel``). Both
+exports write both sides' box groups and state ``main`` over each side's digits read at the flat
+positions of its ``slotData`` (``flatAt``, the engine's boundary splice). ``export_peel`` writes
+the copy map ``cp`` from the peeled box's nodes to the copy's, ``PeelOK``, ``PeelFlat`` and
+``main`` through ``evalL_peel_flat``. ``export_slide`` checks equal ``slotData`` and proves
+``main`` through two chains to one diagram (``C``) and ``evalG_flatAt``. Both exports assume the
+phaseless phase index ``zero`` (also that of a zero phase vector) reads the zero phase."""
 
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from dataclasses import dataclass
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx.algebra.phase import PhaseVector
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 
 _KINDS = {"Z": "Z", "X": "X", "F": "F", "T": "T", "Ti": "Ti", "W": "W", "B": "B", "S": "S"}
@@ -147,17 +149,26 @@ class _Tables:
         return table.setdefault(key, len(table))
 
 
+def _phase_key(phase: object) -> str:
+    """The phase table key: a zero phase vector reads as no phase."""
+    return repr(None) if isinstance(phase, PhaseVector) and phase.is_zero else repr(phase)
+
+
 def linked(
     d: Diagram,
     tables: _Tables,
     idents: Mapping[Port, int] | None = None,
     ghost: int | None = None,
+    held: Mapping[Port, LBox] | None = None,
 ) -> LDiag:
     """``d`` as a linked diagram, each boundary leg ``p`` of ``idents`` behind a phaseless
     Z(1 -> 1) of id ``idents[p]`` (wired to ``p``, its other leg in ``p``'s boundary place), with
     ``ghost`` every other boundary link port written as the ghost ``(ghost, True, i)`` of its slot
-    ``i`` (its boundary place and its link end); raises :class:`LinkedUnsupported` outside plain
+    ``i`` (its boundary place and its link end); a boundary link port ``p`` of ``held`` has its
+    identity, or with ``ghost`` the ghost ``(x, True, i + 1)``, held as the node ``x`` of the box
+    ``held[p]`` (appended after ``d``'s boxes). Raises :class:`LinkedUnsupported` outside plain
     node boxes with links whose ports are wired."""
+    held = held or {}
     nodes = []
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
@@ -168,7 +179,7 @@ def linked(
         ins = tuple(_Tables.index(tables.dims, str(p.dim)) for p in node.inputs)
         legs = [*outs, *ins]
         dim = legs[0] if legs else _Tables.index(tables.dims, "")
-        ph = _Tables.index(tables.phases, repr(node.phase))
+        ph = _Tables.index(tables.phases, _phase_key(node.phase))
         if name == "B" and len(ins) == 2:
             dim, ph = ins
         elif name == "S" and len(outs) == 2:
@@ -181,8 +192,8 @@ def linked(
         if bp not in bouts and bp not in bins:
             raise LinkedUnsupported("an identity end off the boundary")
         side = bouts if bp in bouts else bins
-        held = d.nodes[bp[0]]  # type: ignore[index]
-        leg = (held.outputs if bp[1] else held.inputs)[bp[2]]
+        owner = d.nodes[bp[0]]  # type: ignore[index]
+        leg = (owner.outputs if bp[1] else owner.inputs)[bp[2]]
         k = _Tables.index(tables.dims, str(leg.dim))
         nodes.append(LNode(iid, "Z", k, _Tables.index(tables.phases, repr(None)), (k,), (k,)))
         side[side.index(bp)] = (iid, bp[1], 0)
@@ -192,8 +203,11 @@ def linked(
         for j, bp in enumerate([*bouts, *bins]):
             if bp in ports:
                 side, pos = (bouts, j) if j < len(bouts) else (bins, j - len(bouts))
-                side[pos] = (ghost, True, j)
-                wires.append((bp, (ghost, True, j)))
+                g = (held[bp].nodes[0], True, j + 1) if bp in held else (ghost, True, j)
+                side[pos] = g
+                wires.append((bp, g))
+    if any(len(b.nodes) != 1 for b in held.values()):
+        raise LinkedUnsupported("a held identity box of more than one node")
     boxes, links, used = [], [], set[int]()
     for bid, b in sorted(d.bang_boxes.items()):
         plain = (
@@ -223,6 +237,7 @@ def linked(
                 w = wires[at[0]]
                 ends.append(w[1] if w[0] == _port(ref) else w[0])
             links.append(LLink(int(bid), _port(p), _port(q), ends[0], ends[1]))
+    boxes += [held[bp] for bp in sorted(held)]
     kept = [w for i, w in enumerate(wires) if i not in used]
     out = LDiag(nodes, kept, bouts, bins, boxes, links)
     for w in kept:
@@ -252,6 +267,54 @@ def _boundary_ends(
                 ends_r[_cpp(cp, port) if int(b_id) == bid and ref is p else port] = nid
                 nid += 1
     return ends_l, ends_r
+
+
+def _engine_ends(after: Diagram) -> dict[Port, int]:
+    """The phaseless Z(1 -> 1) nodes of ``after`` with one leg on its boundary and the other
+    wired, by the port they are wired to."""
+    bnd = {_port(r) for r in [*after.boundary_outputs, *after.boundary_inputs]}
+    out: dict[Port, int] = {}
+    for nid, node in after.nodes.items():
+        if node.generator_type.name != "Z" or len(node.inputs) != 1 or len(node.outputs) != 1:
+            continue
+        if _phase_key(node.phase) != repr(None):
+            continue
+        legs = [(int(nid), True, 0), (int(nid), False, 0)]
+        on = [p for p in legs if p in bnd]
+        wired = [
+            (_port(w.b) if _port(w.a) in legs else _port(w.a))
+            for w in after.wires
+            if _port(w.a) in legs or _port(w.b) in legs
+        ]
+        if len(on) == 1 and len(wired) == 1:
+            out[wired[0]] = int(nid)
+    return out
+
+
+def _held(
+    after: Diagram, ends_r: dict[Port, int], tables: _Tables, ids: set[int]
+) -> tuple[dict[Port, int], dict[Port, LBox]]:
+    """The identity ends of ``ends_r`` that ``after`` already holds as phaseless Z(1 -> 1) nodes
+    of ``ids``, each with the outermost box of ``after`` holding it, as that box with only the
+    node."""
+    found: dict[Port, int] = {}
+    boxes: dict[Port, LBox] = {}
+    bnd = {_port(r) for r in [*after.boundary_outputs, *after.boundary_inputs]}
+    engine = {p: y for p, y in _engine_ends(after).items() if y in ids}
+    for port in ends_r:
+        if port in bnd or port not in engine:
+            continue
+        y = engine[port]
+        owners = [
+            (bid, b) for bid, b in sorted(after.bang_boxes.items()) if y in map(int, b.node_scope)
+        ]
+        if len(owners) != 1 or owners[0][1].parent is not None:
+            raise LinkedUnsupported("an engine identity end in no single outermost box")
+        bid, b = owners[0]
+        mult = _Tables.index(tables.mults, str(sp.expand(b.multiplicity.to_sympy())))
+        found[port] = y
+        boxes[port] = LBox(int(bid), mult, None, (y,))
+    return found, boxes
 
 
 def _cpp(cp: dict[int, int], p: Port) -> Port:
@@ -426,10 +489,24 @@ _FLAT_FIELDS = 10
 """The fields of ``PeelFlat``."""
 
 
-def export_peel(before: Diagram, after: Diagram) -> str | None:
-    """Lean source whose ``main`` proves the linked digit sums of ``before`` and ``after`` equal,
-    ``after`` peeling the last copy of one outermost node box of ``before``; None outside that
-    form."""
+@dataclass
+class PeelEnds:
+    """A peel's box, its nodes ``B``, the copy map, both sides' identity ends and the boundary
+    link ports of ``before`` whose identity ``after`` holds in a box of its own."""
+
+    box: int
+    B: list[int]
+    fresh: list[int]
+    cp: dict[int, int]
+    ends_l: dict[Port, int]
+    ends_r: dict[Port, int]
+    held: dict[Port, LBox]
+
+
+def peel_ends(before: Diagram, after: Diagram, tables: _Tables) -> PeelEnds | None:
+    """The :class:`PeelEnds` of ``after`` peeling the last copy of one outermost node box of
+    ``before``: the new nodes of ``after`` are the copies of the box's nodes and the phaseless
+    Z(1 -> 1) nodes the peel puts behind boundary link ports; None outside that form."""
     shifted = [
         bid
         for bid, b in before.bang_boxes.items()
@@ -441,14 +518,43 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     if len(shifted) != 1:
         return None
     B = sorted(int(x) for x in before.bang_boxes[shifted[0]].node_scope)
-    fresh = sorted({int(x) for x in after.nodes} - {int(x) for x in before.nodes})
-    if len(fresh) != len(B):
+    new = sorted({int(x) for x in after.nodes} - {int(x) for x in before.nodes})
+    engine = set(_engine_ends(after).values()) & set(new)
+    if len(new) == len(B):
+        engine = set()
+    elif len(engine) != len(new) - len(B):
         return None
+    fresh = [x for x in new if x not in engine]
     cp = dict(zip(B, fresh, strict=True))
     ends_l, ends_r = _boundary_ends(before, after, int(shifted[0]), cp)
-    tables = _Tables()
     try:
-        L = linked(before, tables, ends_l)
+        found, boxes = _held(after, ends_r, tables, engine)
+    except LinkedUnsupported:
+        return None
+    held: dict[Port, LBox] = {}
+    for pb, nid in list(ends_l.items()):
+        pa = next(p for p, v in ends_r.items() if v == nid)
+        if pa in found:
+            ends_l[pb] = found[pa]
+            held[pb] = boxes[pa]
+            del ends_r[pa]
+    if set(new) != set(fresh) | {b.nodes[0] for b in held.values()}:
+        return None
+    return PeelEnds(int(shifted[0]), B, fresh, cp, ends_l, ends_r, held)
+
+
+def export_peel(before: Diagram, after: Diagram) -> str | None:
+    """Lean source whose ``main`` proves the linked digit sums of ``before`` and ``after`` equal,
+    ``after`` peeling the last copy of one outermost node box of ``before``; None outside that
+    form."""
+    tables = _Tables()
+    pe = peel_ends(before, after, tables)
+    if pe is None:
+        return None
+    shifted, B, fresh, cp = [pe.box], pe.B, pe.fresh, pe.cp
+    ends_l, ends_r, held = pe.ends_l, pe.ends_r, pe.held
+    try:
+        L = linked(before, tables, ends_l, held=held)
         R = linked(after, tables, ends_r)
     except LinkedUnsupported:
         return None
@@ -469,7 +575,8 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     if gl is None or gr is None:
         return None
     try:
-        Tl, Tr = linked(before, tables, ghost=G), linked(after, tables, ghost=G)
+        Tl = linked(before, tables, ghost=G, held=held)
+        Tr = linked(after, tables, ghost=G)
     except LinkedUnsupported:
         return None
     if not (_same_up_to_order(Tl, Dl) and _same_up_to_order(Tr, Dr)):
@@ -557,7 +664,6 @@ def ghost_ok(D: LDiag, gs: Sequence[Ghost], x: LNode, a: Port, c: Port, g: Port,
         and x.outs == (x.dim,)
         and x.ins == (x.dim,)
         and {a, c} == {(x.id, True, 0), (x.id, False, 0)}
-        and all(x.id not in b.nodes for b in D.boxes)
         and all(x.id not in (p[0], q[0]) for p, q in D.wires)
         and len(set(bnd)) == len(bnd)
         and 0 <= i < len(bnd)
@@ -565,11 +671,12 @@ def ghost_ok(D: LDiag, gs: Sequence[Ghost], x: LNode, a: Port, c: Port, g: Port,
         and a not in bnd
         and g not in bnd
         and all(g not in w for w in D.wires)
-        and g[0] != x.id
+        and g not in (a, c)
+        and D.chain(g[0]) == D.chain(x.id)
         and all(c not in (lk.l1, lk.l2, lk.e1, lk.e2) for lk in D.links)
         and all(a not in (lk.l1, lk.l2) for lk in D.links)
         and all(g not in (lk.l1, lk.l2, lk.e1, lk.e2) for lk in D.links)
-        and all(not rest(lk) for lk in D.links if a in (lk.e1, lk.e2))
+        and all(rest(lk) == D.chain(x.id) for lk in D.links if a in (lk.e1, lk.e2))
         and all(q[0] not in (a, c, g) for q in gs)
     )
 
@@ -614,7 +721,7 @@ def _reduce(
             if c not in M.bnd():
                 continue
             a, i = legs[1 - legs.index(c)], M.bnd().index(c)
-            g = (G, True, i)
+            g = (x.id, True, i + 1) if M.chain(x.id) else (G, True, i)
             if ghost_ok(M, gs, x, a, c, g, i):
                 steps.append(("ghost", x, (a, c, g), i))
                 D = ghost_drop(M, x.id, a, c, g)
@@ -650,7 +757,7 @@ def _chain(
     out, at, terms = "", start, list[str]()
     held: list[str] = []
     drop_proof = ",\n    ".join(["by decide +kernel"] * 18)
-    ghost_proof = ",\n    ".join(["by decide +kernel"] * 22)
+    ghost_proof = ",\n    ".join(["by decide +kernel"] * 23)
     switched = False
     for j, (kind, x, ports, i) in enumerate(steps, 1):
         xn = f"x{tag}{j}"

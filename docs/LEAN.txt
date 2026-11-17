@@ -390,8 +390,17 @@ place and its link end; evalG L gsL is the digit sum with each ghost's digit rea
 Z(1 -> 1) behind every boundary link port (and, for a peel, behind its copy), and chain_b, chain_k
 prove their linked digit sums equal to evalG of L and L': evalL_dropAt drops an identity wired to
 a node leg (moved last, then DropOK.evalL_drop), evalG_ghostAt one at a link end (GhostOK, the
-identity's digits summed out at its slot's). Both write the box groups G (before) and G'
-(after). A peel, namespace <N>.P<i>: PeelFlat (checked by decide +kernel) maps each slot digit of
+identity's digits summed out at its slot's). A peel of a chain box whose chain end sits on the
+boundary inside a nested box (the open grids of tests/test_nested_chain.py) puts a phaseless
+Z(1 -> 1) behind that end, of zero phase vector (read as phase index zero), in an outermost box
+of its own multiplicity; lean_linked.peel_ends finds it in L', and L and Lb hold that boundary
+link port in a box with the same id and multiplicity: Lb's identity is the node of L''s, and L
+writes the ghost ⟨x, true, i + 1⟩ with x the identity's id, its box listing x. GhostOK takes
+such an identity: the link ends carry x's node chain as copy index, the ghost has x's node chain
+(gch), and pinsG bounds each ghost's slot digit t below its dimension for t over its leg chain's
+copy indices; tests/test_lean_peel.py compares these flat positions with the engine's
+instantiated boundary, where the identities the instantiation adds take the slot and copy index
+of the leg they meet. Both write the box groups G (before) and G' (after). A peel, namespace <N>.P<i>: PeelFlat (checked by decide +kernel) maps each slot digit of
 Lb to its own or, at the box's last copy, its copy's in Lk, one to one and onto, and keeps the
 order of their keys slot pair by slot pair (agree, copyVs, copyCopy on the anchors);
 evalL_peel_flat (evalL_peel, then evalL_congr: the digit sum reads only its boundary legs'

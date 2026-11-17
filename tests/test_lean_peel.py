@@ -19,14 +19,16 @@ the boundary behind an identity spider (79.16e); identity slides through
 ghost of its slot, proved equal to the identity forms, the phaseless index stated as zero, slides
 read through the slot data of both sides' box groups (79.16f); the engine's instantiated boundary
 in the key order of ``LinkedSplice.lean`` (``flatAt``), peels and slides read at those flat
-positions, a peel whose copy slots moved refused here and in Lean (79.16h, 79.16i)."""
+positions, a peel whose copy slots moved refused here and in Lean (79.16h, 79.16i); peels of the
+open grids, the chain end on the boundary held in the box of the identity the peel puts behind
+it, at the engine's flat positions, checked in Lean (79.16l)."""
 
 from __future__ import annotations
 
 import itertools
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import cast
 
 import pytest
@@ -41,7 +43,7 @@ from archytaszx.semantics.decide import decide_equal
 from archytaszx.semantics.induction import rename_multiplicity
 from archytaszx.semantics.lean_net import check, lean_project
 from archytaszx.semantics.prove import InductionSide, _with_scalar_index
-from tests.test_nested_chain import _grid_pair
+from tests.test_nested_chain import _grid_pair, _open_grid
 
 
 def _peels(t: kernel.Theorem, seen: set[int] | None = None) -> Iterator[kernel.Theorem]:
@@ -225,9 +227,16 @@ inputs e.in0, f.in0, b.in0, a.in0"""
 Slot = tuple[int, tuple[int, ...]]
 
 
-def _engine_flat(d: Diagram, order: Sequence[str], values: Mapping[str, int]) -> list[Slot]:
+def _engine_flat(
+    d: Diagram,
+    order: Sequence[str],
+    values: Mapping[str, int],
+    held: Mapping[lean_linked.Port, lean_linked.LBox] | None = None,
+) -> list[Slot]:
     """The instantiated boundary of ``d`` (symbols instantiated in ``order``) as slots of its
-    linked ghost form with copy indices outermost box first."""
+    linked ghost form (boundary link ports of ``held`` in their held boxes) with copy indices
+    outermost box first; a boundary node the instantiation adds reads the slot and copy index of
+    the leg it is wired to, its link's box left out."""
     prov: dict[NodeId, tuple[NodeId, dict[int, int]]] = {}
     scopes = {int(b): set(x.node_scope) for b, x in d.bang_boxes.items()}
     real = bangbox._instantiate_node_scope
@@ -258,19 +267,43 @@ def _engine_flat(d: Diagram, order: Sequence[str], values: Mapping[str, int]) ->
     ghost = 1 + max(int(x) for x in d.nodes)
     D = lean_linked.linked(d, tables, ghost=ghost)
     ports = [lean_linked._port(r) for r in [*d.boundary_outputs, *d.boundary_inputs]]
+    link_box = {
+        lean_linked._port(r): int(b) for b, x in d.bang_boxes.items() for pq in x.links for r in pq
+    }
     out = []
     for r in [*w.boundary_outputs, *w.boundary_inputs]:
         o, c = prov.get(r.node_id, (r.node_id, {}))
-        i = ports.index((int(o), r.direction is Direction.OUTPUT, r.index))
-        ghosted = D.bnd()[i][0] == ghost
+        port = (int(o), r.direction is Direction.OUTPUT, r.index)
+        if o not in d.nodes:
+            other = next(
+                x.b if x.a.node_id == r.node_id else x.a
+                for x in w.wires
+                if r.node_id in (x.a.node_id, x.b.node_id)
+            )
+            o, c = prov[other.node_id]
+            port = (int(o), other.direction is Direction.OUTPUT, other.index)
+            i = ports.index(port)
+            boxes = [b.id for b in D.node_boxes(int(o)) if b.id != link_box[port]]
+            out.append((i, tuple(c[b] for b in boxes)))
+            continue
+        i = ports.index(port)
+        ghosted = D.bnd()[i][0] == ghost and port not in (held or {})
         out.append((i, () if ghosted else tuple(c[b.id] for b in D.node_boxes(int(o)))))
     return out
 
 
-def _model_flat(d: Diagram, values: Mapping[str, int]) -> list[Slot]:
-    """The slots of ``d``'s linked ghost form in increasing ``key`` (``LinkedSplice.lean``)."""
+def _model_flat(
+    d: Diagram,
+    values: Mapping[str, int],
+    held: Callable[[lean_linked._Tables], Mapping[lean_linked.Port, lean_linked.LBox]]
+    | None = None,
+) -> list[Slot]:
+    """The slots of ``d``'s linked ghost form (boundary link ports of ``held`` in their held
+    boxes) in increasing ``key`` (``LinkedSplice.lean``)."""
     tables = lean_linked._Tables()
-    D = lean_linked.linked(d, tables, ghost=1 + max(int(x) for x in d.nodes))
+    D = lean_linked.linked(
+        d, tables, ghost=1 + max(int(x) for x in d.nodes), held=held(tables) if held else None
+    )
     sd = lean_linked.slot_data(D, lean_linked.groups(d))
     ks = {m: int(sp.sympify(e).subs(values)) for e, m in tables.mults.items()}
 
@@ -310,6 +343,57 @@ def test_the_flat_positions_are_the_engine_boundary_order() -> None:
         d = _nest_grouped(groups)
         values = {"n": 2, "m": 3}
         assert _engine_flat(d, ["n", "m"], values) == _model_flat(d, values), groups
+
+
+def _open_peel(head: bool, tail: bool) -> tuple[Diagram, Diagram]:
+    """An open grid at ``s + 1`` rows and its peel of the row box."""
+    d = rename_multiplicity(parse_dsl(_open_grid(head, tail)), "n", Mult("s") + 1)
+    row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
+    return d, bangbox.peel_one(d, row.id).diagram
+
+
+OPEN = [(True, False), (False, True), (True, True)]
+"""The open grids: top, bottom or both vertical legs on the boundary."""
+
+
+@pytest.mark.parametrize(("head", "tail"), OPEN)
+def test_open_grid_flat_positions_are_the_engine_boundary_order(head: bool, tail: bool) -> None:
+    before, after = _open_peel(head, tail)
+
+    def held(tables: lean_linked._Tables) -> Mapping[lean_linked.Port, lean_linked.LBox]:
+        pe = lean_linked.peel_ends(before, after, tables)
+        assert pe is not None and pe.held
+        return pe.held
+
+    ports = held(lean_linked._Tables())
+    values = {"s": 2, "l": 3}
+    for order in (["s", "l"], ["l", "s"]):
+        assert _engine_flat(before, order, values, ports) == _model_flat(before, values, held)
+        assert _engine_flat(after, order, values) == _model_flat(after, values)
+
+
+@pytest.mark.parametrize(("head", "tail"), OPEN)
+def test_a_peel_of_an_open_grid_exports_through_boxed_ghosts(head: bool, tail: bool) -> None:
+    before, after = _open_peel(head, tail)
+    source = lean_linked.export_peel(before, after)
+    assert source is not None and "evalL_peel_flat ok flat" in source
+    assert "evalG_ghostAt okb1" in source
+    assert lean_linked.export_peel(after, before) is None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_an_open_grid_peel_and_refuses_a_wrong_copy_count(tmp_path: object) -> None:
+    source = lean_linked.export_peel(*_open_peel(True, False))
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/open.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    bad = source.replace("+ 1 →", "+ 2 →")
+    assert bad != source
+    ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
 
 
 def _moved_copy_slots() -> tuple[Diagram, Diagram]:
