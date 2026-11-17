@@ -169,6 +169,10 @@ def linked(
         legs = [*outs, *ins]
         dim = legs[0] if legs else _Tables.index(tables.dims, "")
         ph = _Tables.index(tables.phases, repr(node.phase))
+        if name == "B" and len(ins) == 2:
+            dim, ph = ins
+        elif name == "S" and len(outs) == 2:
+            dim, ph = outs
         nodes.append(LNode(int(nid), _KINDS[name], dim, ph, outs, ins))
     wires = [(_port(w.a), _port(w.b)) for w in sorted(d.wires, key=lambda w: w.sort_key())]
     bouts = [_port(r) for r in d.boundary_outputs]
@@ -202,6 +206,7 @@ def linked(
             and not b.tree
             and b.feed is None
             and not b.sheets
+            and b.align is None
         )
         if not plain:
             raise LinkedUnsupported(f"box {bid} is no plain node box")

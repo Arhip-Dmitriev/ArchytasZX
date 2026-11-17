@@ -1719,7 +1719,11 @@ class _Lean:
         source = lean_split.export_split(t.lhs, t.rhs)
         if source is None:
             return None
-        tail = "the box's copies from the first box's copy count on read at the copy's digits"
+        tail = (
+            "the digit sums being LDiagram.evalX (each box index read at the copy through cph and "
+            "cdim, each aligned wire an entry of LDiagram.aligned with its port boxes), the box's "
+            "copies from the first box's copy count on read at the copy's digits"
+        )
         return self.linked_net(source, "Q", tail, binders, self.call(t.lhs), self.call(t.rhs))
 
     def linked_net(

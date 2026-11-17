@@ -390,15 +390,31 @@ two chains. A slide, namespace <N>.S<i>, writes C, the diagram both identity for
 (chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G, and S<i>.main is
 evalG_flatAt: the two digit sums read at the flat positions of their slot data agree.
 
-A power split of base 2 (kernel.power_split) is proved the same way when both sides are linked
-diagrams (ArchytasZX/LinkedSplit.lean): namespace <N>.Q<i> writes L (the box bid at mb copies),
-L' (bid at c₁ copies and its copy bid₂ at c₂ copies, the nodes cp x) and BoxSplitOK, checked by
-decide +kernel; Q<i>.main is evalL_split: for every Env and ks with ks mb = ks c₁ + ks c₂, the
-digit sum of L' equals that of L with B's copy j + ks c₁ read at the copy's copy j. A node of
-the box whose phase reads the box index carries the copy-indexed phase (x, bid, 0, c₁), its copy
-(cp x, bid₂, 1, c₁) and the phase index of x. bid has no links of its own, no leg is bundled
-over it, and no leg dimension reads its index; qram's box C1 is outside this form and stays an
-axiom.
+A power split (kernel.power_split) is proved the same way when both sides are linked diagrams
+(ArchytasZX/LinkedSplit.lean), over the digit sum evalX (Linked.lean): evalL with copy-indexed
+leg dimensions cdim (an entry (p, y, c, m) gives leg p at copy t the dimension index
+Nat.pair (portDim p) (t_y + c * ks m)) and aligned wires (an entry (a, b, perm) pins digit t of
+a to digit pick t perm of b); evalX_eq_evalL: with neither, evalX is evalL. Every box index is
+read through cph (a phase, or the second dimension of a binder or splitter) or cdim (a leg
+dimension) and then cleared; plain dimension and phase indices are numbered below every index
+read at a copy. A wire between two boxes of one alignment group (DIAGRAM.txt, align) is an
+aligned wire whose end a carries, as port boxes, the boxes of the other end it lies outside of.
+Namespace <N>.Q<i> writes L (the box bid at mb copies), L' (bid at c₁ copies and its copy bid₂ at
+c₂ copies, the nodes cp x, each inner box y as cb y) and BoxSplitOK, checked by decide +kernel;
+Q<i>.main is evalX_split: for every Env and ks with ks mb = ks c₁ + ks c₂, the digit sum of L'
+equals that of L with each moved leg's copy j + ks c₁ of bid read at the copy's copy j. The
+split coordinate of a leg's copy index sits at spos: first on B, past the node chain on a leg of
+T. A reading (_, bid, c, c₁) of the box index becomes (cp x, bid₂, c + 1, c₁) on the copy; a
+reading of an inner box y keeps c and m and reads cb y. A leg of a Z or X spider off the box,
+wired (from a top-level spider) or aligned into it, is a tail entry (e.1, e.2) of T: it becomes
+e.1 over bid and the appended leg e.2 over bid₂ (extT), the spider's value kept at each of its
+copies up to leg order (BoxSplitOK.tnode). bid has no links of its own and no leg dimension reads
+its index. A split of base b is b - 1 chained evalX_split steps (step k moves the top h copies
+of the box at (b - k + 1) h copies into the k-th new box). split_power inserts each new tail leg
+right after its leg, extT appends it: a last step okP : LegPermOK P L' rn renumbers the legs of
+the Z and X spiders within each side, and evalX_legPerm keeps evalX with P's slots read from
+L''s through rnφ rn. qram's box C1 (index v; its child C2 of index j, aligned to C0, with
+splitter legs of dimension 2^(j+1) and 2^(j+2)) is in this form.
 
 A symbolic contraction step whose contracted diagrams carry a bang box or a free multiplicity
 is proved again by the induction rung of decide (base case decided, step case by its step

@@ -35,12 +35,25 @@ structure DLink where
   e2 : Port
   deriving DecidableEq, Repr
 
-/-- A boxed diagram with chain links and copy-indexed phases `(node, box, c, m)`. -/
+/-- An aligned wire: copy `t` of the leg `a` meets copy `pick t perm` of the leg `b`. -/
+structure DAlign where
+  a : Port
+  b : Port
+  perm : List ℕ
+  deriving DecidableEq, Repr
+
+/-- A boxed diagram with chain links, copy-indexed phases `(node, box, c, m)`, copy-indexed leg
+dimensions `(leg, box, c, m)` and aligned wires. -/
 structure LDiagram where
   base : Diagram
   links : List DLink := []
   cph : List (ℕ × ℕ × ℕ × ℕ) := []
+  cdim : List (Port × ℕ × ℕ × ℕ) := []
+  aligned : List DAlign := []
   deriving DecidableEq, Repr
+
+/-- The coordinates of `t` at the places `perm`. -/
+def pick (t perm : List ℕ) : List ℕ := perm.map fun i => t.getD i 0
 
 /-- A digit: a leg and a copy index. -/
 abbrev Dig := Port × List ℕ
@@ -229,6 +242,183 @@ theorem evalL_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' 
         rw [hv _ h1 _ h2, hv _ h3 _ h4]
         rfl
     unfold pinsL
+    refine and_congr ⟨fun h x hx' => ?_, fun h y hy => ?_⟩ ⟨fun h q hq t ht => ?_, ?_⟩
+    · rw [hx x hx']
+      rcases hD x hx' with hm | hm
+      · exact h _ hm
+      · exact (h _ hm).symm
+    · obtain ⟨x, hx', e | e⟩ := hD' y hy
+      · have := (hx x hx').1 (h x hx')
+        rw [← e]; exact this
+      · have := (hx x hx').1 (h x hx')
+        rw [← e]; exact this.symm
+    · obtain ⟨p, i⟩ := q
+      obtain ⟨hi, rfl⟩ := (mem_zipIdx' _ _ _).1 hq
+      have hp : L.base.bnd[i] ∈ L.base.bnd := List.getElem_mem hi
+      have hq' := hB _ hp t ht
+      set r := φ L.base.bnd[i] t with hr
+      have hidx := List.idxOf_lt_length_of_mem hq'
+      have hmem : (r.1, L'.base.bnd.idxOf r.1) ∈ L'.base.bnd.zipIdx :=
+        (mem_zipIdx' _ _ _).2 ⟨hidx, List.getElem_idxOf hidx⟩
+      have hu : r.2 ∈ cidx ks' (L'.base.legChain r.1) := (hinto _ (hbl _ hp) t ht).2
+      have := h _ hmem r.2 hu
+      simp only at this
+      rw [hl _ (dl _ (hbl _ hp) t ht), relab_dlab, hs', bndMap, List.getD_eq_getElem _ _ hi]
+      rw [hs] at this
+      exact this
+    · intro h q hq u hu
+      obtain ⟨q, i'⟩ := q
+      obtain ⟨hi', rfl⟩ := (mem_zipIdx' _ _ _).1 hq
+      obtain ⟨p, hp, t, ht, he⟩ := hB' _ (List.getElem_mem hi') u hu
+      obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.1 hp
+      have := h (L.base.bnd[i], i) ((mem_zipIdx' _ _ _).2 ⟨hi, rfl⟩) t ht
+      simp only at this
+      rw [hl _ (dl _ (hbl _ hp) t ht), relab_dlab, hs', bndMap, List.getD_eq_getElem _ _ hi,
+        he] at this
+      simp only at this ⊢
+      rw [hs]
+      rw [List.Nodup.idxOf_getElem hbnd'] at this
+      exact this
+
+/-- The digit pairs of the aligned wire `w`. -/
+def alignPairs (ks : ℕ → ℕ) (w : DAlign) : List (Dig × Dig) :=
+  (cidx ks (L.base.legChain w.a)).map fun t => ((w.a, t), (w.b, pick t w.perm))
+
+/-- `dpairs`, then every aligned wire's digit pairs. -/
+def dpairsX (ks : ℕ → ℕ) : List (Dig × Dig) :=
+  L.dpairs ks ++ L.aligned.flatMap (L.alignPairs ks)
+
+/-- Every digit pair of `dpairsX` agreeing, every boundary leg's digits its slot's. -/
+def pinsX (ks : ℕ → ℕ) (ν : ℕ → ℕ) : Prop :=
+  (∀ x ∈ L.dpairsX ks, ν (dlab x.1.1 x.1.2) = ν (dlab x.2.1 x.2.2)) ∧
+    (∀ q ∈ L.base.bnd.zipIdx, ∀ t ∈ cidx ks (L.base.legChain q.1), ν (dlab q.1 t) = ν (slab q.2 t))
+
+/-- The dimension index of the leg `p` at copy `t`: for an entry `(p, y, c, m)` of `cdim`,
+`Nat.pair (portDim p) (t_y + c * ks m)`. -/
+def dimAt (ks : ℕ → ℕ) (p : Port) (t : List ℕ) : ℕ :=
+  match L.cdim.find? fun q => decide (q.1 = p) with
+  | some q => Nat.pair (L.base.portDim p) (t.getD (L.depth q.2.1 p.node) 0 + q.2.2.1 * ks q.2.2.2)
+  | none => L.base.portDim p
+
+open Classical in
+/-- `evalL` with the copy-indexed leg dimensions and the aligned wires. -/
+noncomputable def evalX (E : Env) (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ) : ℂ :=
+  sumOver (fun l => E.dimv (L.dimAt ks (dport l) (dtup l))) (L.base.dlabs ks)
+    (fun ν => if L.pinsX ks ν then L.prodL E ks ν else 0) (slotsD σ)
+
+/-- With no copy-indexed leg dimensions and no aligned wires `evalX` is `evalL`. -/
+theorem evalX_eq_evalL (hd : L.cdim = []) (ha : L.aligned = []) (E : Env) (ks : ℕ → ℕ)
+    (σ : ℕ → List ℕ → ℕ) : L.evalX E ks σ = L.evalL E ks σ := by
+  unfold evalX evalL
+  have h1 : (fun l => E.dimv (L.dimAt ks (dport l) (dtup l))) =
+      fun l => E.dimv (L.base.portDim (dport l)) := by
+    funext l; simp [dimAt, hd]
+  have h2 : ∀ ν, L.pinsX ks ν ↔ L.pinsL ks ν := fun ν => by
+    simp [pinsX, pinsL, dpairsX, ha]
+  rw [h1]
+  congr 1
+  funext ν
+  classical
+  exact if_congr (h2 ν) rfl rfl
+
+/-- `evalL_relabel` for `evalX`. -/
+theorem evalX_relabel (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ σ' : ℕ → List ℕ → ℕ)
+    (ρ : ℕ → ℕ) (hnd : (L.base.dlabs ks).Nodup) (hnd' : (L'.base.dlabs ks').Nodup)
+    (hmem : ∀ x, x ∈ L'.base.dlabs ks' ↔ ∃ y ∈ L.base.dlabs ks, ρ y = x)
+    (hinj : ∀ x ∈ L.base.dlabs ks, ∀ y ∈ L.base.dlabs ks, ρ x = ρ y → x = y)
+    (hdim : ∀ x ∈ L.base.dlabs ks,
+      E.dimv (L'.dimAt ks' (dport (ρ x)) (dtup (ρ x))) = E.dimv (L.dimAt ks (dport x) (dtup x)))
+    (hF : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (ρ x)) →
+      (∀ i t, τ (slab i t) = σ' i t) → (∀ i t, τ' (slab i t) = σ i t) →
+      (L'.pinsX ks' τ ↔ L.pinsX ks τ') ∧ L'.prodL E ks' τ = L.prodL E ks τ') :
+    L'.evalX E ks' σ' = L.evalX E ks σ := by
+  have hperm : (L'.base.dlabs ks').Perm ((L.base.dlabs ks).map ρ) := by
+    refine (List.perm_ext_iff_of_nodup hnd' (List.Nodup.map_on hinj hnd)).2 fun x => ?_
+    rw [hmem x, List.mem_map]
+  have hdl : ∀ x ∈ L'.base.dlabs ks', ∃ p t, x = dlab p t := fun x hx => by
+    obtain ⟨p, -, t, -, rfl⟩ := (mem_dlabs L'.base ks' x).1 hx
+    exact ⟨p, t, rfl⟩
+  have hdl0 : ∀ x ∈ L.base.dlabs ks, ∃ p t, x = dlab p t := fun x hx => by
+    obtain ⟨p, -, t, -, rfl⟩ := (mem_dlabs L.base ks x).1 hx
+    exact ⟨p, t, rfl⟩
+  unfold evalX
+  rw [sumOver_perm _ hperm]
+  refine sumOver_map_on _ _ ρ _ hnd hinj hdim _ _ _ _ (fun τ τ' hτ hτ' hl => ?_) (fun x hx => ?_)
+  · have hs : ∀ i t, τ (slab i t) = σ' i t := fun i t => by
+      rw [hτ _ fun h => by
+        obtain ⟨p, u, e⟩ := hdl _ ((List.Perm.mem_iff hperm).2 h)
+        exact dlab_ne_slab p u i t e.symm, slotsD_slab]
+    have hs' : ∀ i t, τ' (slab i t) = σ i t := fun i t => by
+      rw [hτ' _ fun h => by
+        obtain ⟨p, u, e⟩ := hdl0 _ h
+        exact dlab_ne_slab p u i t e.symm, slotsD_slab]
+    obtain ⟨h1, h2⟩ := hF τ τ' hl hs hs'
+    rw [h2]
+    classical
+    exact if_congr h1 rfl rfl
+  · obtain ⟨p, t, rfl⟩ := hdl0 x hx
+    obtain ⟨q, u, e⟩ := hdl _ ((hmem _).2 ⟨_, hx, rfl⟩)
+    rw [slotsD_dlab, e, slotsD_dlab]
+
+/-- `evalL_relabelφ` for `evalX`: the map of digits keeps each digit's dimension (`dimAt`) and
+sends the pairs of `dpairsX` both ways. -/
+theorem evalX_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' : ℕ → List ℕ → ℕ)
+    (φ : Port → List ℕ → Dig)
+    (hnd : (L.base.dlabs ks).Nodup) (hnd' : (L'.base.dlabs ks').Nodup) (hbnd' : L'.base.bnd.Nodup)
+    (hinto : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p),
+      (φ p t).1 ∈ L'.base.legs ∧ (φ p t).2 ∈ cidx ks' (L'.base.legChain (φ p t).1))
+    (honto : ∀ q ∈ L'.base.legs, ∀ u ∈ cidx ks' (L'.base.legChain q),
+      ∃ p ∈ L.base.legs, ∃ t ∈ cidx ks (L.base.legChain p), φ p t = (q, u))
+    (hinj : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p), ∀ p' ∈ L.base.legs,
+      ∀ t' ∈ cidx ks (L.base.legChain p'), φ p t = φ p' t' → p = p' ∧ t = t')
+    (hdim : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p),
+      E.dimv (L'.dimAt ks' (φ p t).1 (φ p t).2) = E.dimv (L.dimAt ks p t))
+    (hpl : ∀ x ∈ L.dpairsX ks, x.1.1 ∈ L.base.legs ∧ x.1.2 ∈ cidx ks (L.base.legChain x.1.1) ∧
+      x.2.1 ∈ L.base.legs ∧ x.2.2 ∈ cidx ks (L.base.legChain x.2.1))
+    (hD : ∀ x ∈ L.dpairsX ks, pmap φ x ∈ L'.dpairsX ks' ∨ pswap (pmap φ x) ∈ L'.dpairsX ks')
+    (hD' : ∀ y ∈ L'.dpairsX ks', ∃ x ∈ L.dpairsX ks, pmap φ x = y ∨ pswap (pmap φ x) = y)
+    (hbl : ∀ p ∈ L.base.bnd, p ∈ L.base.legs)
+    (hB : ∀ p ∈ L.base.bnd, ∀ t ∈ cidx ks (L.base.legChain p), (φ p t).1 ∈ L'.base.bnd)
+    (hB' : ∀ q ∈ L'.base.bnd, ∀ u ∈ cidx ks' (L'.base.legChain q), ∃ p ∈ L.base.bnd,
+      ∃ t ∈ cidx ks (L.base.legChain p), φ p t = (q, u))
+    (hP : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (relab φ x)) →
+      L'.prodL E ks' τ = L.prodL E ks τ') :
+    L'.evalX E ks' σ' = L.evalX E ks (bndMap L.base L'.base φ σ') := by
+  have dl : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p), dlab p t ∈ L.base.dlabs ks :=
+    fun p hp t ht => (mem_dlabs L.base ks _).2 ⟨p, hp, t, ht, rfl⟩
+  refine evalX_relabel L L' E ks ks' _ σ' (relab φ) hnd hnd' (fun x => ?_) ?_ ?_ ?_
+  · rw [mem_dlabs]
+    constructor
+    · rintro ⟨q, hq, u, hu, rfl⟩
+      obtain ⟨p, hp, t, ht, he⟩ := honto q hq u hu
+      exact ⟨_, dl p hp t ht, by rw [relab_dlab, he]⟩
+    · rintro ⟨y, hy, rfl⟩
+      obtain ⟨p, hp, t, ht, rfl⟩ := (mem_dlabs L.base ks _).1 hy
+      obtain ⟨h1, h2⟩ := hinto p hp t ht
+      exact ⟨_, h1, _, h2, relab_dlab φ p t⟩
+  · intro x hx y hy he
+    obtain ⟨p, hp, t, ht, rfl⟩ := (mem_dlabs L.base ks _).1 hx
+    obtain ⟨p', hp', t', ht', rfl⟩ := (mem_dlabs L.base ks _).1 hy
+    rw [relab_dlab, relab_dlab] at he
+    obtain ⟨e1, e2⟩ := dlab_inj he
+    obtain ⟨rfl, rfl⟩ := hinj p hp t ht p' hp' t' ht' (Prod.ext e1 e2)
+    rfl
+  · intro x hx
+    obtain ⟨p, hp, t, ht, rfl⟩ := (mem_dlabs L.base ks _).1 hx
+    rw [relab_dlab, dport_dlab, dport_dlab, dtup_dlab, dtup_dlab]
+    exact hdim p hp t ht
+  · intro τ τ' hl hs hs'
+    refine ⟨?_, hP τ τ' hl⟩
+    have hv : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p),
+        τ' (dlab p t) = τ (dlab (φ p t).1 (φ p t).2) := fun p hp t ht => by
+      rw [hl _ (dl p hp t ht), relab_dlab]
+    have hx : ∀ x ∈ L.dpairsX ks, (τ' (dlab x.1.1 x.1.2) = τ' (dlab x.2.1 x.2.2) ↔
+        τ (dlab (pmap φ x).1.1 (pmap φ x).1.2) = τ (dlab (pmap φ x).2.1 (pmap φ x).2.2)) :=
+      fun x hx => by
+        obtain ⟨h1, h2, h3, h4⟩ := hpl x hx
+        rw [hv _ h1 _ h2, hv _ h3 _ h4]
+        rfl
+    unfold pinsX
     refine and_congr ⟨fun h x hx' => ?_, fun h y hy => ?_⟩ ⟨fun h q hq t ht => ?_, ?_⟩
     · rw [hx x hx']
       rcases hD x hx' with hm | hm
