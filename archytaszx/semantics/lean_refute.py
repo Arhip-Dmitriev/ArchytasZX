@@ -1667,7 +1667,13 @@ class _Refuter:
         for n in net.nodes:
             legs = tuple(dict.fromkeys((*n.outs, *n.ins)))
             scope = tuple(x for x in legs if x not in pinned)
-            key = (id(n), tuple((x, pinned[x]) for x in legs if x in pinned))
+            key = (
+                self.p,
+                self.w,
+                self.M,
+                id(n),
+                tuple((x, pinned[x]) for x in legs if x in pinned),
+            )
 
             def leaf(tau: dict[int, int], n: LNode = n) -> int:
                 return self.res(self.node(n, {**tau, **pinned}))
