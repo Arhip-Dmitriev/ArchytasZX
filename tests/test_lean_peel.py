@@ -592,6 +592,59 @@ def test_lean_checks_an_inner_box_reading_on_a_copy_and_refuses_it_at_the_templa
     assert not ok
 
 
+PLAIN = """count n
+b = X(1 -> 1, literal 2)
+q = B(literal 2, literal 2^m)
+repeat n as R index m: b, q
+chain R: b.out0 -> b.in0
+inputs b.in0, q.in0, q.in1
+outputs b.out0, q.out0"""
+"""A chain of X(1 -> 1) of dimension 2 through a box of index m that also holds a binder
+B(2, 2^m), both chain ends and the binder's legs on the boundary."""
+
+
+def _plain_peel() -> tuple[Diagram, Diagram]:
+    """PLAIN at ``s + 1`` copies and its peel of the box."""
+    d = rename_multiplicity(parse_dsl(PLAIN), "n", Mult("s") + 1)
+    row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
+    return d, bangbox.peel_one(d, row.id).diagram
+
+
+def _read_dropped_leg(source: str) -> str:
+    """``source`` with the leg a dropped identity meets given a leg-dimension reading in ``Lk``."""
+    found = re.search(r"theorem okk1 : DropOKX .* (⟨\d+, \w+, \d+⟩) :=", source)
+    assert found is not None
+    head, tail = source.split("def Lk : LDiagram :=", 1)
+    tail = tail.replace("cdim := [", f"cdim := [({found[1]}, 0, 0, 0), ", 1)
+    return head + "def Lk : LDiagram :=" + tail
+
+
+def test_an_identity_wired_to_a_node_leg_on_a_side_with_an_index_drops_through_evalX_dropAt() -> (
+    None
+):
+    before, after = _plain_peel()
+    source = lean_linked.export_peel(before, after)
+    assert source is not None and "(evalX_peel_flat ok flat E ks hk y)" in source
+    assert "theorem okk1 : DropOKX (Lk.moveLast xk1.id)" in source
+    assert "(evalX_dropAt okk1 E hE ks σ)" in source
+    assert _read_dropped_leg(source) != source
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_an_identity_drop_with_an_index_and_refuses_it_at_a_read_leg(
+    tmp_path: object,
+) -> None:
+    source = lean_linked.export_peel(*_plain_peel())
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/drop.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    ok, output = check(_read_dropped_leg(source), f"{tmp_path}/bad.lean")
+    assert not ok
+
+
 def _moved_copy_slots() -> tuple[Diagram, Diagram]:
     """A successor peel whose peeled side has its first and last outputs swapped."""
     before, after = next(_succ_peels(_cluster()))

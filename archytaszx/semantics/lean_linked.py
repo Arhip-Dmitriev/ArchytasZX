@@ -13,7 +13,7 @@
 
 """Lean output for kernel peels and identity slides over linked diagrams (ArchytasZX/Linked.lean,
 LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean,
-LinkedFirst.lean). A boxed diagram is written as
+LinkedFirst.lean, LinkedDropX.lean). A boxed diagram is written as
 an ``LDiagram``: its nodes, its wires without those at chain link ports, its boundary, its node
 boxes and its links, each link's ends the partners of its two ports; a link port on the boundary
 is the ghost ``(G, True, i)`` of its slot ``i``, its boundary place and its link end (``evalG``),
@@ -33,7 +33,8 @@ box with an index is written over ``evalX`` (:func:`linked` with ``readings``): 
 literal dimensions written with their template's indices read at the constant copy
 (:func:`_read_copies`); its first copy (a reversed chain, ``LinkedFirst.lean``) through
 ``FirstOK``, ``FirstX`` and ``evalX_peel_first``, the kept copies written with their template's
-indices read one copy higher (:func:`_shift_kept`)."""
+indices read one copy higher (:func:`_shift_kept`); an identity wired to a node leg there drops
+through ``DropOKX`` and ``evalX_dropAt`` (``LinkedDropX.lean``)."""
 
 from __future__ import annotations
 
@@ -932,6 +933,9 @@ _GHOSTX_FIELDS = 3
 _FIRSTX_FIELDS = 9
 """The fields of ``FirstX``."""
 
+_DROPX_FIELDS = 4
+"""The fields of ``DropOKX`` past ``DropOK``."""
+
 
 @dataclass
 class PeelEnds:
@@ -1267,12 +1271,16 @@ def _reduce(
     """``D`` with each node of ``drops`` meeting :func:`drop_ok` dropped (moved last first),
     then each node of ``ids`` meeting :func:`ghost_ok` dropped for the ghost ``(G, True, i)`` of
     its slot ``i``; the ghosts (most recent first; None when a node of ``ids`` stays) and the
-    steps. With ``xm`` nothing is dropped by :func:`drop_ok` and the ghosts meet
-    :func:`ghost_x_ok`."""
+    steps. With ``xm`` the ghosts meet :func:`ghost_x_ok`, and nodes of ``drops`` meeting
+    :func:`drop_x_ok` are dropped only when the ghosts alone leave a node of ``ids``."""
+    if xm and drops:
+        alone = _reduce(D, ids, set(), G, True)
+        if alone[1] is not None:
+            return alone
     steps: list[Step] = []
     left = set(ids)
-    for x in [n for n in D.nodes if n.id in drops and not xm]:
-        found = _drops(D, x)
+    for x in [n for n in D.nodes if n.id in drops]:
+        found = _drops(D, x, xm)
         if found:
             w, u, v, P, (nodes, wires, outs, ins, links) = found[0]
             steps.append(("drop", x, (*w, u, v, P), -1))
@@ -1324,12 +1332,16 @@ def _chain(
     out, at, terms = "", start, list[str]()
     held: list[str] = []
     drop_proof = ",\n    ".join(["by decide +kernel"] * 18)
+    dk, da, de = "DropOK", "dropAt", "evalL_dropAt"
     ghost_proof = ",\n    ".join(["by decide +kernel"] * 23)
     gk, ga, ge, sx = "GhostOK", "ghostAt", "evalG", "evalL"
     if x:
         ghost_proof = "⟨" + ghost_proof + "⟩,\n    "
         ghost_proof += ",\n    ".join(["by decide +kernel"] * _GHOSTX_FIELDS)
         gk, ga, ge, sx = "GhostOKX", "ghostAtX", "evalGX", "evalX"
+        drop_proof = "⟨" + drop_proof + "⟩,\n    "
+        drop_proof += ",\n    ".join(["by decide +kernel"] * _DROPX_FIELDS)
+        dk, da, de = "DropOKX", "dropAtX", "evalX_dropAt"
     switched = False
     for j, (kind, node, ports, i) in enumerate(steps, 1):
         xn = f"x{tag}{j}"
@@ -1340,11 +1352,11 @@ def _chain(
             w0, w1, u, v, P = ports
             wl = f"({_lport(w0)}, {_lport(w1)})"
             out += (
-                f"theorem ok{tag}{j} : DropOK ({at}.moveLast {xn}.id) {xn} {wl} {_lport(u)} "
+                f"theorem ok{tag}{j} : {dk} ({at}.moveLast {xn}.id) {xn} {wl} {_lport(u)} "
                 f"{_lport(v)} {_lport(P)} :=\n  ⟨{drop_proof}⟩\n\n"
             )
-            terms.append(f"(evalL_dropAt ok{tag}{j} E hE ks σ)")
-            at = f"({at}.dropAt {xn} {wl} {_lport(v)} {_lport(P)})"
+            terms.append(f"({de} ok{tag}{j} E hE ks σ)")
+            at = f"({at}.{da} {xn} {wl} {_lport(v)} {_lport(P)})"
             continue
         if not switched:
             terms.append(f"({ge}_nil {at} E ks σ).symm")
@@ -1444,8 +1456,25 @@ def drop_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Port)
     )
 
 
-def _drops(D: LDiag, x: LNode) -> list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]]:
-    """Each ``(w, u, v, P, dropped)`` of ``x`` in ``D`` meeting :func:`drop_ok`."""
+def drop_x_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Port) -> bool:
+    """The Lean ``DropOKX D x w u v P``, field by field, with ``DropOK``'s ``pdim``."""
+    owner = next((n for n in D.nodes if n.id == P[0]), None)
+    dims = None if owner is None else (owner.outs if P[1] else owner.ins)
+    return (
+        drop_ok(strip(D), x, w, u, v, P)
+        and dims is not None
+        and P[2] < len(dims)
+        and dims[P[2]] == x.dim
+        and all(q[0] != x.id for q in D.cph)
+        and all(q[0][0] != x.id and q[0] != P for q in D.cdim)
+    )
+
+
+def _drops(
+    D: LDiag, x: LNode, xm: bool = False
+) -> list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]]:
+    """Each ``(w, u, v, P, dropped)`` of ``x`` in ``D`` meeting :func:`drop_ok` (with ``xm``
+    :func:`drop_x_ok`)."""
     D = _move_last(D, x)
     out: list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]] = []
     legs = [(x.id, True, 0), (x.id, False, 0)]
@@ -1454,7 +1483,7 @@ def _drops(D: LDiag, x: LNode) -> list[tuple[tuple[Port, Port], Port, Port, Port
         for w in D.wires:
             if u in w and w[0] != w[1]:
                 P = w[1] if w[0] == u else w[0]
-                if drop_ok(D, x, w, u, v, P):
+                if (drop_x_ok if xm else drop_ok)(D, x, w, u, v, P):
                     out.append((w, u, v, P, drop_id(D, x.id, w, v, P)))
     return out
 

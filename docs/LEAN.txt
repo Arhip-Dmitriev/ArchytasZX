@@ -403,7 +403,7 @@ applied to R<i>.main; slots<i> stays opaque.
 
 A peel and an identity slide are proved the same way over linked diagrams (ArchytasZX/Linked.lean,
 LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean,
-LinkedFirst.lean). Both
+LinkedFirst.lean, LinkedDropX.lean). Both
 read each side's digits at its flat boundary positions: the engine instantiates a box by
 splicing each of its slot blocks into one run at the place of the block's first leg,
 copy-major, outputs and inputs apart (bangbox._splice_box), and LinkedSplice.lean states the
@@ -491,8 +491,19 @@ engine writes the kept copies with their index shifted (2**(m + 1)) and the firs
 export writes both with their template's indices, the kept ones with (_, box, 1, m1) and the copy
 with (_, box, 0, 0), each literal checked by sympy (m + 1, 0), and main takes ks m1 = 1.
 tests/test_lean_peel.py checks REV_BINDER (GRID with the row chain reversed and a binder
-B(2, 2^m) in the row box of index m); Lean refuses a kept copy read at coefficient 0. An identity
-wired to a node leg on a side with an index is not exported.
+B(2, 2^m) in the row box of index m); Lean refuses a kept copy read at coefficient 0.
+
+An identity wired to a node leg on a side with an index is dropped over evalX
+(LinkedDropX.lean): DropOKX holds DropOK of the side stripped of its readings, no aligned wires,
+no reading of the identity or its legs, and no leg-dimension reading of the leg P it meets (whose
+dimension is then the identity's, pdim); dropIdX is dropId keeping cdim and the aligned wires, and
+DropOKX.evalX_drop (evalL_drop with phAt through rdVal and dimAt) and evalX_dropAt keep evalX. The
+chain of such a side writes DropOKX steps and evalX_dropAt before its GhostOKX steps;
+lean_linked._reduce drops (drop_x_ok) only when the ghosts alone leave an identity, so every export
+without such an identity is unchanged. tests/test_lean_peel.py checks PLAIN (a chain of
+X(1 -> 1) of dimension 2 through a box of index m holding B(2, 2^m)), whose peeled copy's chain
+end meets the boundary identity at a node leg; Lean refuses the drop when that leg is given a
+leg-dimension reading. An identity meeting a leg with a leg-dimension reading is not exported.
 
 A power split (kernel.power_split) is proved the same way when both sides are linked diagrams
 (ArchytasZX/LinkedSplit.lean), over the digit sum evalX (Linked.lean): evalL with copy-indexed

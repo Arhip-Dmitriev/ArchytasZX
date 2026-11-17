@@ -67,6 +67,7 @@ import ArchytasZX.LinkedForm
 import ArchytasZX.LinkedGhost
 import ArchytasZX.LinkedSplice
 import ArchytasZX.LinkedFirst
+import ArchytasZX.LinkedDropX
 import ArchytasZX.Mixed
 import ArchytasZX.NumField
 import ArchytasZX.PathSum
