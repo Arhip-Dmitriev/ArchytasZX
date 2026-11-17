@@ -36,6 +36,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 from archytaszx.algebra.phase import INDEX
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics.lean_net import (
+    TABLE_CHUNK,
     LNet,
     LNode,
     NetUnsupported,
@@ -57,6 +58,7 @@ MAX_TERMS = 200_000
 MAX_CYCLOTOMIC_DEGREE = 512
 MAX_PRIMES = 4
 MAX_PINNED = 16
+SYM_FIRST = 10_000
 MAX_RES_ENTRIES = 2_000_000
 RES_PRIME_FLOOR = 1 << 20
 
@@ -1326,7 +1328,16 @@ class _Refuter:
 
     def net_plan(self, net: LNet, sigma: Mapping[int, int]) -> tuple[str, Any, int]:
         """The residue contraction of ``net`` at ``sigma``: by tables, else by substitution and
-        geometric sums; with the residue it gives."""
+        geometric sums, the substitution first when a node's table has over `SYM_FIRST` entries;
+        with the residue it gives."""
+        legs = [dict.fromkeys((*n.outs, *n.ins)) for n in net.nodes]
+        widest = max(
+            (math.prod(self.labdim(x) for x in ls if x not in sigma) for ls in legs), default=1
+        )
+        if widest > SYM_FIRST:
+            with contextlib.suppress(NetUnsupported):
+                sp_ = sym_plan(self, net, sigma)
+                return "sym", sp_, sp_.value
         try:
             pl = self.res_plan(net, sigma)
             return "res", pl, self.res_final(pl[2], sigma)
@@ -1472,8 +1483,7 @@ class _Refuter:
         fs = [*self.zs, *self.tabs]
         fsl = _ints_nat(fs)
         cases = "".join(f"  | {ph}, _ => (0, [])\n" for ph in self.zs) + "".join(
-            f"  | {ph}, k => ((((({_ints(nums)}) : List ℤ).getD k 0 * {M // den}) % {M}).toNat, "
-            "[])\n"
+            f"  | {ph}, k => ((({self.table_get(nums)} * {M // den}) % {M}).toNat, []" + ")\n"
             for ph, (nums, den) in self.tabs.items()
         )
         phok = ", ".join(self.phase_proof(ph, j, unfold) for ph, j in self.keys)
@@ -1613,6 +1623,13 @@ class _Refuter:
             "simp only [E, Ψ, tv, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, "
             f"mono_nil_left] <;> (try push_cast) <;> {cert}"
         )
+
+    def table_get(self, nums: Sequence[int]) -> str:
+        """Entry `k` of ``nums`` as a Lean `ℤ` term, read from the export's chunk definitions
+        past `TABLE_CHUNK` entries."""
+        if len(nums) > TABLE_CHUNK:
+            return str(self.out.table_get(nums))
+        return f"(({_ints(nums)}) : List ℤ).getD k 0"
 
     def res_count(self, size: int) -> None:
         """Counts ``size`` residue entries against `MAX_TERMS` and `MAX_RES_ENTRIES`."""

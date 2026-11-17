@@ -622,9 +622,34 @@ theorem sval_zero (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     simp only [sin, List.contains_iff_mem] at h
     rw [List.prod_eq_zero (List.mem_map.2 ⟨q, h, h0⟩)]; ring
 
-/-- The state after binding `l` to `e`. -/
+/-- An expression simplified by `LX.norm` with no label pinned. -/
+def LX.nz (e : LX) : LX := e.norm [] fun _ => 0
+
+theorem LX.nz_eval (τ : ℕ → ℕ) (e : LX) : e.nz.eval τ = e.eval τ := by
+  rw [LX.nz, LX.norm_eval]
+  congr 1
+
+/-- Bindings with each expression simplified. -/
+def bnz (bs : List (ℕ × LX)) : List (ℕ × LX) := bs.map fun b => (b.1, b.2.nz)
+
+theorem blook_bnz (x : ℕ) :
+    ∀ bs : List (ℕ × LX), blook (bnz bs) x = (blook bs x).map LX.nz
+  | [] => rfl
+  | (a, e) :: t => by
+    simp only [bnz, List.map_cons, blook]
+    split_ifs
+    · rfl
+    · exact blook_bnz x t
+
+theorem tval_bnz (bs : List (ℕ × LX)) (τ : ℕ → ℕ) : tval (bnz bs) τ = tval bs τ := by
+  funext x
+  unfold tval texpr
+  rw [blook_bnz]
+  cases blook bs x <;> simp [LX.nz_eval]
+
+/-- The state after binding `l` to `e`, its expressions simplified. -/
 def dapply (l : ℕ) (e : LX) (st : SSt) : SSt :=
-  ⟨(l, e) :: bsubst l e st.bs, st.ns, st.cs.map fun q => (q.1, q.2.subst l e), st.c⟩
+  ⟨bnz ((l, e) :: bsubst l e st.bs), st.ns, st.cs.map fun q => (q.1, (q.2.subst l e).nz), st.c⟩
 
 /-- A delta step on `l` from `src` giving `e`, with `R` the summed and `U` the boundary
 labels. -/
@@ -651,7 +676,8 @@ theorem dstep_pt (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C 
     omega
   rw [Finset.sum_eq_single (e.eval τ)]
   · have hT := tval_step st.bs l e hfree τ
-    simp only [sval, dapply, List.map_map, Function.comp_def, hT, cval, LX.eval_subst]
+    simp only [sval, dapply, tval_bnz, List.map_map, Function.comp_def, hT, cval, LX.nz_eval,
+      LX.eval_subst]
   · intro j hj hne
     apply sval_zero S M P C p w st src hin
     by_contra hv

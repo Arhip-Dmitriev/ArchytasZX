@@ -423,9 +423,9 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
         if step[0] == "D":
             e = step[3]
             st = State(
-                [(l, e), *((a, subst(v, l, e)) for a, v in st.bs)],
+                [(l, lnorm(e, (), {})), *((a, lnorm(subst(v, l, e), (), {})) for a, v in st.bs)],
                 list(st.ns),
-                [(nq, subst(v, l, e)) for nq, v in st.cs],
+                [(nq, lnorm(subst(v, l, e), (), {})) for nq, v in st.cs],
                 st.c,
             )
         else:

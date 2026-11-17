@@ -94,6 +94,7 @@ _RESERVED = frozenset(
 
 
 PHASE_TABLE_MIN = 64
+TABLE_CHUNK = 256
 
 
 def _phase_table(pv: PhaseVector) -> tuple[list[int], int] | None:
@@ -340,6 +341,8 @@ class _Export:
         self.phase_specs: list[tuple[dict[int, sp.Expr], sp.Expr | None]] = [({}, None)]
         self.phase_key: dict[str, int] = {"": 0}
         self.phase_tables: dict[int, tuple[list[int], int]] = {}
+        self.table_names: dict[tuple[int, ...], str] = {}
+        self.table_defs: list[str] = []
         self.weight_tab: dict[int, str] = {}
         self.coef_models: dict[str, dict[int, sp.Expr]] = {}
         self.labs: dict[int, int] = {}
@@ -457,6 +460,27 @@ class _Export:
             self.sc.nats |= {str(x) for x in e.free_symbols}
         return self.dim_key[key]
 
+    def table_get(self, nums: Sequence[int]) -> str:
+        """Entry `k` of ``nums`` read from the definitions `PT{j}`, a list of chunks of
+        `TABLE_CHUNK` entries each its own definition `PT{j}_{c}`."""
+        key = tuple(nums)
+        if key not in self.table_names:
+            name = f"PT{len(self.table_names)}"
+            self.table_names[key] = name
+            rows = [key[i : i + TABLE_CHUNK] for i in range(0, len(key), TABLE_CHUNK)]
+            for c, r in enumerate(rows):
+                self.table_defs.append(
+                    f"/-- Chunk {c} of a phase table. -/\ndef {name}_{c} : List ℤ := "
+                    f"[{', '.join(map(str, r))}]"
+                )
+            parts = ", ".join(f"{name}_{c}" for c in range(len(rows)))
+            self.table_defs.append(
+                f"/-- A phase table in chunks of {TABLE_CHUNK}. -/\n"
+                f"def {name} : List (List ℤ) := [{parts}]"
+            )
+        name = self.table_names[key]
+        return f"({name}.getD (k / {TABLE_CHUNK}) []).getD (k % {TABLE_CHUNK}) 0"
+
     def phase_body(self, pv: PhaseVector) -> str:
         """The phases of ``pv`` in turns, as the body of a Lean ``fun k``: a packed table of
         numerators over one denominator when it has more than ``PHASE_TABLE_MIN`` rational
@@ -464,6 +488,8 @@ class _Export:
         tab = _phase_table(pv)
         if tab is not None:
             nums, den = tab
+            if len(nums) > TABLE_CHUNK:
+                return f"((({self.table_get(nums)} : ℤ) : ℝ) / {den})"
             return f"(((([{', '.join(map(str, nums))}] : List ℤ).getD k 0 : ℤ) : ℝ) / {den})"
         parts = []
         for index, ph in sorted(pv.entries().items()):
@@ -3309,6 +3335,7 @@ class _Export:
         labs = _pairs(sorted(self.labs.items()))
         coef = f", coef := Ψ {args}".rstrip() if self.weight_tab else ""
         tables = [
+            *self.table_defs,
             f"/-- Dimension values. -/\ndef Δ {binders} : ℕ → ℕ\n{dims}\n  | _ => 1",
             (
                 f"/-- Phase vectors in turns. -/\nnoncomputable def Φ {binders} : ℕ → ℕ → ℝ\n"
