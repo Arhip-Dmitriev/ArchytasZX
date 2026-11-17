@@ -222,6 +222,41 @@ def test_stage_cpu_limits_are_timeouts() -> None:
     assert (out["outcome"], out["cause"]) == ("timeout", "limit.generate_cpu")
 
 
+def test_generate_memory_failures_are_unsupported_input_size() -> None:
+    """quantum_hamming n=18: a MemoryError in the generate stage, or a memory kill or MemoryError
+    exit whose open span is generate.script, is unsupported.input_size; under input.* or
+    without spans it stays oom."""
+    from benchmarks import outcomes
+
+    run = {"tool": "archytaszx", "equation": "quantum_hamming/main", "n": 18, "d": 2}
+    gen = {"status": "oom", "detail": "MemoryError"}
+    out = outcomes.classify({**run, "outcome": "oom", "stages": {"generate": gen}})
+    assert (out["outcome"], out["stage"], out["cause"]) == (
+        "unsupported",
+        "generate",
+        "unsupported.input_size",
+    )
+    assert out["raw_outcome"] == "oom" and outcomes.counted(out)
+    span = {"open_span": "generate.script"}
+    for kill in (
+        {"outcome": "oom", "kill": "cgroup oom_kill", "exit": -15},
+        {"outcome": "oom", "kill": "SIGKILL", "exit": -9},
+        {"outcome": "error", "kill": None, "exit": 137},
+        {"outcome": "error", "kill": None, "exit": 1, "detail": "MemoryError"},
+    ):
+        killed = {**run, **kill, "killed_in": "generate"}
+        out = outcomes.classify({**killed, **span})
+        assert (out["outcome"], out["cause"]) == ("unsupported", "unsupported.input_size")
+        assert outcomes.classify(killed)["outcome"] == "oom"
+        inner = outcomes.classify({**killed, "open_span": "input.parse"})
+        assert inner["outcome"] == "oom"
+    dec = {"status": "oom", "detail": "MemoryError"}
+    out = outcomes.classify(
+        {**run, "outcome": "oom", "stages": {"generate": {"status": "ok"}, "decide": dec}}
+    )
+    assert (out["outcome"], out["cause"]) == ("oom", "memory.error")
+
+
 def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
     """quantum_hamming_family/encoding single_entry: n = 6 (63 outputs, 2^63) is unsupported,
     unsupported.phase_table_bound; n = 3 builds."""

@@ -122,6 +122,7 @@ UNSUPPORTED: dict[str, str] = {
     "proof_file_missing": " proof file ",
     "not_installed": "not installed",
     "qubit_cap": "Requested too many qubits from package",
+    "input_size": "the input format is intractable at this size",
 }
 
 CAUSES: dict[str, str] = {
@@ -139,8 +140,6 @@ CAUSES: dict[str, str] = {
     "limit.stage_cpu": "a stage used up its CPU limit",
     "limit.generate_cpu": "ArchytasZX script generation (the harness's translator) used up its CPU "
     "limit (timeout)",
-    "kill.generate_oom": "a memory kill while generating the ArchytasZX script outside the "
-    "engine's input spans (harness_error)",
     "limit.prepare_cpu": "a rival's preparation used up its CPU limit (timeout)",
     "limit.rival_cpu": "the rival used up its CPU limit",
     "limit.rival_wall": "the rival used up its wall limit",
@@ -159,6 +158,8 @@ CAUSES: dict[str, str] = {
     "harness.driver": "an exception raised in the harness's own driver code",
     "harness.generate": "an exception while generating the ArchytasZX script",
     "unsupported.<code>": "a code of UNSUPPORTED",
+    "unsupported.input_size": "a MemoryError or memory kill while generating the ArchytasZX "
+    "script outside the engine's input spans",
     "unknown.<rung code>": "the last rung tried and its stop code (RUNGS)",
 }
 
@@ -315,8 +316,10 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
         return "timeout", stage, "kill.stage_timer"
     span = rec.get("open_span")
     memory = kill in ("cgroup oom_kill", "SIGKILL") or rec.get("journal_oom_kill")
-    if (memory or code in (-9, 137)) and stage == "generate" and span and not _engine_input(span):
-        return "harness_error", stage, "kill.generate_oom"
+    memory = memory or code in (-9, 137) or oc == "oom"
+    memory = memory or allocation_failure(str(rec.get("detail") or ""))
+    if memory and stage == "generate" and span and not _engine_input(span):
+        return "unsupported", stage, "unsupported.input_size"
     if kill == "cgroup oom_kill" or rec.get("journal_oom_kill"):
         return "oom", stage, "kill.cgroup_oom_kill"
     if kill == "SIGKILL" or code in (-9, 137):
@@ -389,6 +392,8 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
             return "timeout", s, "limit.generate_cpu", detail
         return "timeout", s, "limit.stage_cpu", detail
     if status == "oom":
+        if s == "generate" and not _engine_input(failed.get("open_span")):
+            return "unsupported", s, "unsupported.input_size", detail
         return "oom", s, "memory.lean" if s == "lean_check" else "memory.error", detail
     if s == "generate":
         return "harness_error", s, "harness.generate", detail
