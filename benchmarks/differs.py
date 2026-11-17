@@ -30,7 +30,11 @@ point is equal, at every point when every tabled
 point is (a no-op edit), and beyond the largest tabled n (d) when the last TAIL tabled values
 of n (d) are equal at every tabled d (n), and at an n beyond the table where the tabled n line
 of its d repeats with a period p (at least PERIODS checks of v(m) = v(m + p)) and the tabled m
-= n mod p is equal. Otherwise it differs at every point of its domain,
+= n mod p is equal. A gate-kind edit (wrong_phase, missing_gate, swapped_control_target) is
+also equal off the table where its gate's own amount and wire dimensions at the point leave the
+gate unchanged (_gate_trivial), and is None off the table when its gate on an unrolled
+equation differs between the probe n and the next GATE_LATER n. Otherwise it differs at every
+point of its domain,
 unless its witness is an interface mismatch between a pure side and a doubled side (one side's
 boundary is the other's taken twice): such a witness reads no entry, and the pair counts as
 not differing.
@@ -181,6 +185,106 @@ def _table_equal(table: dict[tuple[Any, int], bool], n: int | None, d: int) -> b
     return d > max(k[1] for k in table) and _tail_equal(table, 1)
 
 
+GATE_KINDS = ("wrong_phase", "missing_gate", "swapped_control_target")
+MAX_LEVELS = 4096
+
+
+@functools.cache
+def _instances() -> dict[str, Any]:
+    """Every S instance of the catalogue by id."""
+    from benchmarks import subject
+
+    return {i.id: i for i in subject.instances(list(subject.catalogue()))}
+
+
+def _gate_view(c: Any, params: dict[str, Any]) -> tuple[Any, tuple[str, ...]]:
+    """The gate an edit names in ``c`` and the dimensions of its wires, as text."""
+    from benchmarks import breaks, ir
+
+    g = c.gates[breaks._index(c, params)]
+    return g, tuple(str(c.dim(q)) for q in ir.gate_wires(g))
+
+
+@functools.cache
+def _edited_gate(equation: str, params_key: str) -> tuple[Any, tuple[str, ...]] | None:
+    """The gate a gate-kind edit names and its wire dimensions, symbolic in d (and in n on a
+    boxed equation); None when they differ between the unrolled probe n and the next
+    GATE_LATER domain n. Raises when the instance or gate is not found."""
+    import json
+
+    from benchmarks import breaks, subject
+
+    inst = _instances()[equation.removesuffix("!")]
+    params = json.loads(params_key)
+    pn = breaks._probe_n(inst)
+    view = _gate_view(subject.circuit_at(inst, pn, None), params)
+    if inst.equation.form == "unrolled":
+        for v in breaks._ns(inst, (pn or 0) + 1, breaks.GATE_LATER):
+            if repr(_gate_view(subject.circuit_at(inst, v, None), params)) != repr(view):
+                return None
+    return view
+
+
+def _value(x: Any, n: int | None, d: int, k: int | None = None) -> sp.Rational | None:
+    """``x`` (a number or text in k, n, d) at the point, None when it is not a rational."""
+    expr = _expr(str(x))
+    v = expr.subs({_N: n if n is not None else 0, _D: d, _K: k if k is not None else 0})
+    return v if v.is_Rational else None
+
+
+def _diagonal_identity(g: Any, size: int, n: int | None, d: int) -> bool:
+    """Whether a ZPhase or XPhase is the identity on a wire of ``size`` levels."""
+    if size > MAX_LEVELS:
+        return False
+    if g.rule is not None:
+        vals = [_value(g.rule, n, d, k) for k in range(size)]
+    else:
+        vals = [_value(v, n, d) for key, v in g.entries.items() if int(key) < size]
+    return all(v is not None and v.is_integer for v in vals)
+
+
+def _gate_trivial(false: dict[str, Any], n: int | None, d: int) -> bool | None:
+    """Whether a gate-kind edit leaves its gate unchanged at (n, d), from the gate's own amount
+    and wire dimensions there: wrong_phase on X, Z, ZPhase or XPhase at one level (an entry
+    edit also when its level lies past the wire), on CX or CZ (equal dimensions D) when D
+    divides 2 s; missing_gate when the dropped X^a or Z^a has D dividing a, a ZPhase or XPhase
+    is an integer at every level, a CX, CZ or F has D = 1; swapped_control_target when a wire
+    has one level. False for other gates or an unfound gate; None when the gate differs across
+    the unrolled probe n."""
+    import json
+
+    from benchmarks import ir
+
+    try:
+        found = _edited_gate(str(false.get("equation")), json.dumps(false.get("params") or {}))
+    except Exception:  # noqa: BLE001
+        return False
+    if found is None:
+        return None
+    g, dims = found
+    sizes = [_value(x, n, d) for x in dims]
+    if any(v is None for v in sizes):
+        return False
+    size = [int(v) for v in sizes if v is not None]
+    kind = false.get("kind")
+    two = isinstance(g, (ir.CX, ir.CZ)) and size[0] == size[1]
+    if kind == "wrong_phase":
+        if isinstance(g, (ir.X, ir.Z)):
+            return size[0] == 1
+        if isinstance(g, (ir.ZPhase, ir.XPhase)):
+            key = min(g.entries) if g.entries else 1
+            return size[0] == 1 or (g.rule is None and int(key) >= size[0])
+        return two and (2 * g.s) % size[0] == 0
+    if kind == "missing_gate":
+        if isinstance(g, (ir.X, ir.Z)):
+            a = _value(g.a, n, d)
+            return a is not None and a.is_integer and int(a) % size[0] == 0
+        if isinstance(g, (ir.ZPhase, ir.XPhase)):
+            return _diagonal_identity(g, size[0], n, d)
+        return (two or isinstance(g, ir.F)) and size[0] == 1
+    return isinstance(g, ir.CX) and min(size) == 1
+
+
 def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool | None:
     """True when the F pair of ``false`` is equal at ``(n, d)`` by its differs_at table, its
     kind's closed-form rule or the table's lines, False when it differs there, None when only
@@ -213,6 +317,12 @@ def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool
         return d <= 2
     if table is not None and _table_equal(table, n, d):
         return True
+    if kind in GATE_KINDS:
+        trivial = _gate_trivial(false, n, d)
+        if trivial is None:
+            return None
+        if trivial:
+            return True
     if kind == "off_by_one_n":
         return False
     witness = false.get("witness") or {}

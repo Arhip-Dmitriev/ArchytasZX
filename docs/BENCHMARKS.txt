@@ -485,7 +485,15 @@ qubit_only where d <= 2. Any other kind is equal off the table where the table s
 d = 1 when every tabled d = 1 point is equal, at n = 0 when every tabled n = 0 point is,
 everywhere when every tabled point is (a no-op edit), beyond the largest tabled n (d) when the
 last 3 tabled n (d) are equal at every tabled d (n), and at an n beyond the table whose d line
-repeats with a period p (at least 3 checks) with the tabled n mod p equal. Otherwise it differs
+repeats with a period p (at least 3 checks) with the tabled n mod p equal. A gate-kind edit
+(wrong_phase, missing_gate, swapped_control_target) is also equal off the table where the
+edited gate's own amount and wire dimensions at the point, read from the S circuit symbolic in
+d (and in n when boxed), leave it unchanged (differs._gate_trivial): wrong_phase on X, Z,
+ZPhase or XPhase at a one-level wire (an entry edit also when its level lies past the wire),
+on CX or CZ of equal dimensions D when D divides 2 s; missing_gate of X^a or Z^a when D divides
+a, of a ZPhase or XPhase integer at every level, of CX, CZ or F at D = 1;
+swapped_control_target when a wire has one level. A gate on an unrolled equation that differs
+between the probe n and the next 3 domain n is None off the table. Otherwise it differs
 everywhere, except a record without a table whose witness is an interface mismatch between a
 boundary and the same boundary taken twice (a pure side against a doubled one), which differs
 nowhere. outcomes.equal_at uses the same predicate, so a run at such a point is invalid_point. Moving a ladder step to the next

@@ -257,6 +257,32 @@ def test_generate_memory_failures_are_unsupported_input_size() -> None:
     assert (out["outcome"], out["cause"]) == ("oom", "memory.error")
 
 
+def test_gate_edit_amount_in_n_or_d_is_equal_where_trivial() -> None:
+    """Off the table: a dropped X^n is equal where d divides n, a CZ sign flip is equal at
+    d = 2, and an unrolled gate that changes with n is None."""
+    from benchmarks import differs, ir
+
+    rec: dict[str, Any] = {
+        "equation": "e!",
+        "kind": "missing_gate",
+        "params": {"index": 0},
+        "differs_at": [[1, 3, True]],
+    }
+    saved = differs._edited_gate
+    try:
+        vars(differs)["_edited_gate"] = lambda eq, key: (ir.X("q", "n"), ("d",))
+        assert differs.equal_at(rec, 6, 3) is True
+        assert differs.equal_at(rec, 7, 3) is False
+        vars(differs)["_edited_gate"] = lambda eq, key: (ir.CZ("a", "b"), ("d", "d"))
+        flip = {**rec, "kind": "wrong_phase"}
+        assert differs.equal_at(flip, 7, 2) is True
+        assert differs.equal_at(flip, 7, 5) is False
+        vars(differs)["_edited_gate"] = lambda eq, key: None
+        assert differs.equal_at(rec, 7, 3) is None
+    finally:
+        vars(differs)["_edited_gate"] = saved
+
+
 def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
     """quantum_hamming_family/encoding single_entry: n = 6 (63 outputs, 2^63) is unsupported,
     unsupported.phase_table_bound; n = 3 builds."""
