@@ -5104,8 +5104,8 @@ class _SymExport:
                 cp_num(self.cp_rows[p][1], j) % self.cp_rows[p][1][1]
                 for j in range(self.cp_rows[p][0])
             ]:
-                big_d, q = self.cp_rows[p]
-                qt = f"(({q[0]}, {q[1]}, {q[2]}, {q[3]}) : ℕ × ℕ × ℤ × ℕ)"
+                big_d, cq = self.cp_rows[p]
+                qt = f"(({cq[0]}, {cq[1]}, {cq[2]}, {cq[3]}) : ℕ × ℕ × ℤ × ℕ)"
                 ok = (
                     f"(ptOK_cpRow_of _ {big_d} {qt} _ (by decide) (by decide +kernel) "
                     "(by decide +kernel))"
