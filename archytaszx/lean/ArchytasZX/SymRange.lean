@@ -1060,4 +1060,34 @@ theorem rxNf_den (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (fl : List ℕ
   rw [nfGoX_den ρ hρ R fl hfl ν hν, hnf]
   simp [exDen]
 
+/-- A round of `normTmX` stated on its own. -/
+theorem normTmX_step (R : List (ℕ × ℕ)) (fl : List ℕ) (h : RHint) (cs : List RHint) (t t' : STm)
+    (hh : normTmX R fl [h] t = some t') : normTmX R fl (h :: cs) t = normTmX R fl cs t' := by
+  obtain ⟨c, es⟩ := h
+  simp only [normTmX, fTm_eq] at hh ⊢
+  cases hc : canonTmH c fl (elimAllX R es t) with
+  | none => rw [hc] at hh; simp at hh
+  | some u =>
+    rw [hc] at hh
+    simp only [fTm_eq, normTmX, Option.some.injEq] at hh ⊢
+    rw [hh]
+
+theorem normTmX_stop (R : List (ℕ × ℕ)) (fl : List ℕ) (h : RHint) (cs : List RHint) (t : STm)
+    (hh : normTmX R fl [h] t = none) : normTmX R fl (h :: cs) t = none := by
+  obtain ⟨c, es⟩ := h
+  simp only [normTmX, fTm_eq] at hh ⊢
+  cases hc : canonTmH c fl (elimAllX R es t) with
+  | none => rfl
+  | some u => rw [hc] at hh; simp [fTm_eq, normTmX] at hh
+
+theorem nfGoX_some (R : List (ℕ × ℕ)) (fl : List ℕ) (h : List RHint) (hs : List (List RHint))
+    (acc : List STm) (t u : STm) (ts : List STm) (hh : normTmX R fl h t = some u) :
+    nfGoX R fl (h :: hs) acc (t :: ts) = nfGoX R fl hs (tmAdd u acc) ts := by
+  simp [nfGoX, hh]
+
+theorem nfGoX_none (R : List (ℕ × ℕ)) (fl : List ℕ) (h : List RHint) (hs : List (List RHint))
+    (acc : List STm) (t : STm) (ts : List STm) (hh : normTmX R fl h t = none) :
+    nfGoX R fl (h :: hs) acc (t :: ts) = nfGoX R fl hs acc ts := by
+  simp [nfGoX, hh]
+
 end ArchytasZX.Sym

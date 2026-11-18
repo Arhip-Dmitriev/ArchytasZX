@@ -566,16 +566,29 @@ valid for every integer value). elimXpin1: x of constant range D held by [D | s 
 s = +-1, V = -s b in [k D, k D + D) by the intervals of its variables (ivl over the ranges
 rgOf R S: the term's other sums, then the labels of R no sum binds) gives x = V - k D
 (elimXpin1_ok, under InR; elimStepX_ok reads the ranges through sumsV_congr_rng and InLab R).
-rxNf_den gives the value wherever InLab R holds, so equal_symSR takes rxNf R FL XH after nfHP.
+rxNf_den gives the value wherever InLab R holds. A compact export (rx_decls) translates each
+network with no normaliser at all (trNetG with the identity: one term, every node's sums and
+factors; tr_net_id), states the scaled difference as its terms (chkd) and passes equal_symSR
+the identity per node and rxNf R FL XH on the difference: per term, rounds of at most RX_STEPS
+= 32 hinted steps, each round its own theorem normTmX R FL [h] T_k = some T_(k+1) (chkS i_k,
+by decide), chained by normTmX_step / normTmX_stop (chkN i) and merged by nfGoX_some /
+nfGoX_none (chkz). Pinning per node instead closes nothing past the first geometric sum: a pin
+taken before the later nodes' roots of unity arrive uses the delta the geometric sum needs.
+A compact table above CP_ROW_MIN = 256 entries is stored as cpRow D q (the indices whose
+numerator is no multiple of M, with phC of their phase) and its phases proved by tab_phC (the
+diagram's table read in chunks of TABLE_CHUNK, getD_chunks under chunkOK).
 lean_sym marks the tables (_SymExport.compact_rules: kind 1 when the entries are c j / M, M the
 lcm of their denominators, else kind 2 for Z nodes on d^2) only after the plain check fails or
-exceeds NORM_TERMS, so every export the plain check reaches is unchanged; rx_cert / x_choice /
-rx_hints mirror normTmX (geometric sums first, then pins by ranges, then elim_choice; at most
-RX_ROUNDS = 8 rounds) and the export writes chkRR / chkXH. fourier_constant_adder: each network
-normalises to one term at every node (n = 2, 3, 4 at d = 3, n = 2, 3 at d = 5); the residual
-is the two terms of left and right, cancelled by 8 pins, 2 splits and 1 geometric sum at n = 2,
-25, 6 and 2 at n = 3, 52, 15 and 3 at n = 4. Lean: n = 2 d = 5 104 KB, 15 s; n = 3 d = 3 125 KB,
-83 s (3.7 GB anon); a swapped output and a changed table are rejected.
+exceeds NORM_TERMS, so every export the plain check reaches is unchanged; the compact check
+translates binder and splitter nodes whatever BS_SMALL says, so pairs beyond 64 nodes reach it.
+rx_cert / x_choice / rx_hints mirror normTmX (geometric sums first, then pins by ranges, then
+elim_choice; at most RX_ROUNDS = 256 rounds). elim_choice tries for each variable only the
+deltas reading it (_occ; same choices as before, faster). fourier_constant_adder at d = 3: the
+difference of the two unnormalised terms (the left term 57, 104, 165, 240 and 432 sums at n = 3,
+4, 5, 6 and 8) cancels by 52, 86, 140, 194 and 302 pins and n - 1 geometric sums; never more
+than these two terms. Lean (anon peak): n = 2 d = 5 19 s (0.6 GB), n = 3 d = 3 22 s (1.1 GB),
+n = 3 d = 5 31 s (1.1 GB), n = 4 d = 3 96 s (2.6 GB), n = 5 d = 3 230 s (5.8 GB); n = 6 and 8
+exceed 6 GB.
 
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a

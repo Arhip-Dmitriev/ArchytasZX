@@ -283,6 +283,51 @@ theorem tab_ph (ρ : Val) (l : List ℤ) (c : ℕ) (cr : ℝ) (hc : cr = c) (pt 
       push_cast; field_simp; ring
     rw [this, ex_int, ex_zero]
 
+/-- Every chunk but the last of length `C`, the last at most `C`. -/
+def chunkOK (C : ℕ) : List (List ℤ) → Bool
+  | [] => true
+  | [c] => decide (c.length ≤ C)
+  | c :: d :: l => decide (c.length = C) && chunkOK C (d :: l)
+
+theorem getD_chunks (C : ℕ) (hC : 0 < C) : ∀ (L : List (List ℤ)) (j : ℕ), chunkOK C L = true →
+    (L.getD (j / C) []).getD (j % C) 0 = L.flatten.getD j 0
+  | [], j, _ => by simp
+  | [c], j, h => by
+    simp only [chunkOK, decide_eq_true_eq] at h
+    by_cases hj : j < C
+    · rw [Nat.div_eq_of_lt hj, Nat.mod_eq_of_lt hj]; simp
+    · have h1 : 1 ≤ j / C := (Nat.one_le_div_iff hC).2 (by omega)
+      have h2 : [c].getD (j / C) [] = [] := by
+        rw [List.getD_eq_default _ _ (by simpa using h1)]
+      rw [h2]
+      simp only [List.flatten_cons, List.flatten_nil, List.append_nil]
+      have h3 : c[j]? = none := List.getElem?_eq_none (by omega)
+      simp [h3]
+  | c :: d :: l, j, h => by
+    simp only [chunkOK, Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨hc, h⟩ := h
+    by_cases hj : j < C
+    · rw [Nat.div_eq_of_lt hj, Nat.mod_eq_of_lt hj]
+      show c.getD j 0 = (c ++ (d :: l).flatten).getD j 0
+      rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+        List.getElem?_append_left (by omega)]
+    · obtain ⟨k, rfl⟩ : ∃ k, j = C + k := ⟨j - C, by omega⟩
+      have e1 : (C + k) / C = k / C + 1 := by
+        rw [Nat.add_comm, Nat.add_div_right _ hC]
+      have e2 : (C + k) % C = k % C := by rw [Nat.add_comm, Nat.add_mod_right]
+      have e3 : (c ++ (d :: l).flatten).getD (C + k) 0 = (d :: l).flatten.getD k 0 := by
+        rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+          List.getElem?_append_right (by omega), hc, Nat.add_sub_cancel_left]
+      rw [e1, e2, List.getD_cons_succ, getD_chunks C hC (d :: l) k h]
+      exact e3.symm
+
+/-- `tab_ph` for a table read in chunks of `C`. -/
+theorem tab_phC (ρ : Val) (L : List (List ℤ)) (C : ℕ) (hC : 0 < C) (c : ℕ) (cr : ℝ) (hc : cr = c)
+    (pt : List (ℕ × CMon)) (hk : chunkOK C L = true) (h : ptOK L.flatten c pt = true) (j : ℕ) :
+    ex ((((L.getD (j / C) []).getD (j % C) 0 : ℤ) : ℝ) / cr) = phF ρ pt j := by
+  rw [getD_chunks C hC L j hk]
+  exact tab_ph ρ _ c cr hc pt h j
+
 /-- A rule of modulus `0` has value `1`. -/
 theorem rV_mark (ρ : Val) (l : List ℤ) (j : ℕ) : rV ρ (⟨0, []⟩, l) j = 1 := by
   simp [rV, DMon.den, om]
@@ -298,6 +343,11 @@ def cpData (r : DMon × List ℤ) : Option (ℕ × ℕ × ℤ × ℕ) :=
 /-- The numerator of a compact table at `j`: `c j` for kind `1`, else `c (j / d) (j % d)`. -/
 def cpNum (q : ℕ × ℕ × ℤ × ℕ) (j : ℕ) : ℤ :=
   if q.1 = 1 then q.2.2.1 * j else q.2.2.1 * ((j / q.2.2.2 : ℕ) : ℤ) * ((j % q.2.2.2 : ℕ) : ℤ)
+
+/-- The stored phases of a compact table on `D` indices: each index whose numerator is no multiple of the modulus, with `phC` of its phase. -/
+def cpRow (D : ℕ) (q : ℕ × ℕ × ℤ × ℕ) : List (ℕ × CMon) :=
+  ((List.range D).filter fun j => cpNum q j % (q.2.1 : ℤ) != 0).map fun j =>
+    (j, phC ((cpNum q j : ℚ) / q.2.1) [])
 
 /-- The first digit variable of a compact table at the bound variable `s`; the second is the
 next. -/

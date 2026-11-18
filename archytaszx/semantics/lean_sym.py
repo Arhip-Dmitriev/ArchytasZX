@@ -562,13 +562,9 @@ def split_step(t: STm) -> STm | None:
 
 
 def elim_step(t: STm) -> STm | None:
-    for pre, (x, d), post in _splits(t[1]):
-        if x in [y for y, _ in (*pre, *post)]:
-            continue
-        e = elim_var(x, d, t[2], t[3])
-        if e is not None:
-            return (cm_mul(t[0], e[0]), pre + post, e[1], e[2])
-    return split_step(t)
+    """``elimStep``, through :func:`elim_choice`."""
+    got = elim_choice(t)
+    return None if got is None else got[0]
 
 
 def elim_all(n: int, t: STm) -> STm:
@@ -1208,8 +1204,10 @@ def _lean_rg(rc: RgCert) -> str:
 
 # geometric sums and pins by the labels' ranges (SymRange)
 
-RX_ROUNDS = 8
+RX_ROUNDS = 256
 """The most rounds :func:`rx_hints` runs on one residual term."""
+RX_STEPS = 32
+"""The most steps of one round of :func:`rx_hints` (one ``decide`` each in the export)."""
 
 
 def geo_data(x: int, big_l: int, lst: Sequence[Fac]) -> tuple[IPoly, IPoly] | None:
@@ -1322,39 +1320,99 @@ def rg_of(
 
 def x_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int, int]] | None:
     """A step of ``elimStepX`` and its hint: a geometric sum, else a pin by ranges, else
-    :func:`elim_choice`."""
-    for rule in (5, 6):
-        order = (
-            [(i, j) for i in range(len(t[1])) for j in range(len(t[2]))]
-            if rule == 5
-            else [(i, j) for j in range(len(t[2])) for i in range(len(t[1]))]
-        )
-        for i, j in order:
-            x, d = t[1][i]
-            rest = t[1][:i] + t[1][i + 1 :]
-            names = [v for v, _ in rest]
-            if len(set(names)) != len(names) or x in names:
+    :func:`elim_choice`. A geometric sum is tried only for variables no delta reads, a pin
+    only by deltas reading the variable."""
+    dd, pp = _occ(t)
+    names = [v for v, _ in t[1]]
+    if len(set(names)) == len(names):
+        ds, ps = t[2], t[3]
+        for i, (x, d) in enumerate(t[1]):
+            if x not in pp or x in dd or not (dm_const(d) and d[0] > 0):
                 continue
-            pre, f, post = t[2][:j], t[2][j], t[2][j + 1 :]
-            e = (
-                elim_geo1(x, d, pre, f, post, t[3])
-                if rule == 5
-                else elim_xpin1(rg_of(r, rest), x, d, pre, f, post, t[3])
-            )
-            if e is not None:
-                return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, rule, j)
+            cache: dict[int, tuple[IPoly, IPoly] | None] = {}
+            for j, f in enumerate(ds):
+                if not (dm_const(f[0]) and f[0][0] > 0):
+                    continue
+                k = f[0][0]
+                if k not in cache:
+                    cache[k] = geo_data(x, k * d[0], ps)
+                got = cache[k]
+                if got is None:
+                    continue
+                am = ip_modc(k, got[0])
+                if ip_modc(k, f[1]) != am and ip_modc(k, ip_smul(-1, f[1])) != am:
+                    continue
+                e = elim_geo1(x, d, ds[:j], f, ds[j + 1 :], ps)
+                if e is not None:
+                    rest = t[1][:i] + t[1][i + 1 :]
+                    return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, 5, j)
+        rng = {v: m for v, m in t[1]}
+        labs = {lab: (dv, ()) for lab, dv in r if lab not in rng}
+        for j, f in enumerate(ds):
+            if not (dm_const(f[0]) and f[0][0] > 0):
+                continue
+            for i, (x, d) in enumerate(t[1]):
+                if d != f[0] or j not in dd.get(x, ()):
+                    continue
+                e = _xpin_fast(rng, labs, x, d, ds[:j], f, ds[j + 1 :], ps)
+                if e is not None:
+                    rest = t[1][:i] + t[1][i + 1 :]
+                    return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, 6, j)
     return elim_choice(t)
+
+
+def _xpin_fast(
+    rng: Mapping[int, DMon],
+    labs: Mapping[int, DMon],
+    x: int,
+    d: DMon,
+    pre: tuple[Fac, ...],
+    f: Fac,
+    post: tuple[Fac, ...],
+    ps: tuple[Fac, ...],
+) -> tuple[CMon, tuple[Fac, ...], tuple[Fac, ...]] | None:
+    """:func:`elim_xpin1` with ``rg_of`` read through dictionaries (the sums without
+    duplicates, ``x`` absent from the pin's value)."""
+    lin = ip_lin(x, f[1])
+    if lin is None:
+        return None
+    s = ip_const(lin[0])
+    if s not in (1, -1):
+        return None
+    v = pin_val(s, lin[1])
+    lo = hi = 0
+    for m, c in v:
+        if not m:
+            lo, hi = lo + c, hi + c
+            continue
+        if len(m) != 1 or m[0] == x:
+            return None
+        dm = rng.get(m[0], labs.get(m[0]))
+        if dm is None or not (dm_const(dm) and dm[0] > 0):
+            return None
+        w = c * (dm[0] - 1)
+        lo, hi = lo + min(0, w), hi + max(0, w)
+    k = _ediv(lo, d[0]) * d[0]
+    if not hi < k + d[0]:
+        return None
+    val = ip_add(v, ip_c(-k))
+    return (
+        of_q(1),
+        tuple(fac_sub(x, val, g) for g in (*pre, *post)),
+        tuple(fac_sub(x, val, g) for g in ps),
+    )
 
 
 def rx_hints(
     fl: Sequence[int], r: Sequence[tuple[int, int]], t: STm
-) -> tuple[STm | None, list[tuple[int, list[tuple[int, int, int]]]]]:
-    """``normTmX``'s rounds for ``t``: each the pivot hint and the steps to a fixed point;
-    the result, None when it vanishes."""
+) -> tuple[STm | None, list[tuple[int, list[tuple[int, int, int]]]], list[STm]]:
+    """``normTmX``'s rounds for ``t``: each the pivot hint and at most RX_STEPS steps; the
+    result (None when it vanishes) and the term before each round."""
     hints: list[tuple[int, list[tuple[int, int, int]]]] = []
+    terms = [t]
     for _ in range(RX_ROUNDS):
         t1, es = t, []
-        for _ in range(4 * len(t[1]) + 8):
+        for _ in range(RX_STEPS):
             got = x_choice(r, t1)
             if got is None:
                 break
@@ -1365,28 +1423,36 @@ def rx_hints(
             break
         hints.append((canon_hint(t1), es))
         if t2 is None:
-            return None, hints
+            return None, hints, terms
         t = t2
-    return t, hints
+        terms.append(t)
+    return t, hints, terms
 
 
-RxCert = tuple[tuple[tuple[int, int], ...], list[list[tuple[int, list[tuple[int, int, int]]]]]]
+RxCert = tuple[
+    tuple[tuple[int, int], ...],
+    list[list[tuple[int, list[tuple[int, int, int]]]]],
+    list[tuple[list[STm], STm | None]],
+]
 
 
 def rx_cert(fl: Sequence[int], e: Sequence[STm], ranges: Mapping[int, int]) -> RxCert | None:
     """``rxNf``'s labels and rounds for a residual whose terms, normalised with the labels'
-    ranges, cancel; None otherwise."""
+    ranges, cancel, with each term's path (the term before each round, the result); None
+    otherwise."""
     if not e or not ranges:
         return None
     r = tuple(sorted(ranges.items()))
     acc: tuple[STm, ...] = ()
     hs = []
+    paths: list[tuple[list[STm], STm | None]] = []
     for t in e:
-        got, h = rx_hints(fl, r, t)
+        got, h, terms = rx_hints(fl, r, t)
         hs.append(h)
+        paths.append((terms, got))
         if got is not None:
             acc = tm_add(got, acc)
-    return (r, hs) if not acc else None
+    return (r, hs, paths) if not acc else None
 
 
 def _lean_rx(rc: RxCert) -> tuple[str, str]:
@@ -1474,6 +1540,8 @@ CP_BASE = 3000000
 """``cpX s = CP_BASE + 2 s``."""
 
 CpData = tuple[int, int, int, int]
+CP_ROW_MIN = 256
+"""The fewest entries of a compact table stored as ``cpRow`` instead of entry by entry."""
 
 
 def cp_data(r: tuple[DMon, tuple[int, ...]] | None) -> CpData | None:
@@ -1482,6 +1550,16 @@ def cp_data(r: tuple[DMon, tuple[int, ...]] | None) -> CpData | None:
         return None
     k, m, c, d = r[1]
     return max(k, 0), max(m, 0), c, max(d, 0)
+
+
+def cp_row(big_d: int, q: CpData) -> list[tuple[int, CMon, sp.Expr]]:
+    """``cpRow``: the entries off multiples of the modulus, each phase with its value."""
+    out = []
+    for j in range(big_d):
+        n = cp_num(q, j)
+        if _emod(n, q[1]):
+            out.append((j, ph_c(Fraction(n, q[1]), ()), sp.Rational(n, q[1])))
+    return out
 
 
 def cp_num(q: CpData, j: int) -> int:
@@ -1685,6 +1763,36 @@ def tr_net_full(
     return [(t[0], sums + t[1], t[2], t[3]) for t in e]
 
 
+def tr_net_id(
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    labs: dict[int, int],
+    nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
+    internal: Sequence[int],
+) -> list[STm] | None:
+    """``trNetG`` with the identity normaliser: each node's terms times the tail's, the labels
+    first met at the node summed there."""
+    pres: list[tuple[int, ...]] = []
+    pre: tuple[int, ...] = ()
+    for node in nodes:
+        pres.append(pre)
+        pre = pre + (*node[1], *node[2])
+    b: list[STm] = [(of_q(1), (), (), ())]
+    for k in range(len(nodes) - 1, -1, -1):
+        node = nodes[k]
+        a = tr_node(dt, pt, OFF + k, *node)
+        if a is None or not ex_mul_ok(a, b):
+            return None
+        legs = (*node[1], *node[2])
+        first = tuple(
+            (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in pres[k]
+        )
+        b = [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, b)]
+    used = {lab for n in nodes for lab in (*n[1], *n[2])}
+    sums = tuple((lab, lab_dm(dt, labs, lab)) for lab in internal if lab not in used)
+    return [(t[0], sums + t[1], t[2], t[3]) for t in b]
+
+
 def lab_dm(dt: Callable[[int], DMon], labs: dict[int, int], lab: int) -> DMon:
     return dt(labs.get(lab, 0))
 
@@ -1789,6 +1897,17 @@ def sym_check(
         return False
     if not (ex_const(s0) and ex_const(s1)):
         return False
+    if rx is not None:
+        a0 = tr_net_id(dt, pt, labs, n0[0], n0[1])
+        a1 = tr_net_id(dt, pt, labs, n1[0], n1[1])
+        neg = ex_neg(s1)
+        if a0 is None or a1 is None or not (ex_mul_ok(s0, a0) and ex_mul_ok(neg, a1)):
+            return False
+        got_x = rx_cert(fl, ex_mul(s0, a0) + ex_mul(neg, a1), lab_ranges(labs, dt, ix, n0[2]))
+        if got_x is None:
+            return False
+        rx.append(got_x)
+        return True
     for tr in (tr_net, tr_net_full):
         if tr is tr_net_full and max(_full_terms(dt, pt, n[0]) for n in (n0, n1)) > FULL_TERMS:
             continue
@@ -1811,11 +1930,6 @@ def sym_check(
             got_r = rg_cert(rest, lab_ranges(labs, dt, ix, n0[2]))
             if got_r is not None:
                 rg.append(got_r)
-                return True
-        if rx is not None and tr is tr_net:
-            got_x = rx_cert(fl, rest, lab_ranges(labs, dt, ix, n0[2]))
-            if got_x is not None:
-                rx.append(got_x)
                 return True
     return False
 
@@ -1903,34 +2017,59 @@ def canon_hint(t: STm) -> int:
 
 def elim_choice(t: STm) -> tuple[STm, tuple[int, int, int]] | None:
     """``elim_step`` with its choice as ``elimStepH`` reads it: sum index, rule (0 unused,
-    1 delta, 2 characters, 3 gcd, 4 split) and delta index."""
-    for i, (pre, (x, d), post) in enumerate(_splits(t[1])):
-        if x in [y for y, _ in (*pre, *post)]:
+    1 delta, 2 characters, 3 gcd, 4 split) and delta index. Only the deltas reading a variable
+    are tried for it (a delta without it pins, divides and splits nothing)."""
+    dd, pp = _occ(t)
+    names = [y for y, _ in t[1]]
+    ds, ps = t[2], t[3]
+    for i, (x, d) in enumerate(t[1]):
+        if names.count(x) > 1:
             continue
-        e = elim_unused(x, d, t[2], t[3])
-        r, j = 0, 0
+        js = dd.get(x, [])
+        e, r, j = None, 0, 0
+        if not js and x not in pp:
+            e = elim_unused(x, d, ds, ps)
         if e is None:
-            for j, (pd, f, qd) in enumerate(_splits(t[2])):
-                e = elim_delta1(x, d, pd, f, qd, t[3])
+            mods = [ds[k][0] for k in js]
+            if x in pp:
+                mods += [g[0] for g in ps if fac_has(x, g)]
+            for j in js:
+                fm = ds[j][0]
+                if not all(dm_dvd(m, fm) for m in mods):
+                    continue
+                e = elim_delta1(x, d, ds[:j], ds[j], ds[j + 1 :], ps)
                 if e is not None:
                     r = 1
                     break
-        if e is None:
-            e, r, j = elim_char(x, d, t[2], t[3]), 2, 0
-        if e is None:
-            for j, (pd, f, qd) in enumerate(_splits(t[2])):
-                e = elim_gcd1(x, d, pd, f, qd, t[3])
-                if e is not None:
-                    r = 3
-                    break
+        if e is None and not js:
+            e, r, j = elim_char(x, d, ds, ps), 2, 0
+        if e is None and len(js) == 1 and x not in pp:
+            j = js[0]
+            e = elim_gcd1(x, d, ds[:j], ds[j], ds[j + 1 :], ps)
+            r = 3
         if e is not None:
-            return (cm_mul(t[0], e[0]), pre + post, e[1], e[2]), (i, r, j)
-    for j, (pd, f, qd) in enumerate(_splits(t[2])):
+            return (cm_mul(t[0], e[0]), t[1][:i] + t[1][i + 1 :], e[1], e[2]), (i, r, j)
+    for j, f in enumerate(ds):
+        vs = ip_varset(f[1])
         for i, (y, d) in enumerate(t[1]):
+            if y not in vs:
+                continue
             got = split_del(t[1], y, d, f)
             if got is not None:
-                return (t[0], t[1], (*pd, got[0], got[1], *qd), t[3]), (i, 4, j)
+                return (t[0], t[1], (*ds[:j], got[0], got[1], *ds[j + 1 :]), t[3]), (i, 4, j)
     return None
+
+
+def _occ(t: STm) -> tuple[dict[int, list[int]], set[int]]:
+    """The deltas reading each variable, in order, and the variables the roots of unity read."""
+    dd: dict[int, list[int]] = {}
+    for j, f in enumerate(t[2]):
+        for x in ip_varset(f[1]):
+            dd.setdefault(x, []).append(j)
+    pp: set[int] = set()
+    for f in t[3]:
+        pp |= ip_varset(f[1])
+    return dd, pp
 
 
 def elim_hints(n: int, t: STm) -> tuple[STm, list[tuple[int, int, int]]]:
@@ -2569,6 +2708,9 @@ class _SymExport:
                 for q in cands:
                     if all(cp_chk(dm, pairs, q, OFF, (), ()) for _ in uses[p]):
                         self.rules[p] = (CP_MARK, q)
+                        if big_d > CP_ROW_MIN:
+                            self.cp_rows[p] = (big_d, q)
+                            self.pt[p] = cp_row(big_d, q)
                         marked = True
                         break
         return marked
@@ -2599,14 +2741,22 @@ class _SymExport:
             except NetUnsupported as exc:
                 failed = exc
             saved = list(self.rules)
+            saved_pt = list(self.pt)
+            self.cp_rows: dict[int, tuple[int, CpData]] = {}
             if not self.compact_rules():
                 if failed is not None:
                     raise failed
                 return False
             self.fz, self.rg = [], []
+            global _BS_ON
+            bs = _BS_ON
+            _BS_ON = True
             if sym_check(*args, None, None, self.rx):
                 return True
+            _BS_ON = bs
             self.rules = saved
+            self.pt = saved_pt
+            self.cp_rows = {}
             self.rx = []
             if failed is not None:
                 raise failed
@@ -3134,7 +3284,11 @@ class _SymExport:
             + "] : List DMon).getD i ⟨1, []⟩"
         )
         rows = []
-        for row in self.pt:
+        for p, row in enumerate(self.pt):
+            if p in getattr(self, "cp_rows", {}):
+                dd, (k, m, c, d) = self.cp_rows[p]
+                rows.append(f"cpRow {dd} (({k}, {m}, {c}, {d}) : ℕ × ℕ × ℤ × ℕ)")
+                continue
             items = []
             for j, _, v in row:
                 q, ks, _ = self.atoms.ks(v, True)
@@ -4247,12 +4401,13 @@ class _SymExport:
             f"({dm}, {cs}) from rfl]\n    congr 1\n    "
         )
 
-    def tab_row(self, p: int, row: list[tuple[int, CMon, sp.Expr]]) -> bool:
-        """Whether ``ptOK`` holds for phase vector ``p``'s flat table and stored ``row``."""
+    def tab_row(self, p: int, row: list[tuple[int, CMon, sp.Expr]], chunked: bool = False) -> bool:
+        """Whether ``ptOK`` holds for phase vector ``p``'s flat table (with ``chunked``, one
+        read in chunks) and stored ``row``."""
         from archytaszx.semantics.lean_net import TABLE_CHUNK
 
         tab = getattr(self.out, "phase_tables", {}).get(p)
-        if tab is None or len(tab[0]) > TABLE_CHUNK:
+        if tab is None or (len(tab[0]) > TABLE_CHUNK) != chunked:
             return False
         nums, den = tab
         keys = [j for j, _, _ in row]
@@ -4274,6 +4429,16 @@ class _SymExport:
             return (
                 f"simp only [{unfold}, Φ]\n    exact tab_ph {rho} _ {den} _ (by norm_num) _ "
                 "(by decide +kernel) j"
+            )
+        rule = self.rules[p] if p < len(self.rules) else None
+        if cp_data(rule) is not None and self.tab_row(p, row, chunked=True):
+            from archytaszx.semantics.lean_net import TABLE_CHUNK
+
+            nums, den = self.out.phase_tables[p]
+            name = self.out.table_names[tuple(nums)]
+            return (
+                f"simp only [{unfold}, Φ]\n    exact tab_phC {rho} {name} {TABLE_CHUNK} "
+                f"(by norm_num) {den} _ (by norm_num) _ (by decide +kernel) (by decide +kernel) j"
             )
         lines = [
             (
@@ -4330,6 +4495,131 @@ class _SymExport:
             "S1",
         )
 
+    def rx_decls(
+        self,
+        name: str,
+        doc: str,
+        own: Mapping[str, tuple[str, Any]],
+        na_: tuple[str, str, Any],
+        nb_: tuple[str, str, Any],
+        s0: Sequence[STm],
+        s1: Sequence[STm],
+        s0t: str,
+        s1t: str,
+    ) -> list[str]:
+        """The check of an export with compact tables: each network's product unnormalised
+        (``trNetG`` with the identity), the scaled difference normalised by ``rxNf`` with the
+        labels' ranges."""
+        (ta, a, _), (tb, b, nb) = na_, nb_
+        labs = dict(self.out.labs)
+        out: list[str] = []
+        e: dict[str, list[STm]] = {}
+        nets_ok: dict[str, str] = {}
+        for tag, (text, lnet) in own.items():
+            nt = _paren(text)
+            nodes, internal, bnd = self.net(lnet)
+            got = tr_net_id(self.dtf, self.ptf, labs, nodes, internal)
+            if got is None:
+                raise NetUnsupported("a compact network whose products capture variables")
+            e[tag] = got
+            out.append(f"def {tag}X : List STm := {_lean_ex(got)}")
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}R : trNetG (fun _ e => e) DT PT RL "
+                f"labs {nt} = some {tag}X := by decide +kernel"
+            )
+            if all(v == 0 for v in labs.values()) and 0 in self.ix:
+                out.append(f"def {tag}MK : ℕ := {hex(_mask((*bnd, *internal)))}")
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {name}c{tag} : netChkF FL DT PT RL "
+                    f"labs IX {tag}MK {nt} = true := by decide +kernel"
+                )
+                nets_ok[tag] = f"(netChkF_ok FL DT PT RL labs IX {tag}MK {nt} {name}c{tag})"
+            else:
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {name}c{tag} : netChk FL DT PT RL "
+                    f"labs IX {nt} = true := by decide +kernel"
+                )
+                nets_ok[tag] = f"{name}c{tag}"
+        tb2 = tb if tb in own else ta
+        neg = ex_neg(s1)
+        if not (ex_mul_ok(s0, e[ta]) and ex_mul_ok(neg, e[tb2])):
+            raise NetUnsupported("a compact export whose products capture variables")
+        diff = ex_mul(s0, e[ta]) + ex_mul(neg, e[tb2])
+        rxs = rx_cert(self.fl, diff, lab_ranges(labs, self.dtf, self.ix, self.net(nb)[2]))
+        if rxs is None:
+            raise NetUnsupported("the compact residual does not cancel")
+        rx_labs, _ = _lean_rx(rxs)
+        out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
+        rr = f"{name}RR"
+        term_rows, steps_by = [], []
+        for i, (rounds, (terms, last)) in enumerate(zip(rxs[1], rxs[2], strict=True)):
+            names = []
+            for k, (c, es) in enumerate(rounds):
+                hn = f"{name}H{i}_{k}"
+                names.append(hn)
+                hint = ", ".join(f"({_rn(x)}, {_rn(y)}, {_rn(z)})" for x, y, z in es)
+                out.append(f"def {hn} : RHint := ({_rn(c)}, [{hint}])")
+            for k, t in enumerate(terms):
+                out.append(f"def {name}T{i}_{k} : STm := {_lean_tm(t)}")
+            m = len(rounds)
+            for k in range(m):
+                res = "none" if last is None and k == m - 1 else f"some {name}T{i}_{k + 1}"
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {name}S{i}_{k} : normTmX {rr} FL "
+                    f"[{name}H{i}_{k}] {name}T{i}_{k} = {res} := by decide +kernel"
+                )
+            row = "[" + ", ".join(names) + "]"
+            term_rows.append(row)
+            lemma = [
+                f"normTmX_{'stop' if last is None and k == m - 1 else 'step'} _ _ _ _ _ "
+                + ("" if last is None and k == m - 1 else "_ ")
+                + f"{name}S{i}_{k}"
+                for k in range(m)
+            ]
+            res = "none" if last is None else f"some {name}T{i}_{m}"
+            proof = f"by rw [{', '.join(lemma)}]; try rfl" if m else "rfl"
+            out.append(
+                f"theorem {name}N{i} : normTmX {rr} FL {row} {name}T{i}_0 = {res} := {proof}"
+            )
+            steps_by.append(
+                f"nfGoX_{'none' if last is None else 'some'} _ _ _ _ _ _ "
+                + ("" if last is None else "_ ")
+                + f"_ {name}N{i}"
+            )
+        out.append(f"def {name}XH : List (List RHint) := [{', '.join(term_rows)}]")
+        e0, e1 = f"{ta}X", f"{tb2}X"
+        dtext = f"(exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})"
+        terms0 = "[" + ", ".join(f"{name}T{i}_0" for i in range(len(rxs[2]))) + "]"
+        parts = [
+            ("p", f"{a}.bnd.isPerm {b}.bnd"),
+            ("k", f"(exConst {s0t} && exConst {s1t})"),
+            ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
+            ("r", f"labOK labs IX DT {a}.bnd {name}RR"),
+        ]
+        for sfx, stmt in parts:
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {name}{sfx} : {stmt} = true := "
+                "by decide +kernel"
+            )
+        out.append(
+            f"set_option maxHeartbeats 0 in\ntheorem {name}d : {dtext} = {terms0} := "
+            "by decide +kernel"
+        )
+        out.append(
+            f"set_option maxHeartbeats 0 in\n{doc}theorem {name}z : (rxNf {rr} FL {name}XH "
+            f"{dtext}).isEmpty = true := by\n  rw [{name}d]\n  unfold rxNf {name}XH\n"
+            f"  rw [{', '.join(steps_by)}]\n  decide +kernel"
+        )
+        fl_ok = self.call("flOK")
+        self.g_lemma[name] = "equal_symSR"
+        self.g_args[name] = (
+            f"(fun _ e => e) (fun _ e => e) (fun _ _ _ => rfl) (fun _ _ _ => rfl) _ _ {ta}R "
+            f"{tb2}R {name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {name}RR "
+            f"(rxNf {name}RR FL {name}XH) (fun e ν hν => rxNf_den {self.rho} {self.hr} {name}RR "
+            f"FL {fl_ok} {name}XH (fun e => e) (fun _ _ => rfl) e ν hν) {name}z {name}r"
+        )
+        return ["noncomputable section", *out, "end"]
+
     def check_decls(
         self,
         name: str,
@@ -4379,14 +4669,14 @@ class _SymExport:
         labs = dict(self.out.labs)
         rx_on = bool(getattr(self, "rx", None)) and name == "chk"
         own = {ta: (a, na)} if a == b else {ta: (a, na), tb: (b, nb)}
+        if rx_on:
+            return self.rx_decls(name, doc, own, (ta, a, na), (tb, b, nb), s0, s1, s0t, s1t)
         steps: dict[str, list[list[STm]]] = {}
         e: dict[str, list[STm]] = {}
         for tag, (_text, lnet) in own.items():
             nodes, internal, _bnd = self.net(lnet)
             st = tr_steps(self.fl, self.dtf, self.ptf, labs, nodes, internal)
             if st is None:
-                if rx_on:
-                    raise NetUnsupported("a compact export without node-by-node steps")
                 return whole
             steps[tag] = st
             used = {lab for n in nodes for lab in (*n[1], *n[2])}
@@ -4395,23 +4685,16 @@ class _SymExport:
         eb = e[tb] if tb in e else e[ta]
         neg = ex_neg(s1)
         if not (ex_mul_ok(s0, e[ta]) and ex_mul_ok(neg, eb)):
-            if rx_on:
-                raise NetUnsupported("a compact export whose products capture variables")
             return whole
         rest = nf_ex(self.fl, ex_mul(s0, e[ta]) + ex_mul(neg, eb))
         fzs = fz_cert(rest) if rest and self.fz and name == "chk" else None
         rgs = None
         if rest and fzs is None and self.rg and name == "chk":
             rgs = rg_cert(rest, lab_ranges(labs, self.dtf, self.ix, self.net(na)[2]))
-        rxs = None
-        if rx_on:
-            rxs = rx_cert(self.fl, rest, lab_ranges(labs, self.dtf, self.ix, self.net(na)[2]))
-            if rest and rxs is None:
-                raise NetUnsupported("the compact residual does not cancel")
-        if rest and fzs is None and rgs is None and rxs is None:
+        if rest and fzs is None and rgs is None:
             return whole
         out: list[str] = []
-        nfn = "nfHP" if rgs is not None or rxs is not None else "nfH"
+        nfn = "nfHP" if rgs is not None else "nfH"
         if fzs is not None:
             out += [
                 f"def {name}FN : ℕ := {fzs[0]}",
@@ -4419,10 +4702,6 @@ class _SymExport:
             ]
         if rgs is not None:
             out.append(f"def {name}RC : RgCert := {_lean_rg(rgs)}")
-        if rxs is not None:
-            rx_labs, rx_hs = _lean_rx(rxs)
-            out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
-            out.append(f"def {name}XH : List (List RHint) := {rx_hs}")
         texts_e: dict[str, str] = {}
         nets_ok: dict[str, str] = {}
         for tag, (text, lnet) in own.items():
@@ -4519,32 +4798,18 @@ class _SymExport:
             nfz = f"(fzNf {name}FN {name}FC (nfH FL {name}ZH 0))"
             hnfz = f"(fzNf_den {self.rho} {self.hr} {name}FN {name}FC _ {hnfz})"
         rgx = ""
-        diff = f"(exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})"
-        z_stmt = f"({nfz[1:-1]} {diff}).isEmpty"
         if rgs is not None:
             nfz = f"(rgNf {name}RC ({nfn} FL {name}ZH 0))"
             hnfz = f"(rgNf_den {self.rho} {self.hr} {name}RC _ {hnfz})"
-            z_stmt = f"({nfz[1:-1]} {diff}).isEmpty"
-        if rxs is not None:
-            nfz = f"(fun e => rxNf {name}RR FL {name}XH ({nfn} FL {name}ZH 0 e))"
-            hnfz = (
-                f"(fun e ν hν => rxNf_den {self.rho} {self.hr} {name}RR FL {fl_ok} {name}XH "
-                f"({nfn} FL {name}ZH 0) {hnfz} e ν hν)"
-            )
-            z_stmt = f"(rxNf {name}RR FL {name}XH ({nfn} FL {name}ZH 0 {diff})).isEmpty"
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
             ("k", f"(exConst {s0t} && exConst {s1t})"),
             ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
-            ("z", z_stmt),
+            ("z", f"({nfz[1:-1]} (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
         ]
         if rgs is not None:
             parts.insert(3, ("r", f"labOK labs IX DT {a}.bnd {name}RC.2.1"))
             rgx = f" {name}RC.2.1"
-            self.g_lemma[name] = "equal_symSR"
-        if rxs is not None:
-            parts.insert(3, ("r", f"labOK labs IX DT {a}.bnd {name}RR"))
-            rgx = f" {name}RR"
             self.g_lemma[name] = "equal_symSR"
         for k, (sfx, stmt) in enumerate(parts):
             out.append(
@@ -4557,7 +4822,7 @@ class _SymExport:
             f"({nfn}_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
             f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
             f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m{rgx} {nfz} {hnfz} {name}z"
-            + (f" {name}r" if rgs is not None or rxs is not None else "")
+            + (f" {name}r" if rgs is not None else "")
         )
         return ["noncomputable section", *out, "end"]
 
