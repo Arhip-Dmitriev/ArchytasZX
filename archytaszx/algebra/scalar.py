@@ -46,6 +46,7 @@ layer, where :class:`~archytaszx.semantics.check.EqualityMode` now carries it, n
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import math
 import re
@@ -587,6 +588,32 @@ def _reduce_symbolic_mod(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
             term = sp.expand((ratio - sp.floor(ratio)) * modulus)
         out.append(cast(sp.Expr, term))
     return cast(sp.Expr, sp.expand(sp.Add(*out)))
+
+
+def _printable(number: sp.Rational) -> bool:
+    """Whether ``str(number)`` stays within the interpreter's integer-to-string digit limit."""
+    try:
+        str(number)
+    except ValueError:
+        return False
+    return True
+
+
+def _int_digest(value: int) -> str:
+    """A sha256 of ``value``'s signed big-endian bytes."""
+    data = value.to_bytes(value.bit_length() // 8 + 1, "big", signed=True)
+    return hashlib.sha256(data).hexdigest()[:32]
+
+
+def _digit_free(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each rational ``p/q`` too long to print replaced by the symbol
+    ``_int_<digest p>_<digest q>``."""
+    huge = {
+        a: sp.Symbol(f"_int_{_int_digest(int(a.p))}_{_int_digest(int(a.q))}")
+        for a in expr.atoms(sp.Rational)
+        if not _printable(a)
+    }
+    return cast(sp.Expr, expr.xreplace(huge))
 
 
 def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
@@ -2692,7 +2719,12 @@ class Scalar:
         return hash(self._expr)
 
     def __repr__(self) -> str:
-        return f"Scalar({self._expr})"
+        """``Scalar(expr)``; past the interpreter's integer-to-string digit limit, each rational
+        too long to print written as ``_int_<p digest>_<q digest>`` (:func:`_digit_free`)."""
+        try:
+            return f"Scalar({self._expr})"
+        except ValueError:
+            return f"Scalar({_digit_free(self._expr)})"
 
     def __str__(self) -> str:
         return str(self._expr)

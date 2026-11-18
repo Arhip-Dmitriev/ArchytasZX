@@ -376,7 +376,10 @@ Errors: SheetGrammarError, SheetDomainError (subclasses of the rewrite errors).
 the one cache object the strategy, saturation and search functions accept.
 
   - fingerprint(diagram) -> DiagramFingerprint: per-node digests and global keys, sha256
-    over repr, identical across processes.
+    over repr, identical across processes. Scalar's repr, which the fingerprint and
+    canonical_key read, writes each rational p/q too long for the interpreter's
+    integer-to-string digit limit as _int_<sha256 of p's bytes>_<sha256 of q's bytes>; every
+    other repr is unchanged.
   - MatchCache: memoises pattern matches by a diagram's match key and canonical keys by its
     global key, in bounded least-recently-used stores (LruMemo).
   - IncrementalMatcher(patterns): after a local edit, keeps every match outside the changed
