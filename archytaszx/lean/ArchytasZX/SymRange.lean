@@ -16,6 +16,10 @@ pinned residual is sum-free and that each case, pruned, is empty or passes `fzOK
 `rgOK_zero` gives the residual's value `0` at every valuation with the labels of `R` in range,
 and `labOK` reads those ranges off the boundary labels' dimensions, so `equal_symR` and
 `equal_symSR` conclude `Equal`.
+`rxNf` normalises a residual term by term with hinted steps (`elimStepX`): `elimGeo1` sums a
+geometric series `Σ_{x<d} ω_{Kd}^(A x)` beside `[K ∣ A]` to `d [Kd ∣ A]`, `elimXpin1` pins a
+bound variable by a delta of its range whose other side lies in one block by the ranges of the
+other sums and of the labels; `rxNf_den` holds wherever the labels of `R` lie in range.
 -/
 
 namespace ArchytasZX.Sym
@@ -505,5 +509,555 @@ theorem nfHP_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
     (H : ℕ → List THint) (i : ℕ) (e : List STm) (ν : ℕ → ℤ) :
     exDen ρ ν (nfHP fl H i e) = exDen ρ ν e := by
   rw [nfHP_eq]; exact nfH_den ρ hρ fl hfl H i e ν
+
+/-! ## Geometric sums -/
+
+theorem ipHas_smul (x : ℕ) (k : ℤ) (p : IPoly) (h : ipHas x p = false) :
+    ipHas x (ipSmul k p) = false := by
+  unfold ipSmul
+  split_ifs
+  · rfl
+  · simpa [ipHas, List.any_map, Function.comp_def] using h
+
+/-- The roots of unity reading `x`, each `ω_m^(a x + b)` with `m ∣ L`, over `ω_L`: the sums of
+`(L / m) a` and of `(L / m) b`. -/
+def geoData (x L : ℕ) : List Fac → Option (IPoly × IPoly)
+  | [] => some ([], [])
+  | f :: l =>
+    match geoData x L l with
+    | none => none
+    | some (A, B) =>
+      if facHas x f then
+        if f.1.isConst && decide (0 < f.1.c) && L % f.1.c == 0 then
+          match ipLin x f.2 with
+          | some (a, b) => some (ipAdd A (ipSmul ((L / f.1.c : ℕ) : ℤ) a),
+              ipAdd B (ipSmul ((L / f.1.c : ℕ) : ℤ) b))
+          | none => none
+        else none
+      else some (A, B)
+
+theorem geoData_spec (dv : ℕ → ℕ) (x L : ℕ) (hL : 0 < L) (l : List Fac) (A B : IPoly)
+    (h : geoData x L l = some (A, B)) :
+    ipHas x A = false ∧ ipHas x B = false ∧ ∀ (ν : ℕ → ℤ) (j : ℤ),
+      (l.map (phV dv (Function.update ν x j))).prod =
+        ((l.filter (fun f => !facHas x f)).map (phV dv ν)).prod *
+          om L ^ (j * ipDen ν A + ipDen ν B) := by
+  have hz : om L ≠ 0 := om_ne_zero _ hL
+  induction l generalizing A B with
+  | nil =>
+    simp only [geoData, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    simp [ipHas, ipDen]
+  | cons f l ih =>
+    simp only [geoData] at h
+    split at h
+    · simp at h
+    · next A' B' hl =>
+      obtain ⟨hA', hB', hrec⟩ := ih A' B' hl
+      split_ifs at h with hx hfc
+      · split at h
+        · next a b hlin =>
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hfc
+          obtain ⟨⟨hk, hpos⟩, hdiv⟩ := hfc
+          obtain ⟨ha, hb, hp⟩ := ipLin_spec x f.2 a b hlin
+          refine ⟨ipHas_add _ _ _ hA' (ipHas_smul _ _ _ ha),
+            ipHas_add _ _ _ hB' (ipHas_smul _ _ _ hb), fun ν j => ?_⟩
+          have hm : f.1.den dv = f.1.c := DMon.den_isConst _ _ hk
+          simp only [List.map_cons, List.prod_cons, List.filter_cons, hx, Bool.not_true,
+            Bool.false_eq_true, ite_false, hrec, ipDen_add, ipDen_smul]
+          unfold phV
+          rw [hp, ipDen_upd_of _ _ _ _ ha, ipDen_upd_of _ _ _ _ hb, Function.update_self, hm,
+            om_up L f.1.c hL hdiv, mul_left_comm, ← zpow_add₀ hz]
+          congr 2
+          ring
+        · simp at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        refine ⟨hA', hB', fun ν j => ?_⟩
+        simp only [Bool.not_eq_true] at hx
+        simp only [List.map_cons, List.prod_cons, List.filter_cons, hx, Bool.not_false,
+          ite_true, hrec]
+        unfold phV
+        rw [ipDen_upd_of _ _ _ _ hx]; ring
+
+/-- `x` of constant range `d`, read by no delta and by roots of unity over moduli dividing
+`L = K d` with exponent `A x + B` over `L` (`geoData`), beside the delta `f = [K ∣ P]` with
+`P ≡ ±A mod K`: `d [L ∣ A] ω_L^B`. -/
+def elimGeo1 (x : ℕ) (D : DMon) (pre : List Fac) (f : Fac) (post ps : List Fac) :
+    Option Elim :=
+  if D.isConst && decide (0 < D.c) && f.1.isConst && decide (0 < f.1.c) &&
+      (pre ++ f :: post).all (fun g => !facHas x g) then
+    match geoData x (f.1.c * D.c) ps with
+    | some (A, B) =>
+      if ipModC f.1.c f.2 == ipModC f.1.c A ||
+          ipModC f.1.c (ipSmul (-1) f.2) == ipModC f.1.c A then
+        some ⟨CMon.rtD D 2, pre ++ (⟨f.1.c * D.c, []⟩, A) :: post,
+          ps.filter (fun g => !facHas x g) ++ [(⟨f.1.c * D.c, []⟩, B)]⟩
+      else none
+    | none => none
+  else none
+
+theorem dvd_iff_of_modC (ν : ℕ → ℤ) (K : ℕ) (p a : IPoly)
+    (h : (ipModC K p == ipModC K a || ipModC K (ipSmul (-1) p) == ipModC K a) = true) :
+    ((K : ℤ) ∣ ipDen ν p ↔ (K : ℤ) ∣ ipDen ν a) := by
+  have h2 := ipDen_modC ν K a
+  simp only [Bool.or_eq_true, beq_iff_eq] at h
+  have key : ∀ q : IPoly, ipModC K q = ipModC K a → (K : ℤ) ∣ ipDen ν q - ipDen ν a := by
+    intro q hq
+    have h1 := ipDen_modC ν K q
+    rw [hq] at h1
+    have := dvd_sub h1 h2
+    rwa [show ipDen ν q - ipDen ν (ipModC K a) - (ipDen ν a - ipDen ν (ipModC K a)) =
+      ipDen ν q - ipDen ν a by ring] at this
+  rcases h with hm | hm
+  · have hPA := key _ hm
+    exact ⟨fun hp => by have := dvd_sub hp hPA; rwa [sub_sub_cancel] at this,
+      fun ha => by have := dvd_add hPA ha; rwa [sub_add_cancel] at this⟩
+  · have hPA := key _ hm
+    rw [ipDen_smul] at hPA
+    constructor
+    · intro hp
+      have := dvd_sub (dvd_neg.2 hp) hPA
+      rwa [show -ipDen ν p - (-1 * ipDen ν p - ipDen ν a) = ipDen ν a by ring] at this
+    · intro ha
+      have := dvd_add hPA ha
+      rw [show -1 * ipDen ν p - ipDen ν a + ipDen ν a = -ipDen ν p by ring] at this
+      exact dvd_neg.1 this
+
+theorem elimGeo1_ok (ρ : Val) (hρ : ρ.OK) (x : ℕ) (D : DMon) (pre : List Fac) (f : Fac)
+    (post ps : List Fac) (e : Elim) (h : elimGeo1 x D pre f post ps = some e) :
+    ElimOK ρ x D (pre ++ f :: post) ps e := by
+  unfold elimGeo1 at h
+  split_ifs at h with hc
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+  obtain ⟨⟨⟨⟨hD, hd⟩, hK⟩, hKpos⟩, hfree⟩ := hc
+  split at h
+  · next A B hg =>
+    split_ifs at h with hm
+    simp only [Option.some.injEq] at h
+    subst h
+    have hL : 0 < f.1.c * D.c := Nat.mul_pos hKpos hd
+    obtain ⟨hA, hB, hrec⟩ := geoData_spec ρ.dv x (f.1.c * D.c) hL ps A B hg
+    have hDd : D.den ρ.dv = D.c := DMon.den_isConst _ _ hD
+    have hKd : f.1.den ρ.dv = f.1.c := DMon.den_isConst _ _ hK
+    intro ν
+    have hdel : ∀ j : ℤ, ((pre ++ f :: post).map (delV ρ.dv (Function.update ν x j))).prod =
+        ((pre ++ f :: post).map (delV ρ.dv ν)).prod := by
+      intro j
+      have := bodyOf_upd ρ.dv x (pre ++ f :: post) [] (by simpa using hfree) ν j
+      simpa [bodyOf] using this
+    have hmod := dvd_iff_of_modC ν f.1.c f.2 A hm
+    have hsum : ∑ j ∈ range (D.den ρ.dv), bodyOf ρ.dv (pre ++ f :: post) ps
+        (Function.update ν x j) = ((pre ++ f :: post).map (delV ρ.dv ν)).prod *
+          ((ps.filter (fun f => !facHas x f)).map (phV ρ.dv ν)).prod *
+          ∑ j ∈ range D.c, om (f.1.c * D.c) ^ ((j : ℤ) * ipDen ν A + ipDen ν B) := by
+      rw [hDd, Finset.mul_sum]
+      refine Finset.sum_congr rfl fun j _ => ?_
+      simp only [bodyOf, hdel, hrec]
+      ring
+    rw [hsum, rtD_two ρ D hd, hDd]
+    have hcm := bodyOf_cons_mid ρ.dv pre f post [] ν
+    have hcm2 := bodyOf_cons_mid ρ.dv pre (⟨f.1.c * D.c, []⟩, A) post [] ν
+    simp only [bodyOf, List.map_nil, List.prod_nil, mul_one] at hcm hcm2
+    have hLd : DMon.den ρ.dv ⟨f.1.c * D.c, []⟩ = f.1.c * D.c := by simp [DMon.den, npow]
+    simp only [bodyOf]
+    rw [hcm, hcm2]
+    simp only [List.map_append, List.prod_append, List.map_cons, List.map_nil, List.prod_cons,
+      List.prod_nil, mul_one, phV, hLd]
+    by_cases hP : (f.1.c : ℤ) ∣ ipDen ν f.2
+    · obtain ⟨t, ht⟩ := hmod.1 hP
+      have h1 : delV ρ.dv ν f = 1 := by simp [delV, hKd, hP]
+      have h2 : delV ρ.dv ν (⟨f.1.c * D.c, []⟩, A) = if (D.c : ℤ) ∣ t then 1 else 0 := by
+        have hdvd : ((f.1.c : ℤ) * D.c ∣ f.1.c * t) ↔ ((D.c : ℤ) ∣ t) :=
+          mul_dvd_mul_iff_left (by exact_mod_cast hKpos.ne')
+        simp only [delV, hLd, ht]
+        push_cast
+        simp only [hdvd]
+      have hz : om (f.1.c * D.c) ≠ 0 := om_ne_zero _ hL
+      have h3 : ∀ j : ℕ, om (f.1.c * D.c) ^ ((j : ℤ) * ipDen ν A + ipDen ν B) =
+          om (f.1.c * D.c) ^ ipDen ν B * om D.c ^ ((j : ℤ) * t + 0) := by
+        intro j
+        rw [om_up (f.1.c * D.c) D.c hL (by simp), Nat.mul_div_cancel _ hd, ht, ← zpow_add₀ hz]
+        congr 1
+        ring
+      rw [Finset.sum_congr rfl fun j _ => h3 j, ← Finset.mul_sum, sum_om_lin _ hd, h1, h2]
+      simp only [hLd, zpow_zero, one_mul]
+      split_ifs <;> ring
+    · have h1 : delV ρ.dv ν f = 0 := by simp [delV, hKd, hP]
+      have h2 : delV ρ.dv ν (⟨f.1.c * D.c, []⟩, A) = 0 := by
+        simp only [delV, hLd]
+        rw [if_neg]
+        intro hdv
+        exact hP (hmod.2 (dvd_trans (by push_cast; exact dvd_mul_right _ _) hdv))
+      rw [h1, h2]
+      ring
+  · simp at h
+
+/-! ## Pins by the ranges of other variables -/
+
+/-- The interval of a linear index polynomial whose variables have positive constant ranges in
+`rg`. -/
+def ivl (rg : List (ℕ × DMon)) : IPoly → Option (ℤ × ℤ)
+  | [] => some (0, 0)
+  | (m, c) :: p =>
+    match ivl rg p with
+    | none => none
+    | some (lo, hi) =>
+      match m with
+      | [] => some (lo + c, hi + c)
+      | [u] =>
+        match rg.lookup u with
+        | some Dm =>
+          if Dm.isConst && decide (0 < Dm.c) then
+            some (lo + min 0 (c * ((Dm.c - 1 : ℕ) : ℤ)), hi + max 0 (c * ((Dm.c - 1 : ℕ) : ℤ)))
+          else none
+        | none => none
+      | _ => none
+
+theorem lookup_mem (rg : List (ℕ × DMon)) (u : ℕ) (Dm : DMon) (h : rg.lookup u = some Dm) :
+    (u, Dm) ∈ rg := by
+  induction rg with
+  | nil => simp at h
+  | cons p rg ih =>
+    obtain ⟨a, b⟩ := p
+    simp only [List.lookup_cons] at h
+    split at h
+    · next he =>
+      simp only [Option.some.injEq] at h
+      subst h
+      have : u = a := by simpa using he
+      subst this
+      exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (ih h)
+
+theorem ivl_spec (dv : ℕ → ℕ) (rg : List (ℕ × DMon)) (ν : ℕ → ℤ) (hν : InR dv rg ν) :
+    ∀ (p : IPoly) (lo hi : ℤ), ivl rg p = some (lo, hi) → lo ≤ ipDen ν p ∧ ipDen ν p ≤ hi
+  | [], lo, hi, h => by
+    simp only [ivl, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    simp [ipDen]
+  | (m, c) :: p, lo, hi, h => by
+    simp only [ivl] at h
+    split at h
+    · simp at h
+    · next lo' hi' hp =>
+      obtain ⟨h1, h2⟩ := ivl_spec dv rg ν hν p lo' hi' hp
+      rw [ipDen_cons]
+      split at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        simp only [imDen, List.map_nil, List.prod_nil, mul_one]
+        omega
+      · next u =>
+        split at h
+        · next Dm hl =>
+          split_ifs at h with hc
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+          obtain ⟨hk, hpos⟩ := hc
+          have hr : 0 ≤ ν u ∧ ν u < (Dm.c : ℤ) := by
+            have := hν _ (lookup_mem rg u Dm hl)
+            simpa [DMon.den_isConst _ _ hk] using this
+          simp only [imDen, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil,
+            mul_one]
+          obtain ⟨hr0, hr1⟩ := hr
+          have hdc : ((Dm.c - 1 : ℕ) : ℤ) = (Dm.c : ℤ) - 1 := by omega
+          rw [hdc]
+          have hb : ν u ≤ (Dm.c : ℤ) - 1 := by omega
+          rcases le_or_gt 0 c with hc0 | hc0
+          · have e1 : c * ν u ≤ c * ((Dm.c : ℤ) - 1) := mul_le_mul_of_nonneg_left hb hc0
+            have e2 : 0 ≤ c * ν u := mul_nonneg hc0 hr0
+            have e3 : 0 ≤ c * ((Dm.c : ℤ) - 1) := mul_nonneg hc0 (by omega)
+            rw [min_eq_left e3, max_eq_right e3]
+            constructor <;> linarith
+          · have e1 : c * ((Dm.c : ℤ) - 1) ≤ c * ν u :=
+              mul_le_mul_of_nonpos_left hb hc0.le
+            have e2 : c * ν u ≤ 0 := mul_nonpos_of_nonpos_of_nonneg hc0.le hr0
+            have e3 : c * ((Dm.c : ℤ) - 1) ≤ 0 := mul_nonpos_of_nonpos_of_nonneg hc0.le (by omega)
+            rw [min_eq_right e3, max_eq_left e3]
+            constructor <;> linarith
+        · simp at h
+      · simp at h
+
+/-- Summing `x` over `D` out of `ds`, `ps` gives `e` wherever the ranges `rg` hold. -/
+def ElimOKR (ρ : Val) (rg : List (ℕ × DMon)) (x : ℕ) (D : DMon) (ds ps : List Fac) (e : Elim) :
+    Prop :=
+  ∀ ν, InR ρ.dv rg ν → ∑ j ∈ range (D.den ρ.dv), bodyOf ρ.dv ds ps (Function.update ν x j) =
+    e.k.den ρ * bodyOf ρ.dv e.ds e.ps ν
+
+/-- `x` of constant range `D` held by `f = [D ∣ s x + b]`, `s = ±1`, with `V = -s b` in
+`[k D, k D + D)` by the ranges `rg`: `x = V - k D`. -/
+def elimXpin1 (rg : List (ℕ × DMon)) (x : ℕ) (D : DMon) (pre : List Fac) (f : Fac)
+    (post ps : List Fac) : Option Elim :=
+  if f.1 = D ∧ D.isConst = true ∧ 0 < D.c then
+    match ipLin x f.2 with
+    | some (a, b) =>
+      match ipConst a with
+      | some s =>
+        if s = 1 ∨ s = -1 then
+          match ivl rg (pinVal s b) with
+          | some (lo, hi) =>
+            if hi < lo / (D.c : ℤ) * D.c + D.c then
+              some ⟨CMon.ofQ 1,
+                (pre ++ post).map (facSub x (ipAdd (pinVal s b) (ipC (-(lo / (D.c : ℤ) * D.c))))),
+                ps.map (facSub x (ipAdd (pinVal s b) (ipC (-(lo / (D.c : ℤ) * D.c)))))⟩
+            else none
+          | none => none
+        else none
+      | none => none
+    | none => none
+  else none
+
+theorem elimXpin1_ok (ρ : Val) (rg : List (ℕ × DMon)) (x : ℕ) (D : DMon) (pre : List Fac)
+    (f : Fac) (post ps : List Fac) (e : Elim) (h : elimXpin1 rg x D pre f post ps = some e) :
+    ElimOKR ρ rg x D (pre ++ f :: post) ps e := by
+  unfold elimXpin1 at h
+  split_ifs at h with hc
+  obtain ⟨hf, hk, hpos⟩ := hc
+  split at h
+  · next a b hlin =>
+    split at h
+    · next s hs =>
+      split_ifs at h with hs1
+      split at h
+      · next lo hi hiv =>
+        split_ifs at h with hlt
+        simp only [Option.some.injEq] at h
+        subst h
+        obtain ⟨_, hb, hp⟩ := ipLin_spec x f.2 a b hlin
+        intro ν hν
+        obtain ⟨hlo, hhi⟩ := ivl_spec ρ.dv rg ν hν _ lo hi hiv
+        have hDd : D.den ρ.dv = D.c := DMon.den_isConst ρ.dv D hk
+        set V := ipDen ν (pinVal s b) with hVdef
+        set k := lo / (D.c : ℤ)
+        have hDz : (0 : ℤ) < D.c := by exact_mod_cast hpos
+        have hkl : k * D.c ≤ lo := Int.ediv_mul_le lo hDz.ne'
+        set w : ℤ := V - k * D.c with hwdef
+        have hw0 : 0 ≤ w := by omega
+        have hw1 : w < D.c := by omega
+        have hwm : V % (D.c : ℤ) = w := by
+          rw [show V = w + k * D.c by omega, Int.add_mul_emod_self_right]
+          exact Int.emod_eq_of_lt hw0 hw1
+        have hdel : ∀ j : ℕ, j < D.c →
+            delV ρ.dv (Function.update ν x (j : ℤ)) f = if j = w.toNat then 1 else 0 := by
+          intro j hj
+          unfold delV
+          rw [hp, ipConst_spec a s hs, ipDen_upd_of _ _ _ _ hb, Function.update_self, hf, hDd]
+          have e1 := pin_dvd s hs1 (D.c : ℤ) (j : ℤ) (ipDen ν b)
+          have e2 := dvd_sub_iff_eq D.c hpos j hj V
+          have hV : -s * ipDen ν b = V := by simp [hVdef, pinVal, ipDen_smul]
+          rw [hV] at e1
+          rw [hwm] at e2
+          by_cases hj' : j = w.toNat
+          · rw [if_pos (e1.2 (e2.2 hj')), if_pos hj']
+          · rw [if_neg (fun hd => hj' (e2.1 (e1.1 hd))), if_neg hj']
+        have hwlt : w.toNat < D.c := by omega
+        rw [hDd, Finset.sum_congr rfl fun j hj => by
+          rw [bodyOf_cons_mid, hdel j (Finset.mem_range.1 hj), ite_mul, one_mul, zero_mul]]
+        rw [Finset.sum_ite_eq' (range D.c) w.toNat, if_pos (Finset.mem_range.2 hwlt), ofQ_den,
+          bodyOf_sub]
+        have hval : ipDen ν (ipAdd (pinVal s b) (ipC (-(lo / (D.c : ℤ) * D.c)))) = w.toNat := by
+          rw [ipDen_add, ipDen_C, Int.toNat_of_nonneg hw0]
+          simp only [hwdef, k, ← hVdef]
+          ring
+        rw [hval]
+        push_cast; ring
+      · simp at h
+    · simp at h
+  · simp at h
+
+/-! ## Hinted steps with the labels' ranges -/
+
+/-- The ranges a pin may read beside the sums `S`: `S`, then the labels of `R` no sum of `S`
+binds. -/
+def rgOf (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) : List (ℕ × DMon) :=
+  S ++ (R.filter fun p => !(S.map (·.1)).contains p.1).map fun p => (p.1, ⟨p.2, []⟩)
+
+/-- Rule `5`: `elimGeo1`; else `elimXpin1` with the ranges `rgOf R S`. -/
+def elimXR (R : List (ℕ × ℕ)) (r : ℕ) (S : List (ℕ × DMon)) (x : ℕ) (D : DMon)
+    (pre : List Fac) (f : Fac) (post ps : List Fac) : Option Elim :=
+  if r = 5 then elimGeo1 x D pre f post ps else elimXpin1 (rgOf R S) x D pre f post ps
+
+theorem elimXR_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (r : ℕ) (S : List (ℕ × DMon))
+    (x : ℕ) (D : DMon) (pre : List Fac) (f : Fac) (post ps : List Fac) (e : Elim)
+    (h : elimXR R r S x D pre f post ps = some e) :
+    ElimOKR ρ (rgOf R S) x D (pre ++ f :: post) ps e := by
+  unfold elimXR at h
+  split_ifs at h
+  · intro ν _; exact elimGeo1_ok ρ hρ x D pre f post ps e h ν
+  · exact elimXpin1_ok ρ _ x D pre f post ps e h
+
+/-- The step `(i, r, j)`: `5` the geometric sum of the sum at `i` beside the delta at `j`, `6`
+the pin by ranges of the sum at `i` by the delta at `j`, else `elimStepH`. -/
+def elimStepX (R : List (ℕ × ℕ)) (t : STm) (i r j : ℕ) : Option STm :=
+  if r = 5 ∨ r = 6 then
+    match t.sums.drop i, t.dels.drop j with
+    | (x, D) :: post, f :: dpost =>
+      if ((t.sums.take i ++ post).map (·.1)).Nodup ∧
+          x ∉ (t.sums.take i ++ post).map (·.1) then
+        match elimXR R r (t.sums.take i ++ post) x D (t.dels.take j) f dpost t.phs with
+        | some e => some ⟨CMon.mul t.c e.k, t.sums.take i ++ post, e.ds, e.ps⟩
+        | none => none
+      else none
+    | _, _ => none
+  else elimStepH t i r j
+
+theorem rgOf_in (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon))
+    (hnd : (S.map (·.1)).Nodup) (ν : ℕ → ℤ) (hν : InLab R ν) :
+    (∀ p ∈ rgOf R S, p.1 ∈ S.map (·.1) → p ∈ S ∧ (S.map (·.1)).count p.1 = 1) ∧
+    (∀ p ∈ rgOf R S, p.1 ∉ S.map (·.1) → 0 ≤ ν p.1 ∧ ν p.1 < ((p.2.den dv : ℕ) : ℤ)) := by
+  constructor
+  · intro p hp hpS
+    simp only [rgOf, List.mem_append, List.mem_map, List.mem_filter] at hp
+    rcases hp with hp | ⟨q, ⟨_, hq⟩, rfl⟩
+    · exact ⟨hp, List.count_eq_one_of_mem hnd hpS⟩
+    · have : q.1 ∉ S.map (·.1) := by simpa using hq
+      exact absurd hpS this
+  · intro p hp hpS
+    simp only [rgOf, List.mem_append, List.mem_map, List.mem_filter] at hp
+    rcases hp with hp | ⟨q, ⟨hq, _⟩, rfl⟩
+    · exact absurd (List.mem_map_of_mem hp) hpS
+    · have := hν q hq
+      simpa [DMon.den, npow] using this
+
+theorem elimStepX_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : STm) (i r j : ℕ)
+    (h : elimStepX R t i r j = some t') (ν : ℕ → ℤ) (hν : InLab R ν) :
+    t'.den ρ ν = t.den ρ ν := by
+  unfold elimStepX at h
+  split_ifs at h with hr
+  · split at h
+    · next x D post f dpost hs hd =>
+      split_ifs at h with hc
+      obtain ⟨hnd, hx⟩ := hc
+      split at h
+      · next e hev =>
+        simp only [Option.some.injEq] at h
+        subst h
+        have hsum : t.sums = t.sums.take i ++ (x, D) :: post := by
+          rw [← hs, List.take_append_drop]
+        have hdl : t.dels = t.dels.take j ++ f :: dpost := by rw [← hd, List.take_append_drop]
+        have hin : ∀ ν', InR ρ.dv (rgOf R (t.sums.take i ++ post)) ν' →
+            ∑ k ∈ range (D.den ρ.dv), bodyOf ρ.dv t.dels t.phs (Function.update ν' x k) =
+              e.k.den ρ * bodyOf ρ.dv e.ds e.ps ν' := by
+          intro ν' hν'
+          rw [hdl]
+          exact elimXR_ok ρ hρ R r _ x D _ f dpost t.phs e hev ν' hν'
+        obtain ⟨hA, hB⟩ := rgOf_in ρ.dv R (t.sums.take i ++ post) hnd ν hν
+        set A := t.sums.take i with hAdef
+        unfold STm.den
+        rw [hsum, sumsV_pull ρ.dv _ post x D hx]
+        simp only [body_eq] at *
+        rw [sumsV_congr_rng ρ.dv _ _ _ (fun ν' => e.k.den ρ * bodyOf ρ.dv e.ds e.ps ν') ν hA hB hin,
+          sumsV_mul_left, CMon.den_mul ρ hρ]
+        ring
+      · simp at h
+    · simp at h
+  · exact elimStepH_ok ρ hρ t t' i r j h ν
+
+/-- `elimStepX` along the hints, each result forced; the term at the first that fails. -/
+def elimAllX (R : List (ℕ × ℕ)) : List (ℕ × ℕ × ℕ) → STm → STm
+  | [], t => t
+  | (i, r, j) :: hs, t =>
+    match elimStepX R t i r j with
+    | some t' => fTm t' (elimAllX R hs)
+    | none => t
+
+theorem elimAllX_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) :
+    ∀ (hs : List (ℕ × ℕ × ℕ)) (t : STm) (ν : ℕ → ℤ), InLab R ν →
+      (elimAllX R hs t).den ρ ν = t.den ρ ν := by
+  intro hs
+  induction hs with
+  | nil => intro t ν _; rfl
+  | cons h hs ih =>
+    obtain ⟨i, r, j⟩ := h
+    intro t ν hν
+    simp only [elimAllX]
+    cases he : elimStepX R t i r j with
+    | none => rfl
+    | some t' => dsimp only; rw [fTm_eq, ih _ ν hν, elimStepX_ok ρ hρ R t t' i r j he ν hν]
+
+/-- `t'` has the value of `t`, or `t` vanishes, wherever the labels of `R` lie in range. -/
+def TmResR (ρ : Val) (R : List (ℕ × ℕ)) (t : STm) : Option STm → Prop
+  | none => ∀ ν, InLab R ν → t.den ρ ν = 0
+  | some t' => ∀ ν, InLab R ν → t'.den ρ ν = t.den ρ ν
+
+/-- `normTmH` with `elimAllX`. -/
+def normTmX (R : List (ℕ × ℕ)) (fl : List ℕ) : List RHint → STm → Option STm
+  | [], t => some t
+  | (c, es) :: cs, t =>
+    match canonTmH c fl (fTm t (elimAllX R es)) with
+    | none => none
+    | some t' => fTm t' (normTmX R fl cs)
+
+theorem normTmX_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (fl : List ℕ) (hfl : FloorOK fl ρ) :
+    ∀ (cs : List RHint) (t : STm), TmResR ρ R t (normTmX R fl cs t) := by
+  intro cs
+  induction cs with
+  | nil => intro t ν _; rfl
+  | cons h cs ih =>
+    obtain ⟨c, es⟩ := h
+    intro t
+    have hc := canonTmH_ok ρ hρ fl hfl c (elimAllX R es t)
+    have he := elimAllX_ok ρ hρ R es t
+    simp only [normTmX, fTm_eq]
+    revert hc
+    cases canonTmH c fl (elimAllX R es t) with
+    | none => intro hc ν hν; rw [← he ν hν, hc ν]
+    | some t' =>
+      intro hc
+      simp only [fTm_eq]
+      have := ih t'
+      revert this
+      cases normTmX R fl cs t' with
+      | none => intro h' ν hν; rw [← he ν hν, ← hc ν, h' ν hν]
+      | some t'' => intro h' ν hν; rw [h' ν hν, hc ν, he ν hν]
+
+/-- The terms normalised with their rounds, in order, summed into `acc`. -/
+def nfGoX (R : List (ℕ × ℕ)) (fl : List ℕ) : List (List RHint) → List STm → List STm → List STm
+  | _, acc, [] => acc
+  | hs, acc, t :: ts =>
+    match normTmX R fl (hs.headD []) t with
+    | none => nfGoX R fl hs.tail acc ts
+    | some t' => nfGoX R fl hs.tail (tmAdd t' acc) ts
+
+theorem nfGoX_den (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (fl : List ℕ) (hfl : FloorOK fl ρ)
+    (ν : ℕ → ℤ) (hν : InLab R ν) : ∀ (e : List STm) (hs : List (List RHint)) (acc : List STm),
+    exDen ρ ν (nfGoX R fl hs acc e) = exDen ρ ν acc + exDen ρ ν e := by
+  intro e
+  induction e with
+  | nil => intro hs acc; simp [nfGoX, exDen]
+  | cons t ts ih =>
+    intro hs acc
+    have hn := normTmX_ok ρ hρ R fl hfl (hs.headD []) t
+    simp only [nfGoX]
+    revert hn
+    cases normTmX R fl (hs.headD []) t with
+    | none =>
+      intro hn
+      dsimp only
+      rw [ih]
+      simp only [exDen, List.map_cons, List.sum_cons]
+      rw [hn ν hν]; ring
+    | some t' =>
+      intro hn
+      dsimp only
+      rw [ih, tmAdd_ok]
+      simp only [exDen, List.map_cons, List.sum_cons]
+      rw [hn ν hν]; ring
+
+/-- The residual normalised term by term with the labels' ranges `R` and the rounds `H`. -/
+def rxNf (R : List (ℕ × ℕ)) (fl : List ℕ) (H : List (List RHint)) (e : List STm) : List STm :=
+  nfGoX R fl H [] e
+
+theorem rxNf_den (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (fl : List ℕ) (hfl : FloorOK fl ρ)
+    (H : List (List RHint)) (nf : List STm → List STm)
+    (hnf : ∀ e ν, exDen ρ ν (nf e) = exDen ρ ν e) (e : List STm) (ν : ℕ → ℤ)
+    (hν : InLab R ν) : exDen ρ ν (rxNf R fl H (nf e)) = exDen ρ ν e := by
+  unfold rxNf
+  rw [nfGoX_den ρ hρ R fl hfl ν hν, hnf]
+  simp [exDen]
 
 end ArchytasZX.Sym

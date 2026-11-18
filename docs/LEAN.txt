@@ -546,6 +546,37 @@ compares shapes only where fingerprints agree (tmAddP); nfHP_eq proves nfHP = nf
 expressions are unchanged. At the node-2 step of that point (585 terms to 271) the kernel spends
 88 s normalising and about 315 s in nfH's shape comparisons.
 
+Compact tables (82.J-e). A phase table on a constant dimension D written entry by entry
+(1 + Sum_j (T_j - 1) [s = j]) multiplies the expression by up to 2 D + 1 terms per spider. A rule
+of modulus 0 (rV_mark: its value is 1) marks a compact table: cpData reads it as [k, M, c, d].
+trNode translates Z and X spiders through spiderC: when cpChk holds (D constant, ptOK of the
+numerators cpNum over j < D against the stored phases, so tab_ph gives the entries), kind 1
+writes one term with the root of unity omega_M^(c s), kind 2 (D = d^2) one term summing the
+digits x = cpX s = 3000000 + 2 s and y = x + 1 with [D | s - d x - y] and omega_M^(c x y)
+(digit_sum: the digits j / d, j % d are the only a, b < d with d^2 | j - d a - b; cp_body2,
+cpTerms_den); otherwise the spider as before (spiderC_den covers both, val_tr uses it). phC,
+ptOK, sum_key, sum_nokey, phC_den0 and tab_ph moved from SymFourier to SymNet. The residual is
+normalised with the labels' ranges (SymRange, rxNf): rounds of hinted steps elimStepX R and
+canonTmH per term (normTmX, nfGoX), rule 5 elimGeo1 and rule 6 elimXpin1, every other rule
+elimStepH. elimGeo1: x of constant range d, read by no delta and by roots of unity over moduli
+m dividing L = K d, their exponents summed over L as A x + B (geoData), beside a delta [K | P]
+with P = +-A mod K (ipModC): Sum_{x<d} [K | P] omega_L^(A x + B) = d [L | A] omega_L^B
+(elimGeo1_ok: K | A then A = K t and the sum is the character sum over d; else both sides 0;
+valid for every integer value). elimXpin1: x of constant range D held by [D | s x + b],
+s = +-1, V = -s b in [k D, k D + D) by the intervals of its variables (ivl over the ranges
+rgOf R S: the term's other sums, then the labels of R no sum binds) gives x = V - k D
+(elimXpin1_ok, under InR; elimStepX_ok reads the ranges through sumsV_congr_rng and InLab R).
+rxNf_den gives the value wherever InLab R holds, so equal_symSR takes rxNf R FL XH after nfHP.
+lean_sym marks the tables (_SymExport.compact_rules: kind 1 when the entries are c j / M, M the
+lcm of their denominators, else kind 2 for Z nodes on d^2) only after the plain check fails or
+exceeds NORM_TERMS, so every export the plain check reaches is unchanged; rx_cert / x_choice /
+rx_hints mirror normTmX (geometric sums first, then pins by ranges, then elim_choice; at most
+RX_ROUNDS = 8 rounds) and the export writes chkRR / chkXH. fourier_constant_adder: each network
+normalises to one term at every node (n = 2, 3, 4 at d = 3, n = 2, 3 at d = 5); the residual
+is the two terms of left and right, cancelled by 8 pins, 2 splits and 1 geometric sum at n = 2,
+25, 6 and 2 at n = 3, 52, 15 and 3 at n = 4. Lean: n = 2 d = 5 104 KB, 15 s; n = 3 d = 3 125 KB,
+83 s (3.7 GB anon); a swapped output and a changed table are rejected.
+
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.

@@ -1206,6 +1206,204 @@ def _lean_rg(rc: RgCert) -> str:
     return f"(({rc[0]}, [{labs}], [{cases}]) : RgCert)"
 
 
+# geometric sums and pins by the labels' ranges (SymRange)
+
+RX_ROUNDS = 8
+"""The most rounds :func:`rx_hints` runs on one residual term."""
+
+
+def geo_data(x: int, big_l: int, lst: Sequence[Fac]) -> tuple[IPoly, IPoly] | None:
+    """``geoData``."""
+    big_a: IPoly = ()
+    big_b: IPoly = ()
+    for f in reversed(lst):
+        if not fac_has(x, f):
+            continue
+        if not (dm_const(f[0]) and f[0][0] > 0 and big_l % f[0][0] == 0):
+            return None
+        lin = ip_lin(x, f[1])
+        if lin is None:
+            return None
+        k = big_l // f[0][0]
+        big_a, big_b = ip_add(big_a, ip_smul(k, lin[0])), ip_add(big_b, ip_smul(k, lin[1]))
+    return big_a, big_b
+
+
+def elim_geo1(
+    x: int, d: DMon, pre: tuple[Fac, ...], f: Fac, post: tuple[Fac, ...], ps: tuple[Fac, ...]
+) -> tuple[CMon, tuple[Fac, ...], tuple[Fac, ...]] | None:
+    """``elimGeo1``."""
+    if not (dm_const(d) and d[0] > 0 and dm_const(f[0]) and f[0][0] > 0):
+        return None
+    if any(fac_has(x, g) for g in (*pre, f, *post)):
+        return None
+    k = f[0][0]
+    big_l = k * d[0]
+    got = geo_data(x, big_l, ps)
+    if got is None:
+        return None
+    big_a, big_b = got
+    am = ip_modc(k, big_a)
+    if ip_modc(k, f[1]) != am and ip_modc(k, ip_smul(-1, f[1])) != am:
+        return None
+    lm = (big_l, ())
+    return (
+        rt_d(d, 2),
+        (*pre, (lm, big_a), *post),
+        tuple(g for g in ps if not fac_has(x, g)) + ((lm, big_b),),
+    )
+
+
+def _lookup(rg: Sequence[tuple[int, DMon]], u: int) -> DMon | None:
+    for v, m in rg:
+        if v == u:
+            return m
+    return None
+
+
+def ivl(rg: Sequence[tuple[int, DMon]], p: IPoly) -> tuple[int, int] | None:
+    """``ivl``."""
+    lo = hi = 0
+    for m, c in p:
+        if not m:
+            lo, hi = lo + c, hi + c
+        elif len(m) == 1:
+            dm = _lookup(rg, m[0])
+            if dm is None or not (dm_const(dm) and dm[0] > 0):
+                return None
+            w = c * (dm[0] - 1)
+            lo, hi = lo + min(0, w), hi + max(0, w)
+        else:
+            return None
+    return lo, hi
+
+
+def elim_xpin1(
+    rg: Sequence[tuple[int, DMon]],
+    x: int,
+    d: DMon,
+    pre: tuple[Fac, ...],
+    f: Fac,
+    post: tuple[Fac, ...],
+    ps: tuple[Fac, ...],
+) -> tuple[CMon, tuple[Fac, ...], tuple[Fac, ...]] | None:
+    """``elimXpin1``."""
+    if not (f[0] == d and dm_const(d) and d[0] > 0):
+        return None
+    lin = ip_lin(x, f[1])
+    if lin is None:
+        return None
+    s = ip_const(lin[0])
+    if s not in (1, -1):
+        return None
+    v = pin_val(s, lin[1])
+    iv = ivl(rg, v)
+    if iv is None:
+        return None
+    lo, hi = iv
+    k = _ediv(lo, d[0]) * d[0]
+    if not hi < k + d[0]:
+        return None
+    val = ip_add(v, ip_c(-k))
+    return (
+        of_q(1),
+        tuple(fac_sub(x, val, g) for g in (*pre, *post)),
+        tuple(fac_sub(x, val, g) for g in ps),
+    )
+
+
+def rg_of(
+    r: Sequence[tuple[int, int]], sums: Sequence[tuple[int, DMon]]
+) -> tuple[tuple[int, DMon], ...]:
+    """``rgOf``."""
+    names = {v for v, _ in sums}
+    return tuple(sums) + tuple((lab, (d, ())) for lab, d in r if lab not in names)
+
+
+def x_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int, int]] | None:
+    """A step of ``elimStepX`` and its hint: a geometric sum, else a pin by ranges, else
+    :func:`elim_choice`."""
+    for rule in (5, 6):
+        order = (
+            [(i, j) for i in range(len(t[1])) for j in range(len(t[2]))]
+            if rule == 5
+            else [(i, j) for j in range(len(t[2])) for i in range(len(t[1]))]
+        )
+        for i, j in order:
+            x, d = t[1][i]
+            rest = t[1][:i] + t[1][i + 1 :]
+            names = [v for v, _ in rest]
+            if len(set(names)) != len(names) or x in names:
+                continue
+            pre, f, post = t[2][:j], t[2][j], t[2][j + 1 :]
+            e = (
+                elim_geo1(x, d, pre, f, post, t[3])
+                if rule == 5
+                else elim_xpin1(rg_of(r, rest), x, d, pre, f, post, t[3])
+            )
+            if e is not None:
+                return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, rule, j)
+    return elim_choice(t)
+
+
+def rx_hints(
+    fl: Sequence[int], r: Sequence[tuple[int, int]], t: STm
+) -> tuple[STm | None, list[tuple[int, list[tuple[int, int, int]]]]]:
+    """``normTmX``'s rounds for ``t``: each the pivot hint and the steps to a fixed point;
+    the result, None when it vanishes."""
+    hints: list[tuple[int, list[tuple[int, int, int]]]] = []
+    for _ in range(RX_ROUNDS):
+        t1, es = t, []
+        for _ in range(4 * len(t[1]) + 8):
+            got = x_choice(r, t1)
+            if got is None:
+                break
+            t1, h = got
+            es.append(h)
+        t2 = canon_tm(fl, t1)
+        if t2 == t:
+            break
+        hints.append((canon_hint(t1), es))
+        if t2 is None:
+            return None, hints
+        t = t2
+    return t, hints
+
+
+RxCert = tuple[tuple[tuple[int, int], ...], list[list[tuple[int, list[tuple[int, int, int]]]]]]
+
+
+def rx_cert(fl: Sequence[int], e: Sequence[STm], ranges: Mapping[int, int]) -> RxCert | None:
+    """``rxNf``'s labels and rounds for a residual whose terms, normalised with the labels'
+    ranges, cancel; None otherwise."""
+    if not e or not ranges:
+        return None
+    r = tuple(sorted(ranges.items()))
+    acc: tuple[STm, ...] = ()
+    hs = []
+    for t in e:
+        got, h = rx_hints(fl, r, t)
+        hs.append(h)
+        if got is not None:
+            acc = tm_add(got, acc)
+    return (r, hs) if not acc else None
+
+
+def _lean_rx(rc: RxCert) -> tuple[str, str]:
+    """The labels' ranges and the rounds as literals."""
+    labs = "[" + ", ".join(f"({x}, {d})" for x, d in rc[0]) + "]"
+    terms = ", ".join(
+        "["
+        + ", ".join(
+            f"({_rn(c)}, [" + ", ".join(f"({_rn(i)}, {_rn(k)}, {_rn(j)})" for i, k, j in es) + "])"
+            for c, es in rounds
+        )
+        + "]"
+        for rounds in rc[1]
+    )
+    return labs, f"([{terms}] : List (List RHint))"
+
+
 # networks
 
 
@@ -1270,6 +1468,85 @@ def r_f(s: int, rule: tuple[DMon, tuple[int, ...]] | None) -> tuple[Fac, ...]:
     return ((rule[0], r_poly(s, rule[1])),)
 
 
+CP_MARK: DMon = (0, ())
+"""The modulus of a rule marking a compact table (``cpData``)."""
+CP_BASE = 3000000
+"""``cpX s = CP_BASE + 2 s``."""
+
+CpData = tuple[int, int, int, int]
+
+
+def cp_data(r: tuple[DMon, tuple[int, ...]] | None) -> CpData | None:
+    """``cpData``: kind, modulus, coefficient and digit range of a marking rule."""
+    if r is None or r[0] != CP_MARK or len(r[1]) != 4:
+        return None
+    k, m, c, d = r[1]
+    return max(k, 0), max(m, 0), c, max(d, 0)
+
+
+def cp_num(q: CpData, j: int) -> int:
+    """``cpNum``."""
+    if q[0] == 1:
+        return q[2] * j
+    d = q[3]
+    return q[2] * (j // d if d else 0) * (j % d if d else j)
+
+
+def pt_ok(lst: Sequence[int], c: int, pt: Sequence[tuple[int, CMon]]) -> bool:
+    """``ptOK``."""
+    keys = [j for j, _ in pt]
+    if c <= 0 or len(set(keys)) != len(keys):
+        return False
+    if not all(m == ph_c(Fraction(lst[j] if j < len(lst) else 0, c), ()) for j, m in pt):
+        return False
+    return all(_emod(v, c) == 0 or i in keys for i, v in enumerate(lst))
+
+
+def cp_terms(
+    k: CMon, d: DMon, s: int, q: CpData, ds: tuple[Fac, ...], ps: tuple[Fac, ...]
+) -> list[STm]:
+    """``cpTerms``."""
+    if q[0] == 1:
+        return [(k, ((s, d),), ds, ps + (((q[1], ()), ip_smul(q[2], ip_v(s))),))]
+    x, y = CP_BASE + 2 * s, CP_BASE + 2 * s + 1
+    delta = (d, ip_sub(ip_sub(ip_v(s), ip_smul(q[3], ip_v(x))), ip_v(y)))
+    phase = ((q[1], ()), ip_smul(q[2], ip_mul(ip_v(x), ip_v(y))))
+    return [(k, ((s, d), (x, (q[3], ())), (y, (q[3], ()))), ds + (delta,), ps + (phase,))]
+
+
+def cp_chk(
+    d: DMon,
+    pt: Sequence[tuple[int, CMon]],
+    q: CpData,
+    s: int,
+    ds: tuple[Fac, ...],
+    ps: tuple[Fac, ...],
+) -> bool:
+    """``cpChk``."""
+    if not (dm_const(d) and d[0] > 0 and pt_ok([cp_num(q, j) for j in range(d[0])], q[1], pt)):
+        return False
+    if q[0] == 1:
+        return True
+    x = CP_BASE + 2 * s
+    return q[3] * q[3] == d[0] and not any(fac_has(x, f) or fac_has(x + 1, f) for f in (*ds, *ps))
+
+
+def spider_c(
+    k: CMon,
+    d: DMon,
+    s: int,
+    pt: Sequence[tuple[int, CMon]],
+    r: tuple[DMon, tuple[int, ...]] | None,
+    ds: tuple[Fac, ...],
+    ps: tuple[Fac, ...],
+) -> list[STm]:
+    """``spiderC``."""
+    q = cp_data(r)
+    if q is not None and cp_chk(d, pt, q, s, ds, ps):
+        return cp_terms(k, d, s, q, ds, ps)
+    return spider(k, d, s, pt, ds, ps + r_f(s, r))
+
+
 def tr_node(
     dt: Callable[[int], DMon],
     pt: Callable[[int], Sequence[tuple[int, CMon]]],
@@ -1281,12 +1558,12 @@ def tr_node(
     ph: int,
 ) -> list[STm] | None:
     d = dt(dim)
-    rf = r_f(s, getattr(pt(ph), "rule", None))
+    rule = getattr(pt(ph), "rule", None)
     if kind == "Z":
-        return spider(of_q(1), d, s, pt(ph), z_legs(d, s, (*os, *is_)), rf)
+        return spider_c(of_q(1), d, s, pt(ph), rule, z_legs(d, s, (*os, *is_)), ())
     if kind == "X":
         poly = ip_mul(ip_v(s), ip_sub(sum_l(os), sum_l(is_)))
-        return spider(rt_d(d, -(len(os) + len(is_))), d, s, pt(ph), (), ((d, poly),) + rf)
+        return spider_c(rt_d(d, -(len(os) + len(is_))), d, s, pt(ph), rule, (), ((d, poly),))
     if kind == "F" and len(os) == 1 and len(is_) == 1:
         return [(rt_d(d, -1), (), (), ((d, ip_mul(ip_v(os[0]), ip_v(is_[0]))),))]
     if kind == "T" and len(os) == 1 and len(is_) == 1:
@@ -1496,12 +1773,14 @@ def sym_check(
     s1: Sequence[STm],
     fz: list[tuple[int, FZCert]] | None = None,
     rg: list[RgCert] | None = None,
+    rx: list[RxCert] | None = None,
 ) -> bool:
     """``symCheck``; a network is ``(nodes, internal, boundary)``. With ``fz``, a sum-free
     residual whose characters vanish (:func:`fz_cert`) also passes (``symCheckF``), its
     modulus and certificate appended to ``fz``; with ``rg``, failing that, a residual
     vanishing on the labels' ranges (:func:`rg_cert`, ``symCheckR``), its certificate
-    appended to ``rg``."""
+    appended to ``rg``; with ``rx``, failing that, a residual cancelling under the labels'
+    ranges (:func:`rx_cert`), its labels and rounds appended to ``rx``."""
     if sorted(n0[2]) != sorted(n1[2]):
         return False
     if not (BS_NODES or _BS_ON) and any(n[0] in ("B", "S") for n in (*n0[0], *n1[0])):
@@ -1532,6 +1811,11 @@ def sym_check(
             got_r = rg_cert(rest, lab_ranges(labs, dt, ix, n0[2]))
             if got_r is not None:
                 rg.append(got_r)
+                return True
+        if rx is not None and tr is tr_net:
+            got_x = rx_cert(fl, rest, lab_ranges(labs, dt, ix, n0[2]))
+            if got_x is not None:
+                rx.append(got_x)
                 return True
     return False
 
@@ -2244,6 +2528,51 @@ class _SymExport:
         self.q = ([(p[0], p[1], p[2][1]) for p in plans], (s0, s1))
         return True
 
+    def compact_rules(self) -> bool:
+        """Marks with a ``cpData`` rule each phase vector without a rule whose stored phases
+        are a compact table at every Z or X node reading it (kind 1 ``c j / M``, else for Z
+        nodes on ``d²`` kind 2 ``c (j / d) (j % d) / M``); whether one was marked."""
+        nets = [self.net(self.a.net), self.net(self.b.net)]
+        uses: dict[int, list[tuple[str, DMon, tuple[int, ...]]]] = {}
+        for nodes, _, _ in nets:
+            for k, (kind, os, is_, dim, ph) in enumerate(nodes):
+                if kind in ("Z", "X"):
+                    uses.setdefault(ph, []).append((kind, self.dtf(dim), (*os, *is_)))
+                elif ph < len(self.pt) and self.pt[ph] and kind not in ("B", "S"):
+                    uses.setdefault(ph, []).append(("", (0, ()), ()))
+        marked = False
+        for p, row in enumerate(self.pt):
+            if p >= len(self.rules) or self.rules[p] is not None or not row or p not in uses:
+                continue
+            pairs = [(j, c) for j, c, _ in row]
+            turns = {}
+            for j, c in pairs:
+                if c[0] not in (1, -1) or c[2] or c[3] or c[4] or c[5]:
+                    break
+                turns[j] = (Fraction(c[1]) + (Fraction(1, 2) if c[0] == -1 else 0)) % 1
+            else:
+                dims = {dm for _, dm, _ in uses[p]}
+                if len(dims) != 1 or any(kind == "" for kind, _, _ in uses[p]):
+                    continue
+                (dm,) = dims
+                if not dm_const(dm) or dm[0] < 2:
+                    continue
+                big_d = dm[0]
+                m = 1
+                for v in turns.values():
+                    m = math.lcm(m, v.denominator)
+                vals = [turns.get(j, Fraction(0)) for j in range(big_d)]
+                d = math.isqrt(big_d)
+                cands = [(1, m, int(vals[1] * m) % m, 0)]
+                if d * d == big_d and d > 1 and all(kind == "Z" for kind, _, _ in uses[p]):
+                    cands.append((2, m, int(vals[d + 1] * m) % m, d))
+                for q in cands:
+                    if all(cp_chk(dm, pairs, q, OFF, (), ()) for _ in uses[p]):
+                        self.rules[p] = (CP_MARK, q)
+                        marked = True
+                        break
+        return marked
+
     def check(self) -> bool:
         if not self.mults:
             assert self.s0 is not None and self.s1 is not None
@@ -2251,7 +2580,8 @@ class _SymExport:
                 return True
             self.fz = []
             self.rg = []
-            return sym_check(
+            self.rx: list[RxCert] = []
+            args = (
                 self.fl,
                 self.dtf,
                 self.ptf,
@@ -2261,9 +2591,26 @@ class _SymExport:
                 self.net(self.b.net),
                 self.s0,
                 self.s1,
-                self.fz,
-                self.rg,
             )
+            try:
+                if sym_check(*args, self.fz, self.rg):
+                    return True
+                failed: NetUnsupported | None = None
+            except NetUnsupported as exc:
+                failed = exc
+            saved = list(self.rules)
+            if not self.compact_rules():
+                if failed is not None:
+                    raise failed
+                return False
+            self.fz, self.rg = [], []
+            if sym_check(*args, None, None, self.rx):
+                return True
+            self.rules = saved
+            self.rx = []
+            if failed is not None:
+                raise failed
+            return False
         if self.planned is None:
             try:
                 self.texts()
@@ -3881,6 +4228,11 @@ class _SymExport:
         rule = self.rules[p] if p < len(self.rules) else None
         if rule is None:
             return f"rw [show rV {rho} (RL {p}) j = 1 by simp [rV, rEv, RL], mul_one]\n    "
+        if cp_data(rule) is not None:
+            return (
+                f"rw [show RL {p} = ({_lean_dm(rule[0])}, {_lean_ints(list(rule[1]))}) from rfl, "
+                f"rV_mark, mul_one]\n    "
+            )
         from archytaszx.algebra.phase import INDEX
 
         k = sp.Symbol("k_lean_index", integer=True, nonnegative=True)
@@ -4025,6 +4377,7 @@ class _SymExport:
                 "by decide +kernel"
             ]
         labs = dict(self.out.labs)
+        rx_on = bool(getattr(self, "rx", None)) and name == "chk"
         own = {ta: (a, na)} if a == b else {ta: (a, na), tb: (b, nb)}
         steps: dict[str, list[list[STm]]] = {}
         e: dict[str, list[STm]] = {}
@@ -4032,6 +4385,8 @@ class _SymExport:
             nodes, internal, _bnd = self.net(lnet)
             st = tr_steps(self.fl, self.dtf, self.ptf, labs, nodes, internal)
             if st is None:
+                if rx_on:
+                    raise NetUnsupported("a compact export without node-by-node steps")
                 return whole
             steps[tag] = st
             used = {lab for n in nodes for lab in (*n[1], *n[2])}
@@ -4040,16 +4395,23 @@ class _SymExport:
         eb = e[tb] if tb in e else e[ta]
         neg = ex_neg(s1)
         if not (ex_mul_ok(s0, e[ta]) and ex_mul_ok(neg, eb)):
+            if rx_on:
+                raise NetUnsupported("a compact export whose products capture variables")
             return whole
         rest = nf_ex(self.fl, ex_mul(s0, e[ta]) + ex_mul(neg, eb))
         fzs = fz_cert(rest) if rest and self.fz and name == "chk" else None
         rgs = None
         if rest and fzs is None and self.rg and name == "chk":
             rgs = rg_cert(rest, lab_ranges(labs, self.dtf, self.ix, self.net(na)[2]))
-        if rest and fzs is None and rgs is None:
+        rxs = None
+        if rx_on:
+            rxs = rx_cert(self.fl, rest, lab_ranges(labs, self.dtf, self.ix, self.net(na)[2]))
+            if rest and rxs is None:
+                raise NetUnsupported("the compact residual does not cancel")
+        if rest and fzs is None and rgs is None and rxs is None:
             return whole
         out: list[str] = []
-        nfn = "nfHP" if rgs is not None else "nfH"
+        nfn = "nfHP" if rgs is not None or rxs is not None else "nfH"
         if fzs is not None:
             out += [
                 f"def {name}FN : ℕ := {fzs[0]}",
@@ -4057,6 +4419,10 @@ class _SymExport:
             ]
         if rgs is not None:
             out.append(f"def {name}RC : RgCert := {_lean_rg(rgs)}")
+        if rxs is not None:
+            rx_labs, rx_hs = _lean_rx(rxs)
+            out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
+            out.append(f"def {name}XH : List (List RHint) := {rx_hs}")
         texts_e: dict[str, str] = {}
         nets_ok: dict[str, str] = {}
         for tag, (text, lnet) in own.items():
@@ -4153,18 +4519,32 @@ class _SymExport:
             nfz = f"(fzNf {name}FN {name}FC (nfH FL {name}ZH 0))"
             hnfz = f"(fzNf_den {self.rho} {self.hr} {name}FN {name}FC _ {hnfz})"
         rgx = ""
+        diff = f"(exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})"
+        z_stmt = f"({nfz[1:-1]} {diff}).isEmpty"
         if rgs is not None:
             nfz = f"(rgNf {name}RC ({nfn} FL {name}ZH 0))"
             hnfz = f"(rgNf_den {self.rho} {self.hr} {name}RC _ {hnfz})"
+            z_stmt = f"({nfz[1:-1]} {diff}).isEmpty"
+        if rxs is not None:
+            nfz = f"(fun e => rxNf {name}RR FL {name}XH ({nfn} FL {name}ZH 0 e))"
+            hnfz = (
+                f"(fun e ν hν => rxNf_den {self.rho} {self.hr} {name}RR FL {fl_ok} {name}XH "
+                f"({nfn} FL {name}ZH 0) {hnfz} e ν hν)"
+            )
+            z_stmt = f"(rxNf {name}RR FL {name}XH ({nfn} FL {name}ZH 0 {diff})).isEmpty"
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
             ("k", f"(exConst {s0t} && exConst {s1t})"),
             ("m", f"(exMulOK {s0t} {e0} && exMulOK (exNeg {s1t}) {e1})"),
-            ("z", f"({nfz[1:-1]} (exMul {s0t} {e0} ++ exMul (exNeg {s1t}) {e1})).isEmpty"),
+            ("z", z_stmt),
         ]
         if rgs is not None:
             parts.insert(3, ("r", f"labOK labs IX DT {a}.bnd {name}RC.2.1"))
             rgx = f" {name}RC.2.1"
+            self.g_lemma[name] = "equal_symSR"
+        if rxs is not None:
+            parts.insert(3, ("r", f"labOK labs IX DT {a}.bnd {name}RR"))
+            rgx = f" {name}RR"
             self.g_lemma[name] = "equal_symSR"
         for k, (sfx, stmt) in enumerate(parts):
             out.append(
@@ -4177,7 +4557,7 @@ class _SymExport:
             f"({nfn}_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
             f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
             f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m{rgx} {nfz} {hnfz} {name}z"
-            + (f" {name}r" if rgs is not None else "")
+            + (f" {name}r" if rgs is not None or rxs is not None else "")
         )
         return ["noncomputable section", *out, "end"]
 

@@ -10,7 +10,8 @@ import ArchytasZX.SymCanon
 `trNode` writes a generator's entry as an expression over its leg labels and one bound
 variable, `trNet` a network's entry as an expression over its boundary labels. `equal_sym`
 proves `Equal` from the normal form of the difference of the two scaled networks being empty,
-for every value of the dimension symbols and coefficient atoms.
+for every value of the dimension symbols and coefficient atoms. A spider whose rule marks a
+compact table (`cpData`) is one term (`spiderC`, `spiderC_den`).
 -/
 
 namespace ArchytasZX.Sym
@@ -207,13 +208,277 @@ def bsTerm (Ds Dt : DMon) (k a b : ℕ) : Option (List STm) :=
       ipSub (ipSub (ipV k) (ipMul (ipC (Dt.c : ℤ)) (ipV a))) (ipV b))], []⟩]
   else none
 
+/-! ## Compact phase tables -/
+
+/-- `ex (q + Σ_j ks_j g_j)` over the atoms `ex g_j`. -/
+def phC (q : ℚ) (ks : List ℤ) : CMon := ⟨(CMon.rnorm 1 q).1, (CMon.rnorm 1 q).2, [], [], ztrim ks, []⟩
+
+theorem phC_den0 (ρ : Val) (q : ℚ) : (phC q []).den ρ = ex (q : ℝ) := by
+  have hr := rnorm_den 1 q
+  simp only [phC, CMon.den, zpw, ztrim, List.map_nil, List.prod_nil, mul_one]
+  rw [hr]; push_cast; ring
+
+/-- Distinct keys, each entry `phC (l_i / c) []`, and every `l_i` off the keys a multiple of `c`. -/
+def ptOK (l : List ℤ) (c : ℕ) (pt : List (ℕ × CMon)) : Bool :=
+  decide (0 < c) && decide (pt.map Prod.fst).Nodup &&
+    pt.all (fun p => p.2 == phC ((l.getD p.1 0 : ℚ) / c) []) &&
+    (List.range l.length).all (fun i => l.getD i 0 % c == 0 || (pt.map Prod.fst).contains i)
+
+theorem sum_key (pt : List (ℕ × CMon)) (f : CMon → ℂ) (hnd : (pt.map Prod.fst).Nodup) (j : ℕ)
+    (p : ℕ × CMon) (hp : p ∈ pt) (hj : p.1 = j) :
+    (pt.map fun p => if j = p.1 then f p.2 else 0).sum = f p.2 := by
+  induction pt with
+  | nil => simp at hp
+  | cons a rest ih =>
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    simp only [List.map_cons, List.sum_cons]
+    have hz : ∀ k, k ∉ rest.map Prod.fst →
+        (rest.map fun p => if k = p.1 then f p.2 else 0).sum = 0 := by
+      intro k hk
+      apply List.sum_eq_zero
+      intro x hx
+      obtain ⟨b, hb, rfl⟩ := List.mem_map.1 hx
+      have : k ≠ b.1 := fun h => hk (h ▸ List.mem_map_of_mem hb)
+      simp [this]
+    rcases List.mem_cons.1 hp with rfl | hp'
+    · rw [ite_cond_eq_true _ _ (eq_true hj.symm), hz _ (hj ▸ hnd.1), add_zero]
+    · have hne : j ≠ a.1 := by
+        intro h; apply hnd.1; rw [← h, ← hj]; exact List.mem_map_of_mem hp'
+      rw [ite_cond_eq_false _ _ (eq_false hne), ih hnd.2 hp', zero_add]
+
+theorem sum_nokey (pt : List (ℕ × CMon)) (f : CMon → ℂ) (j : ℕ) (hj : j ∉ pt.map Prod.fst) :
+    (pt.map fun p => if j = p.1 then f p.2 else 0).sum = 0 := by
+  apply List.sum_eq_zero
+  intro x hx
+  obtain ⟨b, hb, rfl⟩ := List.mem_map.1 hx
+  have : j ≠ b.1 := fun h => hj (h ▸ List.mem_map_of_mem hb)
+  simp [this]
+
+/-- A rational phase table `l / c` against its stored phases. -/
+theorem tab_ph (ρ : Val) (l : List ℤ) (c : ℕ) (cr : ℝ) (hc : cr = c) (pt : List (ℕ × CMon))
+    (h : ptOK l c pt = true) (j : ℕ) : ex (((l.getD j 0 : ℤ) : ℝ) / cr) = phF ρ pt j := by
+  simp only [ptOK, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
+  obtain ⟨⟨⟨hc0, hnd⟩, hall⟩, hcov⟩ := h
+  subst hc
+  unfold phF
+  by_cases hk : j ∈ pt.map Prod.fst
+  · obtain ⟨p, hp, hpj⟩ := List.mem_map.1 hk
+    rw [sum_key pt (fun m => m.den ρ - 1) hnd j p hp hpj]
+    have he := hall p hp
+    simp only [beq_iff_eq] at he
+    rw [he, phC_den0, hpj]; push_cast; ring
+  · rw [sum_nokey pt (fun m => m.den ρ - 1) j hk, add_zero]
+    have hm : (c : ℤ) ∣ l.getD j 0 := by
+      by_cases hlt : j < l.length
+      · have := hcov j (List.mem_range.2 hlt)
+        simp only [Bool.or_eq_true, beq_iff_eq, List.contains_iff_mem] at this
+        rcases this with h | h
+        · exact Int.dvd_of_emod_eq_zero h
+        · exact absurd h hk
+      · rw [List.getD_eq_default _ _ (by omega)]; exact dvd_zero _
+    obtain ⟨z, hz⟩ := hm
+    rw [hz]
+    have hc' : (c : ℝ) ≠ 0 := by exact_mod_cast hc0.ne'
+    have : (((c : ℤ) * z : ℤ) : ℝ) / (c : ℝ) = 0 + (z : ℝ) := by
+      push_cast; field_simp; ring
+    rw [this, ex_int, ex_zero]
+
+/-- A rule of modulus `0` has value `1`. -/
+theorem rV_mark (ρ : Val) (l : List ℤ) (j : ℕ) : rV ρ (⟨0, []⟩, l) j = 1 := by
+  simp [rV, DMon.den, om]
+
+/-- The kind, modulus, coefficient and digit range `[k, M, c, d]` of a rule of modulus `0`. -/
+def cpData (r : DMon × List ℤ) : Option (ℕ × ℕ × ℤ × ℕ) :=
+  if r.1.c = 0 ∧ r.1.e = [] then
+    match r.2 with
+    | [k, M, c, d] => some (k.toNat, M.toNat, c, d.toNat)
+    | _ => none
+  else none
+
+/-- The numerator of a compact table at `j`: `c j` for kind `1`, else `c (j / d) (j % d)`. -/
+def cpNum (q : ℕ × ℕ × ℤ × ℕ) (j : ℕ) : ℤ :=
+  if q.1 = 1 then q.2.2.1 * j else q.2.2.1 * ((j / q.2.2.2 : ℕ) : ℤ) * ((j % q.2.2.2 : ℕ) : ℤ)
+
+/-- The first digit variable of a compact table at the bound variable `s`; the second is the
+next. -/
+def cpX (s : ℕ) : ℕ := 3000000 + 2 * s
+
+/-- The compact spider of a table `q`: kind `1` the root of unity `ω_M^(c s)`; else the digits
+`x, y < d` of `s` summed, the delta `[D ∣ s - d x - y]` and the root of unity `ω_M^(c x y)`. -/
+def cpTerms (k : CMon) (D : DMon) (s : ℕ) (q : ℕ × ℕ × ℤ × ℕ) (ds ps : List Fac) : List STm :=
+  if q.1 = 1 then [⟨k, [(s, D)], ds, ps ++ [(⟨q.2.1, []⟩, ipSmul q.2.2.1 (ipV s))]⟩]
+  else [⟨k, [(s, D), (cpX s, ⟨q.2.2.2, []⟩), (cpX s + 1, ⟨q.2.2.2, []⟩)],
+    ds ++ [(D, ipSub (ipSub (ipV s) (ipSmul q.2.2.2 (ipV (cpX s)))) (ipV (cpX s + 1)))],
+    ps ++ [(⟨q.2.1, []⟩, ipSmul q.2.2.1 (ipMul (ipV (cpX s)) (ipV (cpX s + 1))))]⟩]
+
+/-- Whether the stored phases are the table `q` on the constant dimension `D`; for kind `2`,
+`D = d²` and the digits free in `ds`, `ps`. -/
+def cpChk (D : DMon) (pt : List (ℕ × CMon)) (q : ℕ × ℕ × ℤ × ℕ) (s : ℕ) (ds ps : List Fac) :
+    Bool :=
+  D.isConst && decide (0 < D.c) && ptOK ((List.range D.c).map (cpNum q)) q.2.1 pt &&
+    (q.1 == 1 || (q.2.2.2 * q.2.2.2 == D.c &&
+      (ds ++ ps).all fun f => !facHas (cpX s) f && !facHas (cpX s + 1) f))
+
+/-- A spider, compact when its rule marks a table `cpChk` accepts. -/
+def spiderC (k : CMon) (D : DMon) (s : ℕ) (pt : List (ℕ × CMon)) (r : DMon × List ℤ)
+    (ds ps : List Fac) : List STm :=
+  match cpData r with
+  | some q => if cpChk D pt q s ds ps then cpTerms k D s q ds ps
+    else spider k D s pt ds (ps ++ rF s r)
+  | none => spider k D s pt ds (ps ++ rF s r)
+
+theorem cpData_mark (r : DMon × List ℤ) (q : ℕ × ℕ × ℤ × ℕ) (h : cpData r = some q) :
+    r.1 = ⟨0, []⟩ := by
+  unfold cpData at h
+  split_ifs at h with hc
+  obtain ⟨⟨c, e⟩, l⟩ := r
+  simp only at hc ⊢
+  rw [hc.1, hc.2]
+
+/-- A compact table's phases below `D`. -/
+theorem cp_ph (ρ : Val) (D : DMon) (pt : List (ℕ × CMon)) (r : DMon × List ℤ)
+    (q : ℕ × ℕ × ℤ × ℕ) (hq : cpData r = some q)
+    (hk : ptOK ((List.range D.c).map (cpNum q)) q.2.1 pt = true)
+    (φ : ℕ → ℝ) (hφ : ∀ j, ex (φ j) = phF ρ pt j * rV ρ r j) (j : ℕ) (hj : j < D.c) :
+    ex (φ j) = om q.2.1 ^ cpNum q j := by
+  obtain ⟨r1, l⟩ := r
+  have h1 : r1 = ⟨0, []⟩ := cpData_mark _ q hq
+  subst h1
+  rw [hφ, rV_mark, mul_one, ← tab_ph ρ _ q.2.1 _ rfl pt hk j, om_zpow_ex]
+  have hg : ((List.range D.c).map (cpNum q)).getD j 0 = cpNum q j := by
+    simp [List.getD_eq_getElem?_getD, hj]
+  rw [hg]
+  congr 1
+  push_cast
+  ring
+
+/-- The digits `j / d`, `j % d` of `j < d²` as the only pair `a, b < d` with
+`d² ∣ j - d a - b`. -/
+theorem digit_sum (d j : ℕ) (hj : j < d * d) (F : ℕ → ℕ → ℂ) :
+    ∑ a ∈ range d, ∑ b ∈ range d,
+      (if ((d * d : ℕ) : ℤ) ∣ (j : ℤ) - d * a - b then F a b else 0) = F (j / d) (j % d) := by
+  have hd : 0 < d := Nat.pos_of_ne_zero (by rintro rfl; simp at hj)
+  have key : ∀ a ∈ range d, ∀ b ∈ range d,
+      (if ((d * d : ℕ) : ℤ) ∣ (j : ℤ) - d * a - b then F a b else 0) =
+        if b = j % d then (if a = j / d then F a b else 0) else 0 := by
+    intro a ha b hb
+    have ha' := Finset.mem_range.1 ha
+    have hb' := Finset.mem_range.1 hb
+    have hm : d * a + b < d * d := by nlinarith
+    have e : (j : ℤ) - d * a - b = (j : ℤ) - ((d * a + b : ℕ) : ℤ) := by push_cast; ring
+    have hiff : j = d * a + b ↔ a = j / d ∧ b = j % d := by
+      constructor
+      · rintro rfl
+        refine ⟨?_, ?_⟩
+        · rw [Nat.mul_add_div hd, Nat.div_eq_of_lt hb', add_zero]
+        · rw [Nat.mul_add_mod, Nat.mod_eq_of_lt hb']
+      · rintro ⟨rfl, rfl⟩; exact (Nat.div_add_mod j d).symm
+    have hc : (((d * d : ℕ) : ℤ) ∣ (j : ℤ) - d * a - b) ↔ (a = j / d ∧ b = j % d) := by
+      rw [e, dvd_iff_eq_lt _ _ _ hj hm, hiff]
+    simp only [hc]
+    by_cases h1 : a = j / d <;> by_cases h2 : b = j % d <;> simp [h1, h2]
+  rw [Finset.sum_congr rfl fun a ha => Finset.sum_congr rfl (key a ha)]
+  have h1 : j / d < d := Nat.div_lt_of_lt_mul hj
+  have h2 : j % d < d := Nat.mod_lt _ hd
+  simp [Finset.sum_ite_eq', h1, h2]
+
+theorem cp_body2 (dv : ℕ → ℕ) (ds ps : List Fac) (ν : ℕ → ℤ) (s x y d M : ℕ) (c : ℤ)
+    (D : DMon) (hD : D.den dv = d * d) (hxs : x ≠ s) (hys : y ≠ s) (hxy : y ≠ x)
+    (hfx : ((ds ++ ps).all fun f => !facHas x f) = true)
+    (hfy : ((ds ++ ps).all fun f => !facHas y f) = true) (j a b : ℕ) :
+    bodyOf dv (ds ++ [(D, ipSub (ipSub (ipV s) (ipSmul d (ipV x))) (ipV y))])
+      (ps ++ [(⟨M, []⟩, ipSmul c (ipMul (ipV x) (ipV y)))])
+      (Function.update (Function.update (Function.update ν s j) x a) y b) =
+    if ((d * d : ℕ) : ℤ) ∣ (j : ℤ) - d * a - b then
+      om M ^ (c * ((a : ℤ) * b)) * bodyOf dv ds ps (Function.update ν s j) else 0 := by
+  have hb1 : bodyOf dv ds ps (Function.update (Function.update (Function.update ν s j) x a) y b) =
+      bodyOf dv ds ps (Function.update ν s j) := by
+    rw [bodyOf_upd dv _ ds ps hfy, bodyOf_upd dv _ ds ps hfx]
+  have hsplit : ∀ (μ : ℕ → ℤ) (f g : Fac), bodyOf dv (ds ++ [f]) (ps ++ [g]) μ =
+      bodyOf dv ds ps μ * (delV dv μ f * phV dv μ g) := by
+    intro μ f g
+    simp only [bodyOf, List.map_append, List.prod_append, List.map_cons, List.map_nil,
+      List.prod_cons, List.prod_nil, mul_one]
+    ring
+  rw [hsplit, hb1]
+  simp only [delV, phV]
+  rw [hD]
+  simp only [ipDen_sub, ipDen_smul, ipDen_mul, ipDen_V, Function.update_self,
+    Function.update_of_ne hxy.symm, Function.update_of_ne hxs.symm, Function.update_of_ne hys.symm,
+    DMon.den, npow, mul_one]
+  split_ifs <;> (try simp only [mul_assoc]) <;> ring
+
+theorem cpTerms_den (ρ : Val) (k : CMon) (D : DMon) (s : ℕ) (q : ℕ × ℕ × ℤ × ℕ)
+    (ds ps : List Fac) (ν : ℕ → ℤ) (hD : D.isConst = true)
+    (h2 : q.1 ≠ 1 → q.2.2.2 * q.2.2.2 = D.c ∧
+      ((ds ++ ps).all fun f => !facHas (cpX s) f && !facHas (cpX s + 1) f) = true) :
+    exDen ρ ν (cpTerms k D s q ds ps) = k.den ρ * ∑ j ∈ range D.c,
+      om q.2.1 ^ cpNum q j * bodyOf ρ.dv ds ps (Function.update ν s j) := by
+  have hDc : D.den ρ.dv = D.c := DMon.den_isConst _ _ hD
+  unfold cpTerms
+  split_ifs with h1
+  · rw [exDen_cons, exDen_nil, add_zero, den_one, hDc]
+    congr 1
+    refine Finset.sum_congr rfl fun j _ => ?_
+    simp only [bodyOf, List.map_append, List.prod_append, List.map_cons, List.map_nil,
+      List.prod_cons, List.prod_nil, mul_one, phV, ipDen_smul, ipDen_V, Function.update_self,
+      cpNum, if_pos h1]
+    simp only [DMon.den, npow, mul_one]
+    ring
+  · obtain ⟨hdd, hfree⟩ := h2 h1
+    have hxs : cpX s ≠ s := by unfold cpX; omega
+    have hys : cpX s + 1 ≠ s := by unfold cpX; omega
+    have hxy : cpX s + 1 ≠ cpX s := by omega
+    simp only [List.all_eq_true, Bool.and_eq_true, Bool.not_eq_true'] at hfree
+    have hfx : ((ds ++ ps).all fun f => !facHas (cpX s) f) = true :=
+      List.all_eq_true.2 fun f hf => by simp [(hfree f hf).1]
+    have hfy : ((ds ++ ps).all fun f => !facHas (cpX s + 1) f) = true :=
+      List.all_eq_true.2 fun f hf => by simp [(hfree f hf).2]
+    rw [exDen_cons, exDen_nil, add_zero]
+    simp only [STm.den, sumsV, body_eq]
+    rw [hDc]
+    congr 1
+    refine Finset.sum_congr rfl fun j hj => ?_
+    have hj' : j < q.2.2.2 * q.2.2.2 := by rw [hdd]; exact Finset.mem_range.1 hj
+    have hd := digit_sum q.2.2.2 j hj' (fun a b => om q.2.1 ^ (q.2.2.1 * ((a : ℤ) * b)) *
+      bodyOf ρ.dv ds ps (Function.update ν s j))
+    have hc : cpNum q j = q.2.2.1 * (((j / q.2.2.2 : ℕ) : ℤ) * ((j % q.2.2.2 : ℕ) : ℤ)) := by
+      simp only [cpNum, if_neg h1]; ring
+    rw [hc, ← hd]
+    simp only [DMon.den, npow, mul_one]
+    refine Finset.sum_congr rfl fun a _ => Finset.sum_congr rfl fun b _ => ?_
+    exact cp_body2 ρ.dv ds ps ν s (cpX s) (cpX s + 1) q.2.2.2 q.2.1 q.2.2.1 D
+      (by rw [hDc, hdd]) hxs hys hxy hfx hfy j a b
+
+theorem spiderC_den (ρ : Val) (hρ : ρ.OK) (k : CMon) (D : DMon) (s : ℕ) (pt : List (ℕ × CMon))
+    (r : DMon × List ℤ) (ds ps : List Fac) (ν : ℕ → ℤ) (hsupp : ∀ p ∈ pt, p.1 < D.den ρ.dv)
+    (φ : ℕ → ℝ) (hφ : ∀ j, ex (φ j) = phF ρ pt j * rV ρ r j) :
+    exDen ρ ν (spiderC k D s pt r ds ps) = k.den ρ * ∑ j ∈ range (D.den ρ.dv),
+      ex (φ j) * bodyOf ρ.dv ds ps (Function.update ν s j) := by
+  unfold spiderC
+  split
+  · next q hq =>
+    split_ifs with hc
+    · simp only [cpChk, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hc
+      obtain ⟨⟨⟨hD, _⟩, hk⟩, h2⟩ := hc
+      have hDc : D.den ρ.dv = D.c := DMon.den_isConst _ _ hD
+      rw [cpTerms_den ρ k D s q ds ps ν hD (fun hne => by
+        rcases h2 with h | h
+        · exact absurd h hne
+        · exact h), hDc]
+      congr 1
+      refine Finset.sum_congr rfl fun j hj => ?_
+      rw [cp_ph ρ D pt r q hq hk φ hφ j (Finset.mem_range.1 hj)]
+    · exact spider_den_rule ρ hρ k D s pt ds ps r ν hsupp φ hφ
+  · exact spider_den_rule ρ hρ k D s pt ds ps r ν hsupp φ hφ
+
 /-- A generator's entry over its legs, `s` its bound variable. -/
 def trNode (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) : Option (List STm) :=
   let D := dt n.dim
   match n.kind, n.outs, n.ins with
-  | .Z, os, is => some (spider (CMon.ofQ 1) D s (pt n.ph) (zLegs D s (os ++ is)) (rF s (rl n.ph)))
-  | .X, os, is => some (spider (CMon.rtD D (-((os.length + is.length : ℕ) : ℤ))) D s (pt n.ph)
-      [] ((D, ipMul (ipV s) (ipSub (sumL os) (sumL is))) :: rF s (rl n.ph)))
+  | .Z, os, is => some (spiderC (CMon.ofQ 1) D s (pt n.ph) (rl n.ph) (zLegs D s (os ++ is)) [])
+  | .X, os, is => some (spiderC (CMon.rtD D (-((os.length + is.length : ℕ) : ℤ))) D s (pt n.ph)
+      (rl n.ph) [] [(D, ipMul (ipV s) (ipSub (sumL os) (sumL is)))])
   | .F, [o], [i] => some [⟨CMon.rtD D (-1), [], [], [(D, ipMul (ipV o) (ipV i))]⟩]
   | .T, [o], [i] => some [⟨CMon.ofQ 1, [], [(D, ipV o)], []⟩,
       ⟨CMon.ofQ 1, [], [(D, ipSub (ipV o) (ipV i))], []⟩,
@@ -334,9 +599,8 @@ theorem val_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ 
   | Z =>
     simp only [trNode, Option.some.injEq] at h
     subst h
-    have hsp := spider_den_rule ρ hρ (CMon.ofQ 1) (dt dim) (s : ℕ) (pt ph)
-      (zLegs (dt dim) s (os ++ is)) [] (rl ph) ν hsupp (E.phase ph) hph
-    simp only [List.nil_append] at hsp
+    have hsp := spiderC_den ρ hρ (CMon.ofQ 1) (dt dim) (s : ℕ) (pt ph) (rl ph)
+      (zLegs (dt dim) s (os ++ is)) [] ν hsupp (E.phase ph) hph
     rw [hsp, ofQ_den]
     simp only [val, tZ, hdim, Rat.cast_one, one_mul]
     refine Finset.sum_congr rfl fun j hj => ?_
@@ -345,10 +609,9 @@ theorem val_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ 
   | X =>
     simp only [trNode, Option.some.injEq] at h
     subst h
-    have hsp := spider_den_rule ρ hρ (CMon.rtD (dt dim) (-((os.length + is.length : ℕ) : ℤ)))
-      (dt dim) s (pt ph) [] [((dt dim), ipMul (ipV s) (ipSub (sumL os) (sumL is)))] (rl ph) ν
+    have hsp := spiderC_den ρ hρ (CMon.rtD (dt dim) (-((os.length + is.length : ℕ) : ℤ)))
+      (dt dim) s (pt ph) (rl ph) [] [((dt dim), ipMul (ipV s) (ipSub (sumL os) (sumL is)))] ν
       hsupp (E.phase ph) hph
-    simp only [List.singleton_append] at hsp
     rw [hsp, rtD_den ρ _ hpos]
     simp only [val, tX, hdim, Finset.mul_sum]
     refine Finset.sum_congr rfl fun j _ => ?_
@@ -997,9 +1260,6 @@ theorem equal_sym (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Floo
       hp hk0 hk1 hs0 hs1 hf
 
 /-! ## Phases and atoms -/
-
-/-- `ex (q + Σ_j ks_j g_j)` over the atoms `ex g_j`. -/
-def phC (q : ℚ) (ks : List ℤ) : CMon := ⟨(CMon.rnorm 1 q).1, (CMon.rnorm 1 q).2, [], [], ztrim ks, []⟩
 
 theorem ex_zpow' (g : ℝ) (z : ℤ) : ex g ^ z = ex (z * g) := by
   unfold ex; rw [← Complex.exp_int_mul]; congr 1; push_cast; ring
