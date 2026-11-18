@@ -606,16 +606,18 @@ kept, through sumsV_congr_rng): 7 [M | s x + b] as [M | x - ((-s b) mod M)] for 
 (ipModC; rule 6 then pins it); 8 / 9 p plus / minus the delta [M | q] at i of the other deltas,
 coefficients mod M (case [M | q] = 0, else q = 0 mod M); 10 [D | p mod D] after [M | p], D | M
 the constant range of the sum at i; 11 a delta [K | p] dropped beside [M | q] with K | M and
-q = +-p mod K (dvd_iff_of_modC); 12 splitDel by the range at i of rgOf R S, labels included
-(splitDel_ok under InR); 13 the pivot x = -s b of [m | s x + b] substituted into the root of
+q = +-p mod K (dvd_iff_of_modC); 12 splitDel by the range of the variable i, label or sum,
+over rgU R S i f (i's own range, rgLoc of the monomial i, then rgLoc R S i f: the ranges of f's
+other variables, each sum bound once or label; rgU_in from rgLoc_in; splitDel_ok under InR); 13 the pivot x = -s b of [m | s x + b] substituted into the root of
 unity omega_M^q at i when M | c m for every coefficient c of a monomial of q reading x
 (ipDen_upd_dvdM: x moving by a multiple of m moves q by a multiple of M); 14 [M | p] as
-[M | -p]; 16 the variable x at i of rgOf R S held by [D | s x + b] at V - k D by ivl (as
+[M | -p]; 16 the variable x = i held by [D | s x + b] at V - k D by ivl over rgU R S x f (as
 elimXpin1, x not summed out) substituted into every other factor; and rule 15 (rcStep) merges
 the square roots sqrt a sqrt b of the coefficient into the integer sqrt (a b). rxNfC, normTmC,
 nfGoC and rxNfC_den mirror rxNf; normTmC_step / normTmC_stop and nfGoC_some / nfGoC_none chain
-the rounds as for normTmX. Rules other than 12 and 16 read no range, so elimStepC checks the sums'
-names distinct only for those two (the others through sumsV_congr). A carry round runs up to
+the rounds as for normTmX. elimStepC checks no list of sums for distinct names: rules 12 and 16
+read their ranges through sumsV_congr_rng over rgU, the others no range (sumsV_congr). A carry
+round runs up to
 C_STEPS = 4096 steps before canonTmH (a round of RX_STEPS steps would canonicalise mid-way and
 merge the roots of unity into one polynomial of up to 1012 monomials at n = 4 that every later
 pin substitutes into): its hint is (c, C_0 ++ (C_1 ++ ...)), chunks of RX_STEPS steps, each run
@@ -623,8 +625,8 @@ from the stated term before it to the next by elimAllCS (none at the first faili
 one decide each), chained by elimAllC_append / elimAllC_of_S (chkE) into normTmC_one, so chkS
 decides only canonTmH on the round's last term. lean_sym tries rx_cert first; only when its
 residual does not cancel
-rx_cert_c reruns the rounds with c_choice (x_choice's geometric sums and pins, then rule 7 before
-a pin, then elim_choice, then rules 15, 13, 14, 8 / 9 (only when the delta loses a variable),
+rx_cert_c reruns the rounds with c_choice (x_choice's geometric sums and pins (rule 20), then
+rule 7 before a rule-20 pin, then elim_choice, then rules 15, 13, 14, 8 / 9 (only when the delta loses a variable),
 11, 12 (labels), 16 (the delta's greatest variable, read by another factor) and 10 (only when a
 delta of the sum's range then thins the new one)) and the export writes normTmC / rxNfC, so
 every export rx_cert reaches is unchanged. The plain route memoises ip_lin and elim_var and skips
@@ -635,11 +637,13 @@ the plain-first order. Exports byte-identical with and without it: fca n = 1 d =
 d = 2, 3, 5, n = 3 d = 3, draper n = 1 d = 3, 5, 10, n = 2, 3 d = 2, symcuc2b, symmct3b,
 cuc4_proof. draper_adder/main d = 2: the difference of the two unnormalised terms cancels in one
 round of 55, 122, 216 and 337 hinted steps at n = 2, 3, 4 and 5 (the left term 39, 90, 162 and
-255 sums), never more than the two terms; export 0.2, 1.3, 7.3 and 54 s (41, 86, 174 and 333 KB);
-Lean (anon peak): n = 2 20 s (0.6 GB), n = 3 64 s (1.3 GB), n = 4 174 s (3.3 GB), n = 5 569 s
-(6.0 GB, 237 s in one chunk of 32 range pins on the 255-sum term); with rounds of RX_STEPS steps
-n = 3 took 109 s (2.3 GB) and n = 4 576 s (5.8 GB). A copy with the copy register's outputs
-swapped and a copy with a changed chunk term are rejected.
+255 sums), never more than the two terms; export 0.4, 2.5, 12, 53 and 165 s at n = 2 to 6 (41,
+87, 174, 333 and 597 KB); Lean (wall, anon peak): n = 2 21 s (0.5 GB), n = 3 37 s (0.9 GB),
+n = 4 111 s (1.6 GB), n = 5 230 s (3.2 GB), n = 6 575 s (5.9 GB: 123 s in trNetG of the left
+network, about 40 s per chunk of 32 pins on the first chunks). With the range pins over rgOf
+(rule 6, 12 and 16 with the sums' names checked distinct) n = 4 took 174 s (3.3 GB) and n = 5
+569 s (6.0 GB); with rounds of RX_STEPS steps n = 3 109 s (2.3 GB) and n = 4 576 s (5.8 GB). A
+copy with the copy register's outputs swapped and a copy with a changed chunk term are rejected.
 
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a

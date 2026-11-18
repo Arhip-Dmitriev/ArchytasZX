@@ -1572,11 +1572,11 @@ def c_fac(
             return None
         return rest, ps
     if rule == 12:
-        rg = rg_of(r, t[1])
-        if i >= len(rg):
+        rg = rg_u(r, t[1], i, f)
+        dy = _lookup(rg, i)
+        if dy is None:
             return None
-        y, d = rg[i]
-        got = None if f[0] == d else split_del(rg, y, d, f)
+        got = None if f[0] == dy else split_del(rg, i, dy, f)
         if got is None:
             return None
         return (*pre, got[0], got[1], *post), ps
@@ -1594,11 +1594,9 @@ def c_fac(
     if rule == 14:
         return (*pre, (f[0], ip_smul(-1, f[1])), *post), ps
     if rule == 16:
-        rg = rg_of(r, t[1])
-        if i >= len(rg):
-            return None
-        x, d = rg[i]
-        if not (f[0] == d and dm_const(d) and d[0] > 0):
+        rg = rg_u(r, t[1], i, f)
+        x, dx = i, _lookup(rg, i)
+        if dx is None or not (f[0] == dx and dm_const(dx) and dx[0] > 0):
             return None
         lin = ip_lin(x, f[1])
         if lin is None:
@@ -1610,8 +1608,8 @@ def c_fac(
         iv = ivl(rg, v)
         if iv is None:
             return None
-        k = _ediv(iv[0], d[0]) * d[0]
-        if not iv[1] < k + d[0]:
+        k = _ediv(iv[0], dx[0]) * dx[0]
+        if not iv[1] < k + dx[0]:
             return None
         val = ip_add(v, ip_c(-k))
         return (
@@ -1636,13 +1634,43 @@ def c_rc(t: STm, i: int, j: int) -> STm | None:
     return ((c[0] * math.isqrt(a * b), c[1], c[2], tuple(rc), c[4], c[5]), t[1], t[2], t[3])
 
 
+def rg_loc(
+    r: Sequence[tuple[int, int]], sums: Sequence[tuple[int, DMon]], x: int, f: Fac
+) -> list[tuple[int, DMon]]:
+    """``rgLoc``: for each variable of ``f`` other than ``x``, in order, its sum when ``sums``
+    binds it once, else its label range in ``r``."""
+    first: dict[int, DMon] = {}
+    counts: dict[int, int] = {}
+    for v, m in sums:
+        first.setdefault(v, m)
+        counts[v] = counts.get(v, 0) + 1
+    labs: dict[int, int] = {}
+    for lab, dv in r:
+        labs.setdefault(lab, dv)
+    out: list[tuple[int, DMon]] = []
+    for mon, _c in f[1]:
+        for u in mon:
+            if u == x:
+                continue
+            if u in first:
+                if counts[u] == 1:
+                    out.append((u, first[u]))
+            elif u in labs:
+                out.append((u, (labs[u], ())))
+    return out
+
+
+def rg_u(
+    r: Sequence[tuple[int, int]], sums: Sequence[tuple[int, DMon]], y: int, f: Fac
+) -> list[tuple[int, DMon]]:
+    """``rgU``: the range of ``y``, then :func:`rg_loc` of ``f`` without ``y``."""
+    return rg_loc(r, sums, y + 1, ((0, ()), (((y,), 1),))) + rg_loc(r, sums, y, f)
+
+
 def c_step(r: Sequence[tuple[int, int]], t: STm, i: int, rule: int, j: int) -> STm | None:
     """``elimStepC`` for the rules 7 to 16."""
     if rule == 15:
         return c_rc(t, i, j)
-    names = [v for v, _ in t[1]]
-    if rule in (12, 16) and len(set(names)) != len(names):
-        return None
     got = c_fac(r, t, i, rule, j)
     return None if got is None else (t[0], t[1], got[0], got[1])
 
@@ -1655,8 +1683,11 @@ def _c_try(
 
 
 def _c_pin(r: Sequence[tuple[int, int]], t: STm) -> Any:
-    """Rule 7 at a delta of a sum's range that rule 6 then pins."""
+    """Rule 7 at a delta of a sum's range that rule 20 then pins."""
+    names = [v for v, _ in t[1]]
     for i, (x, d) in enumerate(t[1]):
+        if names.count(x) != 1:
+            continue
         rest = t[1][:i] + t[1][i + 1 :]
         for j, f in enumerate(t[2]):
             if f[0] != d or not fac_has(x, f):
@@ -1665,7 +1696,8 @@ def _c_pin(r: Sequence[tuple[int, int]], t: STm) -> Any:
             if got is None or got[0][2][j] == f:
                 continue
             g = got[0][2][j]
-            if elim_xpin1(rg_of(r, rest), x, d, t[2][:j], g, t[2][j + 1 :], t[3]) is not None:
+            rg = rg_loc(r, rest, x, g)
+            if elim_xpin1(rg, x, d, t[2][:j], g, t[2][j + 1 :], t[3]) is not None:
                 return got
     return None
 
@@ -1742,13 +1774,11 @@ def _c_absorb(r: Sequence[tuple[int, int]], t: STm) -> Any:
 
 def _c_split(r: Sequence[tuple[int, int]], t: STm) -> Any:
     """Rule 12 by a label's range."""
-    rg = rg_of(r, t[1])
     names = {v for v, _ in t[1]}
+    labs = [lab for lab, _d in r if lab not in names]
     for j in range(len(t[2])):
-        for i, (y, _d) in enumerate(rg):
-            if y in names:
-                continue
-            got = _c_try(r, t, i, 12, j)
+        for y in labs:
+            got = _c_try(r, t, y, 12, j)
             if got is not None:
                 return got
     return None
@@ -1756,19 +1786,16 @@ def _c_split(r: Sequence[tuple[int, int]], t: STm) -> Any:
 
 def _c_lpin(r: Sequence[tuple[int, int]], t: STm) -> Any:
     """Rule 16 at a delta's greatest variable of the delta's range read by another factor."""
-    rg = rg_of(r, t[1])
     for j, f in enumerate(t[2]):
         if not (dm_const(f[0]) and f[0][0] > 0) or not f[1]:
             continue
         x = max(ip_varset(f[1]))
         if not any(fac_has(x, g) for k, g in enumerate((*t[2], *t[3])) if k != j):
             continue
-        for i, (y, d) in enumerate(rg):
-            if y == x and d == f[0]:
-                got = _c_try(r, t, i, 16, j)
-                if got is not None:
-                    return got
-                break
+        if _lookup(rg_u(r, t[1], x, f), x) == f[0]:
+            got = _c_try(r, t, x, 16, j)
+            if got is not None:
+                return got
     return None
 
 
@@ -1809,7 +1836,7 @@ def c_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int,
     before such a pin, else :func:`elim_choice`, else a carry step (rules 15, 13, 14, 8 or 9,
     11, 12, 16, 10)."""
     got = x_choice(r, t)
-    if got is not None and got[1][1] in (5, 6):
+    if got is not None and got[1][1] in (5, 6, 20):
         return got
     pin: tuple[STm, tuple[int, int, int]] | None = _c_pin(r, t)
     if pin is not None:

@@ -12,12 +12,12 @@ range, each at the delta `f = [M ∣ p]` with index `j`: `7` `f` as `[M ∣ x - 
 for `p = s x + b`, `x` the sum at `i`; `8`, `9` `p` plus or minus the delta at `i` of the same
 modulus, coefficients mod `M`; `10` `[D ∣ p mod D]` beside `f`, `D ∣ M` the range of the sum at
 `i`; `11` `f` dropped beside a delta at `i` that implies it; `12` `f` split by `splitDel` over
-the range at `i` of the sums and labels; `13` the pivot of `f` substituted into the root of
-unity at `i`, its modulus dividing `M` times each coefficient of a monomial reading the pivot;
-`14` `p` negated; `15` the square roots at `i` and `j` of the coefficient merged when their
-product is a square; `16` the variable at `i` of the sums and labels, held by `f` at one value
-by the ranges, substituted in every other factor. `rxNfC` is `rxNf` with `elimStepC`; `rxNfC_den` holds wherever the labels
-of `R` lie in range.
+the range of the variable `i` (`rgU`: its own and those of `f`'s other variables, `rgLoc`);
+`13` the pivot of `f` substituted into the root of unity at `i`, its modulus dividing `M` times
+each coefficient of a monomial reading the pivot; `14` `p` negated; `15` the square roots at `i`
+and `j` of the coefficient merged when their product is a square; `16` the variable `i`, held
+by `f` at one value by the ranges `rgU`, substituted in every other factor. `rxNfC` is `rxNf`
+with `elimStepC`; `rxNfC_den` holds wherever the labels of `R` lie in range.
 -/
 
 namespace ArchytasZX.Sym
@@ -253,31 +253,51 @@ theorem carry11_ok (dv : ℕ → ℕ) (i : ℕ) (pre : List Fac) (f : Fac)
       rw [hf]; ring
   · simp at h
 
-/-- Rule `12`: `f` split by `splitDel` over the range at `i` of `rgOf R S`. -/
-def carry12 (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i : ℕ) (pre : List Fac) (f : Fac)
+/-- The ranges rules `12` and `16` read at `f` for the variable `y`: `y`'s own (`rgLoc` of the
+monomial `y`), then those of `f`'s other variables (`rgLoc R S y f`). -/
+def rgU (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (y : ℕ) (f : Fac) : List (ℕ × DMon) :=
+  rgLoc R S (y + 1) (⟨0, []⟩, [([y], 1)]) ++ rgLoc R S y f
+
+theorem rgU_in (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (y : ℕ) (f : Fac)
+    (ν : ℕ → ℤ) (hν : InLab R ν) :
+    (∀ p ∈ rgU R S y f, p.1 ∈ S.map (·.1) → p ∈ S ∧ (S.map (·.1)).count p.1 = 1) ∧
+    (∀ p ∈ rgU R S y f, p.1 ∉ S.map (·.1) →
+      0 ≤ ν p.1 ∧ ν p.1 < ((p.2.den dv : ℕ) : ℤ)) := by
+  obtain ⟨a1, a2⟩ := rgLoc_in dv R S (y + 1) (⟨0, []⟩, [([y], 1)]) ν hν
+  obtain ⟨b1, b2⟩ := rgLoc_in dv R S y f ν hν
+  constructor
+  · intro p hp; rcases List.mem_append.1 hp with h | h
+    · exact a1 p h
+    · exact b1 p h
+  · intro p hp; rcases List.mem_append.1 hp with h | h
+    · exact a2 p h
+    · exact b2 p h
+
+/-- Rule `12`: `f` split by `splitDel` over the range of `y` in `rg`. -/
+def carry12 (rg : List (ℕ × DMon)) (y : ℕ) (pre : List Fac) (f : Fac)
     (post ps : List Fac) : Option (List Fac × List Fac) :=
-  match (rgOf R S)[i]? with
-  | some p =>
-    if f.1 = p.2 then none else
-      match splitDel (rgOf R S) p.1 p.2 f with
+  match rg.lookup y with
+  | some D =>
+    if f.1 = D then none else
+      match splitDel rg y D f with
       | some (f1, f2, _) => some (pre ++ f1 :: f2 :: post, ps)
       | none => none
   | none => none
 
-theorem carry12_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i : ℕ)
+theorem carry12_ok (dv : ℕ → ℕ) (rg : List (ℕ × DMon)) (y : ℕ)
     (pre : List Fac) (f : Fac) (post ps ds' ps' : List Fac)
-    (h : carry12 R S i pre f post ps = some (ds', ps')) (ν : ℕ → ℤ)
-    (hν : InR dv (rgOf R S) ν) :
+    (h : carry12 rg y pre f post ps = some (ds', ps')) (ν : ℕ → ℤ)
+    (hν : InR dv rg ν) :
     bodyOf dv ds' ps' ν = bodyOf dv (pre ++ f :: post) ps ν := by
   unfold carry12 at h
   split at h
-  · next p _ =>
+  · next D _ =>
     split_ifs at h
     split at h
     · next f1 f2 U hs =>
       simp only [Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
-      obtain ⟨hU, hval⟩ := splitDel_ok dv (rgOf R S) p.1 p.2 f f1 f2 U hs
+      obtain ⟨hU, hval⟩ := splitDel_ok dv rg y D f f1 f2 U hs
       have hv := hval ν (fun q hq => hν q (hU q hq).1)
       rw [bodyOf_cons_mid dv pre f1, bodyOf_cons_mid dv pre f2, bodyOf_cons_mid dv pre f, hv]
       ring
@@ -343,26 +363,26 @@ theorem carry14_ok (dv : ℕ → ℕ) (pre : List Fac) (f : Fac) (post ps : List
   refine delV_congr dv ν f _ rfl ?_
   rw [ipDen_smul, neg_one_mul, dvd_neg]
 
-/-- Rule `16`: `x`, the variable at `i` of `rgOf R S`, of constant range `D`, held by
+/-- Rule `16`: `x`, of constant range `D` in `rg`, held by
 `f = [D ∣ s x + b]`, `s = ±1`, with `V = -s b` in `[k D, k D + D)` by the ranges: `x = V - k D`
 substituted in every other factor. -/
-def carry16 (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i : ℕ) (pre : List Fac) (f : Fac)
+def carry16 (rg : List (ℕ × DMon)) (x : ℕ) (pre : List Fac) (f : Fac)
     (post ps : List Fac) : Option (List Fac × List Fac) :=
-  match (rgOf R S)[i]? with
-  | some p =>
-    if f.1 = p.2 ∧ p.2.isConst = true ∧ 0 < p.2.c then
-      match ipLin p.1 f.2 with
+  match rg.lookup x with
+  | some D =>
+    if f.1 = D ∧ D.isConst = true ∧ 0 < D.c then
+      match ipLin x f.2 with
       | some (a, b) =>
         match ipConst a with
         | some s =>
           if s = 1 ∨ s = -1 then
-            match ivl (rgOf R S) (pinVal s b) with
+            match ivl rg (pinVal s b) with
             | some (lo, hi) =>
-              if hi < lo / (p.2.c : ℤ) * p.2.c + p.2.c then
-                some (pre.map (facSub p.1 (ipAdd (pinVal s b) (ipC (-(lo / (p.2.c : ℤ) * p.2.c)))))
-                  ++ f :: post.map (facSub p.1 (ipAdd (pinVal s b)
-                    (ipC (-(lo / (p.2.c : ℤ) * p.2.c))))),
-                  ps.map (facSub p.1 (ipAdd (pinVal s b) (ipC (-(lo / (p.2.c : ℤ) * p.2.c))))))
+              if hi < lo / (D.c : ℤ) * D.c + D.c then
+                some (pre.map (facSub x (ipAdd (pinVal s b) (ipC (-(lo / (D.c : ℤ) * D.c)))))
+                  ++ f :: post.map (facSub x (ipAdd (pinVal s b)
+                    (ipC (-(lo / (D.c : ℤ) * D.c))))),
+                  ps.map (facSub x (ipAdd (pinVal s b) (ipC (-(lo / (D.c : ℤ) * D.c))))))
               else none
             | none => none
           else none
@@ -371,14 +391,14 @@ def carry16 (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i : ℕ) (pre : Li
     else none
   | none => none
 
-theorem carry16_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i : ℕ)
+theorem carry16_ok (dv : ℕ → ℕ) (rg : List (ℕ × DMon)) (x : ℕ)
     (pre : List Fac) (f : Fac) (post ps ds' ps' : List Fac)
-    (h : carry16 R S i pre f post ps = some (ds', ps')) (ν : ℕ → ℤ)
-    (hν : InR dv (rgOf R S) ν) :
+    (h : carry16 rg x pre f post ps = some (ds', ps')) (ν : ℕ → ℤ)
+    (hν : InR dv rg ν) :
     bodyOf dv ds' ps' ν = bodyOf dv (pre ++ f :: post) ps ν := by
   unfold carry16 at h
   split at h
-  · next p hpi =>
+  · next D hpi =>
     split_ifs at h with hc
     obtain ⟨hf, hk, hpos⟩ := hc
     split at h
@@ -391,31 +411,32 @@ theorem carry16_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × 
           split_ifs at h with hlt
           simp only [Option.some.injEq, Prod.mk.injEq] at h
           obtain ⟨rfl, rfl⟩ := h
-          set v := ipAdd (pinVal s b) (ipC (-(lo / (p.2.c : ℤ) * p.2.c))) with hvdef
-          obtain ⟨_, _, hp⟩ := ipLin_spec p.1 f.2 a b hlin
+          set v := ipAdd (pinVal s b) (ipC (-(lo / (D.c : ℤ) * D.c))) with hvdef
+          obtain ⟨_, _, hp⟩ := ipLin_spec x f.2 a b hlin
           rw [bodyOf_cons_mid, ← List.map_append, bodyOf_cons_mid, bodyOf_sub]
           rcases delV_cases dv ν f with h0 | h1
           · rw [h0]; ring
           · congr 1
             have hfd := delV_one dv ν f h1
-            rw [hf, DMon.den_isConst dv p.2 hk, hp, ipConst_spec a s hs, pin_dvd s hs1] at hfd
+            rw [hf, DMon.den_isConst dv D hk, hp, ipConst_spec a s hs, pin_dvd s hs1] at hfd
             have hV : -s * ipDen ν b = ipDen ν (pinVal s b) := by simp [pinVal, ipDen_smul]
             rw [hV] at hfd
-            obtain ⟨hlo, hhi⟩ := ivl_spec dv (rgOf R S) ν hν _ lo hi hiv
-            have hr := hν p (List.mem_of_getElem? hpi)
-            rw [DMon.den_isConst dv p.2 hk] at hr
+            obtain ⟨hlo, hhi⟩ := ivl_spec dv rg ν hν _ lo hi hiv
+            have hr := hν (x, D) (lookup_mem rg x D hpi)
+            rw [DMon.den_isConst dv D hk] at hr
             obtain ⟨hr0, hr1⟩ := hr
-            set D : ℤ := (p.2.c : ℤ)
-            set k := lo / D
-            have hDz : (0 : ℤ) < D := Int.natCast_pos.2 hpos
-            have hkl : k * D ≤ lo := Int.ediv_mul_le lo hDz.ne'
-            have hval : ipDen ν v = ipDen ν (pinVal s b) - k * D := by
+            dsimp only at hr0 hr1
+            set Dz : ℤ := (D.c : ℤ)
+            set k := lo / Dz
+            have hDz : (0 : ℤ) < Dz := Int.natCast_pos.2 hpos
+            have hkl : k * Dz ≤ lo := Int.ediv_mul_le lo hDz.ne'
+            have hval : ipDen ν v = ipDen ν (pinVal s b) - k * Dz := by
               rw [hvdef, ipDen_add, ipDen_C]; ring
-            have hx : ν p.1 = ipDen ν v := by
-              have hd : D ∣ ν p.1 - ipDen ν v := by
-                rw [hval, show ν p.1 - (ipDen ν (pinVal s b) - k * D) =
-                  (ν p.1 - ipDen ν (pinVal s b)) + D * k by ring]
-                exact dvd_add hfd (dvd_mul_right D k)
+            have hx : ν x = ipDen ν v := by
+              have hd : Dz ∣ ν x - ipDen ν v := by
+                rw [hval, show ν x - (ipDen ν (pinVal s b) - k * Dz) =
+                  (ν x - ipDen ν (pinVal s b)) + Dz * k by ring]
+                exact dvd_add hfd (dvd_mul_right Dz k)
               have := Int.eq_zero_of_abs_lt_dvd hd (abs_lt.2 ⟨by omega, by omega⟩)
               omega
             rw [← hx, Function.update_eq_self]
@@ -433,16 +454,16 @@ def carryFac (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i r : ℕ) (pre :
   else if r = 9 then carry89 (-1) i pre f post ps
   else if r = 10 then carry10 S i pre f post ps
   else if r = 11 then carry11 i pre f post ps
-  else if r = 12 then carry12 R S i pre f post ps
+  else if r = 12 then carry12 (rgU R S i f) i pre f post ps
   else if r = 13 then carry13 i pre f post ps
   else if r = 14 then some (carry14 pre f post ps)
-  else if r = 16 then carry16 R S i pre f post ps
+  else if r = 16 then carry16 (rgU R S i f) i pre f post ps
   else none
 
 theorem carryFac_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i r : ℕ)
     (pre : List Fac) (f : Fac) (post ps ds' ps' : List Fac)
     (h : carryFac R S i r pre f post ps = some (ds', ps')) (ν : ℕ → ℤ)
-    (hν : r = 12 ∨ r = 16 → InR dv (rgOf R S) ν) :
+    (hν : r = 12 ∨ r = 16 → InR dv (rgU R S i f) ν) :
     bodyOf dv ds' ps' ν = bodyOf dv (pre ++ f :: post) ps ν := by
   unfold carryFac at h
   split_ifs at h
@@ -451,13 +472,13 @@ theorem carryFac_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ ×
   · exact carry89_ok dv (-1) i pre f post ps ds' ps' h ν
   · exact carry10_ok dv S i pre f post ps ds' ps' h ν
   · exact carry11_ok dv i pre f post ps ds' ps' h ν
-  · exact carry12_ok dv R S i pre f post ps ds' ps' h ν (hν (Or.inl (by assumption)))
+  · exact carry12_ok dv (rgU R S i f) i pre f post ps ds' ps' h ν (hν (Or.inl (by assumption)))
   · exact carry13_ok dv i pre f post ps ds' ps' h ν
   · have h' := Option.some.inj h
     have := carry14_ok dv pre f post ps ν
     rw [h'] at this
     exact this
-  · exact carry16_ok dv R S i pre f post ps ds' ps' h ν (hν (Or.inr (by assumption)))
+  · exact carry16_ok dv (rgU R S i f) i pre f post ps ds' ps' h ν (hν (Or.inr (by assumption)))
 
 /-! ## Square roots of the coefficient -/
 
@@ -500,26 +521,24 @@ theorem rcStep_ok (ρ : Val) (t t' : STm) (i j : ℕ) (h : rcStep t i j = some t
 
 /-! ## Steps and normal forms -/
 
-/-- Rule `15` `rcStep`; rules `7` to `14` and `16` `carryFac` at the delta at `j`, the sums'
-names distinct for `12` and `16`; else `elimStepX`. -/
+/-- Rule `15` `rcStep`; rules `7` to `14` and `16` `carryFac` at the delta at `j`; else
+`elimStepX`. -/
 def elimStepC (R : List (ℕ × ℕ)) (t : STm) (i r j : ℕ) : Option STm :=
   if r = 15 then rcStep t i j
   else if 7 ≤ r ∧ r ≤ 16 then
-    if (r = 12 ∨ r = 16) ∧ ¬(t.sums.map (·.1)).Nodup then none
-    else
-      match t.dels.drop j with
-      | f :: post =>
-        match carryFac R t.sums i r (t.dels.take j) f post t.phs with
-        | some (ds, ps) => some ⟨t.c, t.sums, ds, ps⟩
-        | none => none
-      | [] => none
+    match t.dels.drop j with
+    | f :: post =>
+      match carryFac R t.sums i r (t.dels.take j) f post t.phs with
+      | some (ds, ps) => some ⟨t.c, t.sums, ds, ps⟩
+      | none => none
+    | [] => none
   else elimStepX R t i r j
 
 theorem elimStepC_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : STm) (i r j : ℕ)
     (h : elimStepC R t i r j = some t') (ν : ℕ → ℤ) (hν : InLab R ν) :
     t'.den ρ ν = t.den ρ ν := by
   unfold elimStepC at h
-  split_ifs at h with h15 hr hnd
+  split_ifs at h with h15 hr
   · exact rcStep_ok ρ t t' i j h ν
   · split at h
     · next f post hd =>
@@ -532,11 +551,8 @@ theorem elimStepC_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : ST
         congr 1
         simp only [body_eq]
         by_cases hr2 : r = 12 ∨ r = 16
-        · have hnd' : (t.sums.map (·.1)).Nodup := by
-            by_contra hc'
-            exact hnd ⟨hr2, hc'⟩
-          obtain ⟨hA, hB⟩ := rgOf_in ρ.dv R t.sums hnd' ν hν
-          refine sumsV_congr_rng ρ.dv t.sums (rgOf R t.sums) _ _ ν hA hB (fun ν' hν' => ?_)
+        · obtain ⟨hA, hB⟩ := rgU_in ρ.dv R t.sums i f ν hν
+          refine sumsV_congr_rng ρ.dv t.sums (rgU R t.sums i f) _ _ ν hA hB (fun ν' hν' => ?_)
           rw [carryFac_ok ρ.dv R t.sums i r _ f post t.phs ds ps hc ν' (fun _ => hν'), hdl]
         · refine sumsV_congr ρ.dv t.sums _ _ (fun ν' => ?_) ν
           rw [carryFac_ok ρ.dv R t.sums i r _ f post t.phs ds ps hc ν'
