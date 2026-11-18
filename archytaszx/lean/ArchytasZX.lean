@@ -94,3 +94,4 @@ import ArchytasZX.PeriodicChain
 import ArchytasZX.ChainMixed
 import ArchytasZX.TreeInduct
 import ArchytasZX.GaussSign
+import ArchytasZX.PhaseMap

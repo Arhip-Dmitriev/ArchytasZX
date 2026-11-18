@@ -146,6 +146,11 @@ between two scaled networks under one environment: the same tensor, scalars incl
                boundary in key order (eval_expandK_evalD, bdims_expandK)
   FamK         DEqual_expandK_of_checks, Equal_of_DEqual_expandK; DEqualF, equality of two
                families at every assignment of their multiplicity symbols
+  PhaseMap     Net.mapPh, each node's phase index through a map (phMap, a list of pairs);
+               Equal.of_phRows, an equation carried to another environment with the same
+               dimensions, labels and multiplicities, each side's phase indices read through its
+               own map, when the two environments agree through the maps on the rows each side
+               uses (phIn)
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
                MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
                cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed
@@ -192,6 +197,31 @@ multiplicities. A rule applied inside node boxes is lifted to every multiplicity
 induction, one box at a time, peeling one copy per step; an induction proof of the engine,
 nested ones included, becomes a Lean induction over the same peeling. A port box on Z and X
 spiders or on a W node's outputs steps by Equal.of_port.
+
+An induction whose goal's phases read its index n (ghz_metrology: the phase (n + 1)/8 on the
+first qubit) has no family statement for every phase parameter table_n (G12). When the plain
+export fails on such a theorem, lean_net.export runs again with each such index linked
+(lean_famlink.linked_indices): the induction becomes the lemma P of a namespace Lnk<i>
+(lean_famlink.Linked), written over the export's own tables, Δ, Φ, labs and F table_n,
+with the normaliser's tables and lemmas of 4.3 inside it:
+
+    theorem P : ∀ n : ℕ, Equal ((F n).env (ksOf [n])) s₀ N_start s₁ N_goal
+
+by induction on n. n = 0: Equal.of_zero_at at F 0 from the normaliser's family lemma (every
+table_n) on the zeroed start and the zeroed goal with its phases read at n = 0, carried to
+F 0 by Equal.of_phRows (each such row mapped back onto the goal's row, the rows equal at
+table_n = 0). n = k + 1: Equal.of_split_at at F (k + 1); the start's split spider is unfused
+(fusionZG read backwards; the split may add several plain legs) so that the start at k, its
+boundary output renamed to the new wire, is a region; the hypothesis at F k is carried to
+F (k + 1) by Equal.of_phRows (the goal read through its rows at n - 1, a network of its own,
+L<i>y) and plugged there (Equal.rename, plug); the rest is proved against the goal's split by
+the normaliser's family lemma at table_n = k + 1. The other steps of the export keep table_n
+as a binder; the top theorem main and main_diagrams state the claim at F n, table_n dropped
+from their binders, so the corollary of 4.7 at n = v reads F v. Only an induction over the
+only multiplicity, whose start reads no such row and whose copies meet one Z spider with a
+boundary output, is linked. ghz_metrology with n free (kernel theorem of 43 inferences, the
+induction stepped by a whole-diagram contraction) is exported this way: 265908 bytes at n
+free, 266311 at n = 61 and 266320 at n = 216, no axiom.
 
 A diagram of the engine with bang boxes is, in Lean, a Diagram with boxes (Diagram.lean, DBox:
 id, multiplicity index, parent box, node scope, port scope; box-free diagrams have none).
@@ -1215,7 +1245,8 @@ dimensions.
 G12 Weighted spiders with bundled legs. Weighted Z and X spiders (Kind.ZW, Kind.XW) are exported at
 symbolic dimensions with their weight rule as a function of the index k : ℕ, and in families
 through Fam.coef (a box multiplicity n inside a weight or phase is the parameter table_n of the
-tables, so main_diagrams holds for every table_n and n); Iverson atoms ModDelta and gcd atoms ModGcd of k are written as Lean terms. A
+tables, so main_diagrams holds for every table_n and n; an induction whose goal's phases read
+its index is linked instead, table_n = n, section 4.2); Iverson atoms ModDelta and gcd atoms ModGcd of k are written as Lean terms. A
 weighted spider inside a port box (one leg bundling k legs) has no network kind: the bundled
 kinds ZB and XB carry phases only, so its export raises NetUnsupported "a weighted spider with
 bundled legs". The engine has no proof of such an induction either (state copy refuses a

@@ -386,6 +386,9 @@ class _Export:
         self.alg_cert: numfield.FieldCertificate | None = None
         self.alg_everything = False
         self.box_syms: set[str] = set()
+        self.linked: set[str] = set()
+        self.linked_pending: list[tuple[str, object, Labelled, Labelled]] = []
+        self.fpos_lemmas = ""
         self.in_table = False
         self.sc = Scalars(
             nat=lambda sym: self.sym.name(self.table_sym(sym), "ℕ"),
@@ -1669,6 +1672,8 @@ class _Export:
             return self.algebraic(t.lhs, t.rhs)
         if inf.kind == "rule":
             return self.rule(t)
+        if inf.kind == "induction" and self.family and str(inf.data.get("index")) in self.linked:
+            return self.linked_induction(t)
         if inf.kind == "induction" and self.family:
             return self.nested_induction(t)
         if inf.kind == "w_fusion":
@@ -1753,6 +1758,61 @@ class _Export:
             lemma,
         )
         return self.theorem(a, b, ONE, lines)
+
+    def linked_induction(self, t: object) -> Proof:
+        """An induction whose goal's phases read its index: the lemma ``P`` of
+        :class:`~archytaszx.semantics.lean_famlink.Linked`, written by :meth:`finish`, applied
+        at the index's current value."""
+        from archytaszx.semantics.kernel import Theorem
+
+        assert isinstance(t, Theorem)
+        mi = self.mult_ix[str(t.inference.data["index"])]
+        start, goal = self.labelled(t.lhs, self.slots), self.labelled(t.rhs, self.slots)
+        tag = self.fresh("Lnk")
+        self.linked_pending.append((tag, t, start, goal))
+        sub = {self.mult_exprs[mi]: self.ks_syms[mi]}
+        left = self.scalar(t.lhs.scalar).xreplace(sub)
+        right = self.scalar(t.rhs.scalar).xreplace(sub)
+        return Proof(f"({tag}.P {_paren(self.ks_vals[mi])})", left, right)
+
+    def linked_lemmas(self) -> None:
+        """The pending :meth:`linked_induction` lemmas, each in its namespace."""
+        from archytaszx.semantics.kernel import Theorem
+        from archytaszx.semantics.lean_famlink import Linked
+
+        for tag, t, start, goal in self.linked_pending:
+            assert isinstance(t, Theorem)
+            idx = str(t.inference.data["index"])
+            block = Linked(self, start, goal, t.lhs, t.rhs, idx, tag).build()
+            self.decls += block
+        self.linked_pending = []
+
+    def link_tables(self, proof: Proof) -> Proof:
+        """The pending linked lemmas written; the phase parameter ``table_n`` of each linked
+        index ``n`` dropped from the top theorem's binders and set to ``n`` in the family's
+        arguments, the environment and ``proof``."""
+        self.linked_lemmas()
+        subs: dict[str, str] = {}
+        for idx in sorted(self.linked):
+            raw = f"table_{idx}"
+            if raw in self.sym.params and idx in self.mult_ix:
+                subs[self.sym.params[raw][0]] = self.mult_names[self.mult_ix[idx]]
+
+        def at(text: str) -> str:
+            for a, b in subs.items():
+                text = re.sub(rf"(?<![\w'.]){re.escape(a)}(?![\w'])", b, text)
+            return text
+
+        def drop(text: str) -> str:
+            for a in subs:
+                text = text.replace(f"({a} : ℕ)", "")
+                text = re.sub(rf"(?<![\w'.]){re.escape(a)}(?![\w'])", "", text)
+            return " ".join(text.split())
+
+        self.fpos_lemmas = self.fpos()
+        self.binders, self.args = drop(self.binders), drop(self.args)
+        self.sp_args, self.env = at(self.sp_args), at(self.env)
+        return Proof(at(proof.term), proof.left, proof.right)
 
     def nested_induction(self, t: object) -> Proof:
         """An induction inside a proof, as its own theorem applied at the current values."""
@@ -2098,6 +2158,8 @@ class _Export:
         if merged:
             name = f"{name}M"
         proof = self.term(theorem)
+        if self.linked_pending:
+            proof = self.link_tables(proof)
         head = f"theorem {_join(name, self.binders, self.hyps)} :\n    "
         try:
             if self.engine_scalars is None:
@@ -3286,6 +3348,8 @@ class _Export:
         assert isinstance(t, Theorem)
         self.register(t.lhs)
         self.register(t.rhs)
+        if t.inference.kind == "induction" and str(t.inference.data.get("index")) in self.linked:
+            return
         for p in t.inference.premises:
             self.collect(p)
         for key in ("peeled", "other_peeled", "own_k", "other_k", "replaced", "exposed"):
@@ -3446,7 +3510,9 @@ class _Export:
             "",
             *_macros(
                 self.unfold,
-                f"exact Fam.env_dimv_pos _ _ _ ({self.fpos()} _)" if self.family else "",
+                f"exact Fam.env_dimv_pos _ _ _ ({self.fpos_lemmas or self.fpos()} _)"
+                if self.family
+                else "",
             ),
         ]
         return "\n".join(
@@ -8187,11 +8253,12 @@ def export(
         except (PathSumError, ScalarUnsupported):
             pass
 
-    def run(everything: bool) -> tuple[str, _Export]:
+    def run(everything: bool, linked: set[str] | None = None) -> tuple[str, _Export]:
         out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
         out.alg_everything = everything
         out.original = original
         out.box_syms = _box_syms(theorem)
+        out.linked = set(linked or ())
         deferred = _deferred(theorem)
         for a, b in deferred:
             out.assume(a, b)
@@ -8204,10 +8271,18 @@ def export(
         except ScalarUnsupported as exc:
             raise NetUnsupported(str(exc)) from exc
 
-    source, first = run(False)
+    try:
+        source, first = run(False)
+    except NetUnsupported:
+        from archytaszx.semantics.lean_famlink import linked_indices
+
+        linked = linked_indices(theorem) if theorem.variables else set()
+        if not linked:
+            raise
+        source, first = run(False, linked)
     if first.alg_cert is not None and first.unproved:
         try:
-            again, second = run(True)
+            again, second = run(True, first.linked)
         except NetUnsupported:
             return source
         if len(second.unproved) < len(first.unproved):

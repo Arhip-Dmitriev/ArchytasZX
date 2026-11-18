@@ -2060,8 +2060,16 @@ class _SymExport:
         self.b = out.labelled(right)
         out.register(left)
         out.register(right)
-        self.m0 = out.scalar(left.scalar)
-        self.m1 = out.scalar(right.scalar)
+        self.tables(out.scalar(left.scalar), out.scalar(right.scalar), floors)
+
+    def phase_value(self, v: sp.Expr) -> sp.Expr:
+        """A phase entry as the atoms read it."""
+        return v
+
+    def tables(self, m0: Any, m1: Any, floors: Mapping[str, int]) -> None:
+        """The scalars ``m0``, ``m1`` and the dimension, phase and atom tables of ``self.out``."""
+        out = self.out
+        self.m0, self.m1 = m0, m1
         self.common: Any = None
         opaque = {v[0] for v in out.sc.opaques.values()}
         varying = set(out.mult_exprs)
@@ -2115,7 +2123,7 @@ class _SymExport:
         self.rules: list[tuple[DMon, tuple[int, ...]] | None] = []
         for entries, rule in out.phase_specs:
             self.rules.append(None if rule is None else self.rule_of(rule))
-            values += list(entries.values())
+            values += [self.phase_value(v) for v in entries.values()]
         self.exs: list[sp.Expr] = []
         for model in (self.m0, self.m1):
             for x in sp.preorder_traversal(sp.sympify(model)):
@@ -2125,7 +2133,8 @@ class _SymExport:
         self.pt: list[list[tuple[int, CMon, sp.Expr]]] = []
         for entries, _ in out.phase_specs:
             row = []
-            for j, v in sorted(entries.items()):
+            for j, v0 in sorted(entries.items()):
+                v = self.phase_value(v0)
                 q, ks, _ = self.atoms.ks(v, True)
                 row.append((int(j), ph_c(q, ks), v))
             self.pt.append(row)
@@ -2706,11 +2715,10 @@ class _SymExport:
             count=1,
         )
 
-    def source(self, name: str) -> str:
+    def prelude(self) -> list[str]:
+        """The tables DT, PT, RL, IX, FL, GS and ρ with rhoOK, flOK, envD and envP (and the
+        scalars S0, S1 of a pair without boxes), after :meth:`texts`."""
         out = self.out
-        self.texts()
-        if self.q is not None:
-            return self.q_source(name)
         bh, args, rho = self.bh, self.args, self.rho
         dims = "[" + ", ".join(self.dnames) + "]"
         gs = [
@@ -2831,6 +2839,17 @@ class _SymExport:
                 f"S{side} := by\n  have hρ := {hr}\n  have hg : ∀ j, {rho}.atom j = ex "
                 f"({gsa}.getD j 0) := fun j => rfl\n  {self.scalar_proof(sm, rho)}"
             )
+        return decls
+
+    def source(self, name: str) -> str:
+        out = self.out
+        self.texts()
+        if self.q is not None:
+            return self.q_source(name)
+        decls = self.prelude()
+        bh = self.bh
+        family = bool(self.mults)
+        env = "" if family else self.env_at()
         A, B = self.a.name, self.b.name
         lead = "  equality over symbolic dimensions by the verified normaliser of ArchytasZX.SymNet"
         if not family:
