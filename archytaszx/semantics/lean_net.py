@@ -8274,8 +8274,14 @@ def export(
     try:
         source, first = run(False)
     except NetUnsupported:
+        from archytaszx.semantics.kernel import _var
+        from archytaszx.semantics.lean_chainnode import export_chain_node
         from archytaszx.semantics.lean_famlink import linked_indices
 
+        if theorem.variables and original is None and not theorem.assumptions:
+            chained = export_chain_node(theorem.lhs, theorem.rhs, name, _var)
+            if chained is not None:
+                return chained
         linked = linked_indices(theorem) if theorem.variables else set()
         if not linked:
             raise

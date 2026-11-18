@@ -102,3 +102,4 @@ import ArchytasZX.GaussSign
 import ArchytasZX.PhaseMap
 import ArchytasZX.CopyPin
 import ArchytasZX.CopyBridge
+import ArchytasZX.ChainNode
