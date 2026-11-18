@@ -92,6 +92,10 @@ import ArchytasZX.ChainEvery
 import ArchytasZX.Periodic
 import ArchytasZX.PeriodicChain
 import ArchytasZX.ChainMixed
+import ArchytasZX.ChainLabel
+import ArchytasZX.ChainForm
+import ArchytasZX.ChainBridge
+import ArchytasZX.ChainFam
 import ArchytasZX.TreeInduct
 import ArchytasZX.GaussSign
 import ArchytasZX.PhaseMap

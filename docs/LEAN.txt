@@ -250,6 +250,27 @@ and 2, their second outputs on the boundary before the tail's output). net_close
 network at any wire offset o as netK o k; expand_chainNet gives, for every k and every offset
 o >= k + 3 (above the k + 3 boundary slots), that network relabelled by the injective fK o k
 equal to chainNet 100 [5] base copy (k + 1).
+ChainLabel.lean, ChainForm.lean, ChainBridge.lean and ChainFam.lean do the same for every closed
+chain box, at every k. ClosedChain: the chain's box is the diagram's only box, holds no boundary
+port, and every wire off the link ports has both ends in it or both out of it; nodes_expand,
+wires_expand and bnd_expand then give expandChain D c k in closed form (each outside node and
+wire once, each box node and inside wire once per copy with the id cpId j, then the link wires,
+D's boundary). netBy D lab is D's network with every leg labelled by lab; equal_netBy: when lab
+reads slot i at boundary port i, both ends of each wire alike, distinct wires at distinct labels
+above the slots, and every leg lies on the boundary or a wire, D.toNet o equals D.netBy lab.
+ChainFamOK D c W (every field decided by the kernel) labels the template once: the slots 0 .. m - 1,
+the outside wires m + i, link t at W + t (chU), the inside wires W + L + i, a box leg at its
+inside wire, W + t for the second port of link t and 2 W + t for the first (chLabT), an outside
+leg at its slot, outside wire or W + t at a link's end (chLab0); chTl holds the outside nodes no
+link's first port meets, chHdN those it meets (no node meets both ends), chCp the box, and W lies
+above m and the wire and link counts. expand_chFam: for every environment whose labels share one
+dimension, every offset o above the slots and every k, (D.expandChain c k).toNet o equals
+chFam D c W k = famNet W (chU) (chTl) (chCp) (chHdN) (range m) k. The proof labels the expansion
+by chLabK (copy j's legs at their template labels raised j levels by sh W j, the head side's
+link ends raised k levels; ChainFamOK.labK_cp decodes cpId by division by the box size) and
+reorders its nodes and summed labels into famNet's (perm_split3, flatMap_swap; famQ lists the
+summed labels in the expansion's order, famQ_nodup and famQ_ge give them distinct and above the
+slots).
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.
