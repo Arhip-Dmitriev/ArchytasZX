@@ -1496,7 +1496,7 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         f"def labs{tag} : List ℕ := {side.labels}",
         f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
         "",
-        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide",
+        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide +kernel",
         "",
         (
             f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
@@ -1657,7 +1657,7 @@ def _zero_body(
         ]
         rws += [
             f"run_sound {m} (by norm_num) steps{tag} {data} _ _ run{tag}_ok, run{tag}_eq",
-            f"PSem.val_of_zeroOK {m} _ run{tag} _ (by decide)",
+            f"PSem.val_of_zeroOK {m} _ run{tag} _ (by decide +kernel)",
         ]
     lines += [
         "/-- The two networks are equal (both zero). -/",
@@ -1721,15 +1721,15 @@ def net_body(
         final = [
             (
                 f"  apply {'finalS_sound' if _leftover(red_l) else 'final_sound'} {m} "
-                f"(by norm_num) _ _ _ _ _ {k_l} {k_r} (by decide) (by decide)"
+                f"(by norm_num) _ _ _ _ _ {k_l} {k_r} (by decide +kernel) (by decide +kernel)"
             ),
-            "    (by decide)",
+            "    (by decide +kernel)",
         ]
     else:
         k_l, k_r = parity[0], 0
         final = [
-            f"  apply finalP_sound {m} (by norm_num) _ _ {parity[1]} _ _ _ {k_l} (by decide)",
-            "    (by decide)",
+            f"  apply finalP_sound {m} (by norm_num) _ _ {parity[1]} _ _ _ {k_l}",
+            "    (by decide +kernel) (by decide +kernel)",
         ]
     sc = _scalars()
     s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
@@ -1769,8 +1769,8 @@ def net_body(
         "  rw [cL, cR, ← val_smul, ← val_smul,",
         f"    run_sound {m} (by norm_num) stepsL {d_l} _ _ runL_ok, runL_eq,",
         f"    run_sound {m} (by norm_num) stepsR {d_r} _ _ runR_ok, runR_eq,",
-        f"    val_agree {m} _ runL {bnd} _ _ (by decide) (by decide)",
-        f"      (dbits_agree ownL ownR _ {bnd} (by decide))]",
+        f"    val_agree {m} _ runL {bnd} _ _ (by decide +kernel) (by decide +kernel)",
+        f"      (dbits_agree ownL ownR _ {bnd} (by decide +kernel))]",
         *final,
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
@@ -1847,7 +1847,7 @@ def _anet_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         f"def labs{tag} : List ℕ := {side.labels}",
         f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
         "",
-        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide",
+        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide +kernel",
         "",
         (
             f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
@@ -1996,10 +1996,12 @@ def net_amp_body(
         "  rw [cL, cR, ← valA_smul, ← valA_smul,",
         f"    aruns_sound {m} (by norm_num) A stepsL {t_l} _ _ reqsL qreqsL arunsL_ok, arunsL_eq,",
         f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR qreqsR arunsR_ok, arunsR_eq,",
-        f"    valA_agree {m} _ A arunsL {bnd} _ _ (by decide) (by decide)",
-        f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
-        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
-        "    (by decide) (by decide) (by decide) (by decide)",
+        f"    valA_agree {m} _ A arunsL {bnd} _ _ (by decide +kernel) (by decide +kernel)",
+        "      (by decide +kernel) (by decide +kernel)",
+        f"      (dbits_agree ownL ownR _ {bnd} (by decide +kernel))]",
+        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r}",
+        "    (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)",
+        "    (by decide +kernel) (by decide +kernel)",
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
     ]
@@ -2131,10 +2133,12 @@ def net_quarter_body(
             f"    aruns_sound {m} (by norm_num) A stepsAR ⟨runR, [], []⟩ _ _ reqsAR qreqsAR "
             "arunR_ok, arunR_eq,"
         ),
-        f"    valA_agree {m} _ A arunL {bnd} _ _ (by decide) (by decide)",
-        f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
-        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
-        "    (by decide) (by decide) (by decide) (by decide)",
+        f"    valA_agree {m} _ A arunL {bnd} _ _ (by decide +kernel) (by decide +kernel)",
+        "      (by decide +kernel) (by decide +kernel)",
+        f"      (dbits_agree ownL ownR _ {bnd} (by decide +kernel))]",
+        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r}",
+        "    (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)",
+        "    (by decide +kernel) (by decide +kernel)",
         "  rw [facL, facR, facAL, facAR]",
         "  exact consts",
         "",

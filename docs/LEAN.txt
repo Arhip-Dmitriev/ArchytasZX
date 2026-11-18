@@ -1169,7 +1169,7 @@ steps pin B (the head variable v with a constraint [v] + B, B free of v: v := B 
 the constraint dropped, factor 1; pin_sound) and norm (phase, constraints and rows normalised;
 norm_sound), and val_smul. ArchytasZX/PathSumDigits.lean reads a label of dimension 2^k as k Boolean digit variables:
 an owner table own lists each digit variable with its label and index (ownOK, checked by
-decide), dbits own sigma reads them from label values, sum_setBits and sumOver_dbits turn the
+decide +kernel), dbits own sigma reads them from label values, sum_setBits and sumOver_dbits turn the
 network's sum over such labels into bsum over their digits, and the fragments are z_frag_dig
 (digit j of every leg equal to an anchor leg's digit j, the phase table interpolated over the
 anchor digits, tableOK by decide), b_frag and s_frag (the whole label's digits equal the low
@@ -1184,7 +1184,12 @@ is a path variable not yet taken, else a variable from PIN_OFFSET; each Z spider
 anchored at the leg through which a search from its class's variable first reaches it. It then
 writes the pin steps (deepest first, each pinned digit to its search parent), norm, a perm to
 from_diagram's path and the reduction steps of export_proof, and main : Equal E sL NL sR NR by
-equal_psd2, run_sound, val_agree and final_sound. Checked end to end: Z fusion, F F, X fusion,
+equal_psd2, run_sound, val_agree and final_sound. Every side condition of main (val_agree,
+dbits_agree, final_sound, finalS_sound, finalP_sound, val_of_zeroOK, and valA_agree with the
+final lemma in the atom bodies net_amp_body and net_quarter_body) is checked by decide +kernel
+on the run_chain literals, so no elaborator whnf runs over them (82.BC: inverse_qft n = 9,
+amm_gf24_mult, honeycomb_code, semiclassical_qft n = 6 and multi_controlled_toffoli n = 6 at d = 2
+stopped there at maxHeartbeats 4000000). Checked end to end: Z fusion, F F, X fusion,
 hh_pivot, omega, omega_conj and rem on qubits, and through binders on dimensions 4 and 8 an
 hh_gen, hh_constraint trace and an hh_nl, hh_gen, hh_gen, rem, hh_constraint trace. certify_decision proves a path_sum EQUAL by export_net as a kernel.Symbolic.
 W nodes on dimension 2 (PathSumW.lean): wFrag dig os i has no path variable and the constraints
