@@ -151,6 +151,12 @@ between two scaled networks under one environment: the same tensor, scalars incl
                dimensions, labels and multiplicities, each side's phase indices read through its
                own map, when the two environments agree through the maps on the rows each side
                uses (phIn)
+  CopyPin      copy-index phases as pinned boundary legs: tZ_pin (a phaseless Z spider with one
+               more leg through F to the value u, summed over that leg, is the Z spider of phase
+               u k / d over sqrt d), tX_pin (a phaseless X spider with one more input at u is the
+               X spider of phase -u k / d over sqrt d), ex_mod, Equal.pin; evalD_eq_of_checks,
+               equal family networks of two checked boxed diagrams with the same boundary data
+               have equal digit sums at every slot digits in range
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
                MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
                cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed

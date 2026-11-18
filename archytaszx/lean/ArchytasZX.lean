@@ -100,3 +100,4 @@ import ArchytasZX.ChainPair
 import ArchytasZX.TreeInduct
 import ArchytasZX.GaussSign
 import ArchytasZX.PhaseMap
+import ArchytasZX.CopyPin
