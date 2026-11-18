@@ -293,6 +293,13 @@ onto the family's labels by Equal.mapL2 (ren, ren_injective by decide) and reord
 then family (chain_pair, every k) and main at the box multiplicity. The file holds no copy count:
 restricted_proof uses it for a family decision with a doubled pair before pair_proof, and the
 point instance is lean_restrict's corollary of main (teleportation_chain and repeater_chain).
+lean_copyphase.gadget takes a boxed diagram whose one node box (plain, no links, pairs, copy
+scalar or port scope) has an index read only by one Z or X spider's phase s j k / d (s = 1 for
+Z, -1 for X, d the dimension symbol of its legs) and makes that spider phaseless with one more
+input: a Z spider's wired from a new Fourier box in the box whose input is a new last boundary
+input K, an X spider's the boundary input K itself; the box loses its index. Copy j of the
+gadget at K = j is copy j of the diagram over sqrt d (CopyPin: tZ_pin, tX_pin), and the copies
+meet the rest only at the boundary, so the normaliser proves the gadget pair with K open.
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.
