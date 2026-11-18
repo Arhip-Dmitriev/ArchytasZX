@@ -383,7 +383,9 @@ the one cache object the strategy, saturation and search functions accept.
   - MatchCache: memoises pattern matches by a diagram's match key and canonical keys by its
     global key, in bounded least-recently-used stores (LruMemo).
   - IncrementalMatcher(patterns): after a local edit, keeps every match outside the changed
-    region and re-matches only inside it.
+    region and re-matches only inside it. Each held match's identity (support ids and repr)
+    is computed once per match object; the anchored matchers share one neighbour map per
+    wire-set snapshot (diagram.wires) and so one anchor closure per rematch.
   - ValueMemo(compute, key): a generic content-keyed memo; numpy results are stored as
     private copies and returned read-only.
   - CacheStats: hits, misses, evictions, invalidations, hit rate.

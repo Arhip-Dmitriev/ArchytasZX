@@ -833,6 +833,7 @@ class IncrementalMatcher:
         "_baseline",
         "_boxes",
         "_cache",
+        "_identities",
         "_keys",
         "_matches",
         "_patterns",
@@ -866,6 +867,7 @@ class IncrementalMatcher:
         self._adjacency: dict[NodeId, frozenset[NodeId]] = {}
         self._boxes: dict[BangBoxId, tuple[object, ...]] = {}
         self._matches: dict[str, tuple[Match, ...]] = {}
+        self._identities: dict[int, tuple[Match, tuple[object, ...] | None]] = {}
         self._stats = IncrementalStats()
 
     @property
@@ -889,6 +891,16 @@ class IncrementalMatcher:
         self._adjacency = {}
         self._boxes = {}
         self._matches = {}
+        self._identities = {}
+
+    def _identity(self, match: Match) -> tuple[object, ...] | None:
+        """:func:`_match_identity` of ``match``, computed once per match object held."""
+        held = self._identities.get(id(match))
+        if held is not None and held[0] is match:
+            return held[1]
+        identity = _match_identity(match)
+        self._identities[id(match)] = (match, identity)
+        return identity
 
     def clear(self) -> None:
         """Drop the baseline and zero the counters."""
@@ -914,6 +926,13 @@ class IncrementalMatcher:
         self._adjacency = _adjacency(diagram) if adjacency is None else adjacency
         self._boxes = _box_scopes(diagram)
         self._matches = found
+        held = self._identities
+        self._identities = {
+            id(m): held[id(m)]
+            for matches in found.values()
+            for m in matches
+            if id(m) in held and held[id(m)][0] is m
+        }
         return MappingProxyType(dict(found))
 
     def seed(
@@ -972,7 +991,7 @@ class IncrementalMatcher:
         foreign exception out of the pattern."""
         baseline: list[tuple[tuple[object, ...], Match]] = []
         for match in self._matches.get(key, ()):
-            identity = _match_identity(match)
+            identity = self._identity(match)
             if identity is None:
                 return None
             baseline.append((identity, match))
@@ -984,7 +1003,7 @@ class IncrementalMatcher:
             ]
             fresh: list[tuple[tuple[object, ...], Match]] = []
             for match in pattern.find_matches_anchored(diagram, closure):
-                identity = _match_identity(match)
+                identity = self._identity(match)
                 if identity is None:
                     return None
                 fresh.append((identity, match))

@@ -1302,13 +1302,25 @@ def _support_ids(*node_ids: NodeId) -> tuple[NodeId, ...]:
     return tuple(sorted(set(node_ids)))
 
 
-def _neighbour_ids(diagram: Diagram) -> dict[NodeId, set[NodeId]]:
-    """Each node id mapped to the node ids one wire hop away."""
-    neighbours: dict[NodeId, set[NodeId]] = {node_id: set() for node_id in diagram.nodes}
-    for wire in diagram.wires:
+def _neighbour_ids(diagram: Diagram) -> Mapping[NodeId, set[NodeId]]:
+    """Each wired node id mapped to the node ids one wire hop away, built once per wire-set
+    snapshot (``diagram.wires``) and shared read-only."""
+    wires = diagram.wires
+    held = _NEIGHBOURS.get(id(wires))
+    if held is not None and held[0] is wires:
+        return held[1]
+    neighbours: dict[NodeId, set[NodeId]] = {}
+    for wire in wires:
         neighbours.setdefault(wire.a.node_id, set()).add(wire.b.node_id)
         neighbours.setdefault(wire.b.node_id, set()).add(wire.a.node_id)
-    return neighbours
+    view = MappingProxyType(neighbours)
+    _NEIGHBOURS.clear()
+    _NEIGHBOURS[id(wires)] = (wires, view)
+    return view
+
+
+_NEIGHBOURS: dict[int, tuple[frozenset[Wire], Mapping[NodeId, set[NodeId]]]] = {}
+"""The last wire-set snapshot :func:`_neighbour_ids` read, and its neighbour map."""
 
 
 def _within_hops(
