@@ -1184,13 +1184,12 @@ def _witness_assignments(
 @_trace.traced("decide.counterexample_search")
 @_trace.traced("decide.path_sum")
 def _path_sum_rung(
-    left: Diagram, right: Diagram, parameters: Mapping[str, int]
+    left: Diagram, right: Diagram, parameters: Mapping[str, int], *, family_only: bool = False
 ) -> PathSumComparison | str:
     """The path-sum rung's comparison, or why the pair is outside its class; a pair outside it
-    on its symbols is compared again instantiated at ``parameters``: a difference there is
-    unequal at that point, an agreement is unknown for the family."""
+    on its symbols is compared again instantiated at ``parameters`` unless ``family_only``
+    (:func:`_compare_at_point`)."""
     from archytaszx.algebra.pathsum import PathSumUnsupported
-    from archytaszx.semantics.check import instantiate
     from archytaszx.semantics.pathsum_diagram import compare_path_sums
 
     paths = _RESIDUAL_PATHS.get()
@@ -1198,8 +1197,31 @@ def _path_sum_rung(
         return compare_path_sums(left, right, paths)
     except PathSumUnsupported as exc:
         why = f"path_sum: not applicable ({exc})"
-    if not parameters:
+    if not parameters or family_only:
         return why
+    return _compare_at_point(left, right, parameters, why)
+
+
+@_trace.traced("decide.counterexample_search")
+@_trace.traced("decide.path_sum")
+def _path_sum_point(
+    left: Diagram, right: Diagram, parameters: Mapping[str, int], why: str
+) -> PathSumComparison | str:
+    """:func:`_compare_at_point`, traced as the path-sum rung."""
+    return _compare_at_point(left, right, parameters, why)
+
+
+def _compare_at_point(
+    left: Diagram, right: Diagram, parameters: Mapping[str, int], why: str
+) -> PathSumComparison | str:
+    """The pair instantiated at ``parameters`` compared by path sums: a difference is unequal at
+    that point, an agreement unknown for the family; ``why`` (the family's reason) prefixed to
+    the reason when that comparison is refused."""
+    from archytaszx.algebra.pathsum import PathSumUnsupported
+    from archytaszx.semantics.check import instantiate
+    from archytaszx.semantics.pathsum_diagram import compare_path_sums
+
+    paths = _RESIDUAL_PATHS.get()
     try:
         at_l, at_r = instantiate(left, parameters), instantiate(right, parameters)
         found = compare_path_sums(at_l, at_r, paths)
@@ -2240,25 +2262,35 @@ def _decide(
         notes.append(f"symbolic: {symbolic.reason}")
     else:
         notes.append("symbolic contraction disabled")
-    if _USE_PATH_SUM.get():
-        settled_ps = _path_sum_rung(
-            family_l, family_r, dict(left.parameters) if parameters_agree else {}
+    pending_point: tuple[dict[str, int], str, int, int] | None = None
+
+    def settle_path_sum(
+        settled_ps: PathSumComparison | str, at: tuple[int, int] | None = None
+    ) -> Decision | None:
+        """The path-sum rung's stop and note (in place at ``at``, the stop and note indices),
+        and its decision when it settles."""
+        stop = (
+            "path_sum",
+            "not_applicable"
+            if isinstance(settled_ps, str)
+            else "residual_enum"
+            if settled_ps.residual_enum
+            else settled_ps.status
+            if settled_ps.status in ("equal", "unequal")
+            else "residual",
         )
-        stops.append(
-            (
-                "path_sum",
-                "not_applicable"
-                if isinstance(settled_ps, str)
-                else "residual_enum"
-                if settled_ps.residual_enum
-                else settled_ps.status
-                if settled_ps.status in ("equal", "unequal")
-                else "residual",
-            )
-        )
-        if isinstance(settled_ps, str):
-            notes.append(settled_ps)
-        elif settled_ps.status == "equal":
+        note = settled_ps if isinstance(settled_ps, str) else settled_ps.reason
+        if at is None:
+            stops.append(stop)
+        else:
+            stops[at[0]] = stop
+        if isinstance(settled_ps, str) or settled_ps.status not in ("equal", "unequal"):
+            if at is None:
+                notes.append(note)
+            else:
+                notes[at[1]] = note
+            return None
+        if settled_ps.status == "equal":
             return finish(
                 EqualityVerdict.EQUAL,
                 DecisionMethod.PATH_SUM,
@@ -2266,35 +2298,53 @@ def _decide(
                 assumptions=(),
                 samples_checked=checked,
             )
-        elif settled_ps.status == "unequal":
-            assert settled_ps.index is not None
-            assert settled_ps.left is not None and settled_ps.right is not None
-            ps_witness = EntryWitness(
-                MappingProxyType(dict(settled_ps.point)),
-                settled_ps.index,
-                settled_ps.left.to_complex(),
-                settled_ps.right.to_complex(),
-            )
-            return finish(
-                EqualityVerdict.UNEQUAL,
-                DecisionMethod.SYMBOLIC_WITNESS,
-                f"path sums differ at boundary index {ps_witness.index}: "
-                f"{ps_witness.left} vs {ps_witness.right} ({settled_ps.reason})",
-                assumptions=(),
-                counterexample=ps_witness.assignment,
-                comparison=ComparisonResult(
-                    EqualityMode.EXACT,
-                    False,
-                    f"entry {ps_witness.index} differs by {ps_witness.deviation}",
-                    ps_witness.deviation,
-                ),
-                samples_checked=checked,
-                witness=ps_witness,
-            )
-        else:
-            notes.append(settled_ps.reason)
+        assert settled_ps.index is not None
+        assert settled_ps.left is not None and settled_ps.right is not None
+        ps_witness = EntryWitness(
+            MappingProxyType(dict(settled_ps.point)),
+            settled_ps.index,
+            settled_ps.left.to_complex(),
+            settled_ps.right.to_complex(),
+        )
+        return finish(
+            EqualityVerdict.UNEQUAL,
+            DecisionMethod.SYMBOLIC_WITNESS,
+            f"path sums differ at boundary index {ps_witness.index}: "
+            f"{ps_witness.left} vs {ps_witness.right} ({settled_ps.reason})",
+            assumptions=(),
+            counterexample=ps_witness.assignment,
+            comparison=ComparisonResult(
+                EqualityMode.EXACT,
+                False,
+                f"entry {ps_witness.index} differs by {ps_witness.deviation}",
+                ps_witness.deviation,
+            ),
+            samples_checked=checked,
+            witness=ps_witness,
+        )
+
+    def point_check() -> Decision | None:
+        """The deferred path-sum comparison at the pair's parameters, settled in place."""
+        nonlocal pending_point
+        if pending_point is None:
+            return None
+        at_parameters, why, stop_at, note_at = pending_point
+        pending_point = None
+        return settle_path_sum(
+            _path_sum_point(family_l, family_r, at_parameters, why), (stop_at, note_at)
+        )
 
     live = free_mult_symbols(family_l) | free_mult_symbols(family_r)
+    if _USE_PATH_SUM.get():
+        ps_parameters = dict(left.parameters) if parameters_agree else {}
+        defer = bool(ps_parameters) and use_induction and max_depth > 0 and bool(live)
+        settled_ps = _path_sum_rung(family_l, family_r, ps_parameters, family_only=defer)
+        if defer and isinstance(settled_ps, str):
+            pending_point = (ps_parameters, settled_ps, len(stops), len(notes))
+        decided_ps = settle_path_sum(settled_ps)
+        if decided_ps is not None:
+            return decided_ps
+
     induction_base: Decision | None = None
     if use_induction and max_depth > 0 and live:
         settled = _decide_by_induction(
@@ -2332,6 +2382,11 @@ def _decide(
                 saturation_limits=saturation_limits,
                 floors=floors,
             )
+        proved = not isinstance(settled, str) and settled[0].value.startswith("equal")
+        if not proved:
+            point_decision = point_check()
+            if point_decision is not None:
+                return point_decision
         stops.extend(_induction_stops(settled if isinstance(settled, str) else settled[2]))
         if isinstance(settled, str):
             notes.append(f"induction: {settled}")
@@ -2343,7 +2398,7 @@ def _decide(
                 stops[:] = [x for x in stops if not x[0].startswith("induction")]
                 stops.append(("induction", code))
             if verdict is EqualityVerdict.UNKNOWN:
-                late_decision = deferred_check()
+                late_decision = point_check() or deferred_check()
                 if late_decision is not None:
                     return late_decision
                 reason = "; ".join([*notes, f"induction: {reason}"])
@@ -2355,7 +2410,7 @@ def _decide(
     else:
         notes.append("induction depth exhausted")
 
-    late_decision = deferred_check()
+    late_decision = point_check() or deferred_check()
     if late_decision is not None:
         return late_decision
     return finish(

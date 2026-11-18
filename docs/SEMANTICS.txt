@@ -494,7 +494,10 @@ where the entries differ.
 A pair with a symbolic dimension that both sides' parameters bind (a script's "dim d = 3") is
 compared again instantiated at those parameters: a difference there is UNEQUAL with the
 parameters as the counterexample, an agreement is UNKNOWN (it holds at one point, not over the
-family the decision is about).
+family the decision is about). When the induction rung will run (a free multiplicity symbol),
+that instantiated comparison waits until induction has not proved the pair equal; induction's
+proof makes it unneeded, and otherwise it runs before induction's refutation or the deferred
+oracle, with its stop and note in the path-sum rung's place.
 
 
 6. SCALABLE-NOTATION CHECKS: archytaszx.semantics.interop
