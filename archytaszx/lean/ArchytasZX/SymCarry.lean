@@ -442,7 +442,7 @@ def carryFac (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i r : ℕ) (pre :
 theorem carryFac_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (i r : ℕ)
     (pre : List Fac) (f : Fac) (post ps ds' ps' : List Fac)
     (h : carryFac R S i r pre f post ps = some (ds', ps')) (ν : ℕ → ℤ)
-    (hν : InR dv (rgOf R S) ν) :
+    (hν : r = 12 ∨ r = 16 → InR dv (rgOf R S) ν) :
     bodyOf dv ds' ps' ν = bodyOf dv (pre ++ f :: post) ps ν := by
   unfold carryFac at h
   split_ifs at h
@@ -451,13 +451,13 @@ theorem carryFac_ok (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ ×
   · exact carry89_ok dv (-1) i pre f post ps ds' ps' h ν
   · exact carry10_ok dv S i pre f post ps ds' ps' h ν
   · exact carry11_ok dv i pre f post ps ds' ps' h ν
-  · exact carry12_ok dv R S i pre f post ps ds' ps' h ν hν
+  · exact carry12_ok dv R S i pre f post ps ds' ps' h ν (hν (Or.inl (by assumption)))
   · exact carry13_ok dv i pre f post ps ds' ps' h ν
   · have h' := Option.some.inj h
     have := carry14_ok dv pre f post ps ν
     rw [h'] at this
     exact this
-  · exact carry16_ok dv R S i pre f post ps ds' ps' h ν hν
+  · exact carry16_ok dv R S i pre f post ps ds' ps' h ν (hν (Or.inr (by assumption)))
 
 /-! ## Square roots of the coefficient -/
 
@@ -501,18 +501,18 @@ theorem rcStep_ok (ρ : Val) (t t' : STm) (i j : ℕ) (h : rcStep t i j = some t
 /-! ## Steps and normal forms -/
 
 /-- Rule `15` `rcStep`; rules `7` to `14` and `16` `carryFac` at the delta at `j`, the sums'
-names distinct; else `elimStepX`. -/
+names distinct for `12` and `16`; else `elimStepX`. -/
 def elimStepC (R : List (ℕ × ℕ)) (t : STm) (i r j : ℕ) : Option STm :=
   if r = 15 then rcStep t i j
   else if 7 ≤ r ∧ r ≤ 16 then
-    if (t.sums.map (·.1)).Nodup then
+    if (r = 12 ∨ r = 16) ∧ ¬(t.sums.map (·.1)).Nodup then none
+    else
       match t.dels.drop j with
       | f :: post =>
         match carryFac R t.sums i r (t.dels.take j) f post t.phs with
         | some (ds, ps) => some ⟨t.c, t.sums, ds, ps⟩
         | none => none
       | [] => none
-    else none
   else elimStepX R t i r j
 
 theorem elimStepC_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : STm) (i r j : ℕ)
@@ -528,12 +528,19 @@ theorem elimStepC_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : ST
         simp only [Option.some.injEq] at h
         subst h
         have hdl : t.dels.take j ++ f :: post = t.dels := by rw [← hd, List.take_append_drop]
-        obtain ⟨hA, hB⟩ := rgOf_in ρ.dv R t.sums hnd ν hν
         unfold STm.den
         congr 1
         simp only [body_eq]
-        refine sumsV_congr_rng ρ.dv t.sums (rgOf R t.sums) _ _ ν hA hB (fun ν' hν' => ?_)
-        rw [carryFac_ok ρ.dv R t.sums i r _ f post t.phs ds ps hc ν' hν', hdl]
+        by_cases hr2 : r = 12 ∨ r = 16
+        · have hnd' : (t.sums.map (·.1)).Nodup := by
+            by_contra hc'
+            exact hnd ⟨hr2, hc'⟩
+          obtain ⟨hA, hB⟩ := rgOf_in ρ.dv R t.sums hnd' ν hν
+          refine sumsV_congr_rng ρ.dv t.sums (rgOf R t.sums) _ _ ν hA hB (fun ν' hν' => ?_)
+          rw [carryFac_ok ρ.dv R t.sums i r _ f post t.phs ds ps hc ν' (fun _ => hν'), hdl]
+        · refine sumsV_congr ρ.dv t.sums _ _ (fun ν' => ?_) ν
+          rw [carryFac_ok ρ.dv R t.sums i r _ f post t.phs ds ps hc ν'
+            (fun h2 => absurd h2 hr2), hdl]
       · simp at h
     · simp at h
   · exact elimStepX_ok ρ hρ R t t' i r j h ν hν
@@ -559,6 +566,37 @@ theorem elimAllC_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) :
     cases he : elimStepC R t i r j with
     | none => rfl
     | some t' => dsimp only; rw [fTm_eq, ih _ ν hν, elimStepC_ok ρ hρ R t t' i r j he ν hν]
+
+/-- `elimStepC` along the hints, each result forced; `none` at the first that fails. -/
+def elimAllCS (R : List (ℕ × ℕ)) : List (ℕ × ℕ × ℕ) → STm → Option STm
+  | [], t => some t
+  | (i, r, j) :: hs, t =>
+    match elimStepC R t i r j with
+    | some t' => fTm t' (elimAllCS R hs)
+    | none => none
+
+theorem elimAllC_append (R : List (ℕ × ℕ)) :
+    ∀ (es1 es2 : List (ℕ × ℕ × ℕ)) (t u : STm), elimAllCS R es1 t = some u →
+      elimAllC R (es1 ++ es2) t = elimAllC R es2 u := by
+  intro es1
+  induction es1 with
+  | nil => intro es2 t u h; simp only [elimAllCS, Option.some.injEq] at h; subst h; rfl
+  | cons s es1 ih =>
+    obtain ⟨i, r, j⟩ := s
+    intro es2 t u h
+    simp only [elimAllCS] at h
+    simp only [List.cons_append, elimAllC]
+    cases he : elimStepC R t i r j with
+    | none => simp [he] at h
+    | some t' =>
+      simp only [he, fTm_eq] at h ⊢
+      exact ih es2 t' u h
+
+theorem elimAllC_of_S (R : List (ℕ × ℕ)) (es : List (ℕ × ℕ × ℕ)) (t u : STm)
+    (h : elimAllCS R es t = some u) : elimAllC R es t = u := by
+  have := elimAllC_append R es [] t u h
+  rw [List.append_nil] at this
+  rw [this]; rfl
 
 /-- `normTmX` with `elimAllC`. -/
 def normTmC (R : List (ℕ × ℕ)) (fl : List ℕ) : List RHint → STm → Option STm
@@ -623,6 +661,11 @@ theorem nfGoC_den (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (fl : List �
       rw [ih, tmAdd_ok]
       simp only [exDen, List.map_cons, List.sum_cons]
       rw [hn ν hν]; ring
+
+theorem normTmC_one (R : List (ℕ × ℕ)) (fl : List ℕ) (c : ℕ) (es : List (ℕ × ℕ × ℕ))
+    (t u : STm) (h : elimAllC R es t = u) : normTmC R fl [(c, es)] t = canonTmH c fl u := by
+  simp only [normTmC, fTm_eq, h]
+  cases canonTmH c fl u <;> simp [fTm_eq, normTmC]
 
 theorem normTmC_step (R : List (ℕ × ℕ)) (fl : List ℕ) (h : RHint) (cs : List RHint) (t t' : STm)
     (hh : normTmC R fl [h] t = some t') : normTmC R fl (h :: cs) t = normTmC R fl cs t' := by

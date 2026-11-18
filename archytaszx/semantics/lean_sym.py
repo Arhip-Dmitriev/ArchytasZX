@@ -1424,22 +1424,33 @@ def rx_hints(
     r: Sequence[tuple[int, int]],
     t: STm,
     choice: Callable[[Sequence[tuple[int, int]], STm], Any] | None = None,
+    steps: int = 0,
+    mids: list[list[STm]] | None = None,
 ) -> tuple[STm | None, list[tuple[int, list[tuple[int, int, int]]]], list[STm]]:
     """``normTmX``'s rounds for ``t`` (``normTmC``'s with ``choice`` :func:`c_choice`): each
-    the pivot hint and at most RX_STEPS steps; the result (None when it vanishes) and the term
-    before each round."""
+    the pivot hint and at most ``steps`` (RX_STEPS when 0) steps; the result (None when it
+    vanishes) and the term before each round. With ``mids``, each round's terms after every
+    RX_STEPS steps appended to it."""
     choice = choice or x_choice
+    steps = steps or RX_STEPS
     hints: list[tuple[int, list[tuple[int, int, int]]]] = []
     terms = [t]
     for _ in range(RX_ROUNDS):
         t1, es = t, []
-        for _ in range(RX_STEPS):
+        cut: list[STm] = []
+        for _ in range(steps):
             got = choice(r, t1)
             if got is None:
                 break
             t1, h = got
             es.append(h)
+            if len(es) % RX_STEPS == 0:
+                cut.append(t1)
         t2 = canon_tm(fl, t1)
+        if not cut or cut[-1] is not t1:
+            cut.append(t1)
+        if mids is not None and t2 != t:
+            mids.append(cut)
         if t2 == t:
             break
         hints.append((canon_hint(t1), es))
@@ -1479,19 +1490,27 @@ def rx_cert(fl: Sequence[int], e: Sequence[STm], ranges: Mapping[int, int]) -> R
 
 
 def rx_cert_c(fl: Sequence[int], e: Sequence[STm], r: tuple[tuple[int, int], ...]) -> RxCert | None:
-    """``rxNfC``'s labels, rounds and paths as :func:`rx_cert`'s, marked by a fourth entry, for
-    a residual whose terms, normalised with the carry steps of :func:`c_choice`, cancel; None
-    otherwise."""
+    """``rxNfC``'s labels, rounds and paths as :func:`rx_cert`'s, and as a fourth entry each
+    round's terms after every RX_STEPS steps (rounds of at most C_STEPS steps), for a residual
+    whose terms, normalised with the carry steps of :func:`c_choice`, cancel; None otherwise."""
     acc: tuple[STm, ...] = ()
     hs = []
     paths: list[tuple[list[STm], STm | None]] = []
+    cuts: list[list[list[STm]]] = []
     for t in e:
-        got, h, terms = rx_hints(fl, r, t, c_choice)
+        mids: list[list[STm]] = []
+        got, h, terms = rx_hints(fl, r, t, c_choice, C_STEPS, mids)
         hs.append(h)
         paths.append((terms, got))
+        cuts.append(mids)
         if got is not None:
             acc = tm_add(got, acc)
-    return (r, hs, paths, True) if not acc else None  # type: ignore[return-value]
+    return (r, hs, paths, cuts) if not acc else None  # type: ignore[return-value]
+
+
+C_STEPS = 4096
+"""The most steps of one round of :func:`rx_cert_c` (RX_STEPS steps per ``decide`` in the
+export)."""
 
 
 # carry steps over the labels' ranges (SymCarry)
@@ -1618,11 +1637,11 @@ def c_rc(t: STm, i: int, j: int) -> STm | None:
 
 
 def c_step(r: Sequence[tuple[int, int]], t: STm, i: int, rule: int, j: int) -> STm | None:
-    """``elimStepC`` for the rules 7 to 15."""
+    """``elimStepC`` for the rules 7 to 16."""
     if rule == 15:
         return c_rc(t, i, j)
     names = [v for v, _ in t[1]]
-    if len(set(names)) != len(names):
+    if rule in (12, 16) and len(set(names)) != len(names):
         return None
     got = c_fac(r, t, i, rule, j)
     return None if got is None else (t[0], t[1], got[0], got[1])
@@ -4923,25 +4942,38 @@ class _SymExport:
             raise NetUnsupported("the compact residual does not cancel")
         rx_labs, _ = _lean_rx(rxs)
         cx = "C" if len(rxs) > 3 else "X"
+        cuts: list[list[list[STm]]] = list(rxs[3:4][0]) if cx == "C" else []  # type: ignore[misc]
         rxn = "rxNfC" if cx == "C" else "rxNf"
         out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
         rr = f"{name}RR"
         term_rows, steps_by = [], []
         for i, (rounds, (terms, last)) in enumerate(zip(rxs[1], rxs[2], strict=True)):
             names = []
+            tdefs = [f"def {name}T{i}_{k} : STm := {_lean_tm(t)}" for k, t in enumerate(terms)]
+            if cx == "C":
+                out += tdefs
             for k, (c, es) in enumerate(rounds):
                 hn = f"{name}H{i}_{k}"
                 names.append(hn)
+                if cx == "C":
+                    out += self.chunk_decls(name, i, k, c, es, cuts[i][k])
+                    continue
                 hint = ", ".join(f"({_rn(x)}, {_rn(y)}, {_rn(z)})" for x, y, z in es)
                 out.append(f"def {hn} : RHint := ({_rn(c)}, [{hint}])")
-            for k, t in enumerate(terms):
-                out.append(f"def {name}T{i}_{k} : STm := {_lean_tm(t)}")
+            if cx == "X":
+                out += tdefs
             m = len(rounds)
             for k in range(m):
                 res = "none" if last is None and k == m - 1 else f"some {name}T{i}_{k + 1}"
+                proof = "by decide +kernel"
+                if cx == "C":
+                    proof = (
+                        f"by\n  rw [{name}H{i}_{k}, normTmC_one _ _ _ _ _ _ {name}E{i}_{k}]\n"
+                        "  decide +kernel"
+                    )
                 out.append(
                     f"set_option maxHeartbeats 0 in\ntheorem {name}S{i}_{k} : normTm{cx} {rr} FL "
-                    f"[{name}H{i}_{k}] {name}T{i}_{k} = {res} := by decide +kernel"
+                    f"[{name}H{i}_{k}] {name}T{i}_{k} = {res} := {proof}"
                 )
             row = "[" + ", ".join(names) + "]"
             term_rows.append(row)
@@ -4994,6 +5026,40 @@ class _SymExport:
             f"FL {fl_ok} {name}XH (fun e => e) (fun _ _ => rfl) e ν hν) {name}z {name}r"
         )
         return ["noncomputable section", *out, "end"]
+
+    @staticmethod
+    def chunk_decls(
+        name: str, i: int, k: int, c: int, es: Sequence[tuple[int, int, int]], cut: Sequence[STm]
+    ) -> list[str]:
+        """Round ``k`` of term ``i`` of the carry route: the hint ``{name}H{i}_{k}`` with its
+        steps as chunks ``{name}C{i}_{k}_{c}`` of RX_STEPS steps, each run by ``elimAllCS`` from
+        the term before it to the next (``{name}K{i}_{k}_{c}``, one ``decide`` each, the terms
+        ``{name}U{i}_{k}_{c}`` from ``cut``), and ``{name}E{i}_{k}``: ``elimAllC`` of the round
+        from ``{name}T{i}_{k}`` to its last term."""
+        rr = f"{name}RR"
+        chunks = [list(es[a : a + RX_STEPS]) for a in range(0, len(es), RX_STEPS)] or [[]]
+        assert len(cut) == len(chunks)
+        tag = f"{i}_{k}"
+        terms = [f"{name}T{tag}"] + [f"{name}U{tag}_{c2 + 1}" for c2 in range(len(chunks))]
+        out = [f"def {terms[c2 + 1]} : STm := {_lean_tm(t)}" for c2, t in enumerate(cut)]
+        for c2, ch in enumerate(chunks):
+            hint = ", ".join(f"({_rn(x)}, {_rn(y)}, {_rn(z)})" for x, y, z in ch)
+            out.append(f"def {name}C{tag}_{c2} : List (ℕ × ℕ × ℕ) := [{hint}]")
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {name}K{tag}_{c2} : elimAllCS {rr} "
+                f"{name}C{tag}_{c2} {terms[c2]} = some {terms[c2 + 1]} := by decide +kernel"
+            )
+        cat = f"{name}C{tag}_{len(chunks) - 1}"
+        for c2 in reversed(range(len(chunks) - 1)):
+            cat = f"{name}C{tag}_{c2} ++ ({cat})"
+        out.append(f"def {name}H{tag} : RHint := ({_rn(c)}, {cat})")
+        rws = [f"elimAllC_append _ _ _ _ _ {name}K{tag}_{c2}" for c2 in range(len(chunks) - 1)]
+        rws.append(f"elimAllC_of_S _ _ _ _ {name}K{tag}_{len(chunks) - 1}")
+        out.append(
+            f"theorem {name}E{tag} : elimAllC {rr} ({cat}) {name}T{tag} = {terms[-1]} := by\n"
+            f"  rw [{', '.join(rws)}]"
+        )
+        return out
 
     def check_decls(
         self,
