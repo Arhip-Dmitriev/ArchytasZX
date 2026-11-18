@@ -1638,10 +1638,13 @@ def _certify(
     induced = decision.induction
     if point is None and induced is not None and induced.counterexample is not None:
         point = {**dict(induced.witness), induced.index: induced.counterexample}
+    at_cx = point is decision.counterexample or (
+        point is not None and point is decision.counterexample_original
+    )
     witness = decision.witness
-    index = witness.index if witness is not None and point is decision.counterexample else None
+    index = witness.index if witness is not None and at_cx else None
     comparison = decision.comparison
-    if index is None and comparison is not None and point is decision.counterexample:
+    if index is None and comparison is not None and at_cx:
         index = comparison.index
     try:
         with _trace.span("decide.refutation"):

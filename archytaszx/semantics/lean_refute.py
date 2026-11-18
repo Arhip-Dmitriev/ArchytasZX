@@ -84,9 +84,9 @@ def export_refutation(
     from archytaszx.semantics.decide import sample_grid
 
     if any(box.is_extended for d in (left, right) for box in d.bang_boxes.values()):
-        return _instantiated_refutation(left, right, point, name, describe)
+        return _instantiated_refutation(left, right, point, name, describe, index)
     if _mult_phases(left) or _mult_phases(right):
-        return _instantiated_refutation(left, right, point, name, describe)
+        return _instantiated_refutation(left, right, point, name, describe, index)
     if _interfaces_differ(left, right) and (
         left.bang_boxes
         or right.bang_boxes
@@ -97,7 +97,7 @@ def export_refutation(
         except NetUnsupported:
             if not (left.bang_boxes or right.bang_boxes):
                 raise
-        return _instantiated_refutation(left, right, point, name, describe)
+        return _instantiated_refutation(left, right, point, name, describe, index)
     first: NetUnsupported | None = None
     candidates = [dict(point)]
     with contextlib.suppress(Exception):
@@ -239,8 +239,10 @@ def _instantiated_refutation(
     point: Mapping[str, object],
     name: str,
     describe: Callable[[Diagram], str] | None,
+    index: Sequence[int] | None = None,
 ) -> str:
-    """The refutation of the two families instantiated at a point's multiplicities."""
+    """The refutation of the two families instantiated at a point's multiplicities, ``index``
+    the first boundary assignment tried at ``point``."""
     from archytaszx.diagram.bangbox import (
         expand_concrete_boxes,
         free_mult_symbols,
@@ -271,7 +273,8 @@ def _instantiated_refutation(
             continue
         rest = {k: v for k, v in cand.items() if k not in mults}
         try:
-            src = export_refutation(pair[0], pair[1], rest, name, describe)
+            hint = index if cand == dict(point) else None
+            src = export_refutation(pair[0], pair[1], rest, name, describe, hint)
         except NetUnsupported as exc:
             first = first or exc
             continue
