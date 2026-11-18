@@ -42,7 +42,11 @@ constraints, one per equation up to orientation) are reported with the verdict a
 prove_equal=False skips the proof of an EQUAL verdict: EQUAL is kept and Decision.proof is
 None. The proof is built by archytaszx.semantics.certify_decision.decision_proof: the
 decision's own certificates, else the normaliser of symbolic sums, else prove; a restricted
-decision through the family's proof or the restricted pair's. describe gives the diagram
+decision through the family's proof or the restricted pair's. A symbolic-contraction
+verdict on a pair with no parameter and no free symbol (scalars, box multiplicities and copy
+scalars, leg dimensions, phases) takes the kernel's contraction theorem first and the
+normaliser only when the kernel refuses; with a free symbol the normaliser comes first.
+describe gives the diagram
 comments of the Lean refutation and the normaliser proof.
 
 With restrict (a Restriction, clause text or a mapping, section 8) the decision is the

@@ -84,8 +84,9 @@ def pair_proof(
     if decision.method is DecisionMethod.PATH_SUM:
         return path_sum_proof(left, right)
     contracted = decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
+    kernel_first = not contracted or _concrete_pair(left, right)
     why_kernel = ""
-    if not contracted:
+    if kernel_first:
         try:
             with _trace.span("decide.proof.kernel"):
                 return kernel.from_decision(decision, left, right), ""
@@ -97,11 +98,12 @@ def pair_proof(
     except kernel.KernelError as exc:
         why_symbolic = str(exc)
     if contracted:
-        try:
-            with _trace.span("decide.proof.kernel"):
-                return kernel.from_decision(decision, left, right), ""
-        except kernel.KernelError as exc:
-            why_kernel = str(exc)
+        if not kernel_first:
+            try:
+                with _trace.span("decide.proof.kernel"):
+                    return kernel.from_decision(decision, left, right), ""
+            except kernel.KernelError as exc:
+                why_kernel = str(exc)
         found, why_path = path_sum_proof(left, right)
         if found is not None:
             return found, ""
@@ -111,6 +113,14 @@ def pair_proof(
     if outcome.proved:
         return outcome, ""
     return None, f"kernel: {why_kernel}; normaliser: {why_symbolic}; search: {outcome.reason}"
+
+
+def _concrete_pair(left: Diagram, right: Diagram) -> bool:
+    """Whether neither diagram has a parameter or a free symbol in its scalar, a box
+    multiplicity or copy scalar, a leg dimension or a phase."""
+    from archytaszx.semantics.decide import _symbol_table
+
+    return not (left.parameters or right.parameters or _symbol_table(left, right))
 
 
 def path_sum_proof(left: Diagram, right: Diagram) -> tuple[kernel.Symbolic | None, str]:
