@@ -890,9 +890,125 @@ theorem elimXR_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (r : ℕ) (S 
   · intro ν _; exact elimGeo1_ok ρ hρ x D pre f post ps e h ν
   · exact elimXpin1_ok ρ _ x D pre f post ps e h
 
+theorem lookupN_mem (R : List (ℕ × ℕ)) (u d : ℕ) (h : R.lookup u = some d) : (u, d) ∈ R := by
+  induction R with
+  | nil => simp at h
+  | cons p R ih =>
+    obtain ⟨a, b⟩ := p
+    simp only [List.lookup_cons] at h
+    split at h
+    · next he =>
+      simp only [Option.some.injEq] at h
+      subst h
+      have : u = a := by simpa using he
+      subst this
+      exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (ih h)
+
+theorem lookup_none (S : List (ℕ × DMon)) (u : ℕ) (h : S.lookup u = none) :
+    u ∉ S.map (·.1) := by
+  induction S with
+  | nil => simp
+  | cons p S ih =>
+    obtain ⟨a, b⟩ := p
+    simp only [List.lookup_cons] at h
+    split at h
+    · simp at h
+    · next he =>
+      simp only [List.map_cons, List.mem_cons, not_or]
+      exact ⟨fun e => by simp [e] at he, ih h⟩
+
+/-- The ranges a pin by `f` reads beside the sums `S`: for each variable of `f` other than `x`,
+its sum in `S` when `S` binds it once, else its label range in `R`. -/
+def rgLoc (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (x : ℕ) (f : Fac) : List (ℕ × DMon) :=
+  ((f.2.flatMap (·.1)).filter (· != x)).filterMap fun u =>
+    match S.lookup u with
+    | some D => if (S.map (·.1)).count u == 1 then some (u, D) else none
+    | none => (R.lookup u).map fun d => (u, ⟨d, []⟩)
+
+theorem rgLoc_in (dv : ℕ → ℕ) (R : List (ℕ × ℕ)) (S : List (ℕ × DMon)) (x : ℕ) (f : Fac)
+    (ν : ℕ → ℤ) (hν : InLab R ν) :
+    (∀ p ∈ rgLoc R S x f, p.1 ∈ S.map (·.1) → p ∈ S ∧ (S.map (·.1)).count p.1 = 1) ∧
+    (∀ p ∈ rgLoc R S x f, p.1 ∉ S.map (·.1) →
+      0 ≤ ν p.1 ∧ ν p.1 < ((p.2.den dv : ℕ) : ℤ)) := by
+  have key : ∀ p ∈ rgLoc R S x f, (S.lookup p.1 = some p.2 ∧ (S.map (·.1)).count p.1 = 1) ∨
+      (S.lookup p.1 = none ∧ ∃ d, R.lookup p.1 = some d ∧ p.2 = ⟨d, []⟩) := by
+    intro p hp
+    simp only [rgLoc, List.mem_filterMap] at hp
+    obtain ⟨u, _, hu⟩ := hp
+    split at hu
+    · next D hD =>
+      split_ifs at hu with hc
+      simp only [Option.some.injEq] at hu
+      subst hu
+      exact Or.inl ⟨hD, by simpa using hc⟩
+    · next hD =>
+      simp only [Option.map_eq_some_iff] at hu
+      obtain ⟨d, hd, rfl⟩ := hu
+      exact Or.inr ⟨hD, d, hd, rfl⟩
+  constructor
+  · intro p hp hpS
+    rcases key p hp with ⟨h1, h2⟩ | ⟨h1, _⟩
+    · have hm := lookup_mem S p.1 p.2 h1
+      exact ⟨hm, h2⟩
+    · exact absurd hpS (lookup_none S p.1 h1)
+  · intro p hp hpS
+    rcases key p hp with ⟨h1, _⟩ | ⟨_, d, hd, h2⟩
+    · exact absurd (List.mem_map_of_mem (f := (·.1)) (lookup_mem S p.1 p.2 h1)) (by simpa using hpS)
+    · have hm : (p.1, d) ∈ R := by
+        have := lookupN_mem R p.1 d hd
+        exact this
+      have := hν _ hm
+      rw [h2]
+      simpa [DMon.den, npow] using this
+
+/-- Rule `20`: `elimXpin1` with the ranges `rgLoc`, no sum of `x` left. -/
+def elimStepL (R : List (ℕ × ℕ)) (t : STm) (i j : ℕ) : Option STm :=
+  match t.sums.drop i, t.dels.drop j with
+  | (x, D) :: post, f :: dpost =>
+    if x ∉ (t.sums.take i ++ post).map (·.1) then
+      match elimXpin1 (rgLoc R (t.sums.take i ++ post) x f) x D (t.dels.take j) f dpost t.phs with
+      | some e => some ⟨CMon.mul t.c e.k, t.sums.take i ++ post, e.ds, e.ps⟩
+      | none => none
+    else none
+  | _, _ => none
+
+theorem elimStepL_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : STm) (i j : ℕ)
+    (h : elimStepL R t i j = some t') (ν : ℕ → ℤ) (hν : InLab R ν) :
+    t'.den ρ ν = t.den ρ ν := by
+  unfold elimStepL at h
+  split at h
+  · next x D post f dpost hs hd =>
+    split_ifs at h with hx
+    split at h
+    · next e hev =>
+      simp only [Option.some.injEq] at h
+      subst h
+      have hsum : t.sums = t.sums.take i ++ (x, D) :: post := by
+        rw [← hs, List.take_append_drop]
+      have hdl : t.dels = t.dels.take j ++ f :: dpost := by rw [← hd, List.take_append_drop]
+      have hin : ∀ ν', InR ρ.dv (rgLoc R (t.sums.take i ++ post) x f) ν' →
+          ∑ k ∈ range (D.den ρ.dv), bodyOf ρ.dv t.dels t.phs (Function.update ν' x k) =
+            e.k.den ρ * bodyOf ρ.dv e.ds e.ps ν' := by
+        intro ν' hν'
+        rw [hdl]
+        exact elimXpin1_ok ρ _ x D _ f dpost t.phs e hev ν' hν'
+      obtain ⟨hA, hB⟩ := rgLoc_in ρ.dv R (t.sums.take i ++ post) x f ν hν
+      set A := t.sums.take i with hAdef
+      unfold STm.den
+      rw [hsum, sumsV_pull ρ.dv _ post x D hx]
+      simp only [body_eq] at *
+      rw [sumsV_congr_rng ρ.dv _ _ _ (fun ν' => e.k.den ρ * bodyOf ρ.dv e.ds e.ps ν') ν hA hB hin,
+        sumsV_mul_left, CMon.den_mul ρ hρ]
+      ring
+    · simp at h
+  · simp at h
+
 /-- The step `(i, r, j)`: `5` the geometric sum of the sum at `i` beside the delta at `j`, `6`
-the pin by ranges of the sum at `i` by the delta at `j`, else `elimStepH`. -/
+the pin by ranges of the sum at `i` by the delta at `j`, `20` that pin by `elimStepL`, else
+`elimStepH`. -/
 def elimStepX (R : List (ℕ × ℕ)) (t : STm) (i r j : ℕ) : Option STm :=
+  if r = 20 then elimStepL R t i j else
   if r = 5 ∨ r = 6 then
     match t.sums.drop i, t.dels.drop j with
     | (x, D) :: post, f :: dpost =>
@@ -927,7 +1043,8 @@ theorem elimStepX_ok (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (t t' : ST
     (h : elimStepX R t i r j = some t') (ν : ℕ → ℤ) (hν : InLab R ν) :
     t'.den ρ ν = t.den ρ ν := by
   unfold elimStepX at h
-  split_ifs at h with hr
+  split_ifs at h with h20 hr
+  · exact elimStepL_ok ρ hρ R t t' i j h ν hν
   · split at h
     · next x D post f dpost hs hd =>
       split_ifs at h with hc

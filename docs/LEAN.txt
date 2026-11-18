@@ -586,9 +586,14 @@ elim_choice; at most RX_ROUNDS = 256 rounds). elim_choice tries for each variabl
 deltas reading it (_occ; same choices as before, faster). fourier_constant_adder at d = 3: the
 difference of the two unnormalised terms (the left term 57, 104, 165, 240 and 432 sums at n = 3,
 4, 5, 6 and 8) cancels by 52, 86, 140, 194 and 302 pins and n - 1 geometric sums; never more
-than these two terms. Lean (anon peak): n = 2 d = 5 19 s (0.6 GB), n = 3 d = 3 22 s (1.1 GB),
-n = 3 d = 5 31 s (1.1 GB), n = 4 d = 3 96 s (2.6 GB), n = 5 d = 3 230 s (5.8 GB); n = 6 and 8
-exceed 6 GB.
+than these two terms. The pins are rule 20 (elimStepL): elimXpin1 with the ranges rgLoc R S x f
+of the delta's own variables (a sum of S bound once there, else the label's range; rgLoc_in),
+so no step checks that the whole sum list is free of duplicates. Lean (anon peak; wall time
+spread over runs on a loaded machine): n = 2 d = 5 19-35 s (0.6 GB), n = 3 d = 3 22-77 s
+(1.1 GB), n = 3 d = 5 31 s (1.1 GB), n = 4 d = 3 87 s (2.4 GB), n = 5 d = 3 230-286 s (5.1 GB);
+a swapped output is rejected. n = 6 and 8 export in Python (29 s,
+385 KB; 131 s, 1.2 MB) but exceed 6 GB in Lean: each round costs the kernel 4-85 s and up to
+3.6 GB on terms of 50 to 165 sums (n = 5), the first rounds the largest.
 
 Carry steps (SymCarry, 82.AS-b). With bit labels and roots of unity of modulus 2^k (the draper
 adder at d = 2) a residual of rxNf does not cancel: a delta [2 | r + x] fixes a bit r to a bit x

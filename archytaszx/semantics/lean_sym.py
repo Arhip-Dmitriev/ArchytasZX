@@ -32,6 +32,7 @@ import functools
 import itertools
 import math
 import re
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from fractions import Fraction
 from typing import Any
@@ -1327,8 +1328,8 @@ def rg_of(
 
 def x_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int, int]] | None:
     """A step of ``elimStepX`` and its hint: a geometric sum, else a pin by ranges, else
-    :func:`elim_choice`. A geometric sum is tried only for variables no delta reads, a pin
-    only by deltas reading the variable."""
+    :func:`elim_choice`. A geometric sum (rule 5) is tried only for variables no delta reads; a
+    pin (rule 20, the ranges ``rgLoc``) only by deltas reading the variable."""
     dd, pp = _occ(t)
     names = [v for v, _ in t[1]]
     if len(set(names)) == len(names):
@@ -1353,18 +1354,26 @@ def x_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int,
                 if e is not None:
                     rest = t[1][:i] + t[1][i + 1 :]
                     return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, 5, j)
-        rng = {v: m for v, m in t[1]}
-        labs = {lab: (dv, ()) for lab, dv in r if lab not in rng}
-        for j, f in enumerate(ds):
-            if not (dm_const(f[0]) and f[0][0] > 0):
+    ds, ps = t[2], t[3]
+    counts = Counter(names)
+    first: dict[int, DMon] = {}
+    for v, m in t[1]:
+        first.setdefault(v, m)
+    labs: dict[int, DMon] = {}
+    for lab, dv in r:
+        if lab not in first:
+            labs.setdefault(lab, (dv, ()))
+    rng = {v: m for v, m in first.items() if counts[v] == 1}
+    for j, f in enumerate(ds):
+        if not (dm_const(f[0]) and f[0][0] > 0):
+            continue
+        for i, (x, d) in enumerate(t[1]):
+            if d != f[0] or counts[x] != 1 or j not in dd.get(x, ()):
                 continue
-            for i, (x, d) in enumerate(t[1]):
-                if d != f[0] or j not in dd.get(x, ()):
-                    continue
-                e = _xpin_fast(rng, labs, x, d, ds[:j], f, ds[j + 1 :], ps)
-                if e is not None:
-                    rest = t[1][:i] + t[1][i + 1 :]
-                    return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, 6, j)
+            e = _xpin_fast(rng, labs, x, d, ds[:j], f, ds[j + 1 :], ps)
+            if e is not None:
+                rest = t[1][:i] + t[1][i + 1 :]
+                return (cm_mul(t[0], e[0]), rest, e[1], e[2]), (i, 20, j)
     return elim_choice(t)
 
 
