@@ -1215,8 +1215,8 @@ def _compare_at_point(
     left: Diagram, right: Diagram, parameters: Mapping[str, int], why: str
 ) -> PathSumComparison | str:
     """The pair instantiated at ``parameters`` compared by path sums: a difference is unequal at
-    that point, an agreement unknown for the family; ``why`` (the family's reason) prefixed to
-    the reason when that comparison is refused."""
+    that point, an agreement unknown for the family; a refused comparison gives its message
+    after ``why``, the family's refusal text."""
     from archytaszx.algebra.pathsum import PathSumUnsupported
     from archytaszx.semantics.check import instantiate
     from archytaszx.semantics.pathsum_diagram import compare_path_sums
