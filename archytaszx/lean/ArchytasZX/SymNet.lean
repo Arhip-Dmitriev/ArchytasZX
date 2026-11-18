@@ -361,11 +361,106 @@ def cpTerms (k : CMon) (D : DMon) (s : ℕ) (q : ℕ × ℕ × ℤ × ℕ) (ds p
     ds ++ [(D, ipSub (ipSub (ipV s) (ipSmul q.2.2.2 (ipV (cpX s)))) (ipV (cpX s + 1)))],
     ps ++ [(⟨q.2.1, []⟩, ipSmul q.2.2.1 (ipMul (ipV (cpX s)) (ipV (cpX s + 1))))]⟩]
 
+theorem getD_map_range (D : ℕ) (f : ℕ → ℤ) (j : ℕ) (hj : j < D) :
+    ((List.range D).map f).getD j 0 = f j := by
+  simp [List.getD_eq_getElem?_getD, hj]
+
+/-- `cpRow D q` holds the table `q` on `D` indices. -/
+theorem ptOK_cpRow (D : ℕ) (q : ℕ × ℕ × ℤ × ℕ) (hM : 0 < q.2.1) :
+    ptOK ((List.range D).map (cpNum q)) q.2.1 (cpRow D q) = true := by
+  have hfst : (cpRow D q).map Prod.fst =
+      (List.range D).filter fun j => cpNum q j % (q.2.1 : ℤ) != 0 := by
+    unfold cpRow
+    rw [List.map_map]
+    exact List.map_id'' (fun _ => rfl) _
+  unfold ptOK
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, Bool.or_eq_true, beq_iff_eq,
+    List.length_map, List.length_range, hfst]
+  refine ⟨⟨⟨hM, (List.nodup_range).filter _⟩, ?_⟩, ?_⟩
+  · intro p hp
+    unfold cpRow at hp
+    obtain ⟨j, hj, rfl⟩ := List.mem_map.1 hp
+    have hj' : j < D := List.mem_range.1 (List.mem_filter.1 hj).1
+    simp only [getD_map_range D (cpNum q) j hj']
+  · intro i hi
+    have hi' : i < D := List.mem_range.1 hi
+    rw [getD_map_range D (cpNum q) i hi']
+    by_cases h : cpNum q i % (q.2.1 : ℤ) = 0
+    · exact Or.inl h
+    · refine Or.inr ?_
+      simp [List.mem_filter, hi', h]
+
+/-- The stored phases are the table `q` on `D` indices: `cpRow D q` itself (one comparison),
+else `ptOK`. -/
+def cpTab (D : ℕ) (pt : List (ℕ × CMon)) (q : ℕ × ℕ × ℤ × ℕ) : Bool :=
+  (pt == cpRow D q && decide (0 < q.2.1)) || ptOK ((List.range D).map (cpNum q)) q.2.1 pt
+
+theorem cpTab_ptOK (D : ℕ) (pt : List (ℕ × CMon)) (q : ℕ × ℕ × ℤ × ℕ) (h : cpTab D pt q = true) :
+    ptOK ((List.range D).map (cpNum q)) q.2.1 pt = true := by
+  unfold cpTab at h
+  simp only [Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h
+  rcases h with ⟨rfl, hM⟩ | h
+  · exact ptOK_cpRow D q hM
+  · exact h
+
+theorem phC_emod (a : ℤ) (M : ℕ) (hM : 0 < M) (ks : List ℤ) :
+    phC (((a % (M : ℤ) : ℤ) : ℚ) / M) ks = phC ((a : ℚ) / M) ks := by
+  have hM' : (M : ℚ) ≠ 0 := by exact_mod_cast hM.ne'
+  have e : (a : ℚ) = ((a % (M : ℤ) : ℤ) : ℚ) + ((a / (M : ℤ) : ℤ) : ℚ) * M := by
+    have e' : a = a % (M : ℤ) + a / (M : ℤ) * (M : ℤ) := (Int.emod_add_ediv_mul a M).symm
+    exact_mod_cast e'
+  have h : (a : ℚ) / M = ((a % (M : ℤ) : ℤ) : ℚ) / M + ((a / (M : ℤ) : ℤ) : ℚ) := by
+    rw [e]; field_simp; try ring
+  rw [h]
+  set x : ℚ := ((a % (M : ℤ) : ℤ) : ℚ) / M
+  set k : ℤ := a / (M : ℤ)
+  have key : x + (k : ℚ) - ((⌊x + (k : ℚ)⌋ : ℤ) : ℚ) = x - ((⌊x⌋ : ℤ) : ℚ) := by
+    simp
+  unfold phC CMon.rnorm
+  simp only [key]
+
+/-- `cpRow D q` holds the table `q` reduced mod `M` on `D` indices. -/
+theorem ptOK_cpRow_mod (D : ℕ) (q : ℕ × ℕ × ℤ × ℕ) (hM : 0 < q.2.1) :
+    ptOK ((List.range D).map fun j => cpNum q j % (q.2.1 : ℤ)) q.2.1 (cpRow D q) = true := by
+  have hg : ∀ j, j < D →
+      ((List.range D).map fun j => cpNum q j % (q.2.1 : ℤ)).getD j 0 = cpNum q j % (q.2.1 : ℤ) :=
+    fun j hj => by simp [List.getD_eq_getElem?_getD, hj]
+  have hfst : (cpRow D q).map Prod.fst =
+      (List.range D).filter fun j => cpNum q j % (q.2.1 : ℤ) != 0 := by
+    unfold cpRow
+    rw [List.map_map]
+    exact List.map_id'' (fun _ => rfl) _
+  unfold ptOK
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, Bool.or_eq_true, beq_iff_eq,
+    List.length_map, List.length_range, hfst]
+  refine ⟨⟨⟨hM, (List.nodup_range).filter _⟩, ?_⟩, ?_⟩
+  · intro p hp
+    unfold cpRow at hp
+    obtain ⟨j, hj, rfl⟩ := List.mem_map.1 hp
+    have hj' : j < D := List.mem_range.1 (List.mem_filter.1 hj).1
+    rw [hg j hj', phC_emod _ _ hM]
+  · intro i hi
+    have hi' : i < D := List.mem_range.1 hi
+    rw [hg i hi', Int.emod_emod_of_dvd _ (dvd_refl _)]
+    by_cases h : cpNum q i % (q.2.1 : ℤ) = 0
+    · exact Or.inl h
+    · refine Or.inr ?_
+      simp [List.mem_filter, hi', h]
+
+/-- `ptOK` of a stored `cpRow D q` against its numerators reduced mod `M`, each by one
+comparison. -/
+theorem ptOK_cpRow_of (L : List ℤ) (D : ℕ) (q : ℕ × ℕ × ℤ × ℕ) (pt : List (ℕ × CMon))
+    (hM : 0 < q.2.1) (hL : (L == (List.range D).map fun j => cpNum q j % (q.2.1 : ℤ)) = true)
+    (hp : (pt == cpRow D q) = true) : ptOK L q.2.1 pt = true := by
+  rw [beq_iff_eq] at hL hp
+  subst hL hp
+  exact ptOK_cpRow_mod D q hM
+
 /-- Whether the stored phases are the table `q` on the constant dimension `D`; for kind `2`,
 `D = d²` and the digits free in `ds`, `ps`. -/
 def cpChk (D : DMon) (pt : List (ℕ × CMon)) (q : ℕ × ℕ × ℤ × ℕ) (s : ℕ) (ds ps : List Fac) :
     Bool :=
-  D.isConst && decide (0 < D.c) && ptOK ((List.range D.c).map (cpNum q)) q.2.1 pt &&
+  D.isConst && decide (0 < D.c) && cpTab D.c pt q &&
     (q.1 == 1 || (q.2.2.2 * q.2.2.2 == D.c &&
       (ds ++ ps).all fun f => !facHas (cpX s) f && !facHas (cpX s + 1) f))
 
@@ -510,7 +605,8 @@ theorem spiderC_den (ρ : Val) (hρ : ρ.OK) (k : CMon) (D : DMon) (s : ℕ) (pt
   · next q hq =>
     split_ifs with hc
     · simp only [cpChk, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hc
-      obtain ⟨⟨⟨hD, _⟩, hk⟩, h2⟩ := hc
+      obtain ⟨⟨⟨hD, _⟩, hk0⟩, h2⟩ := hc
+      have hk := cpTab_ptOK D.c pt q hk0
       have hDc : D.den ρ.dv = D.c := DMon.den_isConst _ _ hD
       rw [cpTerms_den ρ k D s q ds ps ν hD (fun hne => by
         rcases h2 with h | h

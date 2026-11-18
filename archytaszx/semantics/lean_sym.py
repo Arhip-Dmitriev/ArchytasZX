@@ -66,6 +66,8 @@ BS_SMALL = 64
 splitter nodes with BS_NODES off."""
 _BS_ON = False
 """Whether the current export writes binder and splitter nodes."""
+_FOLD = False
+"""Whether the compact check folds binder, compact spider and splitter blocks (``trNetK``)."""
 BLOCK_MAX = 8
 """The most nodes of one ``trBlockM`` theorem."""
 BLOCK_TERMS = 24
@@ -1513,6 +1515,119 @@ C_STEPS = 4096
 export)."""
 
 
+def carry17(i: int, pre: tuple[Fac, ...], f: Fac, post: tuple[Fac, ...]) -> Fac | None:
+    """``carry17``: ``f = [M ∣ p]`` as ``[M ∣ (p - c s q) mod M]`` beside the delta
+    ``[m ∣ q]`` at ``i`` of ``pre + post``, ``q = s x + b`` at its pivot ``x``, ``c`` the
+    coefficient of ``x`` in ``p``, ``M ∣ c s m``."""
+    rest = pre + post
+    if i >= len(rest):
+        return None
+    g = rest[i]
+    if not (dm_const(g[0]) and dm_const(f[0]) and f[0][0] > 0):
+        return None
+    pv = pivot_of(g[1])
+    if pv is None:
+        return None
+    lin = ip_lin(pv[0], f[1])
+    if lin is None:
+        return None
+    c = ip_const(lin[0])
+    if c is None or (c * pv[1] * g[0][0]) % f[0][0]:
+        return None
+    return (f[0], ip_modc(f[0][0], ip_add(f[1], ip_smul(-(c * pv[1]), g[1]))))
+
+
+def _c17(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 17 at the first delta whose pivot is a sum read by another delta with a coefficient
+    that the moduli allow to clear."""
+    ds = t[2]
+    names = {v for v, _ in t[1]}
+    for j, f in enumerate(ds):
+        if not (dm_const(f[0]) and f[0][0] > 1):
+            continue
+        rest = _without(ds, j)
+        for i, g in enumerate(rest):
+            pv = pivot_of(g[1])
+            if pv is None or pv[0] not in names or not fac_has(pv[0], f):
+                continue
+            got = carry17(i, ds[:j], f, ds[j + 1 :])
+            if got is not None and not fac_has(pv[0], got):
+                return (t[0], t[1], (*ds[:j], got, *ds[j + 1 :]), t[3]), (i, 17, j)
+    return None
+
+
+def ph_split(t: STm, i: int, j: int) -> STm | None:
+    """``phSplit``: the root of unity ``[M ∣ p]`` at ``i`` as ``[M ∣ p₀]`` in place and
+    ``[d ∣ p₁ / k]`` appended, ``x`` the sum at ``j`` of constant range ``d``, ``M = k d``, ``p₁``
+    the monomials reading ``x``."""
+    if i >= len(t[3]) or j >= len(t[1]):
+        return None
+    g, (x, d) = t[3][i], t[1][j]
+    if not (dm_const(d) and d[0] > 0 and dm_const(g[0]) and g[0][0] > 0 and g[0][0] % d[0] == 0):
+        return None
+    k = g[0][0] // d[0]
+    with_x = tuple(m for m in g[1] if x in m[0])
+    if any(c % k for _, c in with_x):
+        return None
+    without = tuple(m for m in g[1] if x not in m[0])
+    phs = (*t[3][:i], (g[0], without), *t[3][i + 1 :], (d, tuple((m, c // k) for m, c in with_x)))
+    return (t[0], t[1], t[2], phs)
+
+
+def _c18(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 18 at the first root of unity of a modulus above ``d`` reading a sum ``x`` of range
+    ``d`` that no delta reads and that every root reading it allows to split."""
+    names = [v for v, _ in t[1]]
+    if len(set(names)) != len(names):
+        return None
+    dd, pp = _occ(t)
+    for j, (x, d) in enumerate(t[1]):
+        if x in dd or x not in pp or not (dm_const(d) and d[0] > 1):
+            continue
+        cand = None
+        for i, g in enumerate(t[3]):
+            if not fac_has(x, g) or g[0] == d:
+                continue
+            if ph_split(t, i, j) is None:
+                cand = None
+                break
+            if cand is None:
+                cand = i
+        if cand is not None:
+            u = ph_split(t, cand, j)
+            if u is not None:
+                return u, (cand, 18, j)
+    return None
+
+
+def f_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int, int]] | None:
+    """A step of ``elimStepF`` and its hint: :func:`x_choice`, else rule 17, else rule 18."""
+    for fn in (x_choice, _c17, _c18):
+        got: tuple[STm, tuple[int, int, int]] | None = fn(r, t)
+        if got is not None:
+            return got
+    return None
+
+
+def rx_cert_f(fl: Sequence[int], e: Sequence[STm], ranges: Mapping[int, int]) -> RxCert | None:
+    """``rxNfF``'s labels, rounds and paths as :func:`rx_cert`'s, marked by a fourth entry
+    ``"F"``, for a residual whose terms, normalised with :func:`f_choice`, cancel; None
+    otherwise."""
+    if not e or not ranges:
+        return None
+    r = tuple(sorted(ranges.items()))
+    acc: tuple[STm, ...] = ()
+    hs = []
+    paths: list[tuple[list[STm], STm | None]] = []
+    for t in e:
+        got, h, terms = rx_hints(fl, r, t, f_choice)
+        hs.append(h)
+        paths.append((terms, got))
+        if got is not None:
+            acc = tm_add(got, acc)
+    return (r, hs, paths, "F") if not acc else None  # type: ignore[return-value]
+
+
 # carry steps over the labels' ranges (SymCarry)
 
 
@@ -2188,6 +2303,118 @@ def tr_net_id(
     return [(t[0], sums + t[1], t[2], t[3]) for t in b]
 
 
+Node = tuple[str, Sequence[int], Sequence[int], int, int]
+
+
+def fold_bzs(
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    n1: Node,
+    n2: Node,
+    n3: Node,
+) -> tuple[STm, int, int] | None:
+    """``foldBZS``: the term ``[d ∣ a' - a] [d ∣ b' - b] ω_M^(c a b)`` of ``B (a, b) → k``,
+    ``Z k → k'`` with a compact table of kind 2 on ``d²`` and ``S k' → (a', b')``, with ``k``,
+    ``k'``."""
+    if not (len(n1[1]) == 1 and len(n1[2]) == 2 and len(n2[1]) == 1 and len(n2[2]) == 1):
+        return None
+    if not (len(n3[1]) == 2 and len(n3[2]) == 1):
+        return None
+    q = cp_data(getattr(pt(n2[4]), "rule", None))
+    if q is None:
+        return None
+    (k,), (a, b), (k1,), (k2,), (a1, b1), (k3,) = n1[1], n1[2], n2[1], n2[2], n3[1], n3[2]
+    d, big = dt(n1[3]), dt(n2[3])
+    labels = [k, k1, a, b, a1, b1]
+    if not (
+        (n1[0], n2[0], n3[0]) == ("B", "Z", "S")
+        and k2 == k
+        and k3 == k1
+        and len(set(labels)) == len(labels)
+        and dt(n1[4]) == d
+        and dt(n3[3]) == d
+        and dt(n3[4]) == d
+        and dm_const(d)
+        and dm_const(big)
+        and big[0] == d[0] * d[0]
+        and q[0] == 2
+        and q[3] == d[0]
+        and pt_ok([cp_num(q, j) for j in range(big[0])], q[1], pt(n2[4]))
+    ):
+        return None
+    dels = ((d, ip_sub(ip_v(a1), ip_v(a))), (d, ip_sub(ip_v(b1), ip_v(b))))
+    phs = (((q[1], ()), ip_smul(q[2], ip_mul(ip_v(a), ip_v(b)))),)
+    return (of_q(1), (), dels, phs), k, k1
+
+
+def fold_ok(
+    internal: Sequence[int], pre: Sequence[int], k: int, k1: int, rest: Sequence[Node]
+) -> bool:
+    """``foldOK``."""
+    later = {lab for n in rest for lab in (*n[1], *n[2])}
+    inner = [lab for lab in internal if lab in (k, k1)]
+    return (
+        k not in pre
+        and k1 not in pre
+        and k not in later
+        and k1 not in later
+        and inner in ([k, k1], [k1, k])
+    )
+
+
+def fold_steps(
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    nodes: Sequence[Node],
+    internal: Sequence[int],
+) -> list[tuple[int, tuple[int, ...], tuple[int, ...], tuple[STm, int, int] | None]]:
+    """``trNodesK``'s steps from the first node: start, labels before, labels read, the folded
+    block or None for one node."""
+    out: list[tuple[int, tuple[int, ...], tuple[int, ...], tuple[STm, int, int] | None]] = []
+    pre: tuple[int, ...] = ()
+    i = 0
+    while i < len(nodes):
+        got = None
+        if i + 2 < len(nodes):
+            got = fold_bzs(dt, pt, nodes[i], nodes[i + 1], nodes[i + 2])
+            if got is not None and not fold_ok(internal, pre, got[1], got[2], nodes[i + 3 :]):
+                got = None
+        span = 3 if got is not None else 1
+        legs = tuple(lab for n in nodes[i : i + span] for lab in (*n[1], *n[2]))
+        out.append((i, pre, legs, got))
+        pre = pre + legs
+        i += span
+    return out
+
+
+def tr_net_k(
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    labs: dict[int, int],
+    nodes: Sequence[Node],
+    internal: Sequence[int],
+) -> list[STm] | None:
+    """``trNetK``: :func:`tr_net_id` with each block of :func:`fold_steps` one term."""
+    b: list[STm] = [(of_q(1), (), (), ())]
+    for i, pre, legs, got in reversed(fold_steps(dt, pt, nodes, internal)):
+        if got is None:
+            a = tr_node(dt, pt, OFF + i, *nodes[i])
+            skip: tuple[int, ...] = ()
+        else:
+            a, skip = [got[0]], (got[1], got[2])
+        if a is None or not ex_mul_ok(a, b):
+            return None
+        first = tuple(
+            (lab, lab_dm(dt, labs, lab))
+            for lab in internal
+            if lab in legs and lab not in pre and lab not in skip
+        )
+        b = [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, b)]
+    used = {lab for n in nodes for lab in (*n[1], *n[2])}
+    sums = tuple((lab, lab_dm(dt, labs, lab)) for lab in internal if lab not in used)
+    return [(t[0], sums + t[1], t[2], t[3]) for t in b]
+
+
 def lab_dm(dt: Callable[[int], DMon], labs: dict[int, int], lab: int) -> DMon:
     return dt(labs.get(lab, 0))
 
@@ -2293,12 +2520,14 @@ def sym_check(
     if not (ex_const(s0) and ex_const(s1)):
         return False
     if rx is not None:
-        a0 = tr_net_id(dt, pt, labs, n0[0], n0[1])
-        a1 = tr_net_id(dt, pt, labs, n1[0], n1[1])
+        trx = tr_net_k if _FOLD else tr_net_id
+        a0 = trx(dt, pt, labs, n0[0], n0[1])
+        a1 = trx(dt, pt, labs, n1[0], n1[1])
         neg = ex_neg(s1)
         if a0 is None or a1 is None or not (ex_mul_ok(s0, a0) and ex_mul_ok(neg, a1)):
             return False
-        got_x = rx_cert(fl, ex_mul(s0, a0) + ex_mul(neg, a1), lab_ranges(labs, dt, ix, n0[2]))
+        cert = rx_cert_f if _FOLD else rx_cert
+        got_x = cert(fl, ex_mul(s0, a0) + ex_mul(neg, a1), lab_ranges(labs, dt, ix, n0[2]))
         if got_x is None:
             return False
         rx.append(got_x)
@@ -2845,6 +3074,7 @@ class _SymExport:
 
     cp_rows: dict[int, tuple[int, CpData]]
     rx: list[RxCert]
+    fold: bool = False
 
     def __init__(
         self,
@@ -3136,6 +3366,20 @@ class _SymExport:
         bs = _BS_ON
         _BS_ON = True
         fl, dtf, ptf, labs, ix, n0, n1, s0, s1 = args
+        global _FOLD
+        if any(
+            got is not None
+            for nodes, internal, _ in (n0, n1)
+            for _, _, _, got in fold_steps(dtf, ptf, nodes, internal)
+        ):
+            _FOLD = True
+            try:
+                if sym_check(fl, dtf, ptf, labs, ix, n0, n1, s0, s1, None, None, self.rx):
+                    self.fold = True
+                    return True
+            finally:
+                _FOLD = False
+            self.rx = []
         if sym_check(fl, dtf, ptf, labs, ix, n0, n1, s0, s1, None, None, self.rx):
             return True
         _BS_ON = bs
@@ -4855,9 +5099,20 @@ class _SymExport:
 
             nums, den = self.out.phase_tables[p]
             name = self.out.table_names[tuple(nums)]
+            ok = "(by decide +kernel)"
+            if p in self.cp_rows and list(nums) == [
+                cp_num(self.cp_rows[p][1], j) % self.cp_rows[p][1][1]
+                for j in range(self.cp_rows[p][0])
+            ]:
+                big_d, q = self.cp_rows[p]
+                qt = f"(({q[0]}, {q[1]}, {q[2]}, {q[3]}) : ℕ × ℕ × ℤ × ℕ)"
+                ok = (
+                    f"(ptOK_cpRow_of _ {big_d} {qt} _ (by decide) (by decide +kernel) "
+                    "(by decide +kernel))"
+                )
             return (
                 f"simp only [{unfold}, Φ]\n    exact tab_phC {rho} {name} {TABLE_CHUNK} "
-                f"(by norm_num) {den} _ (by norm_num) _ (by decide +kernel) (by decide +kernel) j"
+                f"(by norm_num) {den} _ (by norm_num) _ (by decide +kernel) {ok} j"
             )
         lines = [
             (
@@ -4937,13 +5192,15 @@ class _SymExport:
         for tag, (text, lnet) in own.items():
             nt = _paren(text)
             nodes, internal, bnd = self.net(lnet)
-            got = tr_net_id(self.dtf, self.ptf, labs, nodes, internal)
+            fold = self.fold
+            got = (tr_net_k if fold else tr_net_id)(self.dtf, self.ptf, labs, nodes, internal)
             if got is None:
                 raise NetUnsupported("a compact network whose products capture variables")
             e[tag] = got
             out.append(f"def {tag}X : List STm := {_lean_ex(got)}")
+            trn = "trNetK" if fold else "trNetG (fun _ e => e)"
             out.append(
-                f"set_option maxHeartbeats 0 in\ntheorem {tag}R : trNetG (fun _ e => e) DT PT RL "
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}R : {trn} DT PT RL "
                 f"labs {nt} = some {tag}X := by decide +kernel"
             )
             if all(v == 0 for v in labs.values()) and 0 in self.ix:
@@ -4964,13 +5221,16 @@ class _SymExport:
         if not (ex_mul_ok(s0, e[ta]) and ex_mul_ok(neg, e[tb2])):
             raise NetUnsupported("a compact export whose products capture variables")
         diff = ex_mul(s0, e[ta]) + ex_mul(neg, e[tb2])
-        rxs = rx_cert(self.fl, diff, lab_ranges(labs, self.dtf, self.ix, self.net(nb)[2]))
+        fold = self.fold
+        rxs = (rx_cert_f if fold else rx_cert)(
+            self.fl, diff, lab_ranges(labs, self.dtf, self.ix, self.net(nb)[2])
+        )
         if rxs is None:
             raise NetUnsupported("the compact residual does not cancel")
         rx_labs, _ = _lean_rx(rxs)
-        cx = "C" if len(rxs) > 3 else "X"
+        cx = "X" if len(rxs) <= 3 else ("F" if rxs[3] == "F" else "C")
         cuts: list[list[list[STm]]] = list(rxs[3:4][0]) if cx == "C" else []  # type: ignore[misc]
-        rxn = "rxNfC" if cx == "C" else "rxNf"
+        rxn = "rxNf" if cx == "X" else f"rxNf{cx}"
         out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
         rr = f"{name}RR"
         term_rows, steps_by = [], []
@@ -4987,7 +5247,7 @@ class _SymExport:
                     continue
                 hint = ", ".join(f"({_rn(x)}, {_rn(y)}, {_rn(z)})" for x, y, z in es)
                 out.append(f"def {hn} : RHint := ({_rn(c)}, [{hint}])")
-            if cx == "X":
+            if cx != "C":
                 out += tdefs
             m = len(rounds)
             for k in range(m):
@@ -5045,9 +5305,10 @@ class _SymExport:
             f"  rw [{', '.join(steps_by)}]\n  decide +kernel"
         )
         fl_ok = self.call("flOK")
-        self.g_lemma[name] = "equal_symSR"
+        self.g_lemma[name] = "equal_symSK" if fold else "equal_symSR"
+        nfs = "" if fold else "(fun _ e => e) (fun _ e => e) (fun _ _ _ => rfl) (fun _ _ _ => rfl) "
         self.g_args[name] = (
-            f"(fun _ e => e) (fun _ e => e) (fun _ _ _ => rfl) (fun _ _ _ => rfl) _ _ {ta}R "
+            f"{nfs}_ _ {ta}R "
             f"{tb2}R {name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {name}RR "
             f"({rxn} {name}RR FL {name}XH) (fun e ν hν => {rxn}_den {self.rho} {self.hr} {name}RR "
             f"FL {fl_ok} {name}XH (fun e => e) (fun _ _ => rfl) e ν hν) {name}z {name}r"

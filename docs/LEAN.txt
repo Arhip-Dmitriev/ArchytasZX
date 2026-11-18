@@ -596,6 +596,50 @@ a swapped output is rejected. n = 6 and 8 export in Python (29 s,
 385 KB; 131 s, 1.2 MB) but exceed 6 GB in Lean: each round costs the kernel 4-85 s and up to
 3.6 GB on terms of 50 to 165 sums (n = 5), the first rounds the largest.
 
+Folded controlled phases (SymFold, 82.J-f). A controlled phase of the compact check is a binder
+B (a, b) -> k, a Z spider k -> k' with a compact table of kind 2 on d^2 and a splitter
+S k' -> (a', b'); in the unnormalised product it brings the sums k, k', s, x, y and five deltas.
+foldBZS reads such three consecutive nodes (shapes, kinds, labels distinct, B and S on d x d,
+the Z dimension d^2 constant, cpData kind 2 with digit range d, ptOK of the table) and gives the
+one term [d | a' - a] [d | b' - b] omega_M^(c a b). trNodesK is trNodesG with the identity
+normaliser that takes the block as one step (kBlock) when foldOK holds: k and k' are not read
+before or after the block and int lists them once each; the block's internal labels other than
+k, k' are summed there (firstBlk). The fold is exact only for in-range digits, so it is proved
+at the node level, where the sums give the ranges: bzs_sum computes Sum_{k, k' < d^2}
+tB(k; a, b) tZ(k', k) tB(k'; a', b') = [a' = a][b' = b] e(phi(a d + b)) for a, b, a', b' < d
+(digits_eqF), cp_ph gives e(phi(j)) = omega_M^(c (j / d) (j % d)), and foldBZS_val matches the
+term's value; kBlock_ok sums k, k' innermost (the tail reads neither, prodVal_reads), the
+block's value read only on its labels (sumOver_ext), the other labels' ranges from the outer
+sums or the boundary; kSingle_ok is the trNodesG_ok step; trNodesK_ok by induction on the
+length, eval_trK and equal_symSK as eval_trG and equal_symSR. The folded residual needs two
+steps that rxNf lacks; elimStepF adds them to elimStepC, each value-preserving for every
+valuation: 17 (carry17) the delta [M | p] at j plus -(c s) times the delta [m | q] at i of the
+others, q = s x + b at its pivot x, c the coefficient of x in p, M | c s m, coefficients mod M
+(a mod-3 delta clears a sum read with coefficient 3 by a mod-9 delta); 18 (phSplit) the root of
+unity [M | p] at i split into [M | p0] in place and [d | p1 / (M / d)] appended, p1 the
+monomials reading the sum x at j of constant range d | M, each coefficient a multiple of M / d
+(om_up), so a character sum over x then applies. rxNfF, normTmF, nfGoF mirror rxNfC.
+lean_sym: fold_bzs, fold_ok, fold_steps and tr_net_k mirror foldBZS, foldOK and trNetK;
+f_choice is x_choice, then rule 17 (_c17: a pivot that is a sum, cleared from the delta), then
+rule 18 (_c18: a sum no delta reads, every root reading it of its modulus or splittable);
+rx_cert_f marks its certificate "F" and the export writes trNetK, normTmF, rxNfF and
+equal_symSK. compact_check tries the folded route first whenever fold_steps folds a block of
+either network, and the unfolded one when it fails; exports without such a block are unchanged
+(byte-identical: fca23, dr10, symcuc2b, symmct3b, cuc4_proof, fca n = 1 d = 3, 5, n = 2 d = 2,
+draper n = 1 d = 3, 5, n = 2, 3, 4 d = 2). fourier_constant_adder d = 3: the left term has 27,
+44, 65, 90 and 152 sums at n = 3, 4, 5, 6, 8 (57, 104, 165, 240, 432 unfolded) and the residual
+cancels in 2, 3, 4, 5 and 7 rounds; exports 0.2 s (83 KB), 0.4 s (62 KB), 1.1 s (92 KB), 2.2 s
+(118 KB), 13 s (245 KB). A table stored as cpRow (above CP_ROW_MIN) cost the kernel more than
+6 GB in cpChk at D = 729 (ptOK reads the numerator list by getD once per entry); cpChk now
+tests cpTab: pt equal to cpRow D q with M > 0 (one list comparison, 10 s and 0.5 GB at
+D = 729; ptOK_cpRow proves ptOK for it), else ptOK as before, so cpChk has the same value
+everywhere; the phase proof of such a table (tab_phC) takes its ptOK from ptOK_cpRow_of (the
+chunks' flattening equal to the numerators mod M and the stored row equal to cpRow D q, each one
+decide; ptOK_cpRow_mod, phC_emod: phC reads its rational mod 1) instead of deciding ptOK.
+Lean (anon peak, loaded machine): fca d = 3 n = 3 25 s (0.5 GB), n = 4 29 s (0.7 GB), n = 5
+100 s (1.7 GB), n = 6 128 s (2.0 GB), n = 8 449 s (5.5 GB); d = 5 n = 2 23 s (0.5 GB), n = 3
+50 s (0.7 GB); a copy of n = 5 with one splitter's outputs swapped is rejected (N0R, D0_bd).
+
 Carry steps (SymCarry, 82.AS-b). With bit labels and roots of unity of modulus 2^k (the draper
 adder at d = 2) a residual of rxNf does not cancel: a delta [2 | r + x] fixes a bit r to a bit x
 but its pin value -x spans two blocks, a mod 2 delta never reaches a mod 4 root of unity whose
