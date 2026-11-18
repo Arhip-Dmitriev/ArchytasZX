@@ -257,6 +257,9 @@ ranges bound the argument in [0, m). A free index v of range m that a delta of t
 to the same residue (c v + L with -c L == x mod m) replaces ModResidue(x, m). An echelon pivot
 v == value mod m with v of range m and value bounded in [0, m) is substituted everywhere,
 deltas of other moduli included; otherwise only where the expression is m-periodic in v.
+At a concrete modulus m the echelon form takes every substituted row and pivot value with an
+integer coefficient c of |c| >= m to sign(c) (|c| mod m), so coefficients stay below m
+instead of growing with each Gauss-Jordan step.
 
 with_dimension_floors sets to zero every [s | c] whose modulus symbol s has, by the given
 floors, a least value above |c|; it is how facts such as "d >= 3" enter a comparison.

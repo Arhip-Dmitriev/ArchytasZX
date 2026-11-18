@@ -1976,24 +1976,45 @@ def _pivot(row: sp.Expr, modulus: sp.Expr) -> tuple[sp.Symbol, sp.Expr] | None:
     return var, sp.expand(-sign * (row - form[var] * var))
 
 
+def _trim_mod(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
+    """``expr`` with each integer coefficient ``c`` of ``|c| >= modulus`` replaced by
+    ``sign(c) (|c| mod modulus)`` at an integer ``modulus``; ``expr`` itself otherwise."""
+    if not modulus.is_Integer or not expr.free_symbols:
+        return expr
+    m = int(modulus)
+    terms = _integer_terms(expr)
+    if terms is None or all(abs(c) < m for c in terms.values()):
+        return expr
+    parts = []
+    for mono, c in terms.items():
+        kept = (abs(c) % m) * (1 if c > 0 else -1)
+        if kept:
+            parts.append(kept * sp.Mul(*(s**e for s, e in mono)))
+    return cast(sp.Expr, sp.Add(*parts))
+
+
 def _echelon(
     rows: list[sp.Expr], modulus: sp.Expr
 ) -> tuple[dict[sp.Symbol, sp.Expr], list[sp.Expr]]:
     """Gauss-Jordan reduction of ``rows`` mod ``modulus`` over unit pivots, as (pivots,
-    residual rows)."""
+    residual rows); at an integer modulus every substituted row and pivot value is taken
+    through :func:`_trim_mod`."""
     pivots: dict[sp.Symbol, sp.Expr] = {}
     pending = list(rows)
     while True:
         residual: list[sp.Expr] = []
         progressed = False
         for row in pending:
-            row = sp.expand(row.xreplace(pivots))
+            row = _trim_mod(sp.expand(row.xreplace(pivots)), modulus)
             found = _pivot(row, modulus)
             if found is None:
                 residual.append(row)
                 continue
             var, value = found
-            pivots = {s: sp.expand(v.xreplace({var: value})) for s, v in pivots.items()}
+            pivots = {
+                s: _trim_mod(sp.expand(v.xreplace({var: value})), modulus)
+                for s, v in pivots.items()
+            }
             pivots[var] = value
             progressed = True
         pending = residual
