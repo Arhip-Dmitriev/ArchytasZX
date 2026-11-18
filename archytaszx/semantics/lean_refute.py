@@ -63,6 +63,10 @@ SYM_FIRST = 10_000
 ELIM_CHUNK = 2_000
 MAX_RES_ENTRIES = 2_000_000
 RES_PRIME_FLOOR = 1 << 20
+LEAF_X_MIN = 1 << 14
+ELIM_DESCENT = True
+DESC_MAX = 300_000
+PT_DENSE_MIN = 16
 
 _Z = sp.Symbol("zeta_lean")
 
@@ -1451,6 +1455,26 @@ class _Refuter:
             mul *= self.labdim(x)
         return tab[i]
 
+    def x_tables(self, net: LNet, leaves: Sequence[Any]) -> list[str | None]:
+        """Per leaf, its `LeafH` when its node is an X node whose table times `d` reaches
+        `LEAF_X_MIN`: `.xd` (checked by `leafXD`) with the residues at one output `s < d` and
+        no inputs packed `b` bits each when its scope is its distinct legs, else `.x`
+        (`leafXR`) with them as a table; None otherwise."""
+        out: list[str | None] = []
+        for n, (scope, tab) in zip(net.nodes, leaves, strict=True):
+            d = self.dimv(n.dim)
+            if n.kind != "X" or self.M % d or len(tab) * d < LEAF_X_MIN:
+                out.append(None)
+                continue
+            g = [self.res(self.tx(n.ph, d, [s], [])) for s in range(d)]
+            legs = [*n.outs, *n.ins]
+            if len(set(legs)) == len(legs) and set(legs) == set(scope):
+                b = max(1, max(g).bit_length())
+                out.append(f".xd {sum(v << (b * s) for s, v in enumerate(g))} {b}")
+            else:
+                out.append(".x (RT.node [" + ", ".join(f"RT.leaf {v}" for v in g) + "])")
+        return out
+
     def res_decls(
         self,
         tag: str,
@@ -1468,7 +1492,7 @@ class _Refuter:
 
         def fac(name: str, f: Any) -> str:
             scopes[name] = tuple(f[0])
-            out.append(f"def {name} : RFac := {_rfac(f, self.labdim, packed)}")
+            out.append(f"def {name} : RFac := {_rfac(f, self.labdim, packed or ELIM_DESCENT)}")
             return name
 
         state = [fac(f"{tag}a{i}", f) for i, f in enumerate(leaves)]
@@ -1490,9 +1514,11 @@ class _Refuter:
             out.append(f"def {tag}S{k} : List (ℕ × RFac) := ({l}, {new}) :: {tag}S{k + 1}")
         out.append(f"theorem {tag}C{n} : chainR {p} {dim} {tag}F{n} {tag}S{n} {tag}F{n} = true :=")
         out[-1] += f"\n  chainR_nil {p} {dim} {tag}F{n}"
+        before = [leaves, *(fs for _l, fs in steps)]
         for k in range(n - 1, -1, -1):
             l, new = news[k]
-            out += self.elim_decls(f"{tag}E{k}", l, f"{tag}F{k}", new, scopes[new], dim)
+            ins = [f for f in before[k] if l in f[0]]
+            out += self.elim_decls(f"{tag}E{k}", l, f"{tag}F{k}", new, scopes[new], dim, ins)
             head = f"chainR {p} {dim} {tag}F{k} {tag}S{k} {tag}F{n} = true"
             out.append(
                 f"theorem {tag}C{k} : {head} :=\n  chainR_step {p} {dim} {l} {tag}F{k} "
@@ -1534,7 +1560,10 @@ class _Refuter:
         binders = _join(out.binders, out.hyps)
         M, p, w = self.M, self.p, self.w
         dim = f"{env}.shape.dim"
-        pt = ", ".join(f"(({ph}, {j}), ({self.P(ph, j)[0]}, []))" for ph, j in self.keys)
+        dense = self.dense_keys()
+        pt = ", ".join(
+            f"(({ph}, {j}), ({self.P(ph, j)[0]}, []))" for ph, j in self.keys if ph not in dense
+        )
         ct = ", ".join(f"(({ph}, {j}), {_terms(self.ctab[(ph, j)])})" for ph, j in self.ckeys)
         qt = ", ".join(f"({ph}, {q})" for ph, q in sorted(self.qtab.items()))
         sig = ", ".join(f"({x}, {v})" for x, v in sorted(sigma.items()))
@@ -1546,6 +1575,10 @@ class _Refuter:
             for ph, (nums, den) in self.tabs.items()
         )
         cases += "".join(self.sparse_cases(ph) for ph in self.sparse)
+        cases += "".join(
+            f"  | {ph}, k => (({_ints_nat(vals)} : List ℕ).getD k 0, [])\n"
+            for ph, vals in dense.items()
+        )
         phok = ", ".join(self.phase_proof(ph, j, unfold) for ph, j in self.keys)
         coefok = ", ".join(
             f"by rw [show Qt {ph} = {self.qtab[ph]} from rfl]; norm_num, {self.coef_proof(ph, j)}"
@@ -1616,11 +1649,24 @@ class _Refuter:
             )
             if route == "res":
                 decls += self.res_decls(tag, plan, dim)
-                body.append(
-                    f"  have r{i} := eval_res {env}.shape {M} Pt Ct {p} {w} (by norm_num) hw1 "
-                    f"(by norm_num) (by norm_num) {tag} σ0 L{tag} {K} {K} ST{tag} FN{tag} {K} "
-                    f"CH{tag} {K} {K} {K}"
-                )
+                gs = self.x_tables(self.a.net if i == 0 else self.b.net, plan[0])
+                if any(g is not None for g in gs):
+                    items = ", ".join(".plain" if g is None else f"({g})" for g in gs)
+                    decls.append(
+                        f"/-- How {tag}'s leaves are checked. -/\n"
+                        f"def G{tag} : List LeafH := [{items}]"
+                    )
+                    body.append(
+                        f"  have r{i} := eval_resG {env}.shape {M} Pt Ct {p} {w} (by norm_num) "
+                        f"hw1 (by norm_num) (by norm_num) {tag} σ0 L{tag} G{tag} {K} {K} "
+                        f"ST{tag} FN{tag} {K} CH{tag} {K} {K} {K}"
+                    )
+                else:
+                    body.append(
+                        f"  have r{i} := eval_res {env}.shape {M} Pt Ct {p} {w} (by norm_num) "
+                        f"hw1 (by norm_num) (by norm_num) {tag} σ0 L{tag} {K} {K} ST{tag} "
+                        f"FN{tag} {K} CH{tag} {K} {K} {K}"
+                    )
             else:
                 more, term = sym_decls(
                     self, tag, self.a.net if i == 0 else self.b.net, plan, env, unbnd
@@ -1673,6 +1719,18 @@ class _Refuter:
                 negated=True,
             )
         return out.source(lead=f"  refutation at {self.point_note()}, ζ = om {M}, mod {p}")
+
+    def dense_keys(self) -> dict[int, list[int]]:
+        """The phase vectors whose keys are every index below at least `PT_DENSE_MIN`, each
+        with its powers of `om M` in index order (`Pt` reads them by `getD`)."""
+        by_ph: dict[int, list[int]] = {}
+        for ph, j in self.keys:
+            by_ph.setdefault(ph, []).append(j)
+        return {
+            ph: [self.P(ph, j)[0] for j in range(len(js))]
+            for ph, js in by_ph.items()
+            if len(js) >= PT_DENSE_MIN and sorted(js) == list(range(len(js)))
+        }
 
     def l_text(self, lcd: int) -> str:
         """The multiplier `L` of `refute_res`: ``lcd`` times :attr:`lmul`."""
@@ -1728,14 +1786,63 @@ class _Refuter:
             return str(self.out.table_get(nums))
         return f"(({_ints(nums)}) : List ℤ).getD k 0"
 
+    def desc_cost(self, scope: Sequence[int], ins: Sequence[Any], l: int) -> int | None:
+        """The cursor steps of `descR` over ``scope`` with the factors ``ins`` summing ``l``,
+        a mirror of its descent on the packed tables; None past `DESC_MAX`."""
+        memo = self.__dict__.setdefault("_ptrees", {})
+        cs = []
+        for f in ins:
+            if id(f) not in memo:
+                memo[id(f)] = (f, _ptree(f, self.labdim))
+            cs.append((tuple(f[0]), memo[id(f)][1]))
+        steps = 0
+
+        def go(xs: Sequence[int], cs: list[tuple[tuple[int, ...], Any]]) -> bool:
+            nonlocal steps
+            dl = self.labdim(l)
+            steps += len(cs) * (1 if xs else 1 + dl + dl * (dl - 1) // 2)
+            if steps > DESC_MAX:
+                return False
+            if not xs or any(c[1] == (0,) for c in cs):
+                return True
+            x = xs[0]
+            for v in range(self.labdim(x)):
+                nxt = []
+                for c in cs:
+                    if c[0] and c[0][0] == x:
+                        steps += v
+                        nxt.append((c[0][1:], c[1] if len(c[1]) == 1 else c[1][1][v]))
+                    else:
+                        nxt.append(c)
+                if not go(xs[1:], nxt):
+                    return False
+            return True
+
+        return steps if go(list(scope), cs) else None
+
     def elim_decls(
-        self, name: str, l: int, fs: str, new: str, scope: Sequence[int], dim: str
+        self,
+        name: str,
+        l: int,
+        fs: str,
+        new: str,
+        scope: Sequence[int],
+        dim: str,
+        ins: Sequence[Any] | None = None,
     ) -> list[str]:
-        """The theorem ``name`` that `elimR` holds: one `decide +kernel`, or through
-        `elimR_chunks` one theorem per value list of the shortest prefix of ``scope`` whose
-        chunks hold at most `ELIM_CHUNK` entry sums each."""
+        """The theorem ``name`` that `elimR` holds: with `ELIM_DESCENT` by `elimT_ok` from one
+        `decide +kernel` when the descent over the factors ``ins`` takes at most `DESC_MAX`
+        cursor steps; otherwise one `decide +kernel`, or through `elimR_chunks` one theorem
+        per value list of the shortest prefix of ``scope`` whose chunks hold at most
+        `ELIM_CHUNK` entry sums each."""
         p = self.p
         head = f"elimR {p} {dim} {l} {fs} {new} = true"
+        if ELIM_DESCENT and (ins is None or self.desc_cost(scope, ins, l) is not None):
+            text = (
+                f"set_option maxHeartbeats 0 in\ntheorem {name} : {head} :=\n"
+                f"  elimT_ok {p} {dim} {l} {fs} {new} (by decide +kernel)"
+            )
+            return [text]
         d = [self.labdim(x) for x in scope]
         k = 0
         while k < len(scope) and math.prod(d[k:]) * self.labdim(l) > ELIM_CHUNK:
@@ -1832,7 +1939,40 @@ class _Refuter:
             else:
                 cache[key] = self.res_table(scope, leaf)
             leaves.append((scope, cache[key]))
-        return self.res_eliminate(leaves, list(dict.fromkeys(net.summed)))
+        return self.res_sorted(*self.res_eliminate(leaves, list(dict.fromkeys(net.summed))))
+
+    def res_sorted(
+        self, leaves: list[Any], steps: list[tuple[int, list[Any]]], final: list[Any]
+    ) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
+        """The plan with every factor's scope ordered by elimination step, latest first and
+        labels never eliminated before them, its table transposed to match."""
+        when = {l: k for k, (l, _fs) in enumerate(steps)}
+
+        def key(x: int) -> tuple[int, int]:
+            return (-when.get(x, len(steps)), x)
+
+        def sort(f: Any) -> Any:
+            scope, tab = f
+            new = tuple(sorted(scope, key=key))
+            if new == tuple(scope):
+                return f
+            dims = [self.labdim(x) for x in scope]
+            arr = np.asarray(tab, dtype=object).reshape(dims, order="F")
+            arr = arr.transpose([list(scope).index(x) for x in new])
+            return new, [int(v) for v in arr.reshape(-1, order="F")]
+
+        memo: dict[int, Any] = {}
+
+        def once(f: Any) -> Any:
+            if id(f) not in memo:
+                memo[id(f)] = (f, sort(f))
+            return memo[id(f)][1]
+
+        return (
+            [once(f) for f in leaves],
+            [(l, [once(f) for f in fs]) for l, fs in steps],
+            [once(f) for f in final],
+        )
 
     def res_eliminate(
         self, leaves: list[Any], labels: Sequence[int]
@@ -2139,6 +2279,23 @@ def _rfac(f: Any, dim: Callable[[int], int], packed: bool = False) -> str:
         return "RT.node [" + ", ".join(k[0] for k in kids) + "]", None
 
     return f"⟨{_ints_nat(list(scope))}, {nest(list(scope), 0, 1)[0]}⟩"
+
+
+def _ptree(f: Any, dim: Callable[[int], int]) -> Any:
+    """A residue factor's table as `_rfac` packs it: ``(v,)`` a leaf, ``("N", kids)`` a
+    level."""
+    scope, tab = f
+
+    def nest(rest: Sequence[int], base: int, stride: int) -> Any:
+        if not rest:
+            return (tab[base],)
+        d = dim(rest[0])
+        kids = [nest(rest[1:], base + v * stride, stride * d) for v in range(d)]
+        if all(len(k) == 1 for k in kids) and len({k[0] for k in kids}) == 1:
+            return kids[0]
+        return ("N", kids)
+
+    return nest(list(scope), 0, 1)
 
 
 def _anon(parts: str) -> str:

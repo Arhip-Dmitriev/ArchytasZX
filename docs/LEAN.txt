@@ -104,6 +104,7 @@ between two scaled networks under one environment: the same tensor, scalars incl
   Contract     exact evaluation of a network by checked variable elimination
   Cyclo        exact arithmetic in ℚ(ζ), ζ a root of unity; cyc_ne
   Refute       exact evaluation of a network at a point (eval_cyc); refute
+  RefuteMod    refutation by residues mod a prime (refute_res, eval_res, elimT; 5.1)
   Ball         ball arithmetic in ℂ for refutations involving π and irrational phases
   Completeness rule lemmas of the complete axiomatisation no earlier module states: wPerm,
                the outputs of a W node permuted; zPerm, the legs of a Z spider
@@ -1250,6 +1251,33 @@ skipped, so a large
 counterexample is replaced by the smallest sample point that still separates. When no point
 gives an exact refutation, the same points are tried by ball arithmetic (5.2). Boundary
 assignments are enumerated lazily, at most 4096 per point.
+
+Residue refutations (ArchytasZX.RefuteMod, refute_res) evaluate both networks mod a prime p = 1
+mod M at an element w of order M (prim_of): eval_res contracts residue factors (RFac, one
+nested table RT per scope) by a chain of eliminations (chainR, one theorem per step). Each
+step's elimR is proved by elimT_ok from one kernel check elimT: the scope conditions, every
+factor holding the label l with its scope read off by the new scope then l, and the new table
+equal (RT.beq) to descR, which builds it by descending through the factors' tables label by
+label, the cursors advanced at each value (adv1, advAll; descR_get), and sums l at the
+bottom. No assignment function is built per entry. Tables are packed: a level whose entries
+are one leaf is that leaf (RT.pack, _rfac packed), and descR returns the leaf 0 for a
+subtable once a cursor is the leaf 0, so a step costs about the entries it visits that no
+zero factor covers. A step whose descent takes more than DESC_MAX = 300000 cursor steps
+(lean_refute.desc_cost, a mirror of descR weighted by the child walks) is checked entry by
+entry by elimR, in chunks through elimR_chunks past ELIM_CHUNK = 2000 entry sums.
+lean_refute.res_sorted orders every scope by elimination step, latest first, and transposes
+the tables to match, for the table route and the substitution route (lean_subst) alike. An
+X node whose leaf table times its dimension d reaches LEAF_X_MIN = 2^14 is checked through
+eval_resG (leafG, LeafH): when its scope is its distinct legs, none pinned, by leafXD, its d
+residues at one output s and no inputs packed b bits each in a number G, and the leaf table
+equal to xdesc, the table of G read at (Σ outs + (d - 1) Σ ins) mod d (tmN_tXT, xdesc_get,
+sum_cf); otherwise by leafXR, each entry against a table g of the d residues. Pt reads a
+phase vector listed at every index below PT_DENSE_MIN = 16 or more by getD from one list of
+powers. incrementer! d=2 n=6, refuted mod 1048897: 133 s, 2.7 GB anon (was killed at 332 s
+near 5.4 GB); n=7: 84 s, 2.5 GB; a tampered residue fails the elimT of the steps that make
+and read it. incrementer! n=4 32 -> 26 s, n=5 109 s / 3.5 GB -> 59 s / 0.9 GB, qft! n=2 d=5
+33 -> 30 s, qft_zero_state! n=2 d=2 9 s / 361 -> 341 MB, quantum_hamming_family! n=3 d=2
+81 -> 46 s; semiclassical_qft! n=2 d=2 is unchanged.
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 

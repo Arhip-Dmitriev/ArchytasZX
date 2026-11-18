@@ -544,7 +544,7 @@ def _finish(
         cscopes.append(sc)
         leaves.append(_reduce(sc, table(sc, cons_entry), d))
     leaves.append(((), [st.c % p]))
-    plan = refuter.res_eliminate(leaves, free)
+    plan = refuter.res_sorted(*refuter.res_eliminate(leaves, free))
     value = refuter.res_final(plan[2], sigma)
     return Plan(states, frees, steps, plan[0], groups, scopes, cscopes, plan, value)
 

@@ -816,6 +816,481 @@ theorem elimR_chunks (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new
   have := (List.all_eq_true.1 h) vs hvs
   exact (List.all_eq_true.1 this) τ hτ
 
+/-! ## Eliminations by descent through the tables -/
+
+/-- A cursor's scope after reading the label `x`. -/
+def advS (x : ℕ) : List ℕ → List ℕ
+  | y :: ys => if y = x then ys else y :: ys
+  | [] => []
+
+/-- A cursor after reading the label `x` at the value `v`. -/
+def adv1 (x v : ℕ) (c : List ℕ × RT) : List ℕ × RT :=
+  match c.1 with
+  | y :: ys => if y = x then (ys, c.2.child v) else c
+  | [] => c
+
+/-- Cursors after reading the labels `xs` at their values in `σ`. -/
+def advAll (σ : ℕ → ℕ) : List ℕ → List (List ℕ × RT) → List (List ℕ × RT)
+  | [], cs => cs
+  | x :: xs, cs => advAll σ xs (cs.map (adv1 x (σ x)))
+
+/-- Scopes after reading the labels `xs`. -/
+def advSAll : List ℕ → List (List ℕ) → List (List ℕ)
+  | [], ss => ss
+  | x :: xs, ss => advSAll xs (ss.map (advS x))
+
+/-- The product mod `p` of the cursors' leaf values. -/
+def rfoldL (p : ℕ) (cs : List (List ℕ × RT)) : ℕ :=
+  cs.foldr (fun c acc => RT.get (fun _ => 0) [] c.2 * acc % p) 1
+
+/-- Every entry of a level is the leaf `v`. -/
+def RT.allLeaf (v : ℕ) : RT → Bool
+  | .nil => true
+  | .cons (.leaf u) t => u == v && RT.allLeaf v t
+  | _ => false
+
+/-- A level whose entries are all one leaf, as that leaf. -/
+def RT.pack : RT → RT
+  | .cons (.leaf v) t => if RT.allLeaf v t then .leaf v else .cons (.leaf v) t
+  | T => T
+
+/-- The table is the leaf `0`. -/
+def RT.isZ : RT → Bool
+  | .leaf 0 => true
+  | _ => false
+
+/-- The table over the labels `xs` of the sum over `l` of the cursors' products, read by
+descending through their tables; a level whose entries are one leaf is that leaf, and a
+subtable is the leaf `0` once a cursor is. -/
+def descR (p : ℕ) (D : ℕ → ℕ) (l : ℕ) : List ℕ → List (List ℕ × RT) → RT
+  | [], cs => .leaf (((List.range (D l)).map fun v => rfoldL p (cs.map (adv1 l v))).sum % p)
+  | x :: xs, cs => if cs.any (fun c => c.2.isZ) then .leaf 0 else
+      RT.pack (RT.node ((List.range (D x)).map fun v => descR p D l xs (cs.map (adv1 x v))))
+
+/-- Equality of tables as a `Bool` by structural recursion. -/
+def RT.beq : RT → RT → Bool
+  | .leaf a, .leaf b => a == b
+  | .nil, .nil => true
+  | .cons a s, .cons b t => RT.beq a b && RT.beq s t
+  | _, _ => false
+
+theorem RT.eq_of_beq : ∀ a b : RT, RT.beq a b = true → a = b
+  | .leaf a, .leaf b, h => by simp only [RT.beq, beq_iff_eq] at h; rw [h]
+  | .nil, .nil, _ => rfl
+  | .cons a s, .cons b t, h => by
+    simp only [RT.beq, Bool.and_eq_true] at h
+    rw [RT.eq_of_beq a b h.1, RT.eq_of_beq s t h.2]
+  | .leaf _, .nil, h | .leaf _, .cons _ _, h | .nil, .leaf _, h | .nil, .cons _ _, h
+  | .cons _ _, .leaf _, h | .cons _ _, .nil, h => by simp [RT.beq] at h
+
+/-- `elimR` checked by one descent: the scope conditions, every scope of a factor with `l`
+read off by `new.scope` then `l`, and `new.table` the descent's table. -/
+def elimT (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac) : Bool :=
+  let ins := Fs.filter fun F => F.scope.contains l
+  elimS l Fs new && (advSAll (new.scope ++ [l]) (ins.map RFac.scope)).all (· == []) &&
+    RT.beq new.table (descR p D l new.scope (ins.map fun F => (F.scope, F.table)))
+
+theorem RT.child_node (L : List RT) : ∀ k (h : k < L.length), (RT.node L).child k = L[k]'h := by
+  induction L with
+  | nil => intro k h; simp at h
+  | cons a L ih =>
+    intro k h
+    cases k with
+    | zero => rfl
+    | succ k =>
+      show (RT.node L).child k = _
+      rw [ih k (by simpa using h)]
+      rfl
+
+theorem adv1_get (σ : ℕ → ℕ) (x : ℕ) (c : List ℕ × RT) :
+    RT.get σ (adv1 x (σ x) c).1 (adv1 x (σ x) c).2 = RT.get σ c.1 c.2 := by
+  obtain ⟨s, T⟩ := c
+  cases s with
+  | nil => rfl
+  | cons y ys =>
+    by_cases h : y = x
+    · subst h; simp [adv1, RT.get]
+    · simp [adv1, h]
+
+theorem adv1_fst (x v : ℕ) (c : List ℕ × RT) : (adv1 x v c).1 = advS x c.1 := by
+  obtain ⟨s, T⟩ := c
+  cases s with
+  | nil => rfl
+  | cons y ys => by_cases h : y = x <;> simp [adv1, advS, h]
+
+theorem advAll_get (σ : ℕ → ℕ) : ∀ (xs : List ℕ) (cs : List (List ℕ × RT)),
+    (advAll σ xs cs).map (fun c => RT.get σ c.1 c.2) = cs.map fun c => RT.get σ c.1 c.2 := by
+  intro xs
+  induction xs with
+  | nil => intro cs; rfl
+  | cons x xs ih =>
+    intro cs
+    simp only [advAll, ih, List.map_map]
+    exact List.map_congr_left fun c _ => adv1_get σ x c
+
+theorem advAll_fst (σ : ℕ → ℕ) : ∀ (xs : List ℕ) (cs : List (List ℕ × RT)),
+    (advAll σ xs cs).map Prod.fst = advSAll xs (cs.map Prod.fst) := by
+  intro xs
+  induction xs with
+  | nil => intro cs; rfl
+  | cons x xs ih =>
+    intro cs
+    simp only [advAll, advSAll, ih, List.map_map]
+    congr 1
+    exact List.map_congr_left fun c _ => adv1_fst x (σ x) c
+
+theorem advAll_congr (σ τ : ℕ → ℕ) : ∀ (xs : List ℕ) (cs : List (List ℕ × RT)),
+    (∀ x ∈ xs, σ x = τ x) → advAll σ xs cs = advAll τ xs cs := by
+  intro xs
+  induction xs with
+  | nil => intro cs _; rfl
+  | cons x xs ih =>
+    intro cs h
+    simp only [advAll, h x List.mem_cons_self]
+    exact ih _ fun y hy => h y (List.mem_cons_of_mem _ hy)
+
+theorem advAll_append (σ : ℕ → ℕ) : ∀ (xs ys : List ℕ) (cs : List (List ℕ × RT)),
+    advAll σ (xs ++ ys) cs = advAll σ ys (advAll σ xs cs) := by
+  intro xs
+  induction xs with
+  | nil => intro ys cs; rfl
+  | cons x xs ih => intro ys cs; exact ih ys _
+
+theorem RT.get_leaf (σ : ℕ → ℕ) (v : ℕ) : ∀ ls : List ℕ, RT.get σ ls (.leaf v) = v
+  | [] => rfl
+  | _ :: ls => by simp only [RT.get, RT.child]; exact RT.get_leaf σ v ls
+
+theorem RT.allLeaf_child (v : ℕ) : ∀ (L : List RT) (k : ℕ), k < L.length →
+    RT.allLeaf v (RT.node L) = true → (RT.node L).child k = .leaf v := by
+  intro L
+  induction L with
+  | nil => intro k h; simp at h
+  | cons a L ih =>
+    intro k hk ha
+    have hn : RT.node (a :: L) = .cons a (RT.node L) := rfl
+    rw [hn] at ha ⊢
+    cases a with
+    | leaf u =>
+      simp only [RT.allLeaf, Bool.and_eq_true, beq_iff_eq] at ha
+      cases k with
+      | zero => simp only [RT.child, ha.1]
+      | succ k => exact ih k (by simpa using hk) ha.2
+    | nil => simp [RT.allLeaf] at ha
+    | cons _ _ => simp [RT.allLeaf] at ha
+
+theorem RT.pack_get (σ : ℕ → ℕ) (x : ℕ) (ls : List ℕ) (L : List RT) (h : σ x < L.length) :
+    RT.get σ (x :: ls) (RT.pack (RT.node L)) = RT.get σ (x :: ls) (RT.node L) := by
+  cases L with
+  | nil => simp at h
+  | cons a L =>
+    have hn : RT.node (a :: L) = .cons a (RT.node L) := rfl
+    rw [hn]
+    cases a with
+    | leaf v =>
+      by_cases ha : RT.allLeaf v (RT.node L) = true
+      · have hl : RT.allLeaf v (RT.node (.leaf v :: L)) = true := by
+          rw [hn]; simp [RT.allLeaf, ha]
+        have hc := RT.allLeaf_child v (.leaf v :: L) (σ x) h hl
+        rw [hn] at hc
+        simp only [RT.pack, ha, ite_true, RT.get, RT.child, hc]
+      · simp only [RT.pack, ha, Bool.false_eq_true, ite_false]
+    | nil => rfl
+    | cons _ _ => rfl
+
+theorem RT.isZ_eq : ∀ T : RT, T.isZ = true → T = .leaf 0
+  | .leaf 0, _ => rfl
+  | .leaf (_ + 1), h => by simp [RT.isZ] at h
+  | .nil, h => by simp [RT.isZ] at h
+  | .cons _ _, h => by simp [RT.isZ] at h
+
+theorem adv1_leaf (x v u : ℕ) (c : List ℕ × RT) (h : c.2 = .leaf u) :
+    (adv1 x v c).2 = .leaf u := by
+  obtain ⟨s, T⟩ := c
+  simp only at h
+  subst h
+  cases s with
+  | nil => rfl
+  | cons y ys => by_cases e : y = x <;> simp [adv1, e, RT.child]
+
+theorem zero_map (x v : ℕ) (cs : List (List ℕ × RT)) (h : ∃ c ∈ cs, c.2 = .leaf 0) :
+    ∃ c ∈ cs.map (adv1 x v), c.2 = .leaf 0 := by
+  obtain ⟨c, hc, h0⟩ := h
+  exact ⟨adv1 x v c, List.mem_map_of_mem hc, adv1_leaf x v 0 c h0⟩
+
+theorem zero_advAll (σ : ℕ → ℕ) : ∀ (xs : List ℕ) (cs : List (List ℕ × RT)),
+    (∃ c ∈ cs, c.2 = .leaf 0) → ∃ c ∈ advAll σ xs cs, c.2 = .leaf 0 := by
+  intro xs
+  induction xs with
+  | nil => intro cs h; exact h
+  | cons x xs ih => intro cs h; exact ih _ (zero_map x (σ x) cs h)
+
+theorem rfoldL_zero (p : ℕ) : ∀ cs : List (List ℕ × RT), (∃ c ∈ cs, c.2 = .leaf 0) →
+    rfoldL p cs = 0 := by
+  intro cs
+  induction cs with
+  | nil => intro h; simp at h
+  | cons c cs ih =>
+    intro h
+    obtain ⟨d, hd, h0⟩ := h
+    simp only [rfoldL, List.foldr_cons]
+    rcases List.mem_cons.1 hd with rfl | hd
+    · rw [h0, RT.get_leaf]; simp
+    · have := ih ⟨d, hd, h0⟩
+      simp only [rfoldL] at this
+      rw [this]; simp
+
+theorem descR_get (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (τ : ℕ → ℕ) : ∀ (xs : List ℕ)
+    (cs : List (List ℕ × RT)), (∀ x ∈ xs, τ x < D x) →
+    RT.get τ xs (descR p D l xs cs) =
+      ((List.range (D l)).map fun v => rfoldL p ((advAll τ xs cs).map (adv1 l v))).sum % p := by
+  intro xs
+  induction xs with
+  | nil => intro cs _; rfl
+  | cons x xs ih =>
+    intro cs h
+    by_cases hz : cs.any (fun c => c.2.isZ) = true
+    · obtain ⟨c, hc, hcz⟩ := List.any_eq_true.1 hz
+      have hz0 : ∃ c ∈ cs, c.2 = .leaf 0 := ⟨c, hc, RT.isZ_eq _ hcz⟩
+      have h0 : ∀ v, rfoldL p ((advAll τ (x :: xs) cs).map (adv1 l v)) = 0 := fun v =>
+        rfoldL_zero p _ (zero_map l v _ (zero_advAll τ _ cs hz0))
+      simp only [descR, hz, ite_true, RT.get_leaf, h0, List.map_const', List.sum_replicate,
+        smul_eq_mul, mul_zero, Nat.zero_mod]
+    · have hd : τ x < ((List.range (D x)).map fun v =>
+          descR p D l xs (cs.map (adv1 x v))).length := by
+        simpa using h x List.mem_cons_self
+      simp only [descR, hz, Bool.false_eq_true, ite_false]
+      rw [RT.pack_get _ _ _ _ hd]
+      simp only [RT.get, advAll]
+      rw [RT.child_node _ _ hd]
+      simp only [List.getElem_map, List.getElem_range]
+      exact ih _ fun y hy => h y (List.mem_cons_of_mem _ hy)
+
+theorem assigns_lt (D : ℕ → ℕ) : ∀ (ls : List ℕ) (τ : ℕ → ℕ), τ ∈ assigns D ls →
+    ∀ x ∈ ls, τ x < D x := by
+  intro ls
+  induction ls with
+  | nil => intro τ _ x hx; simp at hx
+  | cons l ls ih =>
+    intro τ hτ x hx
+    simp only [assigns, List.mem_flatMap, List.mem_map, List.mem_range] at hτ
+    obtain ⟨τ1, h1, j, hj, rfl⟩ := hτ
+    by_cases e : x = l
+    · subst e; simpa using hj
+    · rw [Function.update_of_ne e]
+      exact ih τ1 h1 x ((List.mem_cons.1 hx).resolve_left e)
+
+theorem rfold_eq_foldr (p : ℕ) (Fs : List RFac) (σ : ℕ → ℕ) :
+    rfold p Fs σ = (Fs.map fun F => F.at σ).foldr (fun a acc => a * acc % p) 1 := by
+  induction Fs with
+  | nil => rfl
+  | cons F Fs ih => simp only [rfold, List.foldr_cons, List.map_cons] at ih ⊢; rw [ih]
+
+theorem rfoldL_eq (p : ℕ) (σ : ℕ → ℕ) (cs : List (List ℕ × RT)) (h : ∀ c ∈ cs, c.1 = []) :
+    rfoldL p cs = (cs.map fun c => RT.get σ c.1 c.2).foldr (fun a acc => a * acc % p) 1 := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih =>
+    simp only [rfoldL, List.foldr_cons, List.map_cons] at ih ⊢
+    rw [ih fun c' hc' => h c' (List.mem_cons_of_mem _ hc'), h c List.mem_cons_self]
+    obtain ⟨s, T⟩ := c
+    cases T <;> rfl
+
+theorem elimT_ok (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac)
+    (h : elimT p D l Fs new = true) : elimR p D l Fs new = true := by
+  simp only [elimT, Bool.and_eq_true, beq_iff_eq, List.all_eq_true] at h
+  obtain ⟨⟨hS, hE⟩, hT⟩ := h
+  have hT := RT.eq_of_beq _ _ hT
+  rw [elimR_split, hS, Bool.true_and, List.all_eq_true]
+  intro τ hτ
+  have hl : l ∉ new.scope := by
+    simp only [elimS, Bool.and_eq_true, Bool.not_eq_true'] at hS
+    simpa using hS.1.1
+  simp only [elimV, beq_iff_eq, RFac.at]
+  rw [hT, descR_get p D l τ _ _ (assigns_lt D _ τ hτ)]
+  congr 2
+  refine List.map_congr_left fun j _ => ?_
+  set ins := Fs.filter fun F => F.scope.contains l
+  set σ := Function.update τ l j
+  have hc : advAll τ new.scope (ins.map fun F => (F.scope, F.table)) =
+      advAll σ new.scope (ins.map fun F => (F.scope, F.table)) :=
+    advAll_congr τ σ _ _ fun x hx =>
+      (Function.update_of_ne (show x ≠ l from fun e => hl (by rw [← e]; exact hx)) _ _).symm
+  have hfin : (advAll σ new.scope (ins.map fun F => (F.scope, F.table))).map (adv1 l j) =
+      advAll σ (new.scope ++ [l]) (ins.map fun F => (F.scope, F.table)) := by
+    rw [advAll_append]
+    simp [advAll, σ]
+  rw [hc, hfin, rfold_eq_foldr]
+  have hnil : ∀ c ∈ advAll σ (new.scope ++ [l]) (ins.map fun F => (F.scope, F.table)),
+      c.1 = [] := by
+    intro c hc'
+    have hm : c.1 ∈ (advAll σ (new.scope ++ [l]) (ins.map fun F => (F.scope, F.table))).map
+        Prod.fst := List.mem_map_of_mem hc'
+    rw [advAll_fst, List.map_map] at hm
+    exact hE _ hm
+  rw [rfoldL_eq p σ _ hnil, advAll_get, List.map_map]
+  rfl
+
+theorem tmN_map_congr (p w M : ℕ) (l : List ℕ) (f g : ℕ → ℤ × ℕ × List ℤ)
+    (h : ∀ k ∈ l, (f k).1 = (g k).1 ∧ (f k).2.1 % M = (g k).2.1 % M) :
+    tmN p w M (l.map f) = tmN p w M (l.map g) := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+    have ih' := ih fun k hk => h k (List.mem_cons_of_mem _ hk)
+    simp only [tmN, List.map_cons, List.foldr_cons] at ih' ⊢
+    rw [ih', (h a List.mem_cons_self).1, (h a List.mem_cons_self).2]
+
+/-- The X spider's residue reads its legs only through `(Σ os + (d - 1) Σ is) % d`. -/
+theorem tmN_tXT (p w M d : ℕ) (P : ℕ → ℕ × List ℤ) (hd : 0 < d) (hdM : d ∣ M)
+    (os is : List ℕ) :
+    tmN p w M (tXT M P d os is) =
+      tmN p w M (tXT M P d [(os.sum + (d - 1) * is.sum) % d] []) := by
+  unfold tXT
+  apply tmN_map_congr
+  intro k _
+  refine ⟨rfl, ?_⟩
+  obtain ⟨r, rfl⟩ := hdM
+  rw [Nat.mul_div_cancel_left _ hd]
+  simp only [List.sum_cons, List.sum_nil, add_zero, mul_zero]
+  set x := os.sum + (d - 1) * is.sum
+  have hx : r * (k * os.sum) + r * ((d - 1) * (k * is.sum)) =
+      r * (k * (x % d)) + d * r * (k * (x / d)) := by
+    have e := Nat.mod_add_div x d
+    calc r * (k * os.sum) + r * ((d - 1) * (k * is.sum)) = r * k * x := by
+          simp only [x]; ring
+      _ = r * k * (x % d + d * (x / d)) := by rw [e]
+      _ = _ := by ring
+  rw [add_assoc, hx, ← add_assoc, Nat.add_mul_mod_self_left]
+
+/-- An X node's factor holds the entry of `g` at `(Σ outs + (d - 1) Σ ins) % d`, with its labels
+in `U` read from `σ`, and covers its other labels; `g` holds the residue of the node's entry with
+the one output `s` and no inputs at each `s < d`. -/
+def leafXR (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p w : ℕ) (U : List ℕ) (σ : ℕ → ℕ)
+    (n : Node) (F : RFac) (g : RT) : Bool :=
+  let d := S.dimv n.dim
+  (n.kind == .X && M % d == 0 && 0 < d) &&
+    (n.outs ++ n.ins).all (fun x => F.scope.contains x || U.contains x) &&
+    (List.range d).all (fun s => g.get (fun _ => s) [0] == tmN p w M (tXT M (P n.ph) d [s] [])) &&
+    (assigns S.dim F.scope).all fun τ => F.at τ == g.get (fun _ =>
+      ((n.outs.map (pin U σ τ)).sum + (d - 1) * (n.ins.map (pin U σ τ)).sum) % d) [0]
+
+theorem leafXR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) (n : Node) (F : RFac) (g : RT)
+    (h : leafXR S M P p w U σ n F g = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
+    (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
+  simp only [leafXR, Bool.and_eq_true, List.all_eq_true, List.contains_iff_mem,
+    beq_iff_eq, Bool.or_eq_true, decide_eq_true_eq, List.mem_range] at h
+  obtain ⟨⟨⟨⟨⟨hk, hmod⟩, hd⟩, hcov⟩, hg⟩, hF⟩ := h
+  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim F.scope τ hτ
+  have hdM : S.dimv n.dim ∣ M := Nat.dvd_of_mod_eq_zero hmod
+  have hval : valW S M P C τ n = valW S M P C (pin U σ ρ) n := by
+    refine valW_congr S M P C n τ (pin U σ ρ) fun l hl => ?_
+    unfold pin
+    by_cases hu : l ∈ U
+    · simp [hu, hU l hu]
+    · have hF' : l ∈ F.scope := (hcov l hl).resolve_right hu
+      simp [hu, hρτ l hF']
+  have hbs : isBS n = false := by simp [isBS, hk]
+  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, hF ρ hρ, hval, ← tmN_cast p w M hp hw hM0 hMb]
+  congr 1
+  simp only [valW, hbs, Bool.false_eq_true, ite_false, hk, tensorW, tensorT]
+  rw [tmN_tXT p w M _ (P n.ph) hd hdM, hg _ (Nat.mod_lt _ hd)]
+
+/-- The table over `xs` of the entry of the packed table `G` (`b` bits each) at `s` plus the
+weighted sum of the labels mod `d`; a level whose entries are one leaf is that leaf. -/
+def xdesc (D : ℕ → ℕ) (d G b : ℕ) (cf : ℕ → ℕ) : List ℕ → ℕ → RT
+  | [], s => .leaf ((G >>> (b * (s % d))) % 2 ^ b)
+  | x :: xs, s => RT.pack (RT.node ((List.range (D x)).map fun v => xdesc D d G b cf xs (s + cf x * v)))
+
+theorem xdesc_get (D : ℕ → ℕ) (d G b : ℕ) (cf : ℕ → ℕ) (τ : ℕ → ℕ) : ∀ (xs : List ℕ) (s : ℕ),
+    (∀ x ∈ xs, τ x < D x) → RT.get τ xs (xdesc D d G b cf xs s) =
+      (G >>> (b * ((s + (xs.map fun x => cf x * τ x).sum) % d))) % 2 ^ b := by
+  intro xs
+  induction xs with
+  | nil => intro s _; simp [xdesc, RT.get]
+  | cons x xs ih =>
+    intro s h
+    have hd : τ x < ((List.range (D x)).map fun v => xdesc D d G b cf xs (s + cf x * v)).length := by
+      simpa using h x List.mem_cons_self
+    simp only [xdesc]
+    rw [RT.pack_get _ _ _ _ hd]
+    simp only [RT.get]
+    rw [RT.child_node _ _ hd]
+    simp only [List.getElem_map, List.getElem_range, List.map_cons, List.sum_cons]
+    rw [ih _ fun y hy => h y (List.mem_cons_of_mem _ hy), Nat.add_assoc]
+
+/-- An X node's factor over exactly its legs, none in `U`, is the table of `G` read at
+`(Σ outs + (d - 1) Σ ins) mod d`, and `G` holds the residue of the node's entry with the one
+output `s` and no inputs at each `s < d`, `b` bits each. -/
+def leafXD (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p w : ℕ) (U : List ℕ) (n : Node)
+    (F : RFac) (G b : ℕ) : Bool :=
+  let d := S.dimv n.dim
+  (n.kind == .X && M % d == 0 && 0 < d) && (n.outs ++ n.ins).Nodup &&
+    (n.outs ++ n.ins).isPerm F.scope && (n.outs ++ n.ins).all (fun x => !U.contains x) &&
+    (List.range d).all (fun s => (G >>> (b * s)) % 2 ^ b == tmN p w M (tXT M (P n.ph) d [s] [])) &&
+    RT.beq F.table (xdesc S.dim d G b
+      (fun x => (if n.outs.contains x then 1 else 0) + (if n.ins.contains x then d - 1 else 0))
+      F.scope 0)
+
+theorem sum_cf (d : ℕ) (os is : List ℕ) (hnd : (os ++ is).Nodup) (τ : ℕ → ℕ) :
+    ((os ++ is).map fun x => ((if os.contains x then 1 else 0) +
+      (if is.contains x then d - 1 else 0)) * τ x).sum = (os.map τ).sum + (d - 1) * (is.map τ).sum := by
+  rw [List.nodup_append] at hnd
+  obtain ⟨_, _, hdis⟩ := hnd
+  rw [List.map_append, List.sum_append, ← List.sum_map_mul_left]
+  congr 1
+  · congr 1
+    refine List.map_congr_left fun x hx => ?_
+    have : x ∉ is := fun h => hdis x hx x h rfl
+    simp [hx, this]
+  · congr 1
+    refine List.map_congr_left fun x hx => ?_
+    have : x ∉ os := fun h => hdis x h x hx rfl
+    simp [hx, this]
+
+theorem leafXD_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (n : Node) (F : RFac) (G b : ℕ)
+    (h : leafXD S M P p w U n F G b = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l) :
+    tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
+  simp only [leafXD, Bool.and_eq_true, List.all_eq_true, beq_iff_eq, decide_eq_true_eq,
+    List.mem_range, List.isPerm_iff] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨hk, hmod⟩, hd⟩, hnd⟩, hperm⟩, _⟩, hG⟩, hT⟩ := h
+  have hT := RT.eq_of_beq _ _ hT
+  have hdM : S.dimv n.dim ∣ M := Nat.dvd_of_mod_eq_zero hmod
+  have hbs : isBS n = false := by simp [isBS, hk]
+  rw [← tmN_cast p w M hp hw hM0 hMb]
+  simp only [valW, hbs, Bool.false_eq_true, ite_false, hk, tensorW, tensorT]
+  have key : ∀ f : ℕ → ℕ, (F.scope.map f).sum = ((n.outs ++ n.ins).map f).sum :=
+    fun f => ((hperm.map f).sum_eq).symm
+  rw [tmN_tXT p w M _ (P n.ph) hd hdM, ← hG _ (Nat.mod_lt _ hd), RFac.at, hT,
+    xdesc_get _ _ _ _ _ τ _ _ hτ, Nat.zero_add, key, sum_cf _ _ _ hnd τ]
+
+/-- How a leaf is checked: by `leafR`, by `leafXR` with the table `g`, or by `leafXD` with
+the packed table `G` of `b`-bit entries. -/
+inductive LeafH where
+  | plain : LeafH
+  | x : RT → LeafH
+  | xd : ℕ → ℕ → LeafH
+
+/-- A leaf check as its `LeafH` says. -/
+def leafG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (U : List ℕ) (σ : ℕ → ℕ) (n : Node) (F : RFac) : LeafH → Bool
+  | .plain => leafR S M P C p w U σ n F
+  | .x g => leafXR S M P p w U σ n F g
+  | .xd G b => leafXD S M P p w U n F G b
+
+theorem leafG_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) (n : Node) (F : RFac) (g : LeafH)
+    (h : leafG S M P C p w U σ n F g = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
+    (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
+  cases g with
+  | plain => exact leafR_val S M P C p w hp hw hM0 hMb U σ n F h τ hτ hU
+  | x g => exact leafXR_val S M P C p w hp hw hM0 hMb U σ n F g h τ hτ hU
+  | xd G b => exact leafXD_val S M P C p w hp hw hM0 hMb U n F G b h τ hτ
+
 /-- The factors of `Fs` without `l`, then `new`. -/
 def elimStepR (l : ℕ) (Fs : List RFac) (new : RFac) : List RFac :=
   Fs.filter (fun F => !F.scope.contains l) ++ [new]
@@ -979,6 +1454,65 @@ theorem eval_res (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C 
   show tmv p w (prodW S M P C N.nodes τ) = rprod p leaves τ
   rw [tmv_prodW]
   refine prod_leavesR S M P C p w hp hw hM0 hMb N.bnd σ N.nodes leaves hlen hleaf τ ?_ ?_
+  · intro F hF x hxF
+    rcases scopesR_leaves N.bnd leaves steps hscope F hF x hxF with hb | hs
+    · by_cases hm : x ∈ (steps.map Prod.fst).reverse
+      · exact hr x hm
+      · rw [hτ x hm]; exact hσ x hb
+    · exact hr x (by simpa using hs)
+  · intro x hx
+    apply hτ x
+    have := hdis x hx
+    simpa using this
+
+theorem prod_leavesG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) :
+    ∀ (ns : List Node) (leaves : List RFac) (gs : List LeafH), leaves.length = ns.length →
+      gs.length = ns.length →
+      (ns.zip (leaves.zip gs)).all (fun q => leafG S M P C p w U σ q.1 q.2.1 q.2.2) = true →
+      ∀ τ, (∀ F ∈ leaves, ∀ x ∈ F.scope, τ x < S.dim x) → (∀ x ∈ U, τ x = σ x) →
+        (ns.map fun n => tmv p w (valW S M P C τ n)).prod = rprod p leaves τ := by
+  intro ns
+  induction ns with
+  | nil => intro leaves gs hlen _ _ τ _ _; cases leaves <;> simp_all [rprod]
+  | cons n ns ih =>
+    intro leaves gs hlen hglen hleaf τ hτ hU
+    cases leaves with
+    | nil => simp at hlen
+    | cons F Fs =>
+      cases gs with
+      | nil => simp at hglen
+      | cons g gs =>
+        simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hleaf
+        have h1 := ih Fs gs (by simpa using hlen) (by simpa using hglen) hleaf.2 τ
+          (fun F hF => hτ F (by simp [hF])) hU
+        simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
+        rw [h1, leafG_val S M P C p w hp hw hM0 hMb U σ n F g hleaf.1 τ (hτ F (by simp)) hU]
+
+/-- `eval_res` with each leaf checked by `leafG` and its table in `gs`. -/
+theorem eval_resG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (N : Net)
+    (σ : ℕ → ℕ) (leaves : List RFac) (gs : List LeafH)
+    (hlen : leaves.length = N.nodes.length ∧ gs.length = N.nodes.length)
+    (hleaf : (N.nodes.zip (leaves.zip gs)).all
+      (fun q => leafG S M P C p w N.bnd σ q.1 q.2.1 q.2.2) = true)
+    (steps : List (ℕ × RFac)) (final : List RFac)
+    (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainR p S.dim leaves steps final = true)
+    (hscope : scopesR N.bnd leaves steps = true)
+    (hdis : N.bnd.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hσ : ∀ x ∈ N.bnd, σ x < S.dim x) :
+    tmv p w (sumLT S.dim N.int (prodW S M P C N.nodes) σ) = (rfold p final σ : ZMod p) := by
+  rw [tmv_sumLT, sumR_perm _ hperm, rfold_cast]
+  simp only [List.all_eq_true, Bool.not_eq_true'] at hdis
+  rw [← chainR_val p S.dim N.bnd steps leaves final hchain hscope σ hσ]
+  apply sumR_congr
+  intro τ hτ hr
+  show tmv p w (prodW S M P C N.nodes τ) = rprod p leaves τ
+  rw [tmv_prodW]
+  refine prod_leavesG S M P C p w hp hw hM0 hMb N.bnd σ N.nodes leaves gs hlen.1 hlen.2 hleaf τ
+    ?_ ?_
   · intro F hF x hxF
     rcases scopesR_leaves N.bnd leaves steps hscope F hF x hxF with hb | hs
     · by_cases hm : x ∈ (steps.map Prod.fst).reverse
