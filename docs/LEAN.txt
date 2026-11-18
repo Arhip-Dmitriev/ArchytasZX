@@ -169,6 +169,20 @@ between two scaled networks under one environment: the same tensor, scalars incl
                ends read through pv, prod_single and sumOver_prod_sep); evalL_eq_of_gad: equal
                family networks of two gadget diagrams give equal linked digit sums at every slot
                digits in range
+  PairBox      pair boxes (DPair: id, parent node box, left and right port, the node a copy
+               holds) and PDiagram (a Diagram with a pairs field, [] by default);
+               Diagram.expandPair, the pair box over the node box holding every node at K copies
+               (PDiagram.expandP); PairOK, the form the pair bridge reads (decidable); tmpl, the
+               template's network without its pair legs; plab and pairNet, the expansion's
+               labelling and network
+  PairNet      equal_expandPair: the expansion's network (toNet, any offset above the slots)
+               equals pairNet at every K (equal_netBy)
+  PairEval     eval_pairNet: pairNet is the template at each copy's slots times, per pair
+               j < k, the pair node's entry at copy k's pinned slot and copy j's (pinOK: a chain
+               of Z spiders from the pair port's node to a slot); sum_dropZ (a label read once by
+               a Z spider summed out drops that leg), sumOver_blocks (blocks on disjoint labels)
+  PairFam      pair_family: two pair boxes pinned to the same slots, templates equal as
+               a TA = b TB, have expansions equal as c a^K against c b^K at every K
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
                MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
                cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed
@@ -341,6 +355,31 @@ the engine's diagrams D0, C0, D1, checked equal to DL, cL, DR by decide, and mai
 (D0.expandChain C0 n) and (D1.expand (ksOf [n])) at offset 2 n + 2, from cyclic_every; lean_net.export
 tries it when its own export fails on a theorem with free multiplicities, and point claims are its
 corollary (4.7). cyclic_shift: 1967 bytes with n free, 2297 at n = 10^3, 2318 at n = 10^6.
+PairBox.lean, PairNet.lean, PairEval.lean, PairFam.lean: pair boxes. A pair box (the engine's
+pairs P of V) holds one node, copied once per pair of copies j < k of its parent node box, its
+input wired to copy j's port left and its output to copy k's port right. In Lean it is a DPair
+beside the Diagram (PDiagram: a Diagram with a pairs field, [] by default, so literals without
+pairs are unchanged); its node and the two wires to it are not in the Diagram, whose left and
+right legs dangle. Diagram.expandPair D p K is the expansion of a diagram whose only box is a node
+box holding every node: copy j of node x has id 2 Nat.pair j x, every leg grown in place as the
+engine grows it (left to K - 1 - j legs, one per later copy; right to j legs, one per earlier
+copy; growC, posC), the boundary copy by copy, and the pair (j, k)'s node has id
+2 Nat.pair j k + 1. PairOK (decided by the kernel) holds the form the bridge reads: every node in
+the box, no inputs, the pair ports dangling and last on their sides (left just before right on a
+shared side), every other leg on the boundary or a wire, wire ends and slots labelled in order by
+D.label m, the pair node an F of one leg each way, dimension index 0 everywhere.
+equal_expandPair: for every K and offset o >= K m, (D.expandPair p K).toNet o equals pairNet p K,
+the expansion labelled by plab (copy j's slot x at j m + x, its template wire label m + i at
+K m + j L + i, the pair (j, k)'s left leg at gL j k and right leg at gR j k; equal_netBy).
+eval_pairNet: when pinOK holds for both pair ports (a chain certificate of Z spiders of the
+template tmpl from the port's node to a slot sL, sR), pairNet at every boundary value is the
+product over the copies of tmpl at the copy's slots times, per pair j < k, the pair node's F entry
+at copy k's slot sR and copy j's slot sL, omega^(x_k x_j) / sqrt D: on the support of the copies
+every Z spider's legs agree (tZ_const), so each pair leg reads its slot (chain_val) and the pair
+nodes are a constant factor; each pair leg, read once by a Z spider, is summed out (sum_dropZ);
+the copies, on disjoint labels, give a product (sumOver_blocks), each the template renamed by shJ
+(sumOver_rename). pair_family: two such diagrams pinned to the same slots, their templates equal
+as a TA = b TB, are equal as c a^K against c b^K at every K.
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.

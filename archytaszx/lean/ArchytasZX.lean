@@ -104,3 +104,7 @@ import ArchytasZX.PhaseMap
 import ArchytasZX.CopyPin
 import ArchytasZX.CopyBridge
 import ArchytasZX.ChainNode
+import ArchytasZX.PairBox
+import ArchytasZX.PairNet
+import ArchytasZX.PairEval
+import ArchytasZX.PairFam
