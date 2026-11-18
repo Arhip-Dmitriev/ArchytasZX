@@ -5,7 +5,7 @@ The Lean 4 Library and Proof Export
 
 Applies to: ArchytasZX 2.0.x
 Lean library: archytaszx/lean (Lean 4.35.0, Mathlib)
-Exporters: archytaszx.semantics.kernel (lean), lean_net, lean_sym, lean_refute, lean_numeric,
+Exporters: archytaszx.semantics.kernel (lean), lean_net, lean_sym, lean_pairs, lean_refute, lean_numeric,
            lean_scalar
 
 
@@ -390,6 +390,22 @@ the pairs by the second copy; om_two gives ω_{2D}^2 = ω_D for every D > 0, odd
 Π_{j<k} F(x_k, x_j) = (√D)⁻¹^(K (K - 1) / 2) ω_{2D}^(S^2 - Q). eval_pairNet_sum: with both pair
 legs pinned to one slot s (complete_graph_state), the pair box's network is the template at each
 copy's slots times that factor, S and Q over the copies' values at s.
+lean_pairs.export_pair_family writes that proof for a family pair whose sides each hold one node
+box over every node and one pair box over it (one F from its left to its right port; Z, X and F
+nodes of one leg dimension, no phase, no inputs): each side as a PDiagram literal PA, PB with its
+DPair pA, pB (the pair node and its two wires off the diagram); okA, okB (PairOK by decide); the
+two templates tmpl, each scaled by its side's ratio per copy (the diagram scalar's ratio times the
+node box's copy scalar), proved by lean_sym.export_symbolic in the namespace PT, moved to Ec d
+(every label of dimension d, every phase zero) by Equal.env0, Equal.mapL2 and Equal.reorder (sT);
+the pin certificates (a breadth-first chain of Z spiders from each pair port's node to a slot,
+the same slots on both sides, pinOK by decide); then family (pair_family, every k, the pair box's
+copy scalar q, equal on both sides, multiplied in as q^(k (k - 1) / 2)) and main at the box
+multiplicity. Refused: a scalar other than 1 at 0 copies, different pair copy scalars, a pair
+copy scalar other than a power d^(r/2), pair legs pinned to different slots. restricted_proof
+tries it for a family decision whose pair has a pair box, before copy-index phases and pair_proof;
+point claims are lean_restrict's corollary of main (complete_graph_state d = 490: 16071 bytes at
+n = 10^3, 16110 at n = 10^6, decide 0.5 s, Lean 5-6 s at n = 10 (d = 3), 10^3 and 10^6; a
+changed node rejected).
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.
@@ -1377,12 +1393,12 @@ and the Lean check 576 s.
 G6 Under the normaliser: node boxes meeting the rest at a wire other than at the bundled
 inputs of Z spiders with a boundary output or plain boundary input, or of X spiders with a
 boundary output, or of a spider without one next to such a spider of its colour (4.3); port
-boxes inside port boxes; chain boxes (cyclic_shift, repeater_chain, teleportation_chain), pair
-boxes (complete_graph_state) and indexed boxes beyond one Z or X phase s j k / d per side
-(lean_copyphase, 4.2), which neither the bundled networks nor the normaliser represent. Families decided by symbolic contraction outside these forms keep
-boxes inside port boxes; chain boxes (bv_secret_pattern, repeater_chain, teleportation_chain;
-cyclic_shift goes through ChainNode.lean, 4.2) and pair boxes (complete_graph_state), which neither the bundled networks
-nor the normaliser represent. Families decided by symbolic contraction outside these forms keep
+boxes inside port boxes; chain boxes (repeater_chain, teleportation_chain; cyclic_shift goes
+through ChainNode.lean, 4.2), indexed boxes beyond one Z or X phase s j k / d per side
+(lean_copyphase, 4.2) and pair boxes outside the form PairOK reads (one pair box over the node box
+holding every node, its pair legs tied to slots by Z spiders; lean_pairs, 4.2), which neither the
+bundled networks nor the normaliser represent. Families decided by symbolic contraction outside
+these forms keep
 the instantiated-pair export of a point claim (4.7), whose size grows with n: ghz_x_basis (a
 fan-out spider with no boundary leg whose neighbours are Fourier boxes).
 

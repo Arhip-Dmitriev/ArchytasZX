@@ -22,7 +22,14 @@ from dataclasses import replace
 from archytaszx import trace as _trace
 from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.diagram.graph import Diagram
-from archytaszx.semantics import kernel, lean_chainfam, lean_copyphase, lean_net, lean_sym
+from archytaszx.semantics import (
+    kernel,
+    lean_chainfam,
+    lean_copyphase,
+    lean_net,
+    lean_pairs,
+    lean_sym,
+)
 from archytaszx.semantics.decide import Decision, DecisionMethod, dimension_floors
 from archytaszx.semantics.lean_scalar import ScalarUnsupported
 from archytaszx.semantics.prove import ProofCertificate, ProofOutcome, prove
@@ -175,6 +182,16 @@ def restricted_proof(
             kernel.KernelError,
         ) as exc:
             why += f"chain family: {exc}; "
+    if evidence is None and family and lean_pairs.has_pairs(*pair):
+        try:
+            evidence = kernel.Symbolic(pair[0], pair[1], lean_pairs.export_pair_family(*pair))
+        except (
+            PathSumUnsupported,
+            lean_net.NetUnsupported,
+            ScalarUnsupported,
+            kernel.KernelError,
+        ) as exc:
+            why += f"pair family: {exc}; "
     if evidence is None and family and source.doubled is None:
         try:
             evidence = kernel.Symbolic(
