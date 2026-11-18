@@ -601,7 +601,7 @@ theorem int_eq (s : PairSpec D p) (K : ℕ) :
   · exact List.map_congr_left fun k hk => plab_plw s K j k hk
   · exact List.map_congr_left fun i _ => by simp [prw, plab_fo]
 
-theorem range_blocks (K m : ℕ) :
+theorem prange_blocks (K m : ℕ) :
     (List.range K).flatMap (fun j => (List.range m).map (j * m + ·)) = List.range (K * m) := by
   induction K with
   | zero => simp
@@ -611,7 +611,7 @@ theorem bnd_map (s : PairSpec D p) (K : ℕ) :
     (D.expandPair p K).bnd.map (D.plab p K) = List.range (K * D.outs.length) := by
   have h0 : (List.range K).flatMap (fun j => D.ins.map (pimg p K j)) = [] := by simp [s.ins]
   simp only [bnd, expandPair, h0, List.append_nil, List.map_flatMap, List.map_map]
-  rw [← range_blocks]
+  rw [← prange_blocks]
   refine List.flatMap_congr fun j _ => List.ext_getElem (by simp) fun r h1 h2 => ?_
   simp only [List.getElem_map, List.getElem_range, Function.comp]
   have hr : r < D.outs.length := by simpa using h1

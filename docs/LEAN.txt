@@ -180,7 +180,7 @@ between two scaled networks under one environment: the same tensor, scalars incl
   PairEval     eval_pairNet: pairNet is the template at each copy's slots times, per pair
                j < k, the pair node's entry at copy k's pinned slot and copy j's (pinOK: a chain
                of Z spiders from the pair port's node to a slot); sum_dropZ (a label read once by
-               a Z spider summed out drops that leg), sumOver_blocks (blocks on disjoint labels)
+               a Z spider summed out drops that leg), sumOver_disj (blocks on disjoint labels)
   PairFam      pair_family: two pair boxes pinned to the same slots, templates equal as
                a TA = b TB, have expansions equal as c a^K against c b^K at every K
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
@@ -375,9 +375,9 @@ eval_pairNet: when pinOK holds for both pair ports (a chain certificate of Z spi
 template tmpl from the port's node to a slot sL, sR), pairNet at every boundary value is the
 product over the copies of tmpl at the copy's slots times, per pair j < k, the pair node's F entry
 at copy k's slot sR and copy j's slot sL, omega^(x_k x_j) / sqrt D: on the support of the copies
-every Z spider's legs agree (tZ_const), so each pair leg reads its slot (chain_val) and the pair
+every Z spider's legs agree (tZ_const), so each pair leg reads its slot (pinChain_val) and the pair
 nodes are a constant factor; each pair leg, read once by a Z spider, is summed out (sum_dropZ);
-the copies, on disjoint labels, give a product (sumOver_blocks), each the template renamed by shJ
+the copies, on disjoint labels, give a product (sumOver_disj), each the template renamed by shJ
 (sumOver_rename). pair_family: two such diagrams pinned to the same slots, their templates equal
 as a TA = b TB, are equal as c a^K against c b^K at every K.
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..

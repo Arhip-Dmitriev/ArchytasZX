@@ -13,9 +13,9 @@ at every boundary value, the product of the template's network at each copy's sl
 pair `j < k`, the pair node's `F` entry at copy `k`'s slot `sR` and copy `j`'s slot `sL`.
 
 The pieces: a Z spider is nonzero only where its legs agree (`tZ_const`), so on the support of
-the copies every pair leg reads its pinned slot (`chain_val`) and the pair nodes give a constant
+the copies every pair leg reads its pinned slot (`pinChain_val`) and the pair nodes give a constant
 factor; summing out a label read once, by a Z spider, drops that leg (`sum_dropZ`); copies on
-disjoint labels give a product (`sumOver_blocks`); each copy is the template renamed by `shJ`.
+disjoint labels give a product (`sumOver_disj`); each copy is the template renamed by `shJ`.
 -/
 
 namespace ArchytasZX
@@ -25,7 +25,7 @@ def Node.dropL (gs : List ℕ) (n : Node) : Node :=
   { n with outs := n.outs.filter (fun x => decide (x ∉ gs)),
            ins := n.ins.filter (fun x => decide (x ∉ gs)) }
 
-theorem prod_flatMap' {α : Type*} (l : List α) (f : α → List ℂ) :
+theorem prod_flatMapC {α : Type*} (l : List α) (f : α → List ℂ) :
     (l.flatMap f).prod = (l.map fun a => (f a).prod).prod := by
   induction l with
   | nil => simp
@@ -172,7 +172,7 @@ theorem sum_dropZ (E : Env) : ∀ (gs : List ℕ) (ns : List Node) (τ : ℕ →
 
 /-- Blocks of nodes on disjoint summed labels, none reading another's: the sum is the product of
 the blocks' sums. -/
-theorem sumOver_blocks (E : Env) : ∀ (bs : List (List ℕ × List Node)) (τ : ℕ → ℕ),
+theorem sumOver_disj (E : Env) : ∀ (bs : List (List ℕ × List Node)) (τ : ℕ → ℕ),
     bs.Pairwise (fun a b => (∀ x ∈ labelsOf a.2, x ∉ b.1) ∧ ∀ x ∈ labelsOf b.2, x ∉ a.1) →
     sumOver (labDim E) (bs.flatMap (·.1)) (prodVal E (bs.flatMap (·.2))) τ =
       (bs.map fun b => sumOver (labDim E) b.1 (prodVal E b.2) τ).prod
@@ -190,7 +190,7 @@ theorem sumOver_blocks (E : Env) : ∀ (bs : List (List ℕ × List Node)) (τ :
     set C := (bs.map fun b => sumOver (labDim E) b.1 (prodVal E b.2) τ).prod
     rw [sumOver_congr _ _ _ (fun ρ => C * prodVal E a.2 ρ) τ (fun ρ hρ _ => ?_), ← mul_sumOver,
       mul_comm]
-    rw [sumOver_const_mul _ _ _ _ _ (prodVal_reads E a.2) h1, sumOver_blocks E bs ρ h.2, mul_comm]
+    rw [sumOver_const_mul _ _ _ _ _ (prodVal_reads E a.2) h1, sumOver_disj E bs ρ h.2, mul_comm]
     congr 1
     refine congrArg List.prod (List.map_congr_left fun c hc => ?_)
     exact sumOver_ext _ _ _ _ (prodVal_reads E c.2) _ _ fun x hx _ => hρ x ((h.1 c hc).2 x hx)
@@ -206,7 +206,7 @@ theorem sumOver_rename (E : Env) (hE : ∀ x y, labDim E x = labDim E y) (f : �
 
 /-- A chain certificate: each entry `(i, x)` a Z node `i` holding `x`, consecutive entries
 sharing the earlier label, the last label the slot. -/
-def chainOK (ns : List Node) : List (ℕ × ℕ) → ℕ → Bool
+def pinChain (ns : List Node) : List (ℕ × ℕ) → ℕ → Bool
   | [], _ => false
   | [(i, x)], s => decide (x = s) && (match ns[i]? with
       | some n => decide (n.kind = .Z) && decide (x ∈ n.labels)
@@ -217,7 +217,7 @@ def chainOK (ns : List Node) : List (ℕ × ℕ) → ℕ → Bool
         | none => false) &&
       (match ns[i']? with
         | some n => decide (n.kind = .Z) && decide (x ∈ n.labels)
-        | none => false) && chainOK ns ((i', x') :: r) s
+        | none => false) && pinChain ns ((i', x') :: r) s
 
 theorem hasZ_spec {ns : List Node} {i x : ℕ}
     (h : (match ns[i]? with
@@ -233,17 +233,17 @@ theorem hasZ_spec {ns : List Node} {i x : ℕ}
 
 /-- Along a chain certificate on `ns`, in a node list `cs` holding `ns`'s labels moved by `f`,
 where every node is nonzero, every label of the first node reads the slot. -/
-theorem chain_val (E : Env) (ns cs : List Node) (hlen : cs.length = ns.length) (f : ℕ → ℕ)
+theorem pinChain_val (E : Env) (ns cs : List Node) (hlen : cs.length = ns.length) (f : ℕ → ℕ)
     (hlab : ∀ i (hi : i < ns.length) x, x ∈ ns[i].labels → f x ∈ (cs[i]'(hlen ▸ hi)).labels)
     (hkind : ∀ i (hi : i < ns.length), (cs[i]'(hlen ▸ hi)).kind = ns[i].kind)
     (τ : ℕ → ℕ) (hnz : ∀ n ∈ cs, val E τ n ≠ 0) :
-    ∀ (cert : List (ℕ × ℕ)) (s i x : ℕ), chainOK ns cert s = true → cert.head? = some (i, x) →
+    ∀ (cert : List (ℕ × ℕ)) (s i x : ℕ), pinChain ns cert s = true → cert.head? = some (i, x) →
       ∃ hi : i < ns.length, ∀ y ∈ (cs[i]'(hlen ▸ hi)).labels, τ y = τ (f s)
-  | [], _, _, _, h, _ => by simp [chainOK] at h
+  | [], _, _, _, h, _ => by simp [pinChain] at h
   | [(i, x)], s, i', x', h, hh => by
     simp only [List.head?_cons, Option.some.injEq, Prod.mk.injEq] at hh
     obtain ⟨rfl, rfl⟩ := hh
-    simp only [chainOK, Bool.and_eq_true, decide_eq_true_eq] at h
+    simp only [pinChain, Bool.and_eq_true, decide_eq_true_eq] at h
     obtain ⟨rfl, h2⟩ := h
     obtain ⟨hi, hz, hx⟩ := hasZ_spec h2
     refine ⟨hi, fun y hy => ?_⟩
@@ -251,11 +251,11 @@ theorem chain_val (E : Env) (ns cs : List Node) (hlen : cs.length = ns.length) (
   | (i, x) :: (i₂, x₂) :: r, s, i', x', h, hh => by
     simp only [List.head?_cons, Option.some.injEq, Prod.mk.injEq] at hh
     obtain ⟨rfl, rfl⟩ := hh
-    simp only [chainOK, Bool.and_eq_true] at h
+    simp only [pinChain, Bool.and_eq_true] at h
     obtain ⟨⟨h1, h2⟩, h3⟩ := h
     obtain ⟨hi, hz, hx⟩ := hasZ_spec h1
     obtain ⟨hi₂, hz₂, hx₂⟩ := hasZ_spec h2
-    obtain ⟨hi₂', ih⟩ := chain_val E ns cs hlen f hlab hkind τ hnz ((i₂, x₂) :: r) s i₂ x₂ h3 rfl
+    obtain ⟨hi₂', ih⟩ := pinChain_val E ns cs hlen f hlab hkind τ hnz ((i₂, x₂) :: r) s i₂ x₂ h3 rfl
     refine ⟨hi, fun y hy => ?_⟩
     rw [Z_eq E τ _ (by rw [hkind i hi]; exact hz) (hnz _ (List.getElem_mem _)) hy (hlab i hi _ hx)]
     exact ih _ (hlab i₂ hi₂ _ hx₂)
@@ -271,7 +271,7 @@ def pinOK (D : Diagram) (p : DPair) (q : Port) (cert : List (ℕ × ℕ)) (s : �
   (match cert.head? with
     | some (i, _) => decide ((D.nodes[i]?.map (·.id)) = some q.node)
     | none => false) &&
-  chainOK (D.tmpl p).nodes cert s
+  pinChain (D.tmpl p).nodes cert s
 
 theorem label_lt (s : PairSpec D p) (q : Port) (h : D.okPort q = true) :
     D.label D.outs.length q < D.outs.length + D.wires.length := by
@@ -471,7 +471,7 @@ theorem pin_at (s : PairSpec D p) (E : Env) (K j : ℕ) (hj : j < K) (q : Port)
   · rw [e] at hh
     simp only [decide_eq_true_eq] at hh
     have hlen : (D.nodes.map (D.pNode p K j)).length = (D.tmpl p).nodes.length := by simp [tmpl]
-    obtain ⟨hi, hv⟩ := chain_val E (D.tmpl p).nodes (D.nodes.map (D.pNode p K j)) hlen
+    obtain ⟨hi, hv⟩ := pinChain_val E (D.tmpl p).nodes (D.nodes.map (D.pNode p K j)) hlen
       (shJ K D.outs.length D.wires.length j)
       (fun i hi x hx => by
         simp only [tmpl, List.getElem_map] at hx ⊢
@@ -487,8 +487,8 @@ theorem pin_at (s : PairSpec D p) (E : Env) (K j : ℕ) (hj : j < K) (q : Port)
         simp only [List.head?_cons, Option.some.injEq] at e
         subst e
         cases r with
-        | nil => simp only [chainOK, Bool.and_eq_true] at this; exact this.2
-        | cons a' r => simp only [chainOK, Bool.and_eq_true] at this; exact this.1.1)
+        | nil => simp only [pinChain, Bool.and_eq_true] at this; exact this.2
+        | cons a' r => simp only [pinChain, Bool.and_eq_true] at this; exact this.1.1)
     refine ⟨D.nodes[i], List.getElem_mem hi', ?_, ?_, fun y hy => ?_⟩
     · simpa [List.getElem?_eq_getElem hi'] using hh
     · simpa [tmpl, tNode] using hz
@@ -549,7 +549,7 @@ theorem eval_pairNet (h : D.PairOK p b = true) (E : Env) (hE : ∀ x, labDim E x
       have hkm : (k + 1) * m ≤ K * m := Nat.mul_le_mul_right _ hk
       rw [Nat.succ_mul] at hkm
       exact hslot τ hτ _ (lt_of_lt_of_le (Nat.add_lt_add_left (by assumption) _) hkm)
-    simp only [prodVal, List.map_flatMap, prod_flatMap', List.map_map]
+    simp only [prodVal, List.map_flatMap, prod_flatMapC, List.map_map]
     refine congrArg List.prod (List.map_congr_left fun j hj => congrArg List.prod
       (List.map_congr_left fun k hk => ?_))
     have hj' := List.mem_range.1 hj
@@ -563,7 +563,7 @@ theorem eval_pairNet (h : D.PairOK p b = true) (E : Env) (hE : ∀ x, labDim E x
     funext fun _ => mul_comm _ _, ← mul_sumOver, mul_comm]
   congr 1
   -- the copies' sum
-  have hbs := sumOver_blocks E ((List.range K).map fun j => (D.pInt K j, C j)) σ (by
+  have hbs := sumOver_disj E ((List.range K).map fun j => (D.pInt K j, C j)) σ (by
     rw [List.pairwise_map]
     refine List.nodup_range.pairwise_of_forall_ne fun i hi j hj hij => ?_
     have hi' := List.mem_range.1 hi
@@ -625,8 +625,8 @@ theorem eval_pairNet (h : D.PairOK p b = true) (E : Env) (hE : ∀ x, labDim E x
           simp only [List.head?_cons, Option.some.injEq] at e
           subst e
           cases r with
-          | nil => simp only [chainOK, Bool.and_eq_true] at hch; exact hch.2
-          | cons a' r => simp only [chainOK, Bool.and_eq_true] at hch; exact hch.1.1)
+          | nil => simp only [pinChain, Bool.and_eq_true] at hch; exact hch.2
+          | cons a' r => simp only [pinChain, Bool.and_eq_true] at hch; exact hch.1.1)
       simpa [tmpl, tNode] using hz
     refine ⟨fun n hn hgn => ?_, ?_⟩
     · obtain ⟨n0, hn0, rfl⟩ := List.mem_map.1 hn
