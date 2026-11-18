@@ -20,10 +20,12 @@ generality the question is undecidable, so every procedure below is sound and in
     both settled, and with a proof the kernel re-checks (Decision.proof).
   - UNEQUAL is reported only with a refutation: interfaces that can never agree, or an oracle
     counterexample at an assignment that satisfies every symbol's assumptions or a symbolic
-    witness entry, either with its Lean refutation (LEAN.txt, section 5.4).
+    witness entry, either with its Lean refutation (LEAN.txt, section 5.4). The evidence of
+    each is rechecked in Python first (section 2.2).
   - EQUAL_UNCERTIFIED and UNEQUAL_UNCERTIFIED carry the same evidence as EQUAL and UNEQUAL
     without the proof or Lean refutation; their reason ends in "uncertified: no proof the
-    kernel re-checks (...)" or "uncertified: no Lean refutation (...)".
+    kernel re-checks (...)", "uncertified: no Lean refutation (...)" or "uncertified:
+    interface recheck failed: ...".
   - Every other outcome is UNKNOWN, with the reason the procedure stopped.
 
 Equations that a derivation assumed rather than verified (DEFERRED and BOUND dimension
@@ -178,7 +180,7 @@ is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparis
                                              proved, refuted, base_not_proved,
                                              step_not_discharged
                                 proof        no_proof (EQUAL_UNCERTIFIED)
-                                refutation   no_lean (UNEQUAL_UNCERTIFIED)
+                                refutation   no_lean, recheck_failed (UNEQUAL_UNCERTIFIED)
                               a DOUBLED decision's stops start with (doubled, doubled), then
                               the doubled comparison's own; the reason text is unchanged
     Decision.assumptions      assumed dimension equations the verdict rests on
@@ -201,6 +203,32 @@ is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparis
     Decision.left_nf, right_nf, comparison, induction, saturation
 
 The parameter environment never enters a verdict; parameters_agree reports it separately.
+
+An UNEQUAL verdict keeps its certification only when its evidence passes a Python recheck
+at its one point (archytaszx.semantics.refute_check):
+
+    residue refutation     recheck_residue: a fresh _Refuter at the same point, order M,
+                           prime p and root w (p prime, w of order exactly M mod p, checked)
+                           tabulates each network's leaf tables at the found boundary
+                           assignment σ without a cache, eliminates them, and confirms that
+                           the residues r0, r1 are the search's and f0(w) r0 != f1(w) r1 mod p;
+                           a boundary-size refutation recounts the slots
+    ball refutation        recheck_numeric: a fresh ball refuter recomputes both entries at σ
+                           through the contraction pinned at σ (the search contracts unpinned),
+                           checks they are the search's groups, and that the ball (x, y, r)
+                           excludes 0 and holds the difference evaluated at 60 digits
+    INTERFACE verdict      recheck_interface: the input or the output leg dimensions, each
+                           slot repeated by its box multiplicities, differ at a sample point
+    interface refutation   none added: its source compares the two leg lists computed from the
+                           diagrams at the point directly, and Lean re-decides the comparison
+
+A residue or ball refutation whose recheck fails is no refutation: export_refutation tries the
+next sample point and route, and when none passes raises the failed recheck, so the verdict is
+UNEQUAL_UNCERTIFIED with stop (refutation, recheck_failed) and reason "uncertified: no Lean
+refutation (residue recheck failed: ...)". A failed interface recheck gives
+UNEQUAL_UNCERTIFIED with the same stop and reason "uncertified: interface recheck failed:
+...". The residue or ball refutation of a pair with a discard is rechecked on the doubled
+pair it refutes; a DOUBLED INTERFACE verdict on the original pair.
 
 2.3 The sample grid
 

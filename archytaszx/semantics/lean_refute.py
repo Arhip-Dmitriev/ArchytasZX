@@ -98,7 +98,10 @@ def export_refutation(
             if not (left.bang_boxes or right.bang_boxes):
                 raise
         return _instantiated_refutation(left, right, point, name, describe, index)
+    from archytaszx.semantics.refute_check import RecheckFailed, checked_residue
+
     first: NetUnsupported | None = None
+    failed: NetUnsupported | None = None
     candidates = [dict(point)]
     with contextlib.suppress(Exception):
         candidates += _by_size(sample_grid(left, right))[:MAX_POINTS]
@@ -112,28 +115,38 @@ def export_refutation(
             if index is not None and candidate == seen[0]:
                 refuter.hint = tuple(index)
             try:
-                return refuter.run(name)
+                src = refuter.run(name)
+                return checked_residue(src, left, right, candidate, describe, refuter)
             except (ScalarUnsupported, NetUnsupported):
                 if not refuter.wide():
                     raise
                 big = _Refuter(left, right, candidate, describe)
                 big.hint, big.sparse_all = refuter.hint, True
-                with contextlib.suppress(ScalarUnsupported, NetUnsupported):
-                    return big.run(name)
+                try:
+                    src = big.run(name)
+                    return checked_residue(src, left, right, candidate, describe, big)
+                except RecheckFailed as exc:
+                    failed = failed or exc
+                except (ScalarUnsupported, NetUnsupported):
+                    pass
                 raise
         except ScalarUnsupported as exc:
             first = first or NetUnsupported(str(exc))
         except NetUnsupported as exc:
             first = first or exc
+            if isinstance(exc, RecheckFailed):
+                failed = failed or exc
     from archytaszx.semantics.lean_numeric import export_numeric_refutation
 
     for candidate in seen:
         try:
             return export_numeric_refutation(left, right, candidate, name, describe)
+        except RecheckFailed as exc:
+            failed = failed or exc
         except NetUnsupported:
             pass
     assert first is not None
-    raise first
+    raise failed or first
 
 
 def _by_size(points: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -1343,6 +1356,7 @@ class _Refuter:
         if found is None:
             raise NetUnsupported("the networks agree mod p at every assignment checked")
         sigma, plans = found
+        self.sigma, self.residues = sigma, [pl[2] for pl in plans]
         self.init_cert()
         hfs = []
         for s, k, v in ((s0, k0, vecs[0]), (s1, k1, vecs[1])):

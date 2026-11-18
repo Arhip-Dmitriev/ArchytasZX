@@ -63,10 +63,17 @@ def export_numeric_refutation(
 ) -> str:
     """Lean 4 source proving that ``left`` and ``right`` are not equal for every value of
     their parameters, at ``point``, by ball arithmetic."""
+    from archytaszx.semantics.refute_check import checked_numeric
+
     try:
-        return _NumRefuter(left, right, point, describe).run(name)
+        refuter = _NumRefuter(left, right, point, describe)
+        source = refuter.run(name)
     except ScalarUnsupported as exc:
         raise NetUnsupported(str(exc)) from exc
+    try:
+        return checked_numeric(source, left, right, point, describe, refuter)
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(f"numeric recheck failed: {exc}") from exc
 
 
 def _round(q: Fraction) -> Fraction:
@@ -680,6 +687,7 @@ class _NumRefuter(_Refuter):
         which = "Or.inl" if abs(x) > r else "Or.inr"
         if max(abs(x), abs(y)) <= r:
             raise NetUnsupported("the balls are too wide to separate the entry from zero")
+        self.evidence = (sigma, g0, g1, x, y, r)
         return self.source_num(name, sigma, sq0, sq1, g0, g1, text, n, which)
 
     def difference(

@@ -1631,7 +1631,17 @@ def _certify(
         decision.method is DecisionMethod.DOUBLED
         and decision.inner_method is DecisionMethod.INTERFACE
     ):
-        return decision
+        from archytaszx.semantics.refute_check import recheck_interface
+
+        failed = recheck_interface(left, right)
+        if failed is None:
+            return decision
+        return replace(
+            decision,
+            stops=(*decision.stops, ("refutation", "recheck_failed")),
+            verdict=EqualityVerdict.UNEQUAL_UNCERTIFIED,
+            reason=f"{decision.reason}; uncertified: {failed}",
+        )
     point = decision.counterexample
     if decision.restriction is not None and decision.counterexample_original is not None:
         point = decision.counterexample_original
@@ -1650,9 +1660,12 @@ def _certify(
         with _trace.span("decide.refutation"):
             source = lean_refutation(left, right, point, describe, index)
     except NetUnsupported as exc:
+        from archytaszx.semantics.refute_check import RecheckFailed
+
+        code = "recheck_failed" if isinstance(exc, RecheckFailed) else "no_lean"
         return replace(
             decision,
-            stops=(*decision.stops, ("refutation", "no_lean")),
+            stops=(*decision.stops, ("refutation", code)),
             verdict=EqualityVerdict.UNEQUAL_UNCERTIFIED,
             reason=f"{decision.reason}; uncertified: no Lean refutation ({exc})",
         )
