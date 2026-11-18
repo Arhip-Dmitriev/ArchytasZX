@@ -674,7 +674,11 @@ family theorem with its corollary at n = v, whose size and time do not depend on
 bernstein_vazirani (and its restrictions n >= 1, d >= 2), phase_flip_code encoding,
 repetition_decoding, phase_flip_decoding, parity_decoding, ghz_disentangle and deutsch_jozsa
 constant (its scalar exp(-2 pi i/d) a constant root of unity, LEAN.txt 4.3); a point claim
-of weyl_commutation at d = v likewise exports the theorem for every d with its corollary. The other
+of weyl_commutation at d = v likewise exports the theorem for every d with its corollary. A
+family whose one indexed node box is read by one Z or X phase s j k / d per side (bv_secret_pattern)
+is proved through its gadget pair, that phase pinned at a new boundary input, and stated over the
+engine's diagrams as linked diagrams with the copy-indexed phase (LEAN.txt 4.2, lean_copyphase),
+the point claim its corollary at n = v. The other
 families of this kind (LEAN.txt, G6) keep the export of kernel.instantiated's pair, which grows
 with v.
 
