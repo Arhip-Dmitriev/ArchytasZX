@@ -669,7 +669,29 @@ lean_linked._reduce drops (drop_x_ok) only when the ghosts alone leave an identi
 without such an identity is unchanged. tests/test_lean_peel.py checks PLAIN (a chain of
 X(1 -> 1) of dimension 2 through a box of index m holding B(2, 2^m)), whose peeled copy's chain
 end meets the boundary identity at a node leg; Lean refuses the drop when that leg is given a
-leg-dimension reading. An identity meeting a leg with a leg-dimension reading is not exported.
+leg-dimension reading.
+An identity meeting a leg with a leg-dimension reading is exported over evalN
+(LinkedRead.lean). LDiagram's last field cnd (default []) holds copy-indexed node dimensions
+(node, box, c, m), read by ndimAt as rdVal reads cph and cdim; dnodeN and prodN are dnodeL and
+prodL with them, and evalW (Linked.lean) is evalX with any integrand product, evalX_relabel(φ)
+and evalX_peel (through evalW_peel) its instances at prodL. evalGXR L gs gr is evalGX with prodN
+and each ghost's bound read through gr (gbd: a read bound (g, box, c, m) gives the ghost the
+bound index rdVal of its dimension index); evalN L is evalGXR L [] [] (evalN_evalW), and with
+cnd = [] they are evalGX and evalX (evalGXR_plain, evalN_plain). PeelN is PeelX with the node
+readings kept on the kept nodes and copied by rdC on the copies (evalN_peel, evalN_peel_flat);
+DropN is DropOKX with the identity x's legs read as x, and P read as x at P's depth as at x's
+(dropIdN drops x's node and leg readings; evalN_drop, evalN_dropAt); GhostN is GhostOKX with x's
+legs read as x and x's reading at the ghost's depth as at x's, and grAdd gives the ghost x's
+reading as its read bound (ghostDropN, evalGXR_ghost, evalGXR_ghostAt). lean_linked tries this
+route after the others (export_peel's reads pass): each unread end identity wired in the peeled
+side to a read leg takes that leg's dimension index and reading on its legs and node on both
+sides (_read_ends); the peeled side's chain writes DropN steps, then evalN_plain once no node
+reading remains, then its GhostOKX steps; the other side's chain writes GhostN steps and ends
+over evalGXR with its read bounds grL; main states L'.evalGX gsL' = L.evalGXR gsL grL through
+PeelN and evalN_peel_flat. The read values Nat.pair k v there lie above every plain index
+(_apart with loose). tests/test_lean_peel.py checks the binder chain B(2, 2^m) of one row
+(BINPLAIN) and BINDERS with one column (BINROW): both export and Lean-check, and Lean refuses
+BINPLAIN with its read bound dropped.
 
 A power split (kernel.power_split) is proved the same way when both sides are linked diagrams
 (ArchytasZX/LinkedSplit.lean), over the digit sum evalX (Linked.lean): evalL with copy-indexed

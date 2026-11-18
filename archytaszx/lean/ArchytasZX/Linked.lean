@@ -43,13 +43,15 @@ structure DAlign where
   deriving DecidableEq, Repr
 
 /-- A boxed diagram with chain links, copy-indexed phases `(node, box, c, m)`, copy-indexed leg
-dimensions `(leg, box, c, m)` and aligned wires. -/
+dimensions `(leg, box, c, m)`, aligned wires and copy-indexed node dimensions `(node, box, c, m)`
+(read by `evalN`, LinkedRead.lean). -/
 structure LDiagram where
   base : Diagram
   links : List DLink := []
   cph : List (ℕ × ℕ × ℕ × ℕ) := []
   cdim : List (Port × ℕ × ℕ × ℕ) := []
   aligned : List DAlign := []
+  cnd : List (ℕ × ℕ × ℕ × ℕ) := []
   deriving DecidableEq, Repr
 
 /-- The coordinates of `t` at the places `perm`. -/
@@ -321,17 +323,28 @@ theorem evalX_eq_evalL (hd : L.cdim = []) (ha : L.aligned = []) (E : Env) (ks : 
   classical
   exact if_congr (h2 ν) rfl rfl
 
-/-- `evalL_relabel` for `evalX`. -/
-theorem evalX_relabel (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ σ' : ℕ → List ℕ → ℕ)
-    (ρ : ℕ → ℕ) (hnd : (L.base.dlabs ks).Nodup) (hnd' : (L'.base.dlabs ks').Nodup)
+open Classical in
+/-- `evalX` with the integrand product `F` in place of `prodL`. -/
+noncomputable def evalW (E : Env) (ks : ℕ → ℕ) (F : (ℕ → ℕ) → ℂ) (σ : ℕ → List ℕ → ℕ) : ℂ :=
+  sumOver (fun l => E.dimv (L.dimAt ks (dport l) (dtup l))) (L.base.dlabs ks)
+    (fun ν => if L.pinsX ks ν then F ν else 0) (slotsD σ)
+
+theorem evalX_evalW (E : Env) (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ) :
+    L.evalX E ks σ = L.evalW E ks (L.prodL E ks) σ := rfl
+
+/-- `evalL_relabel` for `evalW`: the integrand products `F` and `F'` agree under the
+relabelling. -/
+theorem evalW_relabel (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ σ' : ℕ → List ℕ → ℕ)
+    (F F' : (ℕ → ℕ) → ℂ) (ρ : ℕ → ℕ) (hnd : (L.base.dlabs ks).Nodup)
+    (hnd' : (L'.base.dlabs ks').Nodup)
     (hmem : ∀ x, x ∈ L'.base.dlabs ks' ↔ ∃ y ∈ L.base.dlabs ks, ρ y = x)
     (hinj : ∀ x ∈ L.base.dlabs ks, ∀ y ∈ L.base.dlabs ks, ρ x = ρ y → x = y)
     (hdim : ∀ x ∈ L.base.dlabs ks,
       E.dimv (L'.dimAt ks' (dport (ρ x)) (dtup (ρ x))) = E.dimv (L.dimAt ks (dport x) (dtup x)))
     (hF : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (ρ x)) →
       (∀ i t, τ (slab i t) = σ' i t) → (∀ i t, τ' (slab i t) = σ i t) →
-      (L'.pinsX ks' τ ↔ L.pinsX ks τ') ∧ L'.prodL E ks' τ = L.prodL E ks τ') :
-    L'.evalX E ks' σ' = L.evalX E ks σ := by
+      (L'.pinsX ks' τ ↔ L.pinsX ks τ') ∧ F' τ = F τ') :
+    L'.evalW E ks' F' σ' = L.evalW E ks F σ := by
   have hperm : (L'.base.dlabs ks').Perm ((L.base.dlabs ks).map ρ) := by
     refine (List.perm_ext_iff_of_nodup hnd' (List.Nodup.map_on hinj hnd)).2 fun x => ?_
     rw [hmem x, List.mem_map]
@@ -341,7 +354,7 @@ theorem evalX_relabel (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ σ'
   have hdl0 : ∀ x ∈ L.base.dlabs ks, ∃ p t, x = dlab p t := fun x hx => by
     obtain ⟨p, -, t, -, rfl⟩ := (mem_dlabs L.base ks x).1 hx
     exact ⟨p, t, rfl⟩
-  unfold evalX
+  unfold evalW
   rw [sumOver_perm _ hperm]
   refine sumOver_map_on _ _ ρ _ hnd hinj hdim _ _ _ _ (fun τ τ' hτ hτ' hl => ?_) (fun x hx => ?_)
   · have hs : ∀ i t, τ (slab i t) = σ' i t := fun i t => by
@@ -360,10 +373,10 @@ theorem evalX_relabel (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ σ'
     obtain ⟨q, u, e⟩ := hdl _ ((hmem _).2 ⟨_, hx, rfl⟩)
     rw [slotsD_dlab, e, slotsD_dlab]
 
-/-- `evalL_relabelφ` for `evalX`: the map of digits keeps each digit's dimension (`dimAt`) and
-sends the pairs of `dpairsX` both ways. -/
-theorem evalX_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' : ℕ → List ℕ → ℕ)
-    (φ : Port → List ℕ → Dig)
+/-- `evalL_relabelφ` for `evalW`: the map of digits keeps each digit's dimension (`dimAt`) and
+sends the pairs of `dpairsX` both ways, the integrand products agreeing under it. -/
+theorem evalW_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' : ℕ → List ℕ → ℕ)
+    (F F' : (ℕ → ℕ) → ℂ) (φ : Port → List ℕ → Dig)
     (hnd : (L.base.dlabs ks).Nodup) (hnd' : (L'.base.dlabs ks').Nodup) (hbnd' : L'.base.bnd.Nodup)
     (hinto : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p),
       (φ p t).1 ∈ L'.base.legs ∧ (φ p t).2 ∈ cidx ks' (L'.base.legChain (φ p t).1))
@@ -382,11 +395,11 @@ theorem evalX_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' 
     (hB' : ∀ q ∈ L'.base.bnd, ∀ u ∈ cidx ks' (L'.base.legChain q), ∃ p ∈ L.base.bnd,
       ∃ t ∈ cidx ks (L.base.legChain p), φ p t = (q, u))
     (hP : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (relab φ x)) →
-      L'.prodL E ks' τ = L.prodL E ks τ') :
-    L'.evalX E ks' σ' = L.evalX E ks (bndMap L.base L'.base φ σ') := by
+      F' τ = F τ') :
+    L'.evalW E ks' F' σ' = L.evalW E ks F (bndMap L.base L'.base φ σ') := by
   have dl : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p), dlab p t ∈ L.base.dlabs ks :=
     fun p hp t ht => (mem_dlabs L.base ks _).2 ⟨p, hp, t, ht, rfl⟩
-  refine evalX_relabel L L' E ks ks' _ σ' (relab φ) hnd hnd' (fun x => ?_) ?_ ?_ ?_
+  refine evalW_relabel L L' E ks ks' _ σ' F F' (relab φ) hnd hnd' (fun x => ?_) ?_ ?_ ?_
   · rw [mem_dlabs]
     constructor
     · rintro ⟨q, hq, u, hu, rfl⟩
@@ -456,6 +469,46 @@ theorem evalX_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' 
       rw [hs]
       rw [List.Nodup.idxOf_getElem hbnd'] at this
       exact this
+
+/-- `evalL_relabel` for `evalX`. -/
+theorem evalX_relabel (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ σ' : ℕ → List ℕ → ℕ)
+    (ρ : ℕ → ℕ) (hnd : (L.base.dlabs ks).Nodup) (hnd' : (L'.base.dlabs ks').Nodup)
+    (hmem : ∀ x, x ∈ L'.base.dlabs ks' ↔ ∃ y ∈ L.base.dlabs ks, ρ y = x)
+    (hinj : ∀ x ∈ L.base.dlabs ks, ∀ y ∈ L.base.dlabs ks, ρ x = ρ y → x = y)
+    (hdim : ∀ x ∈ L.base.dlabs ks,
+      E.dimv (L'.dimAt ks' (dport (ρ x)) (dtup (ρ x))) = E.dimv (L.dimAt ks (dport x) (dtup x)))
+    (hF : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (ρ x)) →
+      (∀ i t, τ (slab i t) = σ' i t) → (∀ i t, τ' (slab i t) = σ i t) →
+      (L'.pinsX ks' τ ↔ L.pinsX ks τ') ∧ L'.prodL E ks' τ = L.prodL E ks τ') :
+    L'.evalX E ks' σ' = L.evalX E ks σ :=
+  evalW_relabel L L' E ks ks' σ σ' (L.prodL E ks) (L'.prodL E ks') ρ hnd hnd' hmem hinj hdim hF
+
+/-- `evalL_relabelφ` for `evalX`: the map of digits keeps each digit's dimension (`dimAt`) and
+sends the pairs of `dpairsX` both ways. -/
+theorem evalX_relabelφ (L L' : LDiagram) (E : Env) (ks ks' : ℕ → ℕ) (σ' : ℕ → List ℕ → ℕ)
+    (φ : Port → List ℕ → Dig)
+    (hnd : (L.base.dlabs ks).Nodup) (hnd' : (L'.base.dlabs ks').Nodup) (hbnd' : L'.base.bnd.Nodup)
+    (hinto : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p),
+      (φ p t).1 ∈ L'.base.legs ∧ (φ p t).2 ∈ cidx ks' (L'.base.legChain (φ p t).1))
+    (honto : ∀ q ∈ L'.base.legs, ∀ u ∈ cidx ks' (L'.base.legChain q),
+      ∃ p ∈ L.base.legs, ∃ t ∈ cidx ks (L.base.legChain p), φ p t = (q, u))
+    (hinj : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p), ∀ p' ∈ L.base.legs,
+      ∀ t' ∈ cidx ks (L.base.legChain p'), φ p t = φ p' t' → p = p' ∧ t = t')
+    (hdim : ∀ p ∈ L.base.legs, ∀ t ∈ cidx ks (L.base.legChain p),
+      E.dimv (L'.dimAt ks' (φ p t).1 (φ p t).2) = E.dimv (L.dimAt ks p t))
+    (hpl : ∀ x ∈ L.dpairsX ks, x.1.1 ∈ L.base.legs ∧ x.1.2 ∈ cidx ks (L.base.legChain x.1.1) ∧
+      x.2.1 ∈ L.base.legs ∧ x.2.2 ∈ cidx ks (L.base.legChain x.2.1))
+    (hD : ∀ x ∈ L.dpairsX ks, pmap φ x ∈ L'.dpairsX ks' ∨ pswap (pmap φ x) ∈ L'.dpairsX ks')
+    (hD' : ∀ y ∈ L'.dpairsX ks', ∃ x ∈ L.dpairsX ks, pmap φ x = y ∨ pswap (pmap φ x) = y)
+    (hbl : ∀ p ∈ L.base.bnd, p ∈ L.base.legs)
+    (hB : ∀ p ∈ L.base.bnd, ∀ t ∈ cidx ks (L.base.legChain p), (φ p t).1 ∈ L'.base.bnd)
+    (hB' : ∀ q ∈ L'.base.bnd, ∀ u ∈ cidx ks' (L'.base.legChain q), ∃ p ∈ L.base.bnd,
+      ∃ t ∈ cidx ks (L.base.legChain p), φ p t = (q, u))
+    (hP : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (relab φ x)) →
+      L'.prodL E ks' τ = L.prodL E ks τ') :
+    L'.evalX E ks' σ' = L.evalX E ks (bndMap L.base L'.base φ σ') :=
+  evalW_relabelφ L L' E ks ks' σ' (L.prodL E ks) (L'.prodL E ks') φ hnd hnd' hbnd' hinto honto
+    hinj hdim hpl hD hD' hbl hB hB' hP
 
 end LDiagram
 

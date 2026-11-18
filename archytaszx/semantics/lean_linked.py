@@ -13,7 +13,7 @@
 
 """Lean output for kernel peels and identity slides over linked diagrams (ArchytasZX/Linked.lean,
 LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean,
-LinkedFirst.lean, LinkedDropX.lean). A boxed diagram is written as
+LinkedFirst.lean, LinkedDropX.lean, LinkedRead.lean). A boxed diagram is written as
 an ``LDiagram``: its nodes, its wires without those at chain link ports, its boundary, its node
 boxes and its links, each link's ends the partners of its two ports; a link port on the boundary
 is the ghost ``(G, True, i)`` of its slot ``i``, its boundary place and its link end (``evalG``),
@@ -34,7 +34,9 @@ literal dimensions written with their template's indices read at the constant co
 (:func:`_read_copies`); its first copy (a reversed chain, ``LinkedFirst.lean``) through
 ``FirstOK``, ``FirstX`` and ``evalX_peel_first``, the kept copies written with their template's
 indices read one copy higher (:func:`_shift_kept`); an identity wired to a node leg there drops
-through ``DropOKX`` and ``evalX_dropAt`` (``LinkedDropX.lean``)."""
+through ``DropOKX`` and ``evalX_dropAt`` (``LinkedDropX.lean``), and one wired to a read leg,
+read as that leg (:func:`_read_ends`), over ``evalN`` (``PeelN``, ``DropN``, ``GhostN``,
+``LinkedRead.lean``)."""
 
 from __future__ import annotations
 
@@ -109,6 +111,7 @@ class LDiag:
     links: list[LLink]
     cph: list[Cph] = field(default_factory=list)
     cdim: list[CDim] = field(default_factory=list)
+    cnd: list[Cph] = field(default_factory=list)
 
     def walk(self, pred: Callable[[LBox], bool], fuel: int, start: int | None) -> list[LBox]:
         out: list[LBox] = []
@@ -863,19 +866,26 @@ def strip(D: LDiag) -> LDiag:
     )
 
 
-def _apart(*Ds: LDiag) -> bool:
-    """Whether every dimension and phase index read at a copy lies above every one read plain."""
+def _apart(*Ds: LDiag, loose: bool = False) -> bool:
+    """Whether every dimension and phase index read at a copy lies above every one read plain;
+    with ``loose``, whether every value ``Nat.pair k v`` of a read index ``k`` does."""
     read: dict[bool, set[int]] = {True: set(), False: set()}
     plain: dict[bool, set[int]] = {True: set(), False: set()}
     for D in Ds:
         legs = {q[0] for q in D.cdim}
         nodes = {q[0] for q in D.cph}
+        dims = {q[0] for q in D.cnd}
         for n in D.nodes:
-            plain[True].add(n.dim)
+            (read if n.id in dims else plain)[True].add(n.dim)
             for o, side in ((True, n.outs), (False, n.ins)):
                 for i, k in enumerate(side):
                     (read if (n.id, o, i) in legs else plain)[True].add(k)
             (read if n.id in nodes else plain)[n.kind in ("B", "S")].add(n.ph)
+    if loose:
+        return all(
+            not read[t] or max(plain[t], default=-1) < min(k * k + k for k in read[t])
+            for t in (True, False)
+        )
     return all(not read[t] or max(plain[t], default=-1) < min(read[t]) for t in (True, False))
 
 
@@ -907,6 +917,10 @@ def literal(D: LDiag) -> str:
         cph = ", ".join(f"({x}, {y}, {c}, {m})" for x, y, c, m in D.cph)
         cdim = ", ".join(f"({_lport(p)}, {y}, {c}, {m})" for p, y, c, m in D.cdim)
         reads = f",\n    cph := [{cph}],\n    cdim := [{cdim}]"
+    if D.cnd:
+        reads += (
+            ",\n    cnd := [" + ", ".join(f"({x}, {y}, {c}, {m})" for x, y, c, m in D.cnd) + "]"
+        )
     return (
         "{ base :=\n      { nodes := [" + nodes + "],\n        wires := [" + wires + "],\n"
         "        outs := [" + ", ".join(map(_lport, D.outs)) + "],\n"
@@ -999,13 +1013,18 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     ``after`` peeling the last copy of one outermost node box of ``before`` (``PeelOK``), or its
     first copy (``PeelOK`` between the two sides with the box's links flipped); None outside
     that form."""
-    return _export_peel(before, after, False) or _export_peel(before, after, True)
+    return (
+        _export_peel(before, after, False)
+        or _export_peel(before, after, True)
+        or _export_peel(before, after, False, True)
+    )
 
 
-def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
+def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = False) -> str | None:
     """:func:`export_peel` of the last copy, or with ``first`` of the first copy; over ``evalX``
     (``PeelX``, ``GhostOKX``; with ``first`` ``FirstOK`` and ``FirstX``) when a box has an
-    index."""
+    index; with ``reads`` over ``evalN`` (``PeelN``, ``DropN``, ``GhostN``), each end identity
+    wired to a read leg read as that leg (:func:`_read_ends`)."""
     tables = _Tables()
     xm = bool(_index_names(before) | _index_names(after))
     if xm:
@@ -1047,9 +1066,18 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     if got is None:
         return None
     R = got
+    if reads:
+        if first or not xm:
+            return None
+        both = _read_ends(L, R, set(ends_l.values()) & set(ends_r.values()))
+        if both is None:
+            return None
+        L, R = both
     if not first and not peel_ok(L, R, box.id, box.mult, c, B, cp):
         return None
     if xm and not first and not peel_x_ok(L, R, box.id, box.mult, c, B, cp):
+        return None
+    if reads and not peel_n_ok(L, R, box.id, c, B, cp):
         return None
     Ls, Rs = strip(L), strip(R)
     Lr, Rr = flip(Ls, box.id), flip(Rs, box.id)
@@ -1066,8 +1094,8 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
         return None
     G = 1 + max(n.id for n in [*L.nodes, *R.nodes])
     ids_l, ids_r = set(ends_l.values()), set(ends_r.values())
-    Dl, gl, sl = _reduce(L, ids_l, set(), G, xm)
-    Dr, gr, sr = _reduce(R, ids_r, ids_r, G, xm)
+    Dl, gl, sl, rl = _reduce(L, ids_l, set(), G, xm, reads)
+    Dr, gr, sr, rr = _reduce(R, ids_r, ids_r, G, xm, reads)
     if gl is None or gr is None:
         return None
     try:
@@ -1081,7 +1109,7 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     Tr = got
     if not (_same_up_to_order(Tl, Dl) and _same_up_to_order(Tr, Dr)):
         return None
-    if xm and not _apart(L, R, Dl, Dr):
+    if xm and not _apart(L, R, Dl, Dr, loose=reads):
         return None
     Gl, Gr = groups(before), groups(after)
     sl_d, sr_d = slot_data(L, Gl), slot_data(R, Gr)
@@ -1096,6 +1124,8 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     proof = ",\n    ".join(["by decide +kernel"] * _FIELDS)
     if xm and not first:
         proof = "⟨" + proof + "⟩,\n    " + ",\n    ".join(["by decide +kernel"] * _PEELX_FIELDS)
+    if reads:
+        proof = "⟨" + proof + "⟩,\n    by decide +kernel,\n    by decide +kernel"
     flat = ",\n    ".join(["by decide +kernel"] * (_FLAT_FIELDS + first))
     rev = ",\n    ".join(["by decide +kernel"] * _REV_FIELDS)
     pre, post = ("Lb", "Lk") if not first else ("Lbr", "Lkr")
@@ -1140,6 +1170,14 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     one, hm = (f" ks {m1} = 1 →", " hm") if first and xm else ("", "")
     kind = "PeelFirst" if first else "PeelFlat"
     ev = "evalGX" if xm else "evalG"
+    evb, evk = f"{ev} gsL", f"{ev} gsL'"
+    if reads:
+        step = "(evalN_peel_flat ok flat E ks hk y)"
+        chb, evb = _chain_n("b", "Lb", "L", "gsL", "grL", sl, gl, rl, L)
+        chk, evk = _chain_n("k", "Lk", "L'", "gsL'", "grL'", sr, gr, rr, R)
+    else:
+        chb = _chain("b", "Lb", "L", "gsL", sl, gl, x=xm)
+        chk = _chain("k", "Lk", "L'", "gsL'", sr, gr, x=xm)
     return (
         "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
         "open ArchytasZX ArchytasZX.LDiagram\n\n"
@@ -1154,12 +1192,13 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
         + _alias("Lb", L, sl, "L")
         + "/-- `L'` with a phaseless Z(1 -> 1) behind each boundary link port and its copy. -/\n"
         + _alias("Lk", R, sr, "L'")
-        + _chain("b", "Lb", "L", "gsL", sl, gl, x=xm)
-        + _chain("k", "Lk", "L'", "gsL'", sr, gr, x=xm)
+        + chb
+        + chk
         + "/-- Each node of the peeled box to its node in the copy. -/\n"
         f"def cp (x : ℕ) : ℕ := (([{table}] : List (ℕ × ℕ)).lookup x).getD 0\n\n"
         + revs
-        + f"theorem ok : {'PeelX' if xm and not first else 'PeelOK'} {pre} {post} {box.id} "
+        + f"theorem ok : {'PeelN' if reads else 'PeelX' if xm and not first else 'PeelOK'} "
+        f"{pre} {post} {box.id} "
         f"{box.mult} {c} "
         f"{_lnat(B)} cp :=\n  ⟨{proof}⟩\n\n"
         "/-- The box groups before the peel, node lists by box. -/\n"
@@ -1174,8 +1213,8 @@ def _export_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
         + "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
         "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
         f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 →{one} ∀ y : ℕ → ℕ,\n"
-        f"      L'.{ev} gsL' E ks (flatAt (L'.slotData G') ks y) =\n"
-        f"        L.{ev} gsL E ks (flatAt (L.slotData G) ks y) := by\n"
+        f"      L'.{evk} E ks (flatAt (L'.slotData G') ks y) =\n"
+        f"        L.{evb} E ks (flatAt (L.slotData G) ks y) := by\n"
         f"  intro E hE ks hk{hm} y\n"
         "  rw [← sdb, ← sdk]\n"
         "  exact (chain_k E hE ks _).symm.trans\n"
@@ -1192,6 +1231,184 @@ Step = tuple[str, LNode, tuple[Port, ...], int]
 ``ghost`` with the link-end leg, the boundary leg and the ghost port, and its slot."""
 
 
+def _read_ends(L: LDiag, R: LDiag, ids: set[int]) -> tuple[LDiag, LDiag] | None:
+    """``L`` and ``R`` with each unread end identity of ``ids`` wired in ``R`` to a leg whose
+    dimension is read given that leg's dimension index, and that leg's reading on its two legs
+    (``cdim``) and on itself (``cnd``); None when there is none."""
+    changed: dict[int, tuple[LNode, tuple[int, int, int]]] = {}
+    for x in R.nodes:
+        if x.id not in ids or x.kind != "Z" or x.outs != (x.dim,) or x.ins != (x.dim,):
+            continue
+        if _find(R.cnd, x.id) is not None or any(q[0][0] == x.id for q in R.cdim):
+            continue
+        legs = [(x.id, True, 0), (x.id, False, 0)]
+        P = next((b if a in legs else a for a, b in R.wires if (a in legs) != (b in legs)), None)
+        owner = None if P is None else next((n for n in R.nodes if n.id == P[0]), None)
+        o = None if P is None else _find(R.cdim, P)
+        if P is None or owner is None or o is None:
+            continue
+        k = (owner.outs if P[1] else owner.ins)[P[2]]
+        changed[x.id] = (LNode(x.id, x.kind, k, x.ph, (k,), (k,)), o)
+    if not changed or any(x not in {n.id for n in L.nodes} for x in changed):
+        return None
+
+    def apply(D: LDiag) -> LDiag:
+        return LDiag(
+            [changed[n.id][0] if n.id in changed else n for n in D.nodes],
+            D.wires,
+            D.outs,
+            D.ins,
+            D.boxes,
+            D.links,
+            D.cph,
+            [*D.cdim, *(((x, b, 0), *o) for x, (_, o) in changed.items() for b in (True, False))],
+            [*D.cnd, *((x, *o) for x, (_, o) in changed.items())],
+        )
+
+    return apply(L), apply(R)
+
+
+def peel_n_ok(L: LDiag, R: LDiag, bid: int, c: int, B: Sequence[int], cp: dict[int, int]) -> bool:
+    """The fields of the Lean ``PeelN L R bid mb c B cp`` past ``PeelX``."""
+    for n in L.nodes:
+        o = _find(L.cnd, n.id)
+        if _find(R.cnd, n.id) != o or (
+            o is not None and R.depth(o[0], n.id) != L.depth(o[0], n.id)
+        ):
+            return False
+        if n.id in B and not _rdc(L, R, bid, c, n.id, cp[n.id], o, _find(R.cnd, cp[n.id])):
+            return False
+    return True
+
+
+def _lreads(gr: Sequence[CDim]) -> str:
+    return "[" + ", ".join(f"({_lport(g)}, {y}, {c}, {m})" for g, y, c, m in gr) + "]"
+
+
+_DROPN_FIELDS = 6
+"""The fields of ``DropN`` past ``DropOK``."""
+
+_GHOSTN_FIELDS = 6
+"""The fields of ``GhostN`` past ``GhostOK``."""
+
+
+def _chain_n(
+    tag: str,
+    start: str,
+    end: str,
+    gname: str,
+    rname: str,
+    steps: Sequence[Step],
+    gs: Sequence[Ghost],
+    gr: Sequence[CDim],
+    D0: LDiag,
+) -> tuple[str, str]:
+    """:func:`_chain` over ``evalN`` from ``start`` (``DropN`` and ``evalN_dropAt``; while node
+    readings remain ``GhostN`` and ``evalGXR_ghostAt``, ``evalN_plain`` and the ``GhostOKX``
+    steps once none remain) and the end's digit sum, with the read bounds ``rname`` when it ends
+    over ``evalGXR``."""
+    out, at, terms = "", start, list[str]()
+    held: list[str] = []
+    reads: list[CDim] = []
+    D = D0
+    one = "by decide +kernel"
+    drop_proof = (
+        "⟨⟨" + ",\n    ".join([one] * 18) + "⟩,\n    " + ",\n    ".join([one] * _DROPN_FIELDS)
+    )
+    ghost_x = (
+        "⟨⟨" + ",\n    ".join([one] * 23) + "⟩,\n    " + ",\n    ".join([one] * _GHOSTX_FIELDS)
+    )
+    ghost_n = (
+        "⟨⟨" + ",\n    ".join([one] * 23) + "⟩,\n    " + ",\n    ".join([one] * _GHOSTN_FIELDS)
+    )
+    mode = "N"
+    for j, (kind, node, ports, i) in enumerate(steps, 1):
+        xn = f"x{tag}{j}"
+        out += (
+            f"/-- The identity dropped at step {j}. -/\nabbrev {xn} : DNode := {_lnode(node)}\n\n"
+        )
+        M = _move_last(D, node)
+        if kind == "drop":
+            w0, w1, u, v, P = ports
+            wl = f"({_lport(w0)}, {_lport(w1)})"
+            out += (
+                f"theorem ok{tag}{j} : DropN ({at}.moveLast {xn}.id) {xn} {wl} {_lport(u)} "
+                f"{_lport(v)} {_lport(P)} :=\n  {drop_proof}⟩\n\n"
+            )
+            terms.append(f"(evalN_dropAt ok{tag}{j} E hE ks σ)")
+            at = f"({at}.dropAtN {xn} {wl} {_lport(v)} {_lport(P)})"
+            nodes, wires, outs, ins, links = drop_id(M, node.id, (w0, w1), v, P)
+            D = LDiag(
+                nodes,
+                wires,
+                outs,
+                ins,
+                M.boxes,
+                links,
+                M.cph,
+                [q for q in M.cdim if q[0][0] != node.id],
+                [q for q in M.cnd if q[0] != node.id],
+            )
+            continue
+        if mode == "N" and not D.cnd:
+            terms.append(f"(evalN_plain {at} (by decide +kernel) E ks σ)")
+            terms.append(f"(evalGX_nil {at} E ks σ).symm")
+            mode = "X"
+        a, c, g = ports
+        if mode == "N":
+            out += (
+                f"theorem ok{tag}{j} : GhostN ({at}.moveLast {xn}.id) {_lghosts(held)} "
+                f"{_lreads(reads)} {xn} {_lport(a)} {_lport(c)} {_lport(g)} {i} :=\n"
+                f"  {ghost_n}⟩\n\n"
+            )
+            terms.append(f"(evalGXR_ghostAt ok{tag}{j} E hE ks σ)")
+            at = f"({at}.ghostAtN {xn} {_lport(a)} {_lport(c)} {_lport(g)})"
+        else:
+            out += (
+                f"theorem ok{tag}{j} : GhostOKX ({at}.moveLast {xn}.id) {_lghosts(held)} {xn} "
+                f"{_lport(a)} {_lport(c)} {_lport(g)} {i} :=\n  {ghost_x}⟩\n\n"
+            )
+            terms.append(f"(evalGX_ghostAt ok{tag}{j} E hE ks σ)")
+            at = f"({at}.ghostAtX {xn} {_lport(a)} {_lport(c)} {_lport(g)})"
+        reads = _gr_add(M, node.id, g, reads)
+        D = ghost_drop(M, node.id, a, c, g)
+        held.insert(0, f"({_lport(g)}, {i}, {node.dim})")
+    if mode == "N" and not steps:
+        pass
+    elif mode == "N" and not D.cnd and all(k == "drop" for k, *_ in steps):
+        terms.append(f"(evalN_plain {at} (by decide +kernel) E ks σ)")
+        terms.append(f"(evalGX_nil {at} E ks σ).symm")
+        mode = "X"
+    body = terms[-1] if terms else "rfl"
+    for t in reversed(terms[:-1]):
+        body = f"{t}.trans ({body})"
+    hE = "hE" if steps else "_"
+    tail = f".trans (by rw [eq_{tag}])" if steps else ""
+    if steps and mode == "N":
+        tail = f".trans (by rw [eq_{tag}]; congr 1 <;> decide +kernel)"
+    listed = _lghosts([f"({_lport(g)}, {i}, {k})" for g, i, k in gs])
+    defined = f"/-- The ghosts of `{end}`. -/\nabbrev {gname} : Ghosts := {listed}\n\n"
+    if mode == "N":
+        defined += (
+            f"/-- The ghost read bounds of `{end}`. -/\n"
+            f"abbrev {rname} : GReads := {_lreads(gr)}\n\n"
+        )
+        ev = f"evalGXR {gname} {rname}"
+    else:
+        ev = f"evalGX {gname}"
+    text = (
+        out
+        + defined
+        + (f"theorem eq_{tag} : {at} = {end} := by\n  decide +kernel\n\n" if steps else "")
+        + f"/-- `{start}`'s digit sum is `{end}`'s with its ghosts. -/\n"
+        f"theorem chain_{tag} : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
+        "    ∀ (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ),\n"
+        f"      {start}.evalN E ks σ = {end}.{ev} E ks σ :=\n"
+        f"  fun E {hE} ks σ => ({body}){tail}\n\n"
+    )
+    return text, ev
+
+
 def _move_last(D: LDiag, x: LNode) -> LDiag:
     return LDiag(
         [n for n in D.nodes if n.id != x.id] + [x],
@@ -1202,6 +1419,7 @@ def _move_last(D: LDiag, x: LNode) -> LDiag:
         D.links,
         D.cph,
         D.cdim,
+        D.cnd,
     )
 
 
@@ -1261,32 +1479,67 @@ def ghost_drop(D: LDiag, x: int, a: Port, c: Port, g: Port) -> LDiag:
         D.boxes,
         [LLink(lk.box, s(lk.l1), s(lk.l2), s(lk.e1), s(lk.e2)) for lk in D.links],
         D.cph,
-        D.cdim,
+        [q for q in D.cdim if q[0][0] != x],
+        [q for q in D.cnd if q[0] != x],
     )
 
 
+def ghost_n_ok(
+    D: LDiag, gs: Sequence[Ghost], gr: Sequence[CDim], x: LNode, a: Port, c: Port, g: Port, i: int
+) -> bool:
+    """The Lean ``GhostN D gs gr x a c g i``, field by field."""
+    o = _find(D.cnd, x.id)
+    return (
+        ghost_ok(D, gs, x, a, c, g, i)
+        and all(q[0] != x.id for q in D.cph)
+        and _find(D.cdim, (x.id, True, 0)) == o
+        and _find(D.cdim, (x.id, False, 0)) == o
+        and (o is None or D.depth(o[0], g[0]) == D.depth(o[0], x.id))
+        and all(r[0] != g for r in gr)
+    )
+
+
+def _gr_add(D: LDiag, x: int, g: Port, gr: list[CDim]) -> list[CDim]:
+    """The Lean ``grAdd D x g gr``."""
+    o = _find(D.cnd, x)
+    return gr if o is None else [(g, *o), *gr]
+
+
 def _reduce(
-    D: LDiag, ids: set[int], drops: set[int], G: int, xm: bool = False
-) -> tuple[LDiag, list[Ghost] | None, list[Step]]:
+    D: LDiag, ids: set[int], drops: set[int], G: int, xm: bool = False, rm: bool = False
+) -> tuple[LDiag, list[Ghost] | None, list[Step], list[CDim]]:
     """``D`` with each node of ``drops`` meeting :func:`drop_ok` dropped (moved last first),
     then each node of ``ids`` meeting :func:`ghost_ok` dropped for the ghost ``(G, True, i)`` of
-    its slot ``i``; the ghosts (most recent first; None when a node of ``ids`` stays) and the
-    steps. With ``xm`` the ghosts meet :func:`ghost_x_ok`, and nodes of ``drops`` meeting
-    :func:`drop_x_ok` are dropped only when the ghosts alone leave a node of ``ids``."""
+    its slot ``i``; the ghosts (most recent first; None when a node of ``ids`` stays), the steps
+    and the ghost read bounds. With ``xm`` the ghosts meet :func:`ghost_x_ok`, and nodes of
+    ``drops`` meeting :func:`drop_x_ok` are dropped only when the ghosts alone leave a node of
+    ``ids``; with ``rm`` the drops meet :func:`drop_n_ok` and, while node readings remain, the
+    ghosts :func:`ghost_n_ok`."""
     if xm and drops:
-        alone = _reduce(D, ids, set(), G, True)
+        alone = _reduce(D, ids, set(), G, True, rm)
         if alone[1] is not None:
             return alone
     steps: list[Step] = []
     left = set(ids)
     for x in [n for n in D.nodes if n.id in drops]:
-        found = _drops(D, x, xm)
+        found = _drops(D, x, xm, rm)
         if found:
             w, u, v, P, (nodes, wires, outs, ins, links) = found[0]
             steps.append(("drop", x, (*w, u, v, P), -1))
-            D = LDiag(nodes, wires, outs, ins, D.boxes, links, D.cph, D.cdim)
+            D = LDiag(
+                nodes,
+                wires,
+                outs,
+                ins,
+                D.boxes,
+                links,
+                D.cph,
+                [q for q in D.cdim if q[0][0] != x.id],
+                [q for q in D.cnd if q[0] != x.id],
+            )
             left.discard(x.id)
     gs: list[Ghost] = []
+    gr: list[CDim] = []
     for x in [n for n in D.nodes if n.id in left]:
         M = _move_last(D, x)
         legs = [(x.id, True, 0), (x.id, False, 0)]
@@ -1295,13 +1548,18 @@ def _reduce(
                 continue
             a, i = legs[1 - legs.index(c)], M.bnd().index(c)
             g = (x.id, True, i + 1) if M.chain(x.id) else (G, True, i)
-            if (ghost_x_ok if xm else ghost_ok)(M, gs, x, a, c, g, i):
+            if (
+                ghost_n_ok(M, gs, gr, x, a, c, g, i)
+                if rm and M.cnd
+                else (ghost_x_ok if xm else ghost_ok)(M, gs, x, a, c, g, i)
+            ):
                 steps.append(("ghost", x, (a, c, g), i))
+                gr = _gr_add(M, x.id, g, gr)
                 D = ghost_drop(M, x.id, a, c, g)
                 gs.insert(0, (g, i, x.dim))
                 left.discard(x.id)
                 break
-    return D, (None if left else gs), steps
+    return D, (None if left else gs), steps, gr
 
 
 def _alias(name: str, D: LDiag, steps: Sequence[Step], same: str) -> str:
@@ -1393,7 +1651,11 @@ def _chain(
 def _same_up_to_order(A: LDiag, B: LDiag) -> bool:
     """``A`` and ``B`` alike but for the order of their nodes."""
     key = sorted(A.nodes, key=lambda n: n.id) == sorted(B.nodes, key=lambda n: n.id)
-    reads = (sorted(A.cph), sorted(A.cdim)) == (sorted(B.cph), sorted(B.cdim))
+    reads = (sorted(A.cph), sorted(A.cdim), sorted(A.cnd)) == (
+        sorted(B.cph),
+        sorted(B.cdim),
+        sorted(B.cnd),
+    )
     return (
         key
         and reads
@@ -1470,11 +1732,29 @@ def drop_x_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Por
     )
 
 
+def drop_n_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Port) -> bool:
+    """The Lean ``DropN D x w u v P``, field by field, with ``DropOK``'s ``pdim``."""
+    owner = next((n for n in D.nodes if n.id == P[0]), None)
+    dims = None if owner is None else (owner.outs if P[1] else owner.ins)
+    o = _find(D.cnd, x.id)
+    return (
+        drop_ok(strip(D), x, w, u, v, P)
+        and dims is not None
+        and P[2] < len(dims)
+        and dims[P[2]] == x.dim
+        and all(q[0] != x.id for q in D.cph)
+        and _find(D.cdim, (x.id, True, 0)) == o
+        and _find(D.cdim, (x.id, False, 0)) == o
+        and _find(D.cdim, P) == o
+        and (o is None or D.depth(o[0], P[0]) == D.depth(o[0], x.id))
+    )
+
+
 def _drops(
-    D: LDiag, x: LNode, xm: bool = False
+    D: LDiag, x: LNode, xm: bool = False, rm: bool = False
 ) -> list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]]:
     """Each ``(w, u, v, P, dropped)`` of ``x`` in ``D`` meeting :func:`drop_ok` (with ``xm``
-    :func:`drop_x_ok`)."""
+    :func:`drop_x_ok`, with ``rm`` :func:`drop_n_ok`)."""
     D = _move_last(D, x)
     out: list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]] = []
     legs = [(x.id, True, 0), (x.id, False, 0)]
@@ -1483,7 +1763,8 @@ def _drops(
         for w in D.wires:
             if u in w and w[0] != w[1]:
                 P = w[1] if w[0] == u else w[0]
-                if (drop_x_ok if xm else drop_ok)(D, x, w, u, v, P):
+                ok = drop_n_ok if rm else drop_x_ok if xm else drop_ok
+                if ok(D, x, w, u, v, P):
                     out.append((w, u, v, P, drop_id(D, x.id, w, v, P)))
     return out
 
@@ -1515,16 +1796,16 @@ def export_slide(before: Diagram, after: Diagram) -> str | None:
     if L.boxes != R.boxes:
         return None
     zero = _Tables.index(tables.phases, repr(None))
-    Dl, gl, sl = _reduce(L, set(idl.values()), set(), G)
-    Dr, gr, sr = _reduce(R, set(idr.values()), set(), G)
+    Dl, gl, sl, _ = _reduce(L, set(idl.values()), set(), G)
+    Dr, gr, sr, _ = _reduce(R, set(idr.values()), set(), G)
     if gl is None or gr is None or not (_same_up_to_order(Tl, Dl) and _same_up_to_order(Tr, Dr)):
         return None
     found = None
     for x in L.nodes:
         if x not in R.nodes or x.kind != "Z" or x.ph != zero or x.id in idl.values():
             continue
-        Cl, hl, ml = _reduce(L, {x.id, *idl.values()}, {x.id}, G)
-        Cr, hr, mr = _reduce(R, {x.id, *idr.values()}, {x.id}, G)
+        Cl, hl, ml, _ = _reduce(L, {x.id, *idl.values()}, {x.id}, G)
+        Cr, hr, mr, _ = _reduce(R, {x.id, *idr.values()}, {x.id}, G)
         if hl is not None and (Cl, hl) == (Cr, hr):
             found = (Cl, hl, ml, mr)
             break

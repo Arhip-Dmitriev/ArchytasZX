@@ -1546,11 +1546,14 @@ theorem dpairsX_nil (L : LDiagram) (h : L.aligned = []) (ks : ℕ → ℕ) :
     L.dpairsX ks = L.dpairs ks := by
   simp [dpairsX, h]
 
-/-- Peeling the last copy of an outermost chain box keeps the digit sum `evalX`, `L`'s slots read
-from `L'`'s through `peelφ`. -/
-theorem evalX_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1)
+/-- Peeling the last copy of an outermost chain box keeps the digit sum `evalW` when the integrand
+products agree under `peelφ`, `L`'s slots read from `L'`'s through `peelφ`. -/
+theorem evalW_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1)
+    (F F' : (ℕ → ℕ) → ℂ)
+    (hF : ∀ τ τ' : ℕ → ℕ, (∀ x ∈ L.base.dlabs ks, τ' x = τ (relab (peelφ B cp (ks c)) x)) →
+      F' τ = F τ')
     (σ' : ℕ → List ℕ → ℕ) :
-    L'.evalX E ks σ' = L.evalX E ks (bndMap L.base L'.base (peelφ B cp (ks c)) σ') := by
+    L'.evalW E ks F' σ' = L.evalW E ks F (bndMap L.base L'.base (peelφ B cp (ks c)) σ') := by
   have ho := h.ok
   have lcL : ∀ q, L.base.legChain q = L.base.nodeChain q.node := ho.lc
   have lcL' : ∀ q, L'.base.legChain q = L'.base.nodeChain q.node := ho.lc'
@@ -1595,7 +1598,7 @@ theorem evalX_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (
       · exact ⟨he2, by rw [lcL, hce2]; exact cidx_eraseIdx ks _ t _ ht, hl2,
           by rw [lcL, hc2]; exact ht⟩
       · exact ⟨he2, by rw [lcL, hce2]; exact hu, he1, by rw [lcL, hce1]; exact hu⟩
-  refine evalX_relabelφ L L' E ks ks σ' (peelφ B cp (ks c)) (Diagram.dlabs_nodup _ _ ho.legsL)
+  refine evalW_relabelφ L L' E ks ks σ' F F' (peelφ B cp (ks c)) (Diagram.dlabs_nodup _ _ ho.legsL)
     (Diagram.dlabs_nodup _ _ ho.legs) ho.bnd ?_ ?_ ?_ ?_ (fun x hx => hpl0 x (by
       rw [dpairsX_nil L h.al] at hx; exact hx)) (fun x hx => by
       rw [dpairsX_nil L h.al] at hx
@@ -1604,7 +1607,7 @@ theorem evalX_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (
       rw [dpairsX_nil L' h.al'] at hy
       obtain ⟨x, hx, e⟩ := ho.bwd ks hk y hy
       exact ⟨x, by rw [dpairsX_nil L h.al]; exact hx, e⟩)
-    (fun p hp => (ho.bndL p hp).1) ?_ ?_ (fun τ τ' hτ => h.prod E ks hk τ τ' hτ)
+    (fun p hp => (ho.bndL p hp).1) ?_ ?_ hF
   · intro p hp t ht
     rw [lcL] at ht
     by_cases hB : p.node ∈ B
@@ -1699,6 +1702,13 @@ theorem evalX_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (
       refine ⟨p, hp, ks c :: u, ?_, peelφ_B (ks c) p hB u⟩
       rw [lcL, c1]
       exact cons_mem_cidx ks mb _ _ u (by omega) (by rw [lcL'] at hu; exact hu)
+
+/-- Peeling the last copy of an outermost chain box keeps the digit sum `evalX`, `L`'s slots read
+from `L'`'s through `peelφ`. -/
+theorem evalX_peel (h : PeelX L L' bid mb c B cp) (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1)
+    (σ' : ℕ → List ℕ → ℕ) :
+    L'.evalX E ks σ' = L.evalX E ks (bndMap L.base L'.base (peelφ B cp (ks c)) σ') :=
+  evalW_peel h E ks hk (L.prodL E ks) (L'.prodL E ks) (fun τ τ' hτ => h.prod E ks hk τ τ' hτ) σ'
 
 end peelx2
 
