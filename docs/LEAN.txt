@@ -402,6 +402,13 @@ meets a phaseless spider of its colour with one (at one summed plain leg, its ou
 other's input for X) first hands the split's new legs to that spider (tower_move): the two
 split spiders fused (fusionZG or fusionXG), the fused spider's tails reordered (isoB), and
 unfused back into the spider of the network at k and the neighbour with both copies' legs.
+A Z spider with neither, one of whose summed plain legs u is the input of an F box with a
+boundary output o (tower_open_leg), is unfused at u (tower_cut_open) and the wire opened
+(tower_opening): four F boxes on the new wire w are the identity, so the small spider on w is
+replaced by F (w -> w1) and F^3 then the spider on w4 (Equal.toLocal of the normaliser's proof
+on the two small networks, plugged); the network at k with u renamed w and o renamed w1, its F
+box being the first of the four, is then the region (ghz_x_basis d = 490: 348774 bytes at
+n = 10^3, 348792 at n = 10^6).
 This proves for every n the families decided by symbolic contraction whose boxes meet a CX
 target (bernstein_vazirani), a fan-out spider with a boundary input (phase_flip_code
 encoding), two fan-out spiders with boundary legs (repetition_decoding, phase_flip_decoding)

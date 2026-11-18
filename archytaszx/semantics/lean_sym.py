@@ -3490,6 +3490,78 @@ class _SymExport:
         )
         return za, zb, fusion
 
+    @staticmethod
+    def tower_open_leg(x: Any, zn: Any) -> tuple[int, Any, int] | None:
+        """For a Z spider ``zn`` without a boundary leg: a summed plain leg ``u`` of it that is
+        the input of an F node of ``x`` whose output is a boundary label, as ``(u, F node,
+        that label)``; None if there is none."""
+        from archytaszx.semantics.lean_net import _head
+
+        if _head(zn.kind) != "ZB":
+            return None
+        plain = (*zn.outs, *zn.ins[: len(zn.ins) - len(zn.kind[-1])])
+        for u in plain:
+            if u not in x.summed:
+                continue
+            for f in x.nodes:
+                if f.kind == "F" and tuple(f.ins) == (u,) and f.outs[0] in x.bnd:
+                    return u, f, f.outs[0]
+        return None
+
+    def tower_cut_open(
+        self, x: Any, zn: Any, u: int, rest: Sequence[Any]
+    ) -> tuple[Any, int, tuple[int, ...], str]:
+        """:meth:`tower_cut` at the summed leg ``u`` of ``zn`` (``zout`` when ``u`` is an
+        output, else ``zin``)."""
+        from archytaszx.semantics.lean_net import _head, _tail
+
+        cs1 = tuple(zn.kind[-1])
+        i1 = tuple(zn.ins[: len(zn.ins) - len(cs1)])
+        mode = "zout" if u in zn.outs else "zin"
+        found = [n for n in rest if _head(n.kind) == _head(zn.kind) and n.outs == zn.outs]
+        if len(found) != 1:
+            raise NetUnsupported("the split spider is not found")
+        zs = found[0]
+        es = tuple(lab for lab in zs.ins if lab not in zn.ins)
+        t1 = _tail(zn.ins, cs1)
+        if not es or tuple(zs.ins) != i1 + tuple(t1) + es:
+            raise NetUnsupported("the split spider's legs are not the unfused form")
+        return zs, u, es, mode
+
+    def tower_opening(
+        self, envk: str, kvs: Sequence[str], zb: Any, w: int, f: Any
+    ) -> tuple[list[Any], Any, str, Any, Any]:
+        """The F chain ``F (w -> w1), F (w1 -> w2), F (w2 -> w3), F (w3 -> w4)`` put before
+        ``zb`` on its leg ``w`` (four F boxes are the identity): the first F box, the other
+        three, ``zb`` on ``w4``, the local equation from ``zb`` to them (``Equal.toLocal`` of
+        the normaliser's proof on the two small networks) and the two networks."""
+        from archytaszx.semantics.lean_net import LNet, LNode
+
+        out = self.out
+        ws = [out.fresh_like(w) for _ in range(4)]
+        chain = [w, *ws]
+        fs = [LNode(f.kind, (chain[j + 1],), (chain[j],), f.dim, f.ph) for j in range(4)]
+        zb2 = LNode(
+            zb.kind,
+            tuple(ws[3] if lab == w else lab for lab in zb.outs),
+            tuple(ws[3] if lab == w else lab for lab in zb.ins),
+            zb.dim,
+            zb.ph,
+        )
+        iface = tuple(dict.fromkeys(zb.labels()))
+        a = LNet((zb,), (), iface)
+        b = LNet((*fs, zb2), tuple(ws), iface)
+        i = len(self.fam_decls)
+        at, bt = f"T{i}oa", f"T{i}ob"
+        self.net_decls += [
+            f"/-- A spider before an opening. -/\ndef {at} : Net := {a.lean()}",
+            f"/-- The spider after four F boxes on one leg. -/\ndef {bt} : Net := {b.lean()}",
+        ]
+        one = sp.Integer(1)
+        lj = self.fam(a, at, b, bt, (one, one, "1", "1"))
+        eq = f"(Equal.toLocal _ _ _ {self.call(lj, *kvs)})"
+        return [fs[0]], (fs[1], fs[2], fs[3], zb2), eq, a, b
+
     def tower(
         self,
         i: int,
@@ -3557,6 +3629,16 @@ class _SymExport:
         ints = tuple(sp0.summed)
         prev_t, prev = f"(Net.split {spc} {H} {xt})", sp0
         held = [z for z in spiders if self.tower_leg(x, z) is None]
+        opened: dict[int, tuple[int, Any, int]] = {}
+        for zn in held:
+            try:
+                self.tower_target(x, zn, spiders, held)
+            except NetUnsupported:
+                got = self.tower_open_leg(x, zn)
+                if got is None:
+                    raise
+                opened[id(zn)] = got
+        held = [z for z in held if id(z) not in opened]
         for j, zn in enumerate(held):
             zm = self.tower_target(x, zn, spiders, held)
             mv = self.tower_move(envk, x, zn, zm, rest, ints, others, bnd)
@@ -3583,7 +3665,10 @@ class _SymExport:
         for zn in spiders:
             if any(zn is h for h in held):
                 continue
-            cut = self.tower_cut(x, zn, rest)
+            if id(zn) in opened:
+                cut = self.tower_cut_open(x, zn, opened[id(zn)][0], rest)
+            else:
+                cut = self.tower_cut(x, zn, rest)
             rest.remove(cut[0])
             cuts.append((zn, *cut))
         copy = list(rest)
@@ -3617,6 +3702,30 @@ class _SymExport:
             done += (za, zb)
             ints += (w,)
             prev_t, prev = n2t, n2
+            if id(zn) in opened:
+                _u, fnode, o_out = opened[id(zn)]
+                head, tail, eq, na, nb = self.tower_opening(envk, kvs, zb, w, fnode)
+                mapping[o_out] = head[0].outs[0]
+                done = done[:-1]
+                ctx = tuple(copy) + tuple(others) + done + tuple(c[1] for c in cuts[j + 1 :])
+                n5 = LNet(ctx + (zb,), ints, bnd)
+                n6 = LNet(ctx + tuple(head) + tail, ints + na.summed + nb.summed, bnd)
+                n5t, n6t = f"T{i}o{j}", f"T{i}p{j}"
+                self.net_decls += [
+                    f"/-- The network before its opening. -/\ndef {n5t} : Net := {n5.lean()}",
+                    f"/-- The network after its opening. -/\ndef {n6t} : Net := {n6.lean()}",
+                ]
+                steps.append(iso_s(prev_t, prev, n5t, n5))
+                steps.append(
+                    f"(plug {envk} {lit(ctx)} {lit([zb])} {lit([*head, *tail])} {_list(ints)} [] "
+                    f"{_list(nb.summed)} {bl} {_list(nb.bnd)} 1 1 {eq} (by chk) (by chk) "
+                    "(by chk))"
+                )
+                done += tuple(head) + tail
+                ints += tuple(nb.summed)
+                prev_t, prev = n6t, n6
+                zbs.pop()
+                zbs.extend((*tail, fnode))
         for lab in y.summed:
             mapping.setdefault(lab, out.fresh_like(lab))
         pairs = _perm_to_bijection(mapping)
