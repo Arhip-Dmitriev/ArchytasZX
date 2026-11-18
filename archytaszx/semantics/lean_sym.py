@@ -3877,6 +3877,7 @@ class _SymExport:
         if rest and fzs is None and rgs is None:
             return whole
         out: list[str] = []
+        nfn = "nfHP" if rgs is not None else "nfH"
         if fzs is not None:
             out += [
                 f"def {name}FN : ℕ := {fzs[0]}",
@@ -3895,7 +3896,7 @@ class _SymExport:
             out.append(
                 f"def {tag}H (i : ℕ) : List THint := (({table} : List (List THint))).getD i []"
             )
-            args = f"(nfH FL {tag}H) DT PT RL labs"
+            args = f"({nfn} FL {tag}H) DT PT RL labs"
             m = len(lnet.nodes)
             for k, n in enumerate(lnet.nodes):
                 out.append(f"def {tag}n{k} : Node := {n.lean()}")
@@ -3974,14 +3975,14 @@ class _SymExport:
         zh = [term_hint(self.fl, t) for t in ex_mul(s0, e[ta]) + ex_mul(neg, eb)]
         out.append(f"def {name}ZH (_ : ℕ) : List THint := [" + ", ".join(map(_lean_th, zh)) + "]")
         fl_ok = self.call("flOK")
-        nfz = f"(nfH FL {name}ZH 0)"
-        hnfz = f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {name}ZH 0)"
+        nfz = f"({nfn} FL {name}ZH 0)"
+        hnfz = f"({nfn}_den {self.rho} {self.hr} FL {fl_ok} {name}ZH 0)"
         if fzs is not None:
             nfz = f"(fzNf {name}FN {name}FC (nfH FL {name}ZH 0))"
             hnfz = f"(fzNf_den {self.rho} {self.hr} {name}FN {name}FC _ {hnfz})"
         rgx = ""
         if rgs is not None:
-            nfz = f"(rgNf {name}RC (nfH FL {name}ZH 0))"
+            nfz = f"(rgNf {name}RC ({nfn} FL {name}ZH 0))"
             hnfz = f"(rgNf_den {self.rho} {self.hr} {name}RC _ {hnfz})"
         parts = [
             ("p", f"{a}.bnd.isPerm {b}.bnd"),
@@ -4000,8 +4001,8 @@ class _SymExport:
                 + f"theorem {name}{sfx} : {stmt} = true := by decide +kernel"
             )
         self.g_args[name] = (
-            f"(nfH FL {ta}H) (nfH FL {tb2}H) (nfH_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
-            f"(nfH_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
+            f"({nfn} FL {ta}H) ({nfn} FL {tb2}H) ({nfn}_den {self.rho} {self.hr} FL {fl_ok} {ta}H) "
+            f"({nfn}_den {self.rho} {self.hr} FL {fl_ok} {tb2}H) _ _ "
             f"({ta}R.trans (congrArg some {ta}XE)) ({tb2}R.trans (congrArg some {tb2}XE)) "
             f"{name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m{rgx} {nfz} {hnfz} {name}z"
             + (f" {name}r" if rgs is not None else "")

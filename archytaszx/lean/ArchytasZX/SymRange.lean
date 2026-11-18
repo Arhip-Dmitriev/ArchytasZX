@@ -407,4 +407,103 @@ theorem equal_symSR (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Fl
     ← hs1] at hz'
   linear_combination hz'
 
+/-! ## Merging by fingerprint -/
+
+/-- One integer folded into a fingerprint. -/
+def fpZ (h : ℕ) (z : ℤ) : ℕ :=
+  (h * 1000003 + (2 * z.natAbs + if z < 0 then 1 else 0)) % 2305843009213693951
+
+/-- A dimension monomial folded into a fingerprint. -/
+def fpDM (h : ℕ) (m : DMon) : ℕ := m.e.foldl (fun h n => fpZ h n) (fpZ h m.c)
+
+/-- A factor folded into a fingerprint. -/
+def fpFac (h : ℕ) (f : Fac) : ℕ :=
+  f.2.foldl (fun h t => fpZ (t.1.foldl (fun h n => fpZ h n) h) t.2) (fpDM h f.1)
+
+/-- A fingerprint of a term's sums and factors. -/
+def fpTm (t : STm) : ℕ :=
+  t.phs.foldl fpFac (t.dels.foldl fpFac (t.sums.foldl (fun h p => fpDM (fpZ h p.1) p.2) 0))
+
+/-- `tmAdd` over terms stored with their fingerprints, `k` that of `t`. -/
+def tmAddP (k : ℕ) (t : STm) : List (ℕ × STm) → List (ℕ × STm)
+  | [] => if t.c.q = 0 then [] else [(k, t)]
+  | u :: l =>
+    if u.1 = k ∧ shape u.2 = shape t then
+      (if qAdd u.2.c.q t.c.q = 0 then l else (u.1, withQ u.2 (qAdd u.2.c.q t.c.q)) :: l)
+    else u :: tmAddP k t l
+
+/-- Every stored fingerprint is its term's. -/
+def FpOK (acc : List (ℕ × STm)) : Prop := ∀ p ∈ acc, p.1 = fpTm p.2
+
+theorem fpTm_shape (u t : STm) (h : shape u = shape t) : fpTm u = fpTm t := by
+  have h1 := congrArg STm.sums h
+  have h2 := congrArg STm.dels h
+  have h3 := congrArg STm.phs h
+  simp only [shape] at h1 h2 h3
+  simp only [fpTm, h1, h2, h3]
+
+theorem tmAddP_eq (t : STm) : ∀ acc : List (ℕ × STm), FpOK acc →
+    (tmAddP (fpTm t) t acc).map (·.2) = tmAdd t (acc.map (·.2)) ∧ FpOK (tmAddP (fpTm t) t acc)
+  | [], _ => by
+    unfold tmAddP tmAdd
+    split_ifs
+    · exact ⟨rfl, fun p hp => by simp at hp⟩
+    · refine ⟨rfl, fun p hp => ?_⟩
+      simp only [List.mem_singleton] at hp
+      subst hp; rfl
+  | u :: l, hok => by
+    have hu : u.1 = fpTm u.2 := hok u List.mem_cons_self
+    have hl : FpOK l := fun p hp => hok p (List.mem_cons_of_mem _ hp)
+    have hiff : (u.1 = fpTm t ∧ shape u.2 = shape t) ↔ shape u.2 = shape t :=
+      ⟨fun h => h.2, fun h => ⟨hu.trans (fpTm_shape _ _ h), h⟩⟩
+    simp only [tmAddP, List.map_cons, tmAdd]
+    by_cases hs : shape u.2 = shape t
+    · rw [if_pos (hiff.2 hs), if_pos hs]
+      split_ifs
+      · exact ⟨rfl, hl⟩
+      · refine ⟨rfl, fun p hp => ?_⟩
+        rcases List.mem_cons.1 hp with rfl | hp
+        · exact hu
+        · exact hl p hp
+    · rw [if_neg (fun h => hs (hiff.1 h)), if_neg hs]
+      obtain ⟨h1, h2⟩ := tmAddP_eq t l hl
+      refine ⟨by simp only [List.map_cons, h1], fun p hp => ?_⟩
+      rcases List.mem_cons.1 hp with rfl | hp
+      · exact hu
+      · exact h2 p hp
+
+/-- `nfGoH` with `tmAddP`. -/
+def nfGoP (fl : List ℕ) : List THint → List (ℕ × STm) → List STm → List (ℕ × STm)
+  | _, acc, [] => acc
+  | hs, acc, t :: ts =>
+    match normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
+      (hs.headD (0, 0, [])).2.2 t with
+    | none => nfGoP fl hs.tail acc ts
+    | some t' => nfGoP fl hs.tail (tmAddP (fpTm t') t' acc) ts
+
+theorem nfGoP_eq (fl : List ℕ) : ∀ (e : List STm) (hs : List THint) (acc : List (ℕ × STm)),
+    FpOK acc → (nfGoP fl hs acc e).map (·.2) = nfGoH fl hs (acc.map (·.2)) e
+  | [], _, _, _ => rfl
+  | t :: ts, hs, acc, hok => by
+    simp only [nfGoP, nfGoH]
+    cases normTmK fl (hs.headD (0, 0, [])).1 (hs.headD (0, 0, [])).2.1
+        (hs.headD (0, 0, [])).2.2 t with
+    | none => exact nfGoP_eq fl ts hs.tail acc hok
+    | some t' =>
+      obtain ⟨h1, h2⟩ := tmAddP_eq t' acc hok
+      rw [nfGoP_eq fl ts hs.tail _ h2, h1]
+
+/-- `nfH` merging by fingerprint. -/
+def nfHP (fl : List ℕ) (H : ℕ → List THint) (i : ℕ) (e : List STm) : List STm :=
+  (nfGoP fl (H i) [] e).map (·.2)
+
+theorem nfHP_eq (fl : List ℕ) (H : ℕ → List THint) (i : ℕ) (e : List STm) :
+    nfHP fl H i e = nfH fl H i e :=
+  nfGoP_eq fl e (H i) [] (fun p hp => by simp at hp)
+
+theorem nfHP_den (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
+    (H : ℕ → List THint) (i : ℕ) (e : List STm) (ν : ℕ → ℤ) :
+    exDen ρ ν (nfHP fl H i e) = exDen ρ ν e := by
+  rw [nfHP_eq]; exact nfH_den ρ hρ fl hfl H i e ν
+
 end ArchytasZX.Sym

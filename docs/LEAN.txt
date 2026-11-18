@@ -342,7 +342,11 @@ factor reads with a coefficient a where M does not divide a D; at most RG_CASES 
 RG_WORK = 2^16 case terms. sym_check tries it after fz_cert (only where the check failed before)
 and the export writes RGC or chkRC. fourier_constant_adder n=2 d=3 (node by node): 288 residual
 terms, sum-free after at most 9 pins/eliminations each, R = [(1, 3), (3, 3)], 9 cases, 802
-pruned terms, 39 cycles.
+pruned terms, 39 cycles. Node-by-node exports with chkRC normalise by nfHP instead of nfH:
+nfGoP stores each merged term with a fingerprint (fpTm, a hash of its sums and factors) and
+compares shapes only where fingerprints agree (tmAddP); nfHP_eq proves nfHP = nfH, so the stated
+expressions are unchanged. At the node-2 step of that point (585 terms to 271) the kernel spends
+88 s normalising and about 315 s in nfH's shape comparisons.
 
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
