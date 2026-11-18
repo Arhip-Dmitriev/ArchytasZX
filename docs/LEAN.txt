@@ -36,6 +36,14 @@ runs Lean on it. In the shell:
 
 In a script file, a relative path resolves against the script's directory.
 
+The workflow .github/workflows/lean.yml builds the library (lake build ArchytasZX, the root module
+importing every file) on every push or pull request that changes archytaszx/lean/** or the
+workflow: elan installs the toolchain of lean-toolchain, lake exe cache get fetches Mathlib's
+built files, and archytaszx/lean/.lake is kept in a GitHub cache keyed by the toolchain, the
+manifest and the library's sources (restored from the latest cache of the same toolchain and
+manifest when the sources changed), so only changed modules and their dependents are rebuilt. The
+step prints the build's wall time. It checks no exported proof.
+
 
 3. THE SEMANTICS IN LEAN
 ------------------------

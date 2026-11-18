@@ -1,0 +1,58 @@
+name: Lean
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "archytaszx/lean/**"
+      - ".github/workflows/lean.yml"
+  pull_request:
+    paths:
+      - "archytaszx/lean/**"
+      - ".github/workflows/lean.yml"
+
+concurrency:
+  group: lean-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        working-directory: archytaszx/lean
+    steps:
+      - uses: actions/checkout@v7
+      - name: install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: cache keys
+        id: keys
+        run: |
+          deps=${{ hashFiles('archytaszx/lean/lean-toolchain', 'archytaszx/lean/lake-manifest.json', 'archytaszx/lean/lakefile.toml') }}
+          src=${{ hashFiles('archytaszx/lean/ArchytasZX.lean', 'archytaszx/lean/ArchytasZX/**') }}
+          echo "prefix=lake-$deps-" >> "$GITHUB_OUTPUT"
+          echo "key=lake-$deps-$src" >> "$GITHUB_OUTPUT"
+      - name: restore .lake
+        uses: actions/cache/restore@v4
+        with:
+          path: archytaszx/lean/.lake
+          key: ${{ steps.keys.outputs.key }}
+          restore-keys: ${{ steps.keys.outputs.prefix }}
+      - name: Mathlib cache
+        run: lake exe cache get
+      - name: lake build ArchytasZX
+        run: |
+          start=$(date +%s)
+          lake build ArchytasZX
+          echo "build wall time: $(( $(date +%s) - start )) s"
+      - name: save .lake
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: archytaszx/lean/.lake
+          key: ${{ steps.keys.outputs.key }}
