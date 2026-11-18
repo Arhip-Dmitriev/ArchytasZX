@@ -3055,6 +3055,37 @@ class _SymExport:
                         break
         return marked
 
+    def chained_gadgets(self) -> bool:
+        """Whether a splitter output of either network is a binder input."""
+        for lnet in (self.a.net, self.b.net):
+            nodes = self.net(lnet)[0]
+            outs = {lab for kind, os, _, _, _ in nodes if kind == "S" for lab in os}
+            if any(lab in outs for kind, _, is_, _, _ in nodes if kind == "B" for lab in is_):
+                return True
+        return False
+
+    def compact_check(self, args: tuple[Any, ...]) -> bool:
+        """The compact check: the tables marked by :meth:`compact_rules`, binder and splitter
+        nodes on, the difference cancelled by ``rx_cert``; the rules, tables and node setting
+        restored when it fails."""
+        saved = list(self.rules)
+        saved_pt = list(self.pt)
+        self.cp_rows = {}
+        if not self.compact_rules():
+            return False
+        self.fz, self.rg = [], []
+        global _BS_ON
+        bs = _BS_ON
+        _BS_ON = True
+        if sym_check(*args, None, None, self.rx):
+            return True
+        _BS_ON = bs
+        self.rules = saved
+        self.pt = saved_pt
+        self.cp_rows = {}
+        self.rx = []
+        return False
+
     def check(self) -> bool:
         if not self.mults:
             assert self.s0 is not None and self.s1 is not None
@@ -3074,30 +3105,19 @@ class _SymExport:
                 self.s0,
                 self.s1,
             )
+            self.cp_rows: dict[int, tuple[int, CpData]] = {}
+            first = self.chained_gadgets()
+            if first and self.compact_check(args):
+                return True
+            self.fz, self.rg = [], []
             try:
                 if sym_check(*args, self.fz, self.rg):
                     return True
                 failed: NetUnsupported | None = None
             except NetUnsupported as exc:
                 failed = exc
-            saved = list(self.rules)
-            saved_pt = list(self.pt)
-            self.cp_rows: dict[int, tuple[int, CpData]] = {}
-            if not self.compact_rules():
-                if failed is not None:
-                    raise failed
-                return False
-            self.fz, self.rg = [], []
-            global _BS_ON
-            bs = _BS_ON
-            _BS_ON = True
-            if sym_check(*args, None, None, self.rx):
+            if not first and self.compact_check(args):
                 return True
-            _BS_ON = bs
-            self.rules = saved
-            self.pt = saved_pt
-            self.cp_rows = {}
-            self.rx = []
             if failed is not None:
                 raise failed
             return False

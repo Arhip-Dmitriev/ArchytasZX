@@ -615,10 +615,14 @@ a pin, then elim_choice, then rules 15, 13, 14, 8 / 9 (only when the delta loses
 11, 12 (labels), 16 (the delta's greatest variable, read by another factor) and 10 (only when a
 delta of the sum's range then thins the new one)) and the export writes normTmC / rxNfC, so
 every export rx_cert reaches is unchanged. The plain route memoises ip_lin and elim_var and skips
-the deltas a variable does not read (same results). draper_adder/main d = 2: the difference of
-the two unnormalised terms cancels by 56, 141 and 257 hinted steps at n = 2, 3 and 4, never more
-than the two terms; export 2.5 s (41 KB), 194 s (105 KB, the plain route first, > 1500 s before
-the memoisation) and 20 s (270 KB, past BS_SMALL); Lean (anon peak): n = 2 38 s (0.7 GB), n = 3
+the deltas a variable does not read (same results). A pair with chained gadgets (a splitter output
+of either network that is a binder input, _SymExport.chained_gadgets) tries the compact check
+first (compact_check) and the plain check only when the compact one fails; every other pair keeps
+the plain-first order. Exports byte-identical with and without it: fca n = 1 d = 3, 5, n = 2
+d = 2, 3, 5, n = 3 d = 3, draper n = 1 d = 3, 5, 10, n = 2, 3 d = 2, symcuc2b, symmct3b,
+cuc4_proof. draper_adder/main d = 2: the difference of the two unnormalised terms cancels by 56,
+141 and 257 hinted steps at n = 2, 3 and 4, never more than the two terms; export 2.5 s (41 KB),
+5 s (105 KB; 167 s with the plain route first) and 20 s (270 KB); Lean (anon peak): n = 2 38 s (0.7 GB), n = 3
 109 s (2.3 GB), n = 4 576 s (5.8 GB); a copy with the copy register's outputs swapped and a copy
 with a changed final term are rejected.
 
