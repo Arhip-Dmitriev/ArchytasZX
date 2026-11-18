@@ -20,8 +20,9 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from archytaszx import trace as _trace
+from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.diagram.graph import Diagram
-from archytaszx.semantics import kernel, lean_net, lean_sym
+from archytaszx.semantics import kernel, lean_chainfam, lean_net, lean_sym
 from archytaszx.semantics.decide import Decision, DecisionMethod, dimension_floors
 from archytaszx.semantics.lean_scalar import ScalarUnsupported
 from archytaszx.semantics.prove import ProofCertificate, ProofOutcome, prove
@@ -164,6 +165,16 @@ def restricted_proof(
             )
         except (lean_net.NetUnsupported, ScalarUnsupported) as exc:
             evidence, why = None, f"normaliser under floors: {exc}; "
+    if evidence is None and family and source.doubled is not None:
+        try:
+            evidence = kernel.Symbolic(pair[0], pair[1], lean_chainfam.export_chain_family(*pair))
+        except (
+            PathSumUnsupported,
+            lean_net.NetUnsupported,
+            ScalarUnsupported,
+            kernel.KernelError,
+        ) as exc:
+            why += f"chain family: {exc}; "
     if evidence is None:
         evidence, rest = pair_proof(inner, *pair, describe=describe)
         why += rest

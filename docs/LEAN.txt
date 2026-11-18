@@ -271,6 +271,22 @@ link ends raised k levels; ChainFamOK.labK_cp decodes cpId by division by the bo
 reorders its nodes and summed labels into famNet's (perm_split3, flatMap_swap; famQ lists the
 summed labels in the expansion's order, famQ_nodup and famQ_ge give them distinct and above the
 slots).
+ChainPair.lean: fam_stepR is fam_step with the block scaled by r; fam_pair gives two chain
+families on the same link labels and slots equal at every k, as a * rA^k against b * rB^k, from
+each side's block of one copy times r equal to its head and the pair at 0 copies; chain_pair
+states it over the expansions of two closed chain boxes meeting ChainFamOK (expand_chFam on each
+side). Equal.env0 moves an equation whose nodes are Z, X, F or identities of dimension and phase
+index 0 to any environment reading index 0 and every label's dimension alike.
+lean_chainfam.export_chain_family writes that proof for a doubled family pair whose sides are one
+plain node box with links each (Z, X and F nodes of one leg dimension, no phase): each side as a
+Lean Diagram and DChain (a boundary link port behind a Z(1 -> 1)), the three pieces (each side's
+blkNet at 1 copy against its headNet, scaled by the side's scalar ratio per copy, and the two
+chFam at 0 copies with the scalars at 0 copies) proved by lean_sym.export_symbolic in their own
+namespaces PA, PB and P0, each moved to Ec d (every label of dimension d) by Equal.env0, renamed
+onto the family's labels by Equal.mapL2 (ren, ren_injective by decide) and reordered (by decide),
+then family (chain_pair, every k) and main at the box multiplicity. The file holds no copy count:
+restricted_proof uses it for a family decision with a doubled pair before pair_proof, and the
+point instance is lean_restrict's corollary of main (teleportation_chain and repeater_chain).
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.

@@ -96,6 +96,7 @@ import ArchytasZX.ChainLabel
 import ArchytasZX.ChainForm
 import ArchytasZX.ChainBridge
 import ArchytasZX.ChainFam
+import ArchytasZX.ChainPair
 import ArchytasZX.TreeInduct
 import ArchytasZX.GaussSign
 import ArchytasZX.PhaseMap
