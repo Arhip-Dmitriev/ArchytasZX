@@ -157,6 +157,16 @@ between two scaled networks under one environment: the same tensor, scalars incl
                X spider of phase -u k / d over sqrt d), ex_mod, Equal.pin; evalD_eq_of_checks,
                equal family networks of two checked boxed diagrams with the same boundary data
                have equal digit sums at every slot digits in range
+  CopyBridge   gadgets of a linked diagram L with one copy-indexed phase, on x: GadZ L G x f z i
+               (x a Z spider, G its phaseless copy with one more input wired from the Fourier
+               box f whose input is the last boundary input K, the wire at place i), GadX L G x
+               z (x an X spider, its new input K itself), Gad either; decidable. evalL_gadZ,
+               evalL_gadX, evalL_gad: G.evalD at slot digits reading K's digit t as rdU t mod d
+               is (sqrt d)^-1 per copy of x times L.evalL, the reading at Nat.pair x.ph u the
+               phase gsg x.kind * u k / d (through evalD_pv, the digit sum over the wires' first
+               ends read through pv, prod_single and sumOver_prod_sep); evalL_eq_of_gad: equal
+               family networks of two gadget diagrams give equal linked digit sums at every slot
+               digits in range
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
                MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
                cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed
