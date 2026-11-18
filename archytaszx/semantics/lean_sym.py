@@ -2788,6 +2788,9 @@ def _port_legs(net: Any, m: int, isb: Callable[[int], bool]) -> list[tuple[int, 
 class _SymExport:
     """The tables, networks and proof of one symbolic export."""
 
+    cp_rows: dict[int, tuple[int, CpData]]
+    rx: list[RxCert]
+
     def __init__(
         self,
         left: Diagram,
@@ -3077,7 +3080,8 @@ class _SymExport:
         global _BS_ON
         bs = _BS_ON
         _BS_ON = True
-        if sym_check(*args, None, None, self.rx):
+        fl, dtf, ptf, labs, ix, n0, n1, s0, s1 = args
+        if sym_check(fl, dtf, ptf, labs, ix, n0, n1, s0, s1, None, None, self.rx):
             return True
         _BS_ON = bs
         self.rules = saved
@@ -3093,7 +3097,7 @@ class _SymExport:
                 return True
             self.fz = []
             self.rg = []
-            self.rx: list[RxCert] = []
+            self.rx = []
             args = (
                 self.fl,
                 self.dtf,
@@ -3105,7 +3109,7 @@ class _SymExport:
                 self.s0,
                 self.s1,
             )
-            self.cp_rows: dict[int, tuple[int, CpData]] = {}
+            self.cp_rows = {}
             first = self.chained_gadgets()
             if first and self.compact_check(args):
                 return True
