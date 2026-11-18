@@ -824,8 +824,10 @@ order, written RUNG.CODE (outcomes.stop_codes): normal_form.agree, .differ; orac
 .indeterminate.replicated_factors, .declined.box_meets_wire, .declined.scalar_budget,
 .declined.other; path_sum.equal, .unequal, .residual, .not_applicable; induction.proved,
 .refuted, .base_not_proved, .step_not_discharged and the same under induction_reversed;
-proof.no_proof and refutation.no_lean from certification; the stops after ("doubled",
-"doubled") prefixed doubled., another doubled stop written doubled.CODE. A record written before
+proof.no_proof, refutation.no_lean and refutation.recheck_failed (a residue, numeric or
+interface recheck that failed, PROOFS.txt section 2.2) from certification; the stops after
+("doubled", "doubled") prefixed doubled., another doubled stop written doubled.CODE. A record
+written before
 Decision.stops existed has its codes read from the decide reason's "; "-separated notes (RUNGS):
 the same codes where a note matches, RUNG.other where none does, RUNG.truncated for the last
 note of a reason cut at 400 characters, notes after an induction note (its base case's own

@@ -190,6 +190,13 @@ RUNGS: tuple[tuple[str, str], ...] = (
     ("induction.step_not_discharged", r"induction: step case over \w+ not proved: no discharge"),
     ("induction_reversed.base_not_proved", r"reversed: base case"),
     ("induction_reversed.step_not_discharged", r"reversed: step c"),
+    (
+        "refutation.recheck_failed",
+        (
+            r"uncertified: (?:no Lean refutation \((?:residue|numeric) recheck failed"
+            r"|interface recheck failed)"
+        ),
+    ),
     ("refutation.no_lean", r"(?:not reported unequal|uncertified): no Lean refutation"),
 )
 _RUNG_RE = [(code, re.compile(pat)) for code, pat in RUNGS]
