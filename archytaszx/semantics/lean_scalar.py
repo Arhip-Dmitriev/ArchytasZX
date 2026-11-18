@@ -450,6 +450,8 @@ class Scalars:
                 before = set(atoms)
                 relations.append((s**2 - poly(x), f"(rt_sq' {self.nat_text(x)})"))
                 queue += [a for a in atoms if a not in before]
+            elif isinstance(atom, Om) and not atom.args[0].is_number:
+                continue
             elif isinstance(atom, Om):
                 m = atom.args[0]
                 if not m.is_Integer:

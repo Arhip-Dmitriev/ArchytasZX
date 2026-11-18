@@ -855,8 +855,8 @@ theorem exDen_neg (ρ : Val) (ν : ℕ → ℤ) (e : List STm) : exDen ρ ν (ex
     simp only [exNeg, List.map_cons] at ih ⊢
     rw [exDen_cons, exDen_cons, ih, den_withQ, den_self ρ ν t]; push_cast; ring
 
-/-- Every term a constant. -/
-def exConst (e : List STm) : Bool := e.all fun t => t.sums.isEmpty && t.dels.isEmpty && t.phs.isEmpty
+/-- Every term a constant: no sums, no deltas, roots of unity of constant exponent. -/
+def exConst (e : List STm) : Bool := e.all fun t => t.sums.isEmpty && t.dels.isEmpty && (tmVars t).isEmpty
 
 theorem exDen_const (ρ : Val) (e : List STm) (h : exConst e = true) (ν ν' : ℕ → ℤ) :
     exDen ρ ν e = exDen ρ ν' e := by
@@ -865,11 +865,11 @@ theorem exDen_const (ρ : Val) (e : List STm) (h : exConst e = true) (ν ν' : �
   | cons t e ih =>
     simp only [exConst, List.all_cons, Bool.and_eq_true, List.isEmpty_iff] at h ih
     rw [exDen_cons, exDen_cons, ih h.2]
-    obtain ⟨c, s, d, p⟩ := t
-    obtain ⟨⟨h1, h2⟩, h3⟩ := h.1
-    simp only at h1 h2 h3
-    subst h1 h2 h3
-    rfl
+    obtain ⟨⟨h1, _⟩, h3⟩ := h.1
+    unfold STm.den
+    rw [h1]
+    simp only [sumsV]
+    rw [body_reads ρ.dv t ν ν' fun x hx => by simp [h3] at hx]
 
 /-- The product of the nodes' entries, node `i`'s bound variable `OFF + i`, unnormalised. -/
 def trNodesF (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) : ℕ → List Node → Option (List STm)

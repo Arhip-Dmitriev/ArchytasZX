@@ -672,7 +672,9 @@ spiders (with a boundary output), a spider without such a leg allowed next to on
 that has one. A point claim at n = v is then restricted_symbolic of that proof, exported as the
 family theorem with its corollary at n = v, whose size and time do not depend on v:
 bernstein_vazirani (and its restrictions n >= 1, d >= 2), phase_flip_code encoding,
-repetition_decoding, phase_flip_decoding, parity_decoding and ghz_disentangle. The other
+repetition_decoding, phase_flip_decoding, parity_decoding, ghz_disentangle and deutsch_jozsa
+constant (its scalar exp(-2 pi i/d) a constant root of unity, LEAN.txt 4.3); a point claim
+of weyl_commutation at d = v likewise exports the theorem for every d with its corollary. The other
 families of this kind (LEAN.txt, G6) keep the export of kernel.instantiated's pair, which grows
 with v.
 

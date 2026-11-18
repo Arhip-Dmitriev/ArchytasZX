@@ -309,7 +309,11 @@ M σ i.
 Verdicts not reached by rewriting (for example by symbolic contraction) are proved by the
 verified normaliser of symbolic sums. Both networks are written as symbolic sums: dimensions as
 monomials in dimension symbols, phases as roots of unity times atoms ex g, scalars as constant
-expressions. equal_sym proves Equal when the normal form of the scaled difference is empty; the
+expressions (exConst: no sums, no deltas, roots of unity of constant exponent). When the export
+fails otherwise, a scalar factor exp(2 pi i c / M), c an integer and M a monomial in the
+dimension symbols, is read as om M ^ c (with_roots), a constant root of unity factor (M, c) of
+the scalar's terms (root_facs, read through phV); the statement then writes it om M ^ c.
+equal_sym proves Equal when the normal form of the scaled difference is empty; the
 Lean kernel computes that normal form (decide +kernel), for every value of the dimension symbols
 and phase parameters. The normaliser removes one bound variable per move:
 
@@ -1208,9 +1212,7 @@ boxes inside port boxes; chain boxes (cyclic_shift, bv_secret_pattern, repeater_
 teleportation_chain) and pair boxes (complete_graph_state), which neither the bundled networks
 nor the normaliser represent. Families decided by symbolic contraction outside these forms keep
 the instantiated-pair export of a point claim (4.7), whose size grows with n: ghz_x_basis (a
-fan-out spider with no boundary leg whose neighbours are Fourier boxes) and deutsch_jozsa
-constant (its scalar exp(-2 pi i/d) is a root of unity of symbolic order, which the
-normaliser's constant monomials CMon do not have).
+fan-out spider with no boundary leg whose neighbours are Fourier boxes).
 
 G7 Deferred dimension constraints in families: a family whose rewrite steps assume dimensions
 equal (d^p = d^q, for example) is proved over the merged bundled networks, and main_diagrams is

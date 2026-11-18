@@ -1468,7 +1468,7 @@ def ex_neg(e: Sequence[STm]) -> list[STm]:
 
 
 def ex_const(e: Sequence[STm]) -> bool:
-    return all(not t[1] and not t[2] and not t[3] for t in e)
+    return all(not t[1] and not t[2] and not tm_vars(t) for t in e)
 
 
 def _full_terms(
@@ -2031,6 +2031,7 @@ class _SymExport:
         right: Diagram,
         describe: Callable[[Diagram], str] | None,
         floors: Mapping[str, int],
+        roots: bool = False,
     ) -> None:
         out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
         out.mixed_ok, out.mixed = True, set()
@@ -2060,7 +2061,10 @@ class _SymExport:
         self.b = out.labelled(right)
         out.register(left)
         out.register(right)
-        self.tables(out.scalar(left.scalar), out.scalar(right.scalar), floors)
+        m0, m1 = out.scalar(left.scalar), out.scalar(right.scalar)
+        if roots:
+            m0, m1 = (self.with_roots(m, dim_syms) for m in (m0, m1))
+        self.tables(m0, m1, floors)
 
     def phase_value(self, v: sp.Expr) -> sp.Expr:
         """A phase entry as the atoms read it."""
@@ -2467,11 +2471,51 @@ class _SymExport:
         terms: list[STm] = []
         self.texts_of: dict[STm, str] = getattr(self, "texts_of", {})
         for term in sp.Add.make_args(sp.expand(sp.sympify(model))):
-            cm, text = self.monomial(term)
-            t: STm = (cm, (), (), ())
+            rest, phs = self.root_facs(term)
+            cm, text = self.monomial(rest)
+            t: STm = (cm, (), (), phs)
             terms.append(t)
             self.texts_of[t] = text
         return terms
+
+    def root_facs(self, term: sp.Expr) -> tuple[sp.Expr, tuple[Fac, ...]]:
+        """``term`` without its roots of unity of symbolic order (``Om(M)^c``, ``M`` a
+        monomial in the dimension symbols), and those roots as constant phase factors
+        ``(M, c)``."""
+        rest: list[sp.Expr] = []
+        phs: tuple[Fac, ...] = ()
+        for f in sp.Mul.make_args(term):
+            base, k = f.as_base_exp()
+            sign = -1 if isinstance(base, Inv) else 1
+            inner = base.args[0] if sign == -1 else base
+            if isinstance(inner, Om) and not inner.args[0].is_number and k.is_Integer:
+                phs += ((_dmon(inner.args[0], self.dsyms), ip_c(sign * int(k))),)
+                continue
+            rest.append(f)
+        return sp.Mul(*rest), phs
+
+    @staticmethod
+    def with_roots(model: sp.Expr, dims: Iterable[sp.Symbol]) -> sp.Expr:
+        """``model`` with each ``Ex(2 pi i c / M)`` (``c`` an integer, ``M`` a monomial in the
+        dimension symbols) written ``Om(M)^c``."""
+
+        def root(x: sp.Expr) -> sp.Expr:
+            turns = x.args[0].replace(lambda e: isinstance(e, Inv), lambda e: 1 / e.args[0])
+            c, mm = sp.fraction(sp.factor(sp.expand(turns / (2 * sp.pi * sp.I))))
+            syms = sorted(mm.free_symbols, key=str)
+            if c.is_Integer and syms and set(syms) <= set(dims):
+                try:
+                    _dmon(mm, syms)
+                except NetUnsupported:
+                    return x
+                return Om(mm) ** int(c)
+            return x
+
+        return _no_negative_powers(sp.sympify(model).replace(lambda e: isinstance(e, Ex), root))
+
+    def scalar_text(self, t: STm) -> str:
+        """A constant scalar term as a Lean ``STm``."""
+        return f"⟨{self.texts_of[t]}, [], [], {_lean_facs(t[3])}⟩"
 
     def monomial(self, term: sp.Expr) -> tuple[CMon, str]:
         cm, text = of_q(1), "CMon.ofQ 1"
@@ -2787,7 +2831,7 @@ class _SymExport:
         )
 
         def stext(terms: list[STm]) -> str:
-            return "[" + ", ".join(f"⟨{self.texts_of[t]}, [], [], []⟩" for t in terms) + "]"
+            return "[" + ", ".join(self.scalar_text(t) for t in terms) + "]"
 
         if not family:
             assert self.s0 is not None and self.s1 is not None
@@ -3011,7 +3055,7 @@ class _SymExport:
         terms = self.scalar_terms(model)
         n = len(self.stabs)
         name, lem = f"SS{n}", f"scalS{n}"
-        body = "[" + ", ".join(f"⟨{self.texts_of[t]}, [], [], []⟩" for t in terms) + "]"
+        body = "[" + ", ".join(self.scalar_text(t) for t in terms) + "]"
         rho, gsa = self.rho, (f"(GS {self.args})" if self.args else "GS")
         self.stab_decls += [
             f"/-- A scalar's terms. -/\ndef {name} : List STm := {body}",
@@ -4029,10 +4073,16 @@ class _SymExport:
         return ["noncomputable section", *out, "end"]
 
     def scalar_proof(self, model: sp.Expr, rho: str, tab: str = "S0, S1") -> str:
+        """The tactic proving a scalar equal to its constant terms; roots of unity of
+        symbolic order (:meth:`root_facs`) read through ``phV``."""
+        roots = any(
+            isinstance(x, Om) and not x.args[0].is_number for x in sp.preorder_traversal(model)
+        )
+        more = "phV, ipDen, imDen, List.prod_cons, " if roots else ""
         return (
             f"simp (disch := decide) only [{tab}, exDen, List.map_cons, List.map_nil, "
             f"List.sum_cons, List.sum_nil, add_zero, den_zero, bodyOf, List.prod_nil, "
-            f"mul_one, CMon.den_mul {rho} hρ, ofQ_den, exQ_den, rtD_den, dP_den, "
+            f"{more}mul_one, CMon.den_mul {rho} hρ, ofQ_den, exQ_den, rtD_den, dP_den, "
             f"phC_den {rho} _ hg] <;> "
             f"simp [DMon.den, npow, ρ, zpow_neg, inv_pow] <;> push_cast <;> ring_nf <;> "
             "(try simp) <;> (try (simp only [om_eq_ex]; norm_num))"
@@ -4057,9 +4107,34 @@ def export_symbolic(
     :class:`NetUnsupported` when the normaliser does not reach it."""
     from archytaszx.semantics.decide import dimension_floors
 
-    ex = _SymExport(
-        left, right, describe, floors if floors is not None else dimension_floors(left, right)
-    )
+    floors = floors if floors is not None else dimension_floors(left, right)
+    try:
+        return _export_symbolic(left, right, name, describe, floors, shift, original, fixed)
+    except NetUnsupported:
+        if not any(isinstance(x, sp.exp) for d in (left, right) for x in _scalar_parts(d)):
+            raise
+    return _export_symbolic(left, right, name, describe, floors, shift, original, fixed, True)
+
+
+def _scalar_parts(d: Diagram) -> Iterable[sp.Expr]:
+    """The subexpressions of ``d``'s scalar."""
+    return list(sp.preorder_traversal(sp.sympify(d.scalar.to_sympy())))
+
+
+def _export_symbolic(
+    left: Diagram,
+    right: Diagram,
+    name: str,
+    describe: Callable[[Diagram], str] | None,
+    floors: Mapping[str, int],
+    shift: tuple[str, int] | None,
+    original: tuple[dict[str, int], list[tuple[Diagram, Diagram]]] | None,
+    fixed: Sequence[tuple[str, int] | tuple[str, int, bool]] | None,
+    roots: bool = False,
+) -> str:
+    """:func:`export_symbolic` with ``floors`` given; with ``roots``, scalar roots of unity of
+    symbolic order as constant phase factors (:meth:`_SymExport.with_roots`)."""
+    ex = _SymExport(left, right, describe, floors, roots)
     ex.shift = shift
     ex.fixed = fixed
     ex.out.original = original
