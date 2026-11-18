@@ -590,6 +590,38 @@ than these two terms. Lean (anon peak): n = 2 d = 5 19 s (0.6 GB), n = 3 d = 3 2
 n = 3 d = 5 31 s (1.1 GB), n = 4 d = 3 96 s (2.6 GB), n = 5 d = 3 230 s (5.8 GB); n = 6 and 8
 exceed 6 GB.
 
+Carry steps (SymCarry, 82.AS-b). With bit labels and roots of unity of modulus 2^k (the draper
+adder at d = 2) a residual of rxNf does not cancel: a delta [2 | r + x] fixes a bit r to a bit x
+but its pin value -x spans two blocks, a mod 2 delta never reaches a mod 4 root of unity whose
+monomials in its pivot all have even coefficients, no step combines two deltas, a delta of
+modulus 4 over labels is never split by their ranges, [K | p] and [K | -p] are both canonical
+when the leading coefficient is K / 2, and sqrt 2 sqrt 8 stays unmerged. elimStepC R adds rules
+on the delta at j (each keeps the term's value wherever the ranges hold; carryFac_ok, the sums
+kept, through sumsV_congr_rng): 7 [M | s x + b] as [M | x - ((-s b) mod M)] for the sum x at i
+(ipModC; rule 6 then pins it); 8 / 9 p plus / minus the delta [M | q] at i of the other deltas,
+coefficients mod M (case [M | q] = 0, else q = 0 mod M); 10 [D | p mod D] after [M | p], D | M
+the constant range of the sum at i; 11 a delta [K | p] dropped beside [M | q] with K | M and
+q = +-p mod K (dvd_iff_of_modC); 12 splitDel by the range at i of rgOf R S, labels included
+(splitDel_ok under InR); 13 the pivot x = -s b of [m | s x + b] substituted into the root of
+unity omega_M^q at i when M | c m for every coefficient c of a monomial of q reading x
+(ipDen_upd_dvdM: x moving by a multiple of m moves q by a multiple of M); 14 [M | p] as
+[M | -p]; 16 the variable x at i of rgOf R S held by [D | s x + b] at V - k D by ivl (as
+elimXpin1, x not summed out) substituted into every other factor; and rule 15 (rcStep) merges
+the square roots sqrt a sqrt b of the coefficient into the integer sqrt (a b). rxNfC, normTmC,
+nfGoC and rxNfC_den mirror rxNf; normTmC_step / normTmC_stop and nfGoC_some / nfGoC_none chain
+the rounds as for normTmX. lean_sym tries rx_cert first; only when its residual does not cancel
+rx_cert_c reruns the rounds with c_choice (x_choice's geometric sums and pins, then rule 7 before
+a pin, then elim_choice, then rules 15, 13, 14, 8 / 9 (only when the delta loses a variable),
+11, 12 (labels), 16 (the delta's greatest variable, read by another factor) and 10 (only when a
+delta of the sum's range then thins the new one)) and the export writes normTmC / rxNfC, so
+every export rx_cert reaches is unchanged. The plain route memoises ip_lin and elim_var and skips
+the deltas a variable does not read (same results). draper_adder/main d = 2: the difference of
+the two unnormalised terms cancels by 56, 141 and 257 hinted steps at n = 2, 3 and 4, never more
+than the two terms; export 2.5 s (41 KB), 194 s (105 KB, the plain route first, > 1500 s before
+the memoisation) and 20 s (270 KB, past BS_SMALL); Lean (anon peak): n = 2 38 s (0.7 GB), n = 3
+109 s (2.3 GB), n = 4 576 s (5.8 GB); a copy with the copy register's outputs swapped and a copy
+with a changed final term are rejected.
+
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.

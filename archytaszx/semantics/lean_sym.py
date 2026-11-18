@@ -222,6 +222,7 @@ def ip_has(x: int, p: IPoly) -> bool:
     return x in ip_varset(p)
 
 
+@functools.lru_cache(maxsize=1 << 18)
 def ip_lin(x: int, p: IPoly) -> tuple[IPoly, IPoly] | None:
     if not all(m.count(x) <= 1 for m, _ in p):
         return None
@@ -385,7 +386,7 @@ def mul_ok(s: STm, t: STm) -> bool:
 
 
 def fac_has(x: int, f: Fac) -> bool:
-    return ip_has(x, f[1])
+    return x in ip_varset(f[1])
 
 
 def fac_sub(x: int, v: IPoly, f: Fac) -> Fac:
@@ -437,8 +438,10 @@ def elim_delta1(
 
 
 def elim_delta(x: int, d: DMon, ds: tuple[Fac, ...], ps: tuple[Fac, ...]) -> Any:
-    for pre, f, post in _splits(ds):
-        e = elim_delta1(x, d, pre, f, post, ps)
+    for i, f in enumerate(ds):
+        if x not in ip_varset(f[1]):
+            continue
+        e = elim_delta1(x, d, ds[:i], f, ds[i + 1 :], ps)
         if e is not None:
             return e
     return None
@@ -499,6 +502,7 @@ def elim_gcd(x: int, d: DMon, ds: tuple[Fac, ...], ps: tuple[Fac, ...]) -> Any:
     return None
 
 
+@functools.lru_cache(maxsize=1 << 18)
 def elim_var(x: int, d: DMon, ds: tuple[Fac, ...], ps: tuple[Fac, ...]) -> Any:
     for fn in (elim_unused, elim_delta, elim_char, elim_gcd):
         e = fn(x, d, ds, ps)
@@ -553,11 +557,14 @@ def split_del(r: Sequence[tuple[int, DMon]], y: int, d: DMon, f: Fac) -> tuple[F
 
 def split_step(t: STm) -> STm | None:
     """``splitStep``: the first delta split by a bound variable, in place."""
-    for pre, f, post in _splits(t[2]):
+    for i, f in enumerate(t[2]):
+        vs = ip_varset(f[1])
         for y, d in t[1]:
+            if y not in vs:
+                continue
             got = split_del(t[1], y, d, f)
             if got is not None:
-                return (t[0], t[1], (*pre, got[0], got[1], *post), t[3])
+                return (t[0], t[1], (*t[2][:i], got[0], got[1], *t[2][i + 1 :]), t[3])
     return None
 
 
@@ -1404,16 +1411,21 @@ def _xpin_fast(
 
 
 def rx_hints(
-    fl: Sequence[int], r: Sequence[tuple[int, int]], t: STm
+    fl: Sequence[int],
+    r: Sequence[tuple[int, int]],
+    t: STm,
+    choice: Callable[[Sequence[tuple[int, int]], STm], Any] | None = None,
 ) -> tuple[STm | None, list[tuple[int, list[tuple[int, int, int]]]], list[STm]]:
-    """``normTmX``'s rounds for ``t``: each the pivot hint and at most RX_STEPS steps; the
-    result (None when it vanishes) and the term before each round."""
+    """``normTmX``'s rounds for ``t`` (``normTmC``'s with ``choice`` :func:`c_choice`): each
+    the pivot hint and at most RX_STEPS steps; the result (None when it vanishes) and the term
+    before each round."""
+    choice = choice or x_choice
     hints: list[tuple[int, list[tuple[int, int, int]]]] = []
     terms = [t]
     for _ in range(RX_ROUNDS):
         t1, es = t, []
         for _ in range(RX_STEPS):
-            got = x_choice(r, t1)
+            got = choice(r, t1)
             if got is None:
                 break
             t1, h = got
@@ -1452,7 +1464,335 @@ def rx_cert(fl: Sequence[int], e: Sequence[STm], ranges: Mapping[int, int]) -> R
         paths.append((terms, got))
         if got is not None:
             acc = tm_add(got, acc)
-    return (r, hs, paths) if not acc else None
+    if not acc:
+        return (r, hs, paths)
+    return rx_cert_c(fl, e, r)
+
+
+def rx_cert_c(fl: Sequence[int], e: Sequence[STm], r: tuple[tuple[int, int], ...]) -> RxCert | None:
+    """``rxNfC``'s labels, rounds and paths as :func:`rx_cert`'s, marked by a fourth entry, for
+    a residual whose terms, normalised with the carry steps of :func:`c_choice`, cancel; None
+    otherwise."""
+    acc: tuple[STm, ...] = ()
+    hs = []
+    paths: list[tuple[list[STm], STm | None]] = []
+    for t in e:
+        got, h, terms = rx_hints(fl, r, t, c_choice)
+        hs.append(h)
+        paths.append((terms, got))
+        if got is not None:
+            acc = tm_add(got, acc)
+    return (r, hs, paths, True) if not acc else None  # type: ignore[return-value]
+
+
+# carry steps over the labels' ranges (SymCarry)
+
+
+def _nvars(p: IPoly) -> int:
+    return len(ip_varset(p))
+
+
+def _without(lst: Sequence[Any], j: int) -> tuple[Any, ...]:
+    return tuple(lst[:j]) + tuple(lst[j + 1 :])
+
+
+def c_fac(
+    r: Sequence[tuple[int, int]], t: STm, i: int, rule: int, j: int
+) -> tuple[tuple[Fac, ...], tuple[Fac, ...]] | None:
+    """``carryFac``: the deltas and roots of unity after step ``(i, rule, j)``, rules 7 to 14,
+    at the delta ``j``."""
+    ds, ps = t[2], t[3]
+    if j >= len(ds):
+        return None
+    pre, f, post = ds[:j], ds[j], ds[j + 1 :]
+    rest = pre + post
+    fc = dm_const(f[0]) and f[0][0] > 0
+    if rule == 7:
+        if i >= len(t[1]) or not fc:
+            return None
+        x = t[1][i][0]
+        lin = ip_lin(x, f[1])
+        if lin is None:
+            return None
+        s = ip_const(lin[0])
+        if s not in (1, -1):
+            return None
+        g = (f[0], ip_sub(ip_v(x), ip_modc(f[0][0], pin_val(s, lin[1]))))
+        return (*pre, g, *post), ps
+    if rule in (8, 9):
+        if i >= len(rest) or rest[i][0] != f[0] or not fc:
+            return None
+        o = rest[i][1]
+        q = ip_add(f[1], ip_smul(1 if rule == 8 else -1, o))
+        return (*pre, (f[0], ip_modc(f[0][0], q)), *post), ps
+    if rule == 10:
+        if i >= len(t[1]):
+            return None
+        d = t[1][i][1]
+        if not (dm_const(d) and d[0] > 0 and dm_const(f[0]) and f[0][0] % d[0] == 0):
+            return None
+        return (*pre, f, (d, ip_modc(d[0], f[1])), *post), ps
+    if rule == 11:
+        if i >= len(rest):
+            return None
+        g = rest[i]
+        if not (dm_const(g[0]) and g[0][0] > 0 and fc and g[0][0] % f[0][0] == 0):
+            return None
+        k = f[0][0]
+        fm = ip_modc(k, f[1])
+        if ip_modc(k, g[1]) != fm and ip_modc(k, ip_smul(-1, g[1])) != fm:
+            return None
+        return rest, ps
+    if rule == 12:
+        rg = rg_of(r, t[1])
+        if i >= len(rg):
+            return None
+        y, d = rg[i]
+        got = None if f[0] == d else split_del(rg, y, d, f)
+        if got is None:
+            return None
+        return (*pre, got[0], got[1], *post), ps
+    if rule == 13:
+        pv = pivot_of(f[1])
+        if i >= len(ps) or pv is None or not fc:
+            return None
+        g = ps[i]
+        if not (dm_const(g[0]) and g[0][0] > 0):
+            return None
+        x, m, big = pv[0], f[0][0], g[0][0]
+        if not all(x not in mon or (c * m) % big == 0 for mon, c in g[1]):
+            return None
+        return ds, (*ps[:i], fac_sub(x, pin_val(pv[1], pv[2]), g), *ps[i + 1 :])
+    if rule == 14:
+        return (*pre, (f[0], ip_smul(-1, f[1])), *post), ps
+    if rule == 16:
+        rg = rg_of(r, t[1])
+        if i >= len(rg):
+            return None
+        x, d = rg[i]
+        if not (f[0] == d and dm_const(d) and d[0] > 0):
+            return None
+        lin = ip_lin(x, f[1])
+        if lin is None:
+            return None
+        s = ip_const(lin[0])
+        if s not in (1, -1):
+            return None
+        v = pin_val(s, lin[1])
+        iv = ivl(rg, v)
+        if iv is None:
+            return None
+        k = _ediv(iv[0], d[0]) * d[0]
+        if not iv[1] < k + d[0]:
+            return None
+        val = ip_add(v, ip_c(-k))
+        return (
+            (*(fac_sub(x, val, g) for g in pre), f, *(fac_sub(x, val, g) for g in post)),
+            tuple(fac_sub(x, val, g) for g in ps),
+        )
+    return None
+
+
+def c_rc(t: STm, i: int, j: int) -> STm | None:
+    """``rcStep``: the square roots ``i`` and ``j`` of the coefficient merged when their
+    product is a square."""
+    c = t[0]
+    rc = list(c[3])
+    if i >= len(rc) or j >= len(rc):
+        return None
+    a, b = rc[i], rc[j]
+    rc.remove(a)
+    if b not in rc or not _isqrt_exact(a * b):
+        return None
+    rc.remove(b)
+    return ((c[0] * math.isqrt(a * b), c[1], c[2], tuple(rc), c[4], c[5]), t[1], t[2], t[3])
+
+
+def c_step(r: Sequence[tuple[int, int]], t: STm, i: int, rule: int, j: int) -> STm | None:
+    """``elimStepC`` for the rules 7 to 15."""
+    if rule == 15:
+        return c_rc(t, i, j)
+    names = [v for v, _ in t[1]]
+    if len(set(names)) != len(names):
+        return None
+    got = c_fac(r, t, i, rule, j)
+    return None if got is None else (t[0], t[1], got[0], got[1])
+
+
+def _c_try(
+    r: Sequence[tuple[int, int]], t: STm, i: int, rule: int, j: int
+) -> tuple[STm, tuple[int, int, int]] | None:
+    u = c_step(r, t, i, rule, j)
+    return None if u is None else (u, (i, rule, j))
+
+
+def _c_pin(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 7 at a delta of a sum's range that rule 6 then pins."""
+    for i, (x, d) in enumerate(t[1]):
+        rest = t[1][:i] + t[1][i + 1 :]
+        for j, f in enumerate(t[2]):
+            if f[0] != d or not fac_has(x, f):
+                continue
+            got = _c_try(r, t, i, 7, j)
+            if got is None or got[0][2][j] == f:
+                continue
+            g = got[0][2][j]
+            if elim_xpin1(rg_of(r, rest), x, d, t[2][:j], g, t[2][j + 1 :], t[3]) is not None:
+                return got
+    return None
+
+
+def _c_rc(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    n = len(t[0][3])
+    for i in range(n):
+        for j in range(i + 1, n):
+            got = _c_try(r, t, i, 15, j)
+            if got is not None:
+                return got
+    return None
+
+
+def _c_phase(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 13 at a root of unity reading a delta's pivot, the root's modulus not dividing the
+    delta's."""
+    for j, f in enumerate(t[2]):
+        if not (dm_const(f[0]) and f[0][0] > 1):
+            continue
+        pv = pivot_of(f[1])
+        if pv is None:
+            continue
+        for i, g in enumerate(t[3]):
+            if fac_has(pv[0], g) and not dm_dvd(g[0], f[0]):
+                got = _c_try(r, t, i, 13, j)
+                if got is not None:
+                    return got
+    return None
+
+
+def _c_tie(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 14 at a delta whose leading coefficient is half its modulus and whose next one is
+    negative."""
+    for j, f in enumerate(t[2]):
+        if not (dm_const(f[0]) and f[0][0] > 2 and f[0][0] % 2 == 0):
+            continue
+        k = f[0][0]
+        cs = [c for _, c in ip_mods(k, f[1]) if c % k]
+        if cs and cs[0] == k // 2:
+            nxt = [c for c in cs[1:] if 2 * c not in (k, -k)]
+            if nxt and nxt[0] < 0:
+                return _c_try(r, t, 0, 14, j)
+    return None
+
+
+def _c_row(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 8 or 9 at the first delta a delta of its modulus thins."""
+    for j, f in enumerate(t[2]):
+        if not (dm_const(f[0]) and f[0][0] > 1):
+            continue
+        for i, g in enumerate(_without(t[2], j)):
+            if g[0] != f[0]:
+                continue
+            for rule in (8, 9):
+                got = _c_try(r, t, i, rule, j)
+                if got is not None and _nvars(got[0][2][j][1]) < _nvars(f[1]):
+                    return got
+    return None
+
+
+def _c_absorb(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 11 at a delta that a delta of a larger modulus implies."""
+    for j, f in enumerate(t[2]):
+        if not (dm_const(f[0]) and f[0][0] > 1):
+            continue
+        for i, g in enumerate(_without(t[2], j)):
+            if dm_const(g[0]) and g[0][0] > f[0][0]:
+                got = _c_try(r, t, i, 11, j)
+                if got is not None:
+                    return got
+    return None
+
+
+def _c_split(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 12 by a label's range."""
+    rg = rg_of(r, t[1])
+    names = {v for v, _ in t[1]}
+    for j in range(len(t[2])):
+        for i, (y, _d) in enumerate(rg):
+            if y in names:
+                continue
+            got = _c_try(r, t, i, 12, j)
+            if got is not None:
+                return got
+    return None
+
+
+def _c_lpin(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 16 at a delta's greatest variable of the delta's range read by another factor."""
+    rg = rg_of(r, t[1])
+    for j, f in enumerate(t[2]):
+        if not (dm_const(f[0]) and f[0][0] > 0) or not f[1]:
+            continue
+        x = max(ip_varset(f[1]))
+        if not any(fac_has(x, g) for k, g in enumerate((*t[2], *t[3])) if k != j):
+            continue
+        for i, (y, d) in enumerate(rg):
+            if y == x and d == f[0]:
+                got = _c_try(r, t, i, 16, j)
+                if got is not None:
+                    return got
+                break
+    return None
+
+
+def _c_weaken(r: Sequence[tuple[int, int]], t: STm) -> Any:
+    """Rule 10 at a delta reading a sum of a smaller range with coefficient ±1, when a delta of
+    that range then thins the new one."""
+    ds = t[2]
+    for j, f in enumerate(ds):
+        if not (dm_const(f[0]) and f[0][0] > 1):
+            continue
+        for i, (x, d) in enumerate(t[1]):
+            if not (dm_const(d) and 1 < d[0] < f[0][0] and f[0][0] % d[0] == 0):
+                continue
+            lin = ip_lin(x, f[1])
+            if lin is None or ip_const(lin[0]) not in (1, -1):
+                continue
+            k = d[0]
+            q = ip_modc(k, f[1])
+            if any(
+                g[0] == d and q in (ip_modc(k, g[1]), ip_modc(k, ip_smul(-1, g[1]))) for g in ds
+            ):
+                continue
+            if not any(
+                g[0] == d
+                and min(_nvars(ip_modc(k, ip_add(q, g[1]))), _nvars(ip_modc(k, ip_sub(q, g[1]))))
+                < _nvars(q)
+                for g in ds
+            ):
+                continue
+            got = _c_try(r, t, i, 10, j)
+            if got is not None:
+                return got
+    return None
+
+
+def c_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int, int]] | None:
+    """A step of ``elimStepC`` and its hint: a geometric sum or a pin by ranges, else rule 7
+    before such a pin, else :func:`elim_choice`, else a carry step (rules 15, 13, 14, 8 or 9,
+    11, 12, 16, 10)."""
+    got = x_choice(r, t)
+    if got is not None and got[1][1] in (5, 6):
+        return got
+    pin: tuple[STm, tuple[int, int, int]] | None = _c_pin(r, t)
+    if pin is not None:
+        return pin
+    if got is not None:
+        return got
+    for fn in (_c_rc, _c_phase, _c_tie, _c_row, _c_absorb, _c_split, _c_lpin, _c_weaken):
+        step: tuple[STm, tuple[int, int, int]] | None = fn(r, t)
+        if step is not None:
+            return step
+    return None
 
 
 def _lean_rx(rc: RxCert) -> tuple[str, str]:
@@ -4549,6 +4889,8 @@ class _SymExport:
         if rxs is None:
             raise NetUnsupported("the compact residual does not cancel")
         rx_labs, _ = _lean_rx(rxs)
+        cx = "C" if len(rxs) > 3 else "X"
+        rxn = "rxNfC" if cx == "C" else "rxNf"
         out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
         rr = f"{name}RR"
         term_rows, steps_by = [], []
@@ -4565,13 +4907,13 @@ class _SymExport:
             for k in range(m):
                 res = "none" if last is None and k == m - 1 else f"some {name}T{i}_{k + 1}"
                 out.append(
-                    f"set_option maxHeartbeats 0 in\ntheorem {name}S{i}_{k} : normTmX {rr} FL "
+                    f"set_option maxHeartbeats 0 in\ntheorem {name}S{i}_{k} : normTm{cx} {rr} FL "
                     f"[{name}H{i}_{k}] {name}T{i}_{k} = {res} := by decide +kernel"
                 )
             row = "[" + ", ".join(names) + "]"
             term_rows.append(row)
             lemma = [
-                f"normTmX_{'stop' if last is None and k == m - 1 else 'step'} _ _ _ _ _ "
+                f"normTm{cx}_{'stop' if last is None and k == m - 1 else 'step'} _ _ _ _ _ "
                 + ("" if last is None and k == m - 1 else "_ ")
                 + f"{name}S{i}_{k}"
                 for k in range(m)
@@ -4579,10 +4921,10 @@ class _SymExport:
             res = "none" if last is None else f"some {name}T{i}_{m}"
             proof = f"by rw [{', '.join(lemma)}]; try rfl" if m else "rfl"
             out.append(
-                f"theorem {name}N{i} : normTmX {rr} FL {row} {name}T{i}_0 = {res} := {proof}"
+                f"theorem {name}N{i} : normTm{cx} {rr} FL {row} {name}T{i}_0 = {res} := {proof}"
             )
             steps_by.append(
-                f"nfGoX_{'none' if last is None else 'some'} _ _ _ _ _ _ "
+                f"nfGo{cx}_{'none' if last is None else 'some'} _ _ _ _ _ _ "
                 + ("" if last is None else "_ ")
                 + f"_ {name}N{i}"
             )
@@ -4606,8 +4948,8 @@ class _SymExport:
             "by decide +kernel"
         )
         out.append(
-            f"set_option maxHeartbeats 0 in\n{doc}theorem {name}z : (rxNf {rr} FL {name}XH "
-            f"{dtext}).isEmpty = true := by\n  rw [{name}d]\n  unfold rxNf {name}XH\n"
+            f"set_option maxHeartbeats 0 in\n{doc}theorem {name}z : ({rxn} {rr} FL {name}XH "
+            f"{dtext}).isEmpty = true := by\n  rw [{name}d]\n  unfold {rxn} {name}XH\n"
             f"  rw [{', '.join(steps_by)}]\n  decide +kernel"
         )
         fl_ok = self.call("flOK")
@@ -4615,7 +4957,7 @@ class _SymExport:
         self.g_args[name] = (
             f"(fun _ e => e) (fun _ e => e) (fun _ _ _ => rfl) (fun _ _ _ => rfl) _ _ {ta}R "
             f"{tb2}R {name}p {nets_ok[ta]} {nets_ok[tb2]} {name}k {name}m {name}RR "
-            f"(rxNf {name}RR FL {name}XH) (fun e ν hν => rxNf_den {self.rho} {self.hr} {name}RR "
+            f"({rxn} {name}RR FL {name}XH) (fun e ν hν => {rxn}_den {self.rho} {self.hr} {name}RR "
             f"FL {fl_ok} {name}XH (fun e => e) (fun _ _ => rfl) e ν hν) {name}z {name}r"
         )
         return ["noncomputable section", *out, "end"]
