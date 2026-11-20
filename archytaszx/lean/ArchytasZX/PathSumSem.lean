@@ -1418,18 +1418,18 @@ def normalP (M : ℕ) : Poly → Bool
 
 /-- `normF (substF z B q)`; `q` when `q` is normal and free of `z`. -/
 def substNF (z : ℕ) (B : F2) (q : F2) : F2 :=
-  if (normalF q && !decide (z ∈ q.flatMap id)) = true then q else normF (substF z B q)
+  if (!decide (z ∈ q.flatMap id) && normalF q) = true then q else normF (substF z B q)
 
 /-- `normP M (substP M z B P)`; `P` when `P` is normal and free of `z`. -/
 def substNP (M z : ℕ) (B : F2) (P : Poly) : Poly :=
-  if (normalP M P && !decide (z ∈ pvars P)) = true then P else normP M (substP M z B P)
+  if (!decide (z ∈ pvars P) && normalP M P) = true then P else normP M (substP M z B P)
 
 theorem fz_substNF (σ : ℕ → ZMod 2) (z : ℕ) (B q : F2) :
     fz σ (substNF z B q) = fz (Function.update σ z (fz σ B)) q := by
   unfold substNF
   split_ifs with h
   · simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not] at h
-    exact (fz_update_not σ z _ q fun m hm hz => h.2 (List.mem_flatMap.2 ⟨m, hm, hz⟩)).symm
+    exact (fz_update_not σ z _ q fun m hm hz => h.1 (List.mem_flatMap.2 ⟨m, hm, hz⟩)).symm
   · rw [fz_normF, fz_substF]
 
 theorem pn_substNP (σ : ℕ → ZMod 2) (M z : ℕ) (hM : 2 ≤ M) (B : F2) (P : Poly) :
@@ -1437,7 +1437,7 @@ theorem pn_substNP (σ : ℕ → ZMod 2) (M z : ℕ) (hM : 2 ≤ M) (B : F2) (P 
   unfold substNP
   split_ifs with h
   · simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not] at h
-    rw [pn_update_not σ z _ P (not_mem_pvars h.2)]
+    rw [pn_update_not σ z _ P (not_mem_pvars h.1)]
     exact peq_refl M _
   · exact peq_trans (pn_normP σ M _) (pn_substP σ M z hM B P)
 
