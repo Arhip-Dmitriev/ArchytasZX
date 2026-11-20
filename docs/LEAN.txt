@@ -1326,8 +1326,8 @@ odd prime p is a quadratic Gauss sum, checked by its square and the sign of its 
 The points tried are the counterexample, then the default sample points ordered by the sum of
 the absolute values of their coordinates, smallest first (lean_refute._by_size), at most 16; a
 point whose evaluation needs a factor table above 200000 entries, or whose factor tables
-together hold more than 200000 cyclotomic terms, or whose field ℚ(ζ) has φ(M) above 512, is
-skipped, so a large
+together hold more than 200000 cyclotomic terms, or whose values need a cyclotomic field of
+degree above 512 (below), is skipped, so a large
 counterexample is replaced by the smallest sample point that still separates. When no point
 gives an exact refutation, the same points are tried by ball arithmetic (5.2). Boundary
 assignments are enumerated lazily, at most 4096 per point.
@@ -1370,6 +1370,16 @@ tables of at most 125^2 entries and the witness index (1, 1, 1, 0) gives the bun
 assignment 31, exported in 1.5 s (Lean is killed at 6 GB: the bundled Fourier box's table of
 125^2 entries). n=2 d=5: export 91 -> 65 KB, Lean OOM-killed at 6 GB -> checked in 25 s,
 0.76 GB anon.
+When φ(M) is above MAX_CYCLOTOMIC_DEGREE = 512, the first refuter is refused and the
+sparse_all refuter (every phase vector sparse) runs (lean_refute.big_field); its scalar factors
+L s k of refute_res are computed modulo ζ^M - 1 and reduced in the subfield they lie in: for
+a polynomial f, k is the gcd of M and its exponents, f(ζ) = g(ζ^k) with g reduced modulo Φ_m,
+m = M / k (subfield, lift; inverses by inverse in that subfield); only a value whose m has
+φ(m) above 512 is refused. The proof of each L s k = Σ c_i ζ^i reduces the remainder modulo
+hzM, then writes it as R(ζ^k) with Φ_m ∣ R over hzM and the hg_p of the primes p of m, which are
+y^m - 1 and Σ_{j<p} y^{jm/p} at y = ζ^k, by their Bézout coefficients (sub_terms); below 512
+the route over Φ_M is unchanged. qft_roundtrip/main! n=4 d=3: M = 2268 (φ = 648, refused
+before), scalar subfields of orders 12 and 42; refuted mod a prime p = 1 mod 2268.
 The prime p is proved prime by norm_num, or, when every phase vector is sparse (sparse_all),
 by Lucas's test (prime_lucas: a primitive root, the factorisation of p - 1, powers by 64-bit
 square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64. prim_of needs

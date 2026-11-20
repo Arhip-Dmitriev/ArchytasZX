@@ -69,6 +69,7 @@ DESC_MAX = 300_000
 PT_DENSE_MIN = 16
 
 _Z = sp.Symbol("zeta_lean")
+_Y = sp.Symbol("zeta_sub_lean")
 
 Key = tuple[tuple[int, ...], int]
 Vec = dict[Key, int]
@@ -1030,17 +1031,75 @@ class _Refuter:
             )
         return sp.Poly(sp.cyclotomic_poly(self.M, _Z), _Z, domain="QQ")
 
+    def big_field(self) -> bool:
+        """Whether Φ_M has degree above `MAX_CYCLOTOMIC_DEGREE` in a :attr:`sparse_all` run."""
+        return self.sparse_all and bool(sp.totient(self.M) > MAX_CYCLOTOMIC_DEGREE)
+
+    def modulus(self) -> sp.Poly:
+        """Φ_M, or ``ζ^M - 1`` for a big field."""
+        if self.big_field():
+            return sp.Poly(_Z**self.M - 1, _Z, domain="QQ")
+        return self.phi()
+
+    def subfield(self, f: sp.Poly) -> tuple[int, int, sp.Poly]:
+        """``(k, m, g)`` with ``f(ζ) = g(ζ^k)``, ``k`` the gcd of ``M`` and the exponents of
+        ``f``, ``m = M / k`` of degree at most `MAX_CYCLOTOMIC_DEGREE`, ``g`` in ``y``
+        reduced modulo Φ_m."""
+        k = self.M
+        for (e,), c in f.terms():
+            if c:
+                k = math.gcd(k, int(e))
+        m = self.M // k
+        if sp.totient(m) > MAX_CYCLOTOMIC_DEGREE:
+            raise NetUnsupported(
+                f"the cyclotomic field of order {self.M} has degree above {MAX_CYCLOTOMIC_DEGREE}"
+            )
+        g = sp.Poly(sum(c * _Y ** (int(e) // k) for (e,), c in f.terms()), _Y, domain="QQ")
+        return k, m, g.rem(sp.Poly(sp.cyclotomic_poly(m, _Y), _Y, domain="QQ"))
+
+    def lift(self, k: int, g: sp.Poly) -> sp.Poly:
+        """``g(ζ^k)`` as a polynomial in ζ."""
+        return sp.Poly(sum(c * _Z ** (int(e) * k) for (e,), c in g.terms()), _Z, domain="QQ")
+
+    def reduced(self, f: sp.Poly) -> sp.Poly:
+        """``f`` modulo Φ_M; for a big field modulo Φ_m of the subfield ``f`` lies in."""
+        if not self.big_field():
+            return f.rem(self.phi())
+        k, _m, g = self.subfield(f)
+        return self.lift(k, g)
+
+    def inverse(self, f: sp.Poly) -> sp.Poly:
+        """``1 / f`` in ℚ(ζ); for a big field computed in the subfield ``f`` lies in."""
+        if not self.big_field():
+            phi = self.phi()
+            return sp.Poly(sp.invert(f.as_expr(), phi.as_expr(), _Z), _Z, domain="QQ")
+        k, m, g = self.subfield(f)
+        inv = sp.invert(g.as_expr(), sp.cyclotomic_poly(m, _Y), _Y)
+        return self.lift(k, sp.Poly(inv, _Y, domain="QQ"))
+
+    def power(self, base: sp.Poly, n: int) -> sp.Poly:
+        """``base ** n`` modulo :meth:`modulus`."""
+        mod = self.modulus()
+        if not self.big_field():
+            return (base**n).rem(mod)
+        out = sp.Poly(1, _Z, domain="QQ")
+        while n:
+            if n & 1:
+                out = (out * base).rem(mod)
+            base = (base * base).rem(mod)
+            n >>= 1
+        return out
+
     def poly(self, e: sp.Expr) -> sp.Poly:
-        """``e`` as a polynomial in ζ reduced modulo Φ_M."""
+        """``e`` as a polynomial in ζ reduced modulo Φ_M (:meth:`reduced`)."""
         q = _rational(e)
         if q is not None:
             return sp.Poly(q, _Z, domain="QQ")
-        phi = self.phi()
-        return self.poly_expr(e).rem(phi)
+        return self.reduced(self.poly_expr(e))
 
     def poly_expr(self, e: sp.Expr) -> sp.Poly:
         e = sp.sympify(e)
-        phi = self.phi()
+        phi = self.modulus()
         if e.is_Rational:
             return sp.Poly(e, _Z, domain="QQ")
         if e == _Z or isinstance(e, Om) and _int(e.args[0]) == self.M:
@@ -1059,15 +1118,15 @@ class _Refuter:
             n = int(e.args[1])
             base = self.poly_expr(e.args[0])
             if n < 0:
-                base, n = sp.Poly(sp.invert(base.as_expr(), phi.as_expr(), _Z), _Z, domain="QQ"), -n
-            return (base**n).rem(phi)
+                base, n = self.inverse(base), -n
+            return self.power(base, n)
         if isinstance(e, NC):
             return sp.Poly(_int(e.args[0]), _Z, domain="QQ")
         if isinstance(e, Inv):
             inner = self.poly_expr(e.args[0])
             if inner.is_zero:
                 return inner
-            return sp.Poly(sp.invert(inner.as_expr(), phi.as_expr(), _Z), _Z, domain="QQ")
+            return self.inverse(inner)
         sub = self.substitute(e, emit=False)
         if sub is None:
             raise NetUnsupported(f"no exact value for {e}")
@@ -1223,7 +1282,9 @@ class _Refuter:
             if sp.expand(q) != 0:
                 terms.append((sp.expand(q), "hzM"))
             rest = sp.expand(r)
-        if rest != 0:
+        if rest != 0 and self.big_field():
+            terms += self.sub_terms(rest)
+        elif rest != 0:
             quot, rem = sp.div(rest, self.phi().as_expr(), _Z)
             if sp.expand(rem) != 0:
                 raise NetUnsupported("the scalar identity does not hold in ℚ(ζ)")
@@ -1307,6 +1368,10 @@ class _Refuter:
             rels.append(sp.Poly(g, _Z, domain="QQ"))
             names.append(name)
             self.hyp_diff[name] = g
+        self.rel_names = names
+        if self.big_field():
+            self.bezout: list[sp.Poly] = []
+            return
         cur = rels[0]
         coeffs = [sp.Poly(1, _Z, domain="QQ")] + [sp.Poly(0, _Z, domain="QQ")] * (len(rels) - 1)
         for i, g in enumerate(rels[1:], start=1):
@@ -1318,8 +1383,42 @@ class _Refuter:
         coeffs = [c * (1 / lead) for c in coeffs]
         if (cur * (1 / lead)) != self.phi():
             raise NetUnsupported("the relations of ζ do not generate Φ_M")
-        self.bezout: list[sp.Poly] = coeffs
+        self.bezout = coeffs
         self.rel_names = names
+
+    def sub_terms(self, rest: sp.Expr) -> list[tuple[sp.Expr, str]]:
+        """For a big field: ``rest = R(ζ^k)`` with ``Φ_m ∣ R``, ``m = M / k``, written over
+        ``hzM`` and the ``hg`` sums of the primes of ``m`` (``y^m - 1`` and
+        ``Σ_{j<p} y^{jm/p}`` at ``y = ζ^k``) through their Bézout coefficients."""
+        k, m, g = self.subfield(sp.Poly(rest, _Z, domain="QQ"))
+        if not g.is_zero:
+            raise NetUnsupported("the scalar identity does not hold in ℚ(ζ)")
+        R = sp.Poly(
+            sum(c * _Y ** (int(e) // k) for (e,), c in sp.Poly(rest, _Z).terms()), _Y, domain="QQ"
+        )
+        quot = R.quo(sp.Poly(sp.cyclotomic_poly(m, _Y), _Y, domain="QQ"))
+        rels = [sp.Poly(_Y**m - 1, _Y, domain="QQ")]
+        names = ["hzM"]
+        for p in sp.primefactors(m):
+            rels.append(sp.Poly(sum(_Y ** (j * (m // p)) for j in range(p)), _Y, domain="QQ"))
+            names.append(f"hg{p}")
+        cur = rels[0]
+        coeffs = [sp.Poly(1, _Y, domain="QQ")] + [sp.Poly(0, _Y, domain="QQ")] * (len(rels) - 1)
+        for i, r in enumerate(rels[1:], start=1):
+            s, t, h = sp.gcdex(cur, r)
+            coeffs = [c * s for c in coeffs]
+            coeffs[i] = coeffs[i] + t
+            cur = h
+        lead = cur.LC()
+        if cur * (1 / lead) != sp.Poly(sp.cyclotomic_poly(m, _Y), _Y, domain="QQ"):
+            raise NetUnsupported("the relations of ζ do not generate Φ_m")
+        out = []
+        for coeff, name in zip(coeffs, names, strict=True):
+            c = (quot * coeff * (1 / lead)).as_expr().xreplace({_Y: _Z**k})
+            c = sp.expand(c)
+            if c != 0:
+                out.append((c, name))
+        return out
 
     # the source
 
