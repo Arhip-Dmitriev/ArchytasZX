@@ -23,6 +23,12 @@ file bytes and lines, ``decl_ms`` (profiler milliseconds per declaration), ``axi
 opaque: no ``import ArchytasZX`` or opaque diagrams; other: any other axiom; else the
 ``lean_status``) and
 ``statement_level`` (source, diagram, network, opaque).
+
+A file whose header imports ArchytasZX is first checked with that line replaced by
+``import ArchytasZX.Light``; when that attempt is not accepted with the final theorem's axioms
+printed, the file as written is checked and gives the result. ``lean_attempts`` lists each
+attempt (import, lean_status, CPU, wall, peak memory, lean_kill, lean_detail) and
+``lean_import`` names the one reported (light or full).
 """
 
 from __future__ import annotations
@@ -66,6 +72,8 @@ _AXIOMS = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS = re.compile(r"'([^']+)' does not depend on any axioms")
 _TOOK = re.compile(r"^(.*?) took ([0-9.]+)(ms|s)$")
 MARK = "@@DECL "
+FULL_IMPORT = "import ArchytasZX"
+LIGHT_IMPORT = "import ArchytasZX.Light"
 
 
 @functools.cache
@@ -449,24 +457,27 @@ def _drain(stream: Any, chunks: list[bytes]) -> None:
     chunks.extend(iter(lambda: stream.read(65536), b""))
 
 
-def check(
-    path: Path, *, timeout: float | None = None, memory_fraction: float = 0.85
+def light_source(source: str) -> str | None:
+    """``source`` with its header line ``import ArchytasZX`` replaced by LIGHT_IMPORT, None when
+    its header has no such line."""
+    lines = source.splitlines(keepends=True)
+    head = max((i + 1 for i, ln in enumerate(lines) if ln.startswith("import ")), default=0)
+    for i in range(head):
+        if lines[i].strip() == FULL_IMPORT:
+            end = lines[i][len(lines[i].rstrip("\r\n")) :]
+            return "".join([*lines[:i], LIGHT_IMPORT + end, *lines[i + 1 :]])
+    return None
+
+
+def _attempt(
+    path: Path, source: str, name: str | None, timeout: float | None, memory_fraction: float
 ) -> dict[str, Any]:
-    """Runs Lean on an instrumented copy of ``path`` and returns the runner's fields (see the
-    module docstring)."""
-    source = path.read_text(encoding="utf-8")
-    name = final_theorem(source)
-    out: dict[str, Any] = {
-        "file_bytes": len(source.encode("utf-8")),
-        "file_lines": source.count("\n") + 1,
-        "final_theorem": name,
-        "statement_level": statement_level(source),
-        "unproved_declared": len(re.findall(r"^axiom unproved_", source, re.MULTILINE)),
-    }
+    """One Lean run on an instrumented copy of ``source`` next to ``path``: lean_status, CPU,
+    wall, peak memory, decl_ms, lean_detail and lean_kill when set, and the axioms of ``name``."""
     probe = path.with_name(path.stem + "_probe.lean")
     probe.write_text(instrument(source, name), encoding="utf-8")
     budget = budget_mb()
-    out["lean_budget_mb"] = budget
+    out: dict[str, Any] = {"lean_budget_mb": budget}
     slot = _slot()
     proc: subprocess.Popen[bytes] | None = None
     done = threading.Event()
@@ -515,6 +526,7 @@ def check(
         if proc is not None:
             _ACTIVE.discard(proc.pid)
         slot.close()
+        probe.unlink(missing_ok=True)
     code = os.waitstatus_to_exitcode(status)
     rusage_cpu = usage.ru_utime + usage.ru_stime
     out |= {
@@ -542,8 +554,51 @@ def check(
         out["lean_status"] = "rejected"
         errors = [ln for ln in text.splitlines() if "error" in ln]
         out["lean_detail"] = (errors[0] if errors else text.strip()[-300:])[:300]
-    axioms = parse_axioms(text, name) if name and out["lean_status"] == "accepted" else None
-    out["axioms"] = axioms
+    out["axioms"] = parse_axioms(text, name) if name and out["lean_status"] == "accepted" else None
+    return out
+
+
+ATTEMPT_FIELDS = (
+    "lean_status",
+    "lean_cpu",
+    "lean_wall",
+    "lean_peak_mb",
+    "lean_peak_anon_mb",
+    "lean_kill",
+    "lean_detail",
+)
+
+
+def check(
+    path: Path, *, timeout: float | None = None, memory_fraction: float = 0.85
+) -> dict[str, Any]:
+    """Runs Lean on ``path`` with the light import first, when its header imports ArchytasZX,
+    and on the file as written whenever that attempt is not accepted with its axioms printed;
+    returns the runner's fields of the final attempt (see the module docstring)."""
+    source = path.read_text(encoding="utf-8")
+    name = final_theorem(source)
+    meta: dict[str, Any] = {
+        "file_bytes": len(source.encode("utf-8")),
+        "file_lines": source.count("\n") + 1,
+        "final_theorem": name,
+        "statement_level": statement_level(source),
+        "unproved_declared": len(re.findall(r"^axiom unproved_", source, re.MULTILINE)),
+    }
+    attempts: list[dict[str, Any]] = []
+    light = light_source(source)
+    res: dict[str, Any] | None = None
+    if light is not None:
+        res = _attempt(path, light, name, timeout, memory_fraction)
+        attempts.append({"import": "light", **{k: res[k] for k in ATTEMPT_FIELDS if k in res}})
+        if res["lean_status"] != "accepted" or (name and res["axioms"] is None):
+            res = None
+    used = "light"
+    if res is None:
+        used = "full"
+        res = _attempt(path, source, name, timeout, memory_fraction)
+        attempts.append({"import": "full", **{k: res[k] for k in ATTEMPT_FIELDS if k in res}})
+    out = meta | res | {"lean_import": used, "lean_attempts": attempts}
+    axioms = out["axioms"]
     out["axiom_class"] = (
         classify(axioms, source) if out["lean_status"] == "accepted" else out["lean_status"]
     )
@@ -552,5 +607,4 @@ def check(
         if axioms is not None
         else None
     )
-    probe.unlink(missing_ok=True)
     return out

@@ -244,6 +244,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     """One worker process on ``job``: its result, or the stage it was killed in."""
     st = ctx.cfg["stages"]
     n_stages = sum(1 for s in ("decide", "certificate", "lean_export", "lean_check") if st[s]) + 1
+    n_stages += 1 if st["lean_check"] else 0
     wall_limit = float(st["timeout_seconds"]) * n_stages * float(st.get("wall_factor", 4))
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, prefix="bench-job-") as fh:
         json.dump(job, fh, default=str)

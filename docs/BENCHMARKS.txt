@@ -597,6 +597,17 @@ times the sum of its stage limits. A stage that cannot run (certificate and Lean
 unknown or unequal_uncertified verdict) is recorded not_run. Only decide decides success; later
 stages are recorded with their status.
 
+lean_check runs in up to two attempts (benchmarks/lean.py, check). When the file's header has the
+line import ArchytasZX, the first attempt checks a copy with that line replaced by
+import ArchytasZX.Light (LEAN.txt, section 2) and nothing else changed. When that attempt is
+accepted and prints the final theorem's axioms, it is the result. Otherwise (rejected, timeout,
+oom, or no axioms printed) the file as written is checked with the same CPU limit and memory
+budget, and that attempt alone is the result, as without the first. A file with no such line is
+checked once, as written. The stage record keeps the fields of the attempt reported, lean_import
+(light or full) and lean_attempts, one entry per attempt with import, lean_status, lean_cpu,
+lean_wall, lean_peak_mb, lean_peak_anon_mb and, when set, lean_kill and lean_detail. The
+worker's wall limit counts lean_check twice.
+
 
 9. STATISTICS
 -------------
