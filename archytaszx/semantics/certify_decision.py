@@ -62,11 +62,13 @@ def pair_proof(
     left: Diagram,
     right: Diagram,
     describe: Callable[[Diagram], str] | None = None,
+    concrete_kernel: bool = True,
 ) -> tuple[ProofCertificate | ProofOutcome | kernel.Theorem | kernel.Symbolic | None, str]:
     """A Lean-checkable proof of ``left = right`` from ``decision``: its own certificates, else
     the normaliser of symbolic sums, else a search; None and the three reasons when all fail. A
     symbolic-contraction verdict tries the normaliser, the kernel's
-    :func:`~archytaszx.semantics.kernel.contraction`, the path-sum export, then the search."""
+    :func:`~archytaszx.semantics.kernel.contraction`, the path-sum export, then the search; the
+    kernel's contraction first on a concrete pair when ``concrete_kernel`` is set."""
     if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
         forward, backward = decision.certificates
         if forward.initial is left and backward.initial is right:
@@ -84,7 +86,7 @@ def pair_proof(
     if decision.method is DecisionMethod.PATH_SUM:
         return path_sum_proof(left, right)
     contracted = decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
-    kernel_first = not contracted or _concrete_pair(left, right)
+    kernel_first = not contracted or (concrete_kernel and _concrete_pair(left, right))
     why_kernel = ""
     if kernel_first:
         try:
@@ -210,7 +212,9 @@ def restricted_proof(
         except (lean_net.NetUnsupported, ScalarUnsupported, kernel.KernelError) as exc:
             why += f"copy-index phases: {exc}; "
     if evidence is None:
-        evidence, rest = pair_proof(inner, *pair, describe=describe)
+        evidence, rest = pair_proof(
+            inner, *pair, describe=describe, concrete_kernel=source.doubled is None or family
+        )
         why += rest
     if evidence is None:
         return None, why

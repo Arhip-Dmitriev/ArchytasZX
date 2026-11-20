@@ -47,7 +47,8 @@ decision's own certificates, else the normaliser of symbolic sums, else prove; a
 decision through the family's proof or the restricted pair's. A symbolic-contraction
 verdict on a pair with no parameter and no free symbol (scalars, box multiplicities and copy
 scalars, leg dimensions, phases) takes the kernel's contraction theorem first and the
-normaliser only when the kernel refuses; with a free symbol the normaliser comes first.
+normaliser only when the kernel refuses; with a free symbol, and on the doubled pair of a
+restricted decision proved over its restricted pair, the normaliser comes first.
 describe gives the diagram
 comments of the Lean refutation and the normaliser proof.
 
