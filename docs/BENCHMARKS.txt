@@ -838,11 +838,15 @@ order, written RUNG.CODE (outcomes.stop_codes): normal_form.agree, .differ; orac
 proof.no_proof, refutation.no_lean and refutation.recheck_failed (a residue, numeric or
 interface recheck that failed, PROOFS.txt section 2.2) from certification; the stops after
 ("doubled", "doubled") prefixed doubled., another doubled stop written doubled.CODE. A record
-written before
-Decision.stops existed has its codes read from the decide reason's "; "-separated notes (RUNGS):
-the same codes where a note matches, RUNG.other where none does, RUNG.truncated for the last
-note of a reason cut at 400 characters, notes after an induction note (its base case's own
-decision) not read.
+written before Decision.stops existed has its codes read from the decide reason's "; "-separated
+notes (RUNGS): the same codes where a note matches, RUNG.other where none does, RUNG.truncated
+for a note holding a cut (below) and for the last note of a reason of 399 or 400 characters
+without one (records written before the cut below kept the first 400 characters), notes after
+an induction note (its base case's own decision) not read.
+
+The decide stage's reason field is the whole reason up to 16000 characters; a longer one keeps
+its first 4000 (outcomes.REASON_HEAD) and last 12000 (REASON_TAIL) characters, joined by
+" [... K characters cut ...] " (outcomes.clip_reason), so its last rung notes stay readable.
 
 Aggregates read the codes, never the messages; harness_error and invalid_point points, and runs
 flagged point_invalid, are left out of the counts' points (harness_error and invalid_point have

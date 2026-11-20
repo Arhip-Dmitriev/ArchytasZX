@@ -219,13 +219,33 @@ RIVAL_PACKAGES: dict[str, tuple[str, ...]] = {
 }
 
 
+REASON_HEAD = 4000
+"""The characters of a decide reason's head kept by clip_reason."""
+
+REASON_TAIL = 12000
+"""The characters of a decide reason's tail kept by clip_reason."""
+
+_REASON_CUT = re.compile(r" \[\.\.\. \d+ characters cut \.\.\.\] ")
+
+
+def clip_reason(reason: str) -> str:
+    """``reason`` whole when at most REASON_HEAD + REASON_TAIL characters, else its head and
+    tail joined by `` [... K characters cut ...] ``."""
+    if len(reason) <= REASON_HEAD + REASON_TAIL:
+        return reason
+    cut = len(reason) - REASON_HEAD - REASON_TAIL
+    return f"{reason[:REASON_HEAD]} [... {cut} characters cut ...] {reason[-REASON_TAIL:]}"
+
+
 def rung_codes(reason: str) -> list[str]:
     """The stop code of every rung note (``; ``-separated) in a decide reason, in order; a note
-    no pattern matches is ``<rung>.other``, the last note of a reason cut at 400 characters is
+    no pattern matches is ``<rung>.other``; a note holding a clip_reason cut, and the last note
+    of a reason of 399 or 400 characters without one (records cut at 400), is
     ``<rung>.truncated``; after an induction note only induction, reversed and refutation notes
     are read (the rest is the base case's own decision)."""
     out: list[str] = []
     segs = [s.strip() for s in reason.split("; ") if s.strip()]
+    old_cut = 399 <= len(reason) <= 400 and _REASON_CUT.search(reason) is None
     nested = False
     for i, seg in enumerate(segs):
         body = _DOUBLED.sub("", seg, count=1)
@@ -239,7 +259,7 @@ def rung_codes(reason: str) -> list[str]:
         rung = code.split(".", 1)[0]
         if nested and rung not in _AFTER_INDUCTION:
             continue
-        if i == len(segs) - 1 and len(reason) >= 399:
+        if (i == len(segs) - 1 and old_cut) or _REASON_CUT.search(seg):
             code = f"{rung}.truncated"
         nested = nested or rung in ("induction", "induction_reversed")
         code = prefix + code
@@ -616,6 +636,7 @@ __all__ = [
     "WRONG_OUTCOMES",
     "below_float_floor",
     "classify",
+    "clip_reason",
     "counted",
     "equal_region",
     "free_axes",
