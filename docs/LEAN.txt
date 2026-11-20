@@ -1004,7 +1004,12 @@ binder of a shift keeps the type of the binder it replaces. No translation is in
 about the same networks and diagram literals as the family theorem. The kernel's subst steps
 are not exported; the corollary replaces them. When the family export has an axiom, a theorem
 with no free multiplicity after kernel.instantiated (every clause applied to the family pair,
-boxes at n = v unrolled there) is exported as that instantiated pair over its networks. The
+boxes at n = v unrolled there) is exported as that instantiated pair over its networks, unless
+a node of it holds a phase rule over a concrete dimension above kernel.WIDE_RULE = 2^16 (the
+bound up to which the parser expands a rule; the network exporters read a rule as its table of
+values): the family export and its corollary are then written as they are (incrementer/main
+d = 2, n = 42: the instantiated right side holds a rule over dimension 2^42, the export ran out
+of the 3481 MiB cap after 300 s; now 0.2 s, 25730 bytes, as at n = 16). The
 opaque export (4.5) of a theorem with subst steps states the premise as a lemma over its
 multiplicities, applies it at the clause's value, and joins it to the substituted sides by instantiation axioms.
 

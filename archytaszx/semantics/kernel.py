@@ -2503,10 +2503,29 @@ def _concrete_export(theorem: Theorem, text: str) -> str | None:
             return None
     if free_mult_symbols(lhs) | free_mult_symbols(rhs) or lhs.bang_boxes or rhs.bang_boxes:
         return None
+    if _wide_rule(lhs) or _wide_rule(rhs):
+        return None
     source = _semantic_pair(lhs, rhs)
     if source is None:
         return None
     return header(source, f"restricted to {text}: the instantiated pair over its networks")
+
+
+WIDE_RULE = 1 << 16
+"""The largest concrete dimension at which :func:`_concrete_export` reads a phase rule as a
+table, the bound up to which the parser expands a rule."""
+
+
+def _wide_rule(diagram: Diagram) -> bool:
+    """Whether a node of ``diagram`` holds a phase rule over a concrete dimension above
+    :data:`WIDE_RULE`."""
+    for node in diagram.nodes.values():
+        pv = node.phase
+        if pv is None or pv.stored_rule is None or not pv.dim.is_concrete:
+            continue
+        if pv.dim.to_int() > WIDE_RULE:
+            return True
+    return False
 
 
 def _guards(theorem: Theorem) -> dict[str, int] | None:
