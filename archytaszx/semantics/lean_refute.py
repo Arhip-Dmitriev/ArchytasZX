@@ -1379,20 +1379,51 @@ class _Refuter:
         return sum(c * pow(self.w, e % self.M, self.p) for (_ks, e), c in v.items()) % self.p
 
     def hinted(self, bnd: Sequence[int]) -> list[tuple[int, ...]]:
-        """The engine's witness index as a value per boundary label, when it fits."""
+        """The engine's witness index as a value per boundary label, when it fits: a bundled
+        label reads the next entries as the digits of its copies (:meth:`digs_c` inverted)."""
         ranges = [self.labdim(x) for x in bnd]
-        if (
-            self.hint is None
-            or len(self.hint) != len(bnd)
-            or sorted(bnd) != list(range(len(bnd)))
-            or not all(0 <= v < r for v, r in zip(self.hint, ranges, strict=True))
-        ):
+        if self.hint is None or sorted(bnd) != list(range(len(bnd))):
             return []
         order = sorted(range(len(bnd)), key=lambda i: bnd[i])
+        hint = list(self.hint)
+        if len(hint) != len(bnd):
+            grouped = self.bundled_hint(sorted(bnd), hint)
+            if grouped is None:
+                return []
+            hint = grouped
+            ranges = [ranges[i] for i in order]
+        if not all(0 <= v < r for v, r in zip(hint, ranges, strict=True)):
+            return []
         out = [0] * len(bnd)
         for slot, i in enumerate(order):
-            out[i] = self.hint[slot]
+            out[i] = hint[slot]
         return [tuple(out)]
+
+    def bundled_hint(self, labels: Sequence[int], hint: Sequence[int]) -> list[int] | None:
+        """One value per label of ``labels`` from ``hint``, a bundled label taking as many
+        entries as its copies; None when the counts do not match."""
+        out = self.out
+
+        def value(d: int, c: tuple[int, ...], ys: Sequence[int]) -> int:
+            if not c:
+                return int(ys[0])
+            per = math.prod(self.mult(x) for x in c[1:])
+            b = d**per
+            return sum(
+                value(d, c[1:], ys[i * per : (i + 1) * per]) * b**i for i in range(self.mult(c[0]))
+            )
+
+        vals: list[int] = []
+        pos = 0
+        for x in labels:
+            idx = out.labs.get(x, 0)
+            c = out.chain(idx) if out.family else ()
+            k = math.prod(self.mult(m) for m in c)
+            if pos + k > len(hint):
+                return None
+            vals.append(value(self.dimv(out.root(idx)), c, hint[pos : pos + k]))
+            pos += k
+        return vals if pos == len(hint) else None
 
     def net_plan(self, net: LNet, sigma: Mapping[int, int]) -> tuple[str, Any, int]:
         """The residue contraction of ``net`` at ``sigma``: by tables, else by substitution and

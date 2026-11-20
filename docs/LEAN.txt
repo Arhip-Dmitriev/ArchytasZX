@@ -1338,6 +1338,18 @@ near 5.4 GB); n=7: 84 s, 2.5 GB; a tampered residue fails the elimT of the steps
 and read it. incrementer! n=4 32 -> 26 s, n=5 109 s / 3.5 GB -> 59 s / 0.9 GB, qft! n=2 d=5
 33 -> 30 s, qft_zero_state! n=2 d=2 9 s / 361 -> 341 MB, quantum_hamming_family! n=3 d=2
 81 -> 46 s; semiclassical_qft! n=2 d=2 is unchanged.
+The substitution route (RefuteSym, lean_subst.sym_plan) sums out a label by a delta step read
+from a binder, a splitter, a constraint, or two legs of a Z spider (Src.zz, spair), and for
+copies of a Z spider in one box (.Bun m .Z) from two legs mod d ^ mult m (spairB: every
+copy's digit agrees, mod_pow_of_digit), the label solved when its range is d ^ mult m
+(solveP). The boundary assignments tried start at the engine's witness index; a bundled
+boundary label reads its copies' entries of that index as its digits (bundled_hint).
+bernstein_vazirani/main/r0! n=3 d=5: its bundled copy spider's table of 125^3 entries was
+refused ("a residue table is too large after substitution"); two such delta steps leave
+tables of at most 125^2 entries and the witness index (1, 1, 1, 0) gives the bundled
+assignment 31, exported in 1.5 s (Lean is killed at 6 GB: the bundled Fourier box's table of
+125^2 entries). n=2 d=5: export 91 -> 65 KB, Lean OOM-killed at 6 GB -> checked in 25 s,
+0.76 GB anon.
 The prime p is proved prime by norm_num, or, when every phase vector is sparse (sparse_all),
 by Lucas's test (prime_lucas: a primitive root, the factorisation of p - 1, powers by 64-bit
 square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64. prim_of needs

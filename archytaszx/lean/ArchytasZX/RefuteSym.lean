@@ -387,10 +387,20 @@ inductive Src where
   | cn : ℕ × LX → Src
   deriving DecidableEq, Repr
 
+/-- Two leg expressions of copies of a Z spider in one box, each mod `d ^ mult m`. -/
+def spairB (S : Shape) (bs : List (ℕ × LX)) (n : Node) (x y : ℕ) : Option (LX × LX) :=
+  match n.kind with
+  | .Bun m .Z =>
+    if x ∈ nlegs n ∧ y ∈ nlegs n then
+      some (.mod (texpr bs x) (S.dimv n.dim ^ S.mult m),
+        .mod (texpr bs y) (S.dimv n.dim ^ S.mult m))
+    else none
+  | _ => none
+
 /-- A source node's leg expression and the expression it equals when the node is nonzero. -/
 def spair (S : Shape) (bs : List (ℕ × LX)) : Src → Option (LX × LX)
   | .zz n x y => if n.kind = .Z ∧ x ∈ nlegs n ∧ y ∈ nlegs n then some (texpr bs x, texpr bs y)
-      else none
+      else spairB S bs n x y
   | .bs n pos =>
     match n.kind, n.outs, n.ins, pos with
     | .B, [k], [a, b], 0 =>
@@ -408,6 +418,7 @@ def spair (S : Shape) (bs : List (ℕ × LX)) : Src → Option (LX × LX)
 def solveP (D : ℕ → ℕ) (l : ℕ) : Option (LX × LX) → Option LX
   | some (.v x, t) => if x = l then some t else none
   | some (.neg (.v x) n, t) => if x = l ∧ n = D l then some (.neg t n) else none
+  | some (.mod (.v x) n, t) => if x = l ∧ n = D l then some t else none
   | _ => none
 
 /-- The value `l` takes where a constraint `N ∣ a + b` holds, `a` reading `l`. -/
@@ -476,6 +487,73 @@ theorem valS_ne (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C :
   · exact ⟨hc.2.1, hc.2.2⟩
   · exact absurd (tmv_tc_zero p w) hv
 
+theorem mod_pow_of_digit (d : ℕ) :
+    ∀ (m x y : ℕ), (∀ i < m, digit d i x = digit d i y) → x % d ^ m = y % d ^ m
+  | 0, x, y, _ => by rw [pow_zero, Nat.mod_one, Nat.mod_one]
+  | m + 1, x, y, h => by
+    have h0 : x % d = y % d := by simpa [digit] using h 0 (Nat.succ_pos m)
+    have hs : x / d % d ^ m = y / d % d ^ m := by
+      apply mod_pow_of_digit d m
+      intro i hi
+      have := h (i + 1) (by omega)
+      simpa only [digit, pow_succ', ← Nat.div_div_eq_div_mul] using this
+    rw [pow_succ', Nat.mod_mul, Nat.mod_mul, h0, hs]
+
+theorem tmv_foldr_ne (p w : ℕ) (f : ℕ → Terms) :
+    ∀ (l : List ℕ), tmv p w ((l.map f).foldr tmul (tc 1)) ≠ 0 → ∀ i ∈ l, tmv p w (f i) ≠ 0
+  | [], _, i, hi => by simp at hi
+  | a :: l, h, i, hi => by
+    simp only [List.map_cons, List.foldr_cons, tmv_mul] at h
+    rcases List.mem_cons.1 hi with rfl | hi
+    · exact left_ne_zero_of_mul h
+    · exact tmv_foldr_ne p w f l (right_ne_zero_of_mul h) i hi
+
+theorem copyLegs_flat (mult : ℕ → ℕ) (d i : ℕ) :
+    ∀ vs : List ℕ, copyLegs mult d i (List.replicate vs.length []) vs = vs.map (digit d i)
+  | [] => rfl
+  | v :: vs => by
+    have := copyLegs_flat mult d i vs
+    simp only [copyLegs, List.length_cons, List.replicate_succ, List.zipWith_cons_cons,
+      List.map_nil, List.prod_nil, pow_one, List.map_cons] at this ⊢
+    rw [this]
+
+theorem spairB_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) (bs : List (ℕ × LX)) (n : Node) (x y : ℕ) (a t : LX)
+    (h : spairB S bs n x y = some (a, t)) (τ : ℕ → ℕ)
+    (hv : tmv p w (valW S M P C (tval bs τ) n) ≠ 0) : a.eval τ = t.eval τ := by
+  obtain ⟨kind, outs, ins, dim, ph⟩ := n
+  unfold spairB at h
+  split at h
+  · rename_i m hk
+    simp only at hk
+    subst hk
+    split_ifs at h with hxy
+    obtain ⟨hx, hy⟩ := hxy
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    simp only [LX.eval]
+    apply mod_pow_of_digit
+    intro i hi
+    have hv' := tmv_foldr_ne p w _ _ hv i (List.mem_range.2 hi)
+    have hz : tmv p w (tZT (P ph) (S.dimv dim)
+        ((outs.map (tval bs τ)).map (digit (S.dimv dim) i) ++
+          (ins.map (tval bs τ)).map (digit (S.dimv dim) i))) ≠ 0 := by
+      have e1 := copyLegs_flat S.mult (S.dimv dim) i (outs.map (tval bs τ))
+      have e2 := copyLegs_flat S.mult (S.dimv dim) i (ins.map (tval bs τ))
+      rw [List.length_map] at e1 e2
+      simpa only [tensorW, tensorT, Kind.outCs, Kind.inCs, List.length_map, e1, e2] using hv'
+    obtain ⟨k, hk⟩ := tZT_eq _ _ _ p w hz
+    have mem : ∀ z ∈ nlegs ⟨.Bun m .Z, outs, ins, dim, ph⟩,
+        digit (S.dimv dim) i (tval bs τ z) ∈
+          (outs.map (tval bs τ)).map (digit (S.dimv dim) i) ++
+            (ins.map (tval bs τ)).map (digit (S.dimv dim) i) := by
+      intro z hz'
+      rw [← List.map_append, ← List.map_append]
+      exact List.mem_map_of_mem (List.mem_map_of_mem (by simpa [nlegs] using hz'))
+    show digit (S.dimv dim) i (tval bs τ x) = digit (S.dimv dim) i (tval bs τ y)
+    rw [hk _ (mem x hx), hk _ (mem y hy)]
+  · simp at h
+
 theorem spair_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
     (p w : ℕ) (bs : List (ℕ × LX)) (src : Src) (a t : LX) (h : spair S bs src = some (a, t))
     (τ : ℕ → ℕ) (hv : sfac S M P C p w bs τ src ≠ 0) : a.eval τ = t.eval τ := by
@@ -484,6 +562,8 @@ theorem spair_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) 
   | zz n x y =>
     simp only [spair] at h
     split_ifs at h with hc
+    swap
+    · exact spairB_sound S M P C p w bs n x y a t h τ hv
     obtain ⟨hk, hx, hy⟩ := hc
     simp only [Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
@@ -541,6 +621,14 @@ theorem solveP_sound (D : ℕ → ℕ) (l : ℕ) (pr : Option (LX × LX)) (e : L
     have := hpr _ _ rfl
     simp only [LX.eval] at this ⊢
     rw [← this, negN_negN _ _ hl]
+  · rename_i x n t
+    split_ifs at h with hx
+    obtain ⟨rfl, rfl⟩ := hx
+    simp only [Option.some.injEq] at h
+    subst h
+    have := hpr _ _ rfl
+    simp only [LX.eval] at this
+    rw [← this, Nat.mod_eq_of_lt hl]
   · simp at h
 
 theorem negN_case (n y b : ℕ) (hl : y < n) (hd : (negN n y + b) % n = 0) : y = b % n := by

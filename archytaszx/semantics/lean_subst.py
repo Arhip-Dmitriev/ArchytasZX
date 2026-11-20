@@ -229,12 +229,29 @@ def _legs(net: LNet, i: int) -> list[int]:
     return [*n.outs, *n.ins]
 
 
-def _spair(st: State, net: LNet, dimv: Callable[[int], int], src: tuple[Any, ...]) -> Any:
+def _bun_z(kind: Any) -> bool:
+    """Whether ``kind`` is `.Bun m .Z`."""
+    return isinstance(kind, tuple) and kind[0] == "Bun" and kind[2] == "Z"
+
+
+def _spair(
+    st: State,
+    net: LNet,
+    dimv: Callable[[int], int],
+    src: tuple[Any, ...],
+    mult: Callable[[int], int] | None = None,
+) -> Any:
     """Mirror of `spair`."""
     if src[0] == "zz":
         _, i, x, y = src
-        if _head(net.nodes[i].kind) == "Z" and x in _legs(net, i) and y in _legs(net, i):
+        n = net.nodes[i]
+        if x not in _legs(net, i) or y not in _legs(net, i):
+            return None
+        if _head(n.kind) == "Z":
             return st.texpr(x), st.texpr(y)
+        if _bun_z(n.kind) and mult is not None:
+            big = dimv(n.dim) ** mult(n.kind[1])
+            return ("mod", st.texpr(x), big), ("mod", st.texpr(y), big)
         return None
     _, i, pos = src
     n = net.nodes[i]
@@ -264,6 +281,8 @@ def _solvep(pair: Any, l: int, d: Callable[[int], int]) -> Ex | None:
     a, t = pair
     if a == ("v", l):
         return tuple(t)
+    if a[0] == "mod" and a[1] == ("v", l) and a[2] == d(l):
+        return tuple(t)
     if a[0] == "neg" and a[1] == ("v", l) and a[2] == d(l):
         return ("neg", t, a[2])
     return None
@@ -279,7 +298,14 @@ def _csolve(n: int, a: Ex, b: Ex, l: int, d: Callable[[int], int]) -> Ex | None:
 
 
 def _solve(
-    st: State, net: LNet, dimv: Any, d: Any, l: int, src: tuple[Any, ...], bare: bool = False
+    st: State,
+    net: LNet,
+    dimv: Any,
+    d: Any,
+    l: int,
+    src: tuple[Any, ...],
+    bare: bool = False,
+    mult: Callable[[int], int] | None = None,
 ) -> Ex | None:
     """Mirror of `solve`; ``bare`` admits a constraint on one label."""
     if src[0] == "cn":
@@ -289,7 +315,7 @@ def _solve(
         if e[0] != "add":
             return None
         return _csolve(n, e[1], e[2], l, d) or _csolve(n, e[2], e[1], l, d)
-    return _solvep(_spair(st, net, dimv, src), l, d)
+    return _solvep(_spair(st, net, dimv, src, mult), l, d)
 
 
 def _fleg(st: State, net: LNet, i: int, l: int) -> Ex | None:
@@ -343,7 +369,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     def ncands(s: State, i: int) -> Any:
         n = net.nodes[i]
         h = _head(n.kind)
-        if h == "Z":
+        if h == "Z" or _bun_z(n.kind):
             L = list(dict.fromkeys(_legs(net, i)))
             for x in L:
                 if not opened(s, s.texpr(x)):
@@ -358,7 +384,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     def dok(s: State, l: int, src: tuple[Any, ...]) -> Ex | None:
         if l not in fset or s.bound(l):
             return None
-        e = _solve(s, net, dimv, d, l, src, pinned)
+        e = _solve(s, net, dimv, d, l, src, pinned, refuter.mult)
         if e is None or l in vars_(e):
             return None
         if any(x not in fset and x not in bset for x in vars_(e)):
@@ -380,10 +406,12 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
                 if a[0] == "neg" and a[1][0] == "v" and a[1][1] in fset:
                     return int(a[1][1])
             return None
-        pr = _spair(s, net, dimv, src)
+        pr = _spair(s, net, dimv, src, refuter.mult)
         if pr is None:
             return None
         a = pr[0]
+        if a[0] == "mod":
+            a = a[1]
         if a[0] == "v":
             return int(a[1])
         if a[0] == "neg" and a[1][0] == "v":
