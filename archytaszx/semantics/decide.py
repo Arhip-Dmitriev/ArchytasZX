@@ -463,10 +463,48 @@ def sample_grid(
         if index_tuple not in seen:
             seen.add(index_tuple)
             ordered.append(index_tuple)
-    return tuple(
+    grid = [
         MappingProxyType({name: values[name][i] for name, i in zip(names, t, strict=True)})
         for t in ordered
-    )
+    ]
+    top = MULTIPLICITY_SAMPLE_VALUES[-1]
+    for name, degree in sorted(_phase_degrees(left, right, values).items()):
+        for v in range(top + 1, degree + 1):
+            point = {k: values[k][0] for k in names}
+            point[name] = v
+            grid.append(MappingProxyType(point))
+    return tuple(grid)
+
+
+def _phase_degrees(
+    left: Diagram, right: Diagram, values: Mapping[str, tuple[CheckAssignmentValue, ...]]
+) -> dict[str, int]:
+    """Each multiplicity symbol in ``values`` sampled at :data:`MULTIPLICITY_SAMPLE_VALUES`
+    mapped to the largest degree in it of a node phase polynomial of ``left`` or ``right``."""
+    names = {n for n, v in values.items() if v is MULTIPLICITY_SAMPLE_VALUES}
+    if not names:
+        return {}
+    exprs: list[sp.Expr] = []
+    for diagram in (left, right):
+        for node in diagram.nodes.values():
+            pv = node.phase
+            if pv is None or not pv.free_symbols & names:
+                continue
+            if pv.stored_rule is not None:
+                exprs.append(pv.stored_rule.to_sympy_turns())
+            if pv.rule is not None or pv.stored_rule is None:
+                exprs.extend(ph.to_sympy_turns() for ph in pv.entries().values())
+    degrees: dict[str, int] = {}
+    for expr in exprs:
+        for sym in expr.free_symbols:
+            if str(sym) not in names:
+                continue
+            try:
+                degree = sp.Poly(expr, sym).degree()
+            except sp.PolynomialError:
+                continue
+            degrees[str(sym)] = max(degrees.get(str(sym), 0), degree)
+    return degrees
 
 
 def _family(diagram: Diagram) -> Diagram:

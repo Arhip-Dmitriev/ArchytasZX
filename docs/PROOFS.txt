@@ -254,6 +254,12 @@ diagram is outside its domain (for example a phase index above d - 1) is refused
 the summary line reports how many samples were evaluated and refused, and the first refusal.
 A dimension named in floors samples the first four values at least max(floor, its phase-vector
 floor) of 2, 3, 4, 1, 5, 6, ...
+A multiplicity n on which a node phase (a vector entry or rule, in turns) is a polynomial of
+degree D > 3 also gets the samples n = 4, ..., D after the grid, every other symbol at its
+first value: an integer-valued polynomial of degree D vanishing mod 1 at n = 0, ..., D vanishes
+mod 1 at every n. incrementer/main! (the phase k n (n-1) (n-2) (n-3) / 48 on each output, first
+nonzero at n = 4): unknown (induction_reversed.step_not_discharged) -> UNEQUAL at n = 4,
+certified, 0.4 s.
 
 2.4 Partial procedures
 
