@@ -95,6 +95,11 @@ _RESERVED = frozenset(
 
 PHASE_TABLE_MIN = 64
 TABLE_CHUNK = 256
+LIST_SPLIT = 4096
+"""List literals longer than this are definitions of `LIST_CHUNK` entries joined by `++`."""
+LIST_CHUNK = 2048
+DOC_MAX = 65536
+"""Doc comments are cut to this many characters."""
 
 
 def _phase_table(pv: PhaseVector) -> tuple[list[int], int] | None:
@@ -199,7 +204,34 @@ def _pairs(ps: Sequence[tuple[int, int]]) -> str:
 
 
 def _comment(text: str) -> str:
+    if len(text) > DOC_MAX:
+        text = text[:DOC_MAX] + " …"
     return text.replace("-/", "- /").replace("/-", "/ -")
+
+
+def _split_list(name: str, ty: str, items: Sequence[str]) -> tuple[list[str], str]:
+    """Chunk definitions `{name}_{c}` of ``items`` and the term joining them by `++`, or none and
+    the literal when ``items`` has at most `LIST_SPLIT` entries."""
+    if len(items) <= LIST_SPLIT:
+        return [], "[" + ", ".join(items) + "]"
+    defs = [
+        f"/-- Chunk {c} of `{name}`. -/\ndef {name}_{c} : List {ty} := "
+        f"[{', '.join(items[i : i + LIST_CHUNK])}]"
+        for c, i in enumerate(range(0, len(items), LIST_CHUNK))
+    ]
+    return defs, " ++ ".join(f"{name}_{c}" for c in range(len(defs)))
+
+
+def _net_def(doc: str, name: str, net: LNet) -> list[str]:
+    """The definition of ``net`` as `{name}`, its long lists as chunk definitions."""
+    if max(len(net.nodes), len(net.summed), len(net.bnd)) <= LIST_SPLIT:
+        return [f"/-- {doc} -/\ndef {name} : Net := {net.lean()}"]
+    dn, nodes = _split_list(f"{name}n", "Node", [n.lean() for n in net.nodes])
+    ds, summed = _split_list(f"{name}s", "ℕ", [str(x) for x in net.summed])
+    db, bnd = _split_list(f"{name}b", "ℕ", [str(x) for x in net.bnd])
+    if not dn:
+        nodes = f"({nodes} : List Node)"
+    return [*dn, *ds, *db, f"/-- {doc} -/\ndef {name} : Net := ⟨{nodes}, {summed}, {bnd}⟩"]
 
 
 def _erase(xs: Sequence[int], x: int) -> tuple[int, ...]:
@@ -924,7 +956,7 @@ class _Export:
         self.nets[key] = labelled
         if slots is None and d.bang_boxes:
             self.boxed[name] = (d, order)
-        self.decls.append(f"/-- {_comment(self.describe(d))} -/\ndef {name} : Net := {net.lean()}")
+        self.decls += _net_def(_comment(self.describe(d)), name, net)
         return labelled
 
     def diagram_literal(
@@ -3396,7 +3428,9 @@ class _Export:
         args = " ".join(n for n, _ in params)
         dims = "\n".join(f"  | {i} => {text}" for i, text in enumerate(self.dims))
         phases = "\n".join(f"  | {i} => {text}" for i, text in enumerate(self.phases))
-        labs = _pairs(sorted(self.labs.items()))
+        lab_defs, labs = _split_list(
+            "labs", "(ℕ × ℕ)", [f"({a}, {b})" for a, b in sorted(self.labs.items())]
+        )
         coef = f", coef := Ψ {args}".rstrip() if self.weight_tab else ""
         tables = [
             *self.table_defs,
@@ -3405,6 +3439,7 @@ class _Export:
                 f"/-- Phase vectors in turns. -/\nnoncomputable def Φ {binders} : ℕ → ℕ → ℝ\n"
                 f"{phases}\n  | _ => fun _ => 0"
             ),
+            *lab_defs,
             f"/-- Each label's dimension index. -/\ndef labs : List (ℕ × ℕ) := {labs}",
             f"/-- The environment. -/\nnoncomputable def E {binders} : Env := "
             f"{{ dimv := Δ {args}, phase := Φ {args}, labs := labs{coef} }}".replace("  ", " "),

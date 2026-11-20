@@ -1680,7 +1680,11 @@ weighted spider). A weight rule the scalar model cannot write still raises NetUn
 G13 Cost of large steps: structural side conditions (among them the isomorphism condition isoOKB
 of isoB) are decided in the kernel first (decide +kernel); a step's closing isoB names its target
 network and is applied by refine before its condition is decided; exports set maxRecDepth to
-100000 and maxHeartbeats to 2000000. zxw_hd, zxw_hd_converse, qf_hd, qf_hd_converse, zxw_vw and
+100000 and maxHeartbeats to 2000000. A network's node, summed or boundary list and the labs
+table longer than LIST_SPLIT = 4096 entries are written as definitions of LIST_CHUNK = 2048
+entries joined by ++ (lean_net._split_list, _net_def; a literal of 17000 nodes or 23000 pairs
+reaches the maximum recursion depth), and doc comments are cut at DOC_MAX = 65536 characters.
+zxw_hd, zxw_hd_converse, qf_hd, qf_hd_converse, zxw_vw and
 zxw_vw_converse steps check up to d = 8 (at d = 8 on a cluster node: zxw_hd 298 s, zxw_hd_converse
 351 s; at the default heartbeat limit both d = 8 steps end in a heartbeat timeout); larger
 dimensions were not measured.
