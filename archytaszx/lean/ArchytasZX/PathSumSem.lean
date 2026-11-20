@@ -825,10 +825,292 @@ def liftNM (M c : ℕ) : List ℕ → List (ℕ × ℕ)
     let L := liftNM M c B
     normPM M ((m, c) :: (L ++ L.map fun t => (m ||| t.1, (M - 2) * t.2)))
 
-/-- `c` times `lift M B`, normalised mod M after each monomial. -/
+/-- The monomials of `g` with `v`, `v` removed, and those without `v`. -/
+def splitAt (v : ℕ) (g : F2) : F2 × F2 :=
+  ((g.filter fun m => decide (v ∈ m)).map fun m => m.filter (· != v),
+    g.filter fun m => !decide (v ∈ m))
+
+theorem fz_splitAt (τ : ℕ → ZMod 2) (v : ℕ) :
+    ∀ g : F2, fz τ g = τ v * fz τ (splitAt v g).1 + fz τ (splitAt v g).2
+  | [] => by simp [splitAt, fz]
+  | m :: g => by
+    have ih := fz_splitAt τ v g
+    by_cases hv : v ∈ m
+    · have h1 : (splitAt v (m :: g)).1 = m.filter (· != v) :: (splitAt v g).1 := by
+        simp [splitAt, hv]
+      have h2 : (splitAt v (m :: g)).2 = (splitAt v g).2 := by simp [splitAt, hv]
+      rw [h1, h2, fz_cons, fz_cons, ih]
+      have hm := mz_update_in τ v (τ v) m hv
+      rw [Function.update_eq_self] at hm
+      rw [hm]
+      ring
+    · have h1 : (splitAt v (m :: g)).1 = (splitAt v g).1 := by simp [splitAt, hv]
+      have h2 : (splitAt v (m :: g)).2 = m :: (splitAt v g).2 := by simp [splitAt, hv]
+      rw [h1, h2, fz_cons, fz_cons, ih]
+      ring
+
+/-! ## The dense lift -/
+
+/-- A table over a list of variables: `node lo hi` holds `lo` where the head variable is 0 and
+`hi` where it is 1. -/
+inductive Tb where
+  | leaf (k : ℕ)
+  | node (lo hi : Tb)
+
+/-- Whether `t` is a complete tree of depth `n`. -/
+def Tb.dep : ℕ → Tb → Prop
+  | 0, .leaf _ => True
+  | n + 1, .node l h => Tb.dep n l ∧ Tb.dep n h
+  | _, _ => False
+
+/-- The entry of `t` at the assignment `σ` of `vs`. -/
+def Tb.at (σ : ℕ → ZMod 2) : List ℕ → Tb → ℕ
+  | _, .leaf k => k
+  | [], .node l _ => Tb.at σ [] l
+  | v :: vs, .node l h => if σ v = 0 then Tb.at σ vs l else Tb.at σ vs h
+
+/-- Leafwise `f` on two trees of one shape. -/
+def Tb.zip (f : ℕ → ℕ → ℕ) : Tb → Tb → Tb
+  | .leaf a, .leaf b => .leaf (f a b)
+  | .node l h, .node l' h' => .node (Tb.zip f l l') (Tb.zip f h h')
+  | t, _ => t
+
+/-- Every leaf times `c`. -/
+def Tb.scale (c : ℕ) : Tb → Tb
+  | .leaf k => .leaf (c * k)
+  | .node l h => .node (Tb.scale c l) (Tb.scale c h)
+
+/-- `node a (a + b mod 2)`. -/
+def Tb.xorN (a b : Tb) : Tb := .node a (Tb.zip (fun x y => (x + y) % 2) a b)
+
+/-- `node a (b - a mod M)`. -/
+def Tb.subN (M : ℕ) (a b : Tb) : Tb := .node a (Tb.zip (fun x y => x + (M - y % M)) b a)
+
+/-- The values 0 or 1 of the F_2 polynomial `B` on the assignments of `vs`. -/
+def tabF : List ℕ → F2 → Tb
+  | [], B => .leaf (B.length % 2)
+  | v :: vs, B => Tb.xorN (tabF vs (splitAt v B).2) (tabF vs (splitAt v B).1)
+
+/-- The multilinear coefficients mod `M` of a table (Moebius transform). -/
+def Tb.mob (M : ℕ) : Tb → Tb
+  | .leaf k => .leaf k
+  | .node l h => Tb.subN M (Tb.mob M l) (Tb.mob M h)
+
+/-- The terms of the leaves nonzero mod `M` of a coefficient table over `vs`, each monomial the
+variables at 1. -/
+def Tb.poly (M : ℕ) : List ℕ → Tb → Poly
+  | _, .leaf k => if k % M = 0 then [] else [([], k % M)]
+  | [], .node l _ => Tb.poly M [] l
+  | v :: vs, .node l h => Tb.poly M vs l ++ (Tb.poly M vs h).map fun t => (v :: t.1, t.2)
+
+/-- `c` times `lift M B` through the table of `B` on `vs`. -/
+def liftD (M c : ℕ) (vs : List ℕ) (B : F2) : Poly :=
+  Tb.poly M vs (Tb.mob M (Tb.scale c (tabF vs B)))
+
+theorem Tb.dep_zip (f : ℕ → ℕ → ℕ) : ∀ (n : ℕ) (a b : Tb), Tb.dep n a → Tb.dep n b →
+    Tb.dep n (Tb.zip f a b)
+  | 0, .leaf _, .leaf _, _, _ => by simp [Tb.zip, Tb.dep]
+  | 0, .node _ _, _, ha, _ => by simp [Tb.dep] at ha
+  | 0, .leaf _, .node _ _, _, hb => by simp [Tb.dep] at hb
+  | _ + 1, .leaf _, _, ha, _ => by simp [Tb.dep] at ha
+  | _ + 1, .node _ _, .leaf _, _, hb => by simp [Tb.dep] at hb
+  | n + 1, .node l h, .node l' h', ha, hb => by
+    simp only [Tb.dep] at ha hb
+    simp only [Tb.zip, Tb.dep]
+    exact ⟨Tb.dep_zip f n l l' ha.1 hb.1, Tb.dep_zip f n h h' ha.2 hb.2⟩
+
+theorem Tb.dep_scale (c : ℕ) : ∀ (n : ℕ) (t : Tb), Tb.dep n t → Tb.dep n (Tb.scale c t)
+  | 0, .leaf _, _ => by simp [Tb.scale, Tb.dep]
+  | 0, .node _ _, h => by simp [Tb.dep] at h
+  | _ + 1, .leaf _, h => by simp [Tb.dep] at h
+  | n + 1, .node l r, h => by
+    simp only [Tb.dep] at h
+    simp only [Tb.scale, Tb.dep]
+    exact ⟨Tb.dep_scale c n l h.1, Tb.dep_scale c n r h.2⟩
+
+theorem Tb.dep_mob (M : ℕ) : ∀ (n : ℕ) (t : Tb), Tb.dep n t → Tb.dep n (Tb.mob M t)
+  | 0, .leaf _, _ => by simp [Tb.mob, Tb.dep]
+  | 0, .node _ _, h => by simp [Tb.dep] at h
+  | _ + 1, .leaf _, h => by simp [Tb.dep] at h
+  | n + 1, .node l r, h => by
+    simp only [Tb.dep] at h
+    have hl := Tb.dep_mob M n l h.1
+    have hr := Tb.dep_mob M n r h.2
+    simp only [Tb.mob, Tb.subN, Tb.dep]
+    exact ⟨hl, Tb.dep_zip _ n _ _ hr hl⟩
+
+theorem dep_tabF : ∀ (vs : List ℕ) (B : F2), Tb.dep vs.length (tabF vs B)
+  | [], _ => by simp [tabF, Tb.dep]
+  | v :: vs, B => by
+    have h1 := dep_tabF vs (splitAt v B).2
+    have h2 := dep_tabF vs (splitAt v B).1
+    simp only [tabF, Tb.xorN, List.length_cons, Tb.dep]
+    exact ⟨h1, Tb.dep_zip _ _ _ _ h1 h2⟩
+
+theorem Tb.at_zip (σ : ℕ → ZMod 2) (f : ℕ → ℕ → ℕ) : ∀ (vs : List ℕ) (a b : Tb),
+    Tb.dep vs.length a → Tb.dep vs.length b →
+      Tb.at σ vs (Tb.zip f a b) = f (Tb.at σ vs a) (Tb.at σ vs b)
+  | [], .leaf _, .leaf _, _, _ => by simp [Tb.zip, Tb.at]
+  | [], .node _ _, _, ha, _ => by simp [Tb.dep] at ha
+  | [], .leaf _, .node _ _, _, hb => by simp [Tb.dep] at hb
+  | _ :: _, .leaf _, _, ha, _ => by simp [Tb.dep] at ha
+  | _ :: _, .node _ _, .leaf _, _, hb => by simp [Tb.dep] at hb
+  | v :: vs, .node l h, .node l' h', ha, hb => by
+    simp only [List.length_cons, Tb.dep] at ha hb
+    simp only [Tb.zip, Tb.at]
+    split_ifs
+    · exact Tb.at_zip σ f vs l l' ha.1 hb.1
+    · exact Tb.at_zip σ f vs h h' ha.2 hb.2
+
+theorem Tb.at_scale (σ : ℕ → ZMod 2) (c : ℕ) : ∀ (vs : List ℕ) (t : Tb),
+    Tb.at σ vs (Tb.scale c t) = c * Tb.at σ vs t
+  | [], .leaf _ => by simp [Tb.scale, Tb.at]
+  | _ :: _, .leaf _ => by simp [Tb.scale, Tb.at]
+  | [], .node l _ => by
+    simp only [Tb.scale, Tb.at]
+    exact Tb.at_scale σ c [] l
+  | v :: vs, .node l h => by
+    simp only [Tb.scale, Tb.at]
+    split_ifs
+    · exact Tb.at_scale σ c vs l
+    · exact Tb.at_scale σ c vs h
+
+theorem zn_empty (σ : ℕ → ZMod 2) : ∀ B : F2, (∀ m ∈ B, m = []) →
+    (if fz σ B = 0 then 0 else 1) = B.length % 2
+  | [], _ => by simp [fz]
+  | m :: B, h => by
+    have ih := zn_empty σ B (fun m' hm' => h m' (List.mem_cons_of_mem _ hm'))
+    have hm : m = [] := h m List.mem_cons_self
+    subst hm
+    have h10 : (1 : ZMod 2) ≠ 0 := by decide
+    rw [fz_cons, show mz σ [] = 1 from rfl, List.length_cons]
+    rcases z2_cases (fz σ B) with e | e
+    · rw [e] at ih ⊢
+      rw [if_pos rfl] at ih
+      rw [add_zero, if_neg h10]
+      omega
+    · rw [e] at ih ⊢
+      rw [if_neg h10] at ih
+      rw [show (1 : ZMod 2) + 1 = 0 by decide, if_pos rfl]
+      omega
+
+theorem at_tabF (σ : ℕ → ZMod 2) : ∀ (vs : List ℕ) (B : F2), (∀ m ∈ B, ∀ x ∈ m, x ∈ vs) →
+    Tb.at σ vs (tabF vs B) = if fz σ B = 0 then 0 else 1
+  | [], B, hB => by
+    simp only [tabF, Tb.at]
+    refine (zn_empty σ B fun m hm => ?_).symm
+    rcases m with _ | ⟨x, m⟩
+    · rfl
+    · exact absurd (hB _ hm x List.mem_cons_self) List.not_mem_nil
+  | v :: vs, B, hB => by
+    have h2 : ∀ m ∈ (splitAt v B).2, ∀ x ∈ m, x ∈ vs := by
+      intro m hm x hx
+      simp only [splitAt, List.mem_filter, Bool.not_eq_true', decide_eq_false_iff_not] at hm
+      rcases List.mem_cons.1 (hB m hm.1 x hx) with e | e
+      · exact absurd (e ▸ hx) hm.2
+      · exact e
+    have h1 : ∀ m ∈ (splitAt v B).1, ∀ x ∈ m, x ∈ vs := by
+      intro m hm x hx
+      simp only [splitAt, List.mem_map, List.mem_filter, decide_eq_true_eq] at hm
+      obtain ⟨m', ⟨hm', _⟩, rfl⟩ := hm
+      simp only [List.mem_filter, bne_iff_ne, ne_eq] at hx
+      rcases List.mem_cons.1 (hB m' hm' x hx.1) with e | e
+      · exact absurd e hx.2
+      · exact e
+    have i2 := at_tabF σ vs _ h2
+    have i1 := at_tabF σ vs _ h1
+    simp only [tabF, Tb.xorN, Tb.at]
+    rw [fz_splitAt σ v B]
+    rcases z2_cases (σ v) with e | e
+    · rw [if_pos e, i2, e, zero_mul, zero_add]
+    · have hne : σ v ≠ 0 := by rw [e]; decide
+      rw [if_neg hne, Tb.at_zip σ _ vs _ _ (dep_tabF vs _) (dep_tabF vs _), i2, i1, e, one_mul]
+      rcases z2_cases (fz σ (splitAt v B).1) with a | a <;>
+        rcases z2_cases (fz σ (splitAt v B).2) with b | b <;>
+        simp [a, b, show (1 : ZMod 2) + 1 = 0 by decide]
+
+theorem pn_mapcons (σ : ℕ → ZMod 2) (v : ℕ) :
+    ∀ L : Poly, pn σ (L.map fun t => (v :: t.1, t.2)) = zq (σ v) * pn σ L
+  | [] => by simp [pn]
+  | t :: L => by
+    rw [List.map_cons, pn_cons, pn_cons, pn_mapcons σ v L]
+    have hm : mz σ (v :: t.1) = σ v * mz σ t.1 := by simp [mz]
+    simp only [hm, zq_mul]
+    ring
+
+theorem pn_polyLeaf (σ : ℕ → ZMod 2) (M k : ℕ) (vs : List ℕ) :
+    pn σ (Tb.poly M vs (.leaf k)) = ((k % M : ℕ) : ℤ) := by
+  have h : pn σ (if k % M = 0 then [] else [([], k % M)]) = ((k % M : ℕ) : ℤ) := by
+    split_ifs with h
+    · rw [h]; simp [pn]
+    · simp [pn, mz, zq]
+  cases vs <;> exact h
+
+theorem peq_natmod (M k : ℕ) : peq M ((k % M : ℕ) : ℤ) (k : ℤ) := by
+  have := peq_mod M k 1
+  simpa using this
+
+theorem pn_poly_sub (σ : ℕ → ZMod 2) (M : ℕ) (hM : 0 < M) : ∀ (vs : List ℕ) (a b : Tb),
+    Tb.dep vs.length a → Tb.dep vs.length b →
+      peq M (pn σ (Tb.poly M vs (Tb.zip (fun x y => x + (M - y % M)) a b)))
+        (pn σ (Tb.poly M vs a) - pn σ (Tb.poly M vs b))
+  | [], .leaf x, .leaf y, _, _ => by
+    simp only [Tb.zip, pn_polyLeaf]
+    obtain ⟨n1, h1⟩ := peq_natmod M (x + (M - y % M))
+    obtain ⟨n2, h2⟩ := peq_natmod M x
+    have hy : y % M < M := Nat.mod_lt y hM
+    refine ⟨n1 - n2 + 1, ?_⟩
+    rw [h1, h2]
+    push_cast [Nat.cast_sub hy.le]
+    ring
+  | [], .node _ _, _, ha, _ => by simp [Tb.dep] at ha
+  | [], .leaf _, .node _ _, _, hb => by simp [Tb.dep] at hb
+  | _ :: _, .leaf _, _, ha, _ => by simp [Tb.dep] at ha
+  | _ :: _, .node _ _, .leaf _, _, hb => by simp [Tb.dep] at hb
+  | v :: vs, .node l h, .node l' h', ha, hb => by
+    simp only [List.length_cons, Tb.dep] at ha hb
+    simp only [Tb.zip, Tb.poly, pn_append, pn_mapcons]
+    obtain ⟨n1, e1⟩ := pn_poly_sub σ M hM vs l l' ha.1 hb.1
+    obtain ⟨n2, e2⟩ := pn_poly_sub σ M hM vs h h' ha.2 hb.2
+    exact ⟨n1 + zq (σ v) * n2, by rw [e1, e2]; ring⟩
+
+theorem pn_poly_mob (σ : ℕ → ZMod 2) (M : ℕ) (hM : 0 < M) : ∀ (vs : List ℕ) (t : Tb),
+    Tb.dep vs.length t → peq M (pn σ (Tb.poly M vs (Tb.mob M t))) (Tb.at σ vs t)
+  | [], .leaf k, _ => by
+    simp only [Tb.mob, pn_polyLeaf, Tb.at]
+    exact peq_natmod M k
+  | [], .node _ _, ht => by simp [Tb.dep] at ht
+  | _ :: _, .leaf _, ht => by simp [Tb.dep] at ht
+  | v :: vs, .node l h, ht => by
+    simp only [List.length_cons, Tb.dep] at ht
+    have dl := Tb.dep_mob M _ _ ht.1
+    have dh := Tb.dep_mob M _ _ ht.2
+    obtain ⟨n1, e1⟩ := pn_poly_mob σ M hM vs l ht.1
+    obtain ⟨n2, e2⟩ := pn_poly_mob σ M hM vs h ht.2
+    obtain ⟨n3, e3⟩ := pn_poly_sub σ M hM vs _ _ dh dl
+    simp only [Tb.mob, Tb.subN, Tb.poly, pn_append, pn_mapcons, Tb.at]
+    rw [e3, e1, e2]
+    rcases z2_cases (σ v) with e | e
+    · rw [if_pos e, e, show zq (0 : ZMod 2) = 0 by decide]
+      exact ⟨n1, by ring⟩
+    · have hne : σ v ≠ 0 := by rw [e]; decide
+      rw [if_neg hne, e, show zq (1 : ZMod 2) = 1 by decide]
+      exact ⟨n3 + n2, by ring⟩
+
+theorem pn_liftD (σ : ℕ → ZMod 2) (M c : ℕ) (hM : 0 < M) (vs : List ℕ) (B : F2)
+    (hB : ∀ m ∈ B, ∀ x ∈ m, x ∈ vs) : peq M (pn σ (liftD M c vs B)) (c * zq (fz σ B)) := by
+  unfold liftD
+  refine peq_trans (pn_poly_mob σ M hM vs _ (Tb.dep_scale c _ _ (dep_tabF vs B))) ?_
+  rw [Tb.at_scale, at_tabF σ vs B hB]
+  refine ⟨0, ?_⟩
+  rcases z2_cases (fz σ B) with e | e <;> simp [e, zq]
+
+/-- `c` times `lift M B`: on its table when `B`'s variables have at most `16 |B|` assignments,
+else normalised mod M after each monomial. -/
 def liftN (M c : ℕ) (B : F2) : Poly :=
   if 2 * c % M = 0 then B.map fun m => (m, c) else
     let vs := vlist B
+    if 2 ^ vs.length ≤ 16 * B.length then liftD M c vs B else
     (liftNM M c (B.map (toM vs))).map (conv vs)
 
 theorem pn_linlift (σ : ℕ → ZMod 2) (M c : ℕ) (h : 2 * c % M = 0) :
@@ -871,8 +1153,14 @@ theorem pn_liftNM (σ : ℕ → ZMod 2) (vs : List ℕ) (M c : ℕ) (hM : 2 ≤ 
 theorem pn_liftN (σ : ℕ → ZMod 2) (M c : ℕ) (hM : 2 ≤ M) (B : F2) :
     peq M (pn σ (liftN M c B)) (c * zq (fz σ B)) := by
   unfold liftN
-  split_ifs with hc
-  · exact pn_linlift σ M c hc B
+  by_cases hc : 2 * c % M = 0
+  · rw [if_pos hc]
+    exact pn_linlift σ M c hc B
+  rw [if_neg hc]
+  show peq M (pn σ (if 2 ^ (vlist B).length ≤ 16 * B.length then liftD M c (vlist B) B else
+    (liftNM M c (B.map (toM (vlist B)))).map (conv (vlist B)))) _
+  split_ifs
+  · exact pn_liftD σ M c (by omega) _ B (fun m hm => mem_vlist hm)
   have h := pn_liftNM σ (vlist B) M c hM (B.map (toM (vlist B)))
   rw [fz_toM σ _ B (fun m hm => mem_vlist hm)] at h
   exact h
@@ -1733,30 +2021,6 @@ theorem gather_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (_h : 
       · exact hg.1 (H _ (Or.inl rfl)) q hq
       · exact H q (Or.inr hq)
   simp only [hiff]
-
-/-- The monomials of `g` with `v`, `v` removed, and those without `v`. -/
-def splitAt (v : ℕ) (g : F2) : F2 × F2 :=
-  ((g.filter fun m => decide (v ∈ m)).map fun m => m.filter (· != v),
-    g.filter fun m => !decide (v ∈ m))
-
-theorem fz_splitAt (τ : ℕ → ZMod 2) (v : ℕ) :
-    ∀ g : F2, fz τ g = τ v * fz τ (splitAt v g).1 + fz τ (splitAt v g).2
-  | [] => by simp [splitAt, fz]
-  | m :: g => by
-    have ih := fz_splitAt τ v g
-    by_cases hv : v ∈ m
-    · have h1 : (splitAt v (m :: g)).1 = m.filter (· != v) :: (splitAt v g).1 := by
-        simp [splitAt, hv]
-      have h2 : (splitAt v (m :: g)).2 = (splitAt v g).2 := by simp [splitAt, hv]
-      rw [h1, h2, fz_cons, fz_cons, ih]
-      have hm := mz_update_in τ v (τ v) m hv
-      rw [Function.update_eq_self] at hm
-      rw [hm]
-      ring
-    · have h1 : (splitAt v (m :: g)).1 = (splitAt v g).1 := by simp [splitAt, hv]
-      have h2 : (splitAt v (m :: g)).2 = m :: (splitAt v g).2 := by simp [splitAt, hv]
-      rw [h1, h2, fz_cons, fz_cons, ih]
-      ring
 
 /-- The value `A + B` of a determined variable `v` of the indicator `g = 1 + q`. -/
 def detValue (v : ℕ) (q : F2) : F2 :=

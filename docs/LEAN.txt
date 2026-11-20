@@ -1137,6 +1137,18 @@ replaced by 1 + Prod (1 + c), fz_gather) and bcanon v (v determined on the suppo
 first constraint, B (A + B) = 0 checked by normF, becomes the row v + A + B and is substituted
 out; det_bits). final_sound compares two path-free sums with equal rows and phase up to
 the constant term, given the constants' identity.
+The lift in substP (liftN M c B, c times lift M B) is computed on a table when 2 c % M != 0
+and the variables vs = vlist B have at most 16 |B| assignments (liftD): tabF vs B gives B's
+F_2 values on every assignment of vs as a binary tree Tb (node lo hi, split at the head
+variable by splitAt; the high half is lo + T mod 2, Tb.xorN), Tb.scale multiplies by c,
+Tb.mob M is the Moebius transform mod M (node (mob lo) (mob hi - mob lo), Tb.subN) and Tb.poly
+lists the leaves nonzero mod M as terms; pn_liftD rests on Tb.at (the entry at an
+assignment), at_tabF and pn_poly_mob. Otherwise liftNM as before (normalised after each mask,
+a merge sort each). Every substP is normalised by normP, whose output is fixed by the
+polynomial's values mod M, so both routes give the same run_chain states and the same export
+texts. inverse_qft/main n = 9 d = 2: the [HH] pivot cascade's B doubles from 8 to 256 monomials
+over 4 to 9 variables and liftNM's |B| sorts per term took runR over 6 GB at the pivot of step
+198 (35 s and 3.0 GB more at step 195); the export now Lean-checks in 302 s at 2.7 GB anon.
 
 ArchytasZX/PathSumRules.lean adds the steps omega and omegaConj (head linear coefficient M / 4
 or 3 M / 4, half coefficients elsewhere: factor sqrt 2 zeta_8 or sqrt 2 zeta_8^7, the quotient's
