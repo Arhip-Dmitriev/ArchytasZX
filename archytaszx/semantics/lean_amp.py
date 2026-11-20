@@ -278,7 +278,7 @@ class AmpRun:
     def turn(self, y: int, bs: Sequence[F2Poly]) -> None:
         """[Turn] on the inner path variable ``y`` with the digits ``bs``: one atom
         ``((1 + zeta^s) / 2)^[bs = s]`` appended per ``s`` of turn_values."""
-        from archytaszx.algebra.pathsum import turn_base, turn_indicator, turn_values
+        from archytaszx.algebra.pathsum import turn_base, turn_indicators, turn_values
 
         k = len(bs)
         if self.coefs.m % (1 << k):
@@ -292,7 +292,8 @@ class AmpRun:
         self.steps.append(f".turn {digits} {listed}")
         self.qreqs += [(s * (self.coefs.m >> k), j, 1) for s, j in pairs]
         self.facs.append(sp.Integer(2))
-        self.atoms = [*self.atoms, *((j, turn_indicator(bs, s)) for s, j in pairs)]
+        table = turn_indicators(bs)
+        self.atoms = [*self.atoms, *((j, table[s]) for s, j in pairs)]
 
     def hold(self, vs: Iterable[int]) -> None:
         """The inner path variables among ``vs`` held, lowest first."""
@@ -305,11 +306,11 @@ class AmpRun:
     def turn_held(self, y: int, bs: Sequence[F2Poly]) -> None:
         """[Turn] on ``y`` with digits ``bs`` reading path variables: those held first, then
         [Turn], its constraint made the head zero atom when it reads a held or path variable."""
-        from archytaszx.algebra.pathsum import turn_indicator
+        from archytaszx.algebra.pathsum import turn_indicators
 
         self.hold(v for b in bs for m in b for v in m)
         self.turn(y, bs)
-        zero = turn_indicator(bs, 1 << (len(bs) - 1))
+        zero = turn_indicators(bs)[1 << (len(bs) - 1)]
         live = set(self.cur) | set(self.held)
         if any(v in live for m in zero for v in m):
             j = self.coefs.index(Cyclo.rational(0))
@@ -321,7 +322,7 @@ class AmpRun:
         """[Average] on the context ``ctx`` of the held variable ``y`` with the half phase
         ``y q / 2``: per atom reading ``y`` the values of ``ctx`` where it is 1 at ``y = 0`` and
         at ``y = 1``, one atom per value of ``ctx``."""
-        from archytaszx.algebra.pathsum import ctx_value, f2_add, turn_indicator
+        from archytaszx.algebra.pathsum import ctx_value, f2_add, turn_indicators
 
         size = 1 << len(ctx)
         reading = [a for a in self.atoms if any(y in m for m in a[1])]
@@ -357,8 +358,9 @@ class AmpRun:
         self.reqs += reqs
         self.facs.append(sp.Integer(2))
         self.held = self.held[1:]
+        table = turn_indicators(ctx)
         self.atoms = [a for a in self.atoms if not any(y in m for m in a[1])] + [
-            (js[n], turn_indicator(ctx, n)) for n in range(size)
+            (js[n], table[n]) for n in range(size)
         ]
 
     def pin(self, y: int, value: F2Poly) -> None:

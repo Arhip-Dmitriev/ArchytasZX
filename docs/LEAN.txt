@@ -1286,7 +1286,10 @@ folds, releases after every step, [Average] at the trace's average steps, averag
 average_half steps, at a pin step norm, asubB when an atom reads the pinned variable (the path
 variables of its value held first) and the inner pin, the canonical pivots (gather and bcanon
 steps when a side's constraints need boolean_eliminate, its support 1),
-asub at the pivots the atoms read, anorm and merges), the identities, the constants' identity
+asub at the pivots the atoms read, anorm and merges; the atoms of a turn, held turn and context
+average take their indicator polynomials from one pathsum.turn_indicators table per digit list,
+3.9 times faster than one product per value at 6 digits, 1.4 at 3, exports byte-identical),
+the identities, the constants' identity
 and main : valA M cL A tL sigma = valA M cR A tR sigma. ArchytasZX/PathSumNetAmp.lean: za_frag
 gives a weighted Z spider whose coefficient at v is C ex (phase v) times the product of A over
 tbl[v] as its unweighted fragment scaled by C times atoms on its anchor digits (atabOK checks
