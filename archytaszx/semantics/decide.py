@@ -1584,7 +1584,6 @@ def lean_refutation(
 
     if not (is_pure(left) and is_pure(right)):
         left, right = double(left), double(right)
-        index = None
     try:
         return export_refutation(left, right, dict(point or {}), describe=describe, index=index)
     except NetUnsupported:

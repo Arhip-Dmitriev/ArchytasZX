@@ -156,7 +156,8 @@ is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparis
                               search tries first the witness index, else the index of the
                               oracle comparison's largest deviation, also when the point is a
                               restricted decision's counterexample in the original symbols and
-                              when the families are instantiated at its multiplicities
+                              when the families are instantiated at its multiplicities, and
+                              over the doubled diagrams of a mixed pair
     Decision.proof            the proof of an EQUAL verdict: the normal-form ProofCertificate,
                               the kernel Theorem of the certificates, the normaliser's
                               kernel.Symbolic, a prove() ProofOutcome, or for a restricted
