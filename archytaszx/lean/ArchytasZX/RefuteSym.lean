@@ -12,7 +12,8 @@ A substitution state (`SSt`) binds summed labels to label expressions (`LX`) in 
 ones, and carries nodes, divisibility constraints and a constant. A delta step sums out a label
 that a binder, splitter, Z spider, wire or constraint fixes; a geometric step sums out a label
 shared by exactly two Fourier boxes by `Σ_j u^{j a} = N [N ∣ a]` and adds that constraint.
-An X step replaces an X spider with zero phases by its constraint the same way; `sym_dstepU`
+An X step replaces an X spider with zero phases by its constraint the same way, and a bundled X
+step copies of one with one output and no inputs (`.Bun m .X`) by `d ^ mult m ∣ x`; `sym_dstepU`
 is a delta step whose bindings read the boundary labels from `σ`. `sym_final` contracts the
 remaining labels with residue tables. `prime_lucas` proves the residue prime by Lucas's test.
 -/
@@ -1338,12 +1339,130 @@ theorem sym_xstep (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   subst hst
   exact sumR_congr S.dim R _ _ σ fun τ _ _ => xstep_pt S M P C p w hw hM st n ns' h τ
 
+/-! ## Bundled X steps -/
+
+/-- `d ^ mult m` for a node of kind `.Bun m b`, else its dimension. -/
+def xbN (S : Shape) (n : Node) : ℕ :=
+  match n.kind with
+  | .Bun m _ => S.dimv n.dim ^ S.mult m
+  | _ => S.dimv n.dim
+
+/-- A bundled X step on `n`, the others `ns'`: copies of an X spider with one output, no
+inputs and zero phases. -/
+def xbOK (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (st : SSt) (n : Node) (ns' : List Node) :
+    Bool :=
+  (match n.kind with | .Bun _ .X => true | _ => false) && n.ins.isEmpty &&
+    n.outs.length == 1 && decide (0 < S.dimv n.dim) && M % S.dimv n.dim == 0 &&
+    (List.range (S.dimv n.dim)).all (fun k => (P n.ph k).1 == 0) && st.ns.isPerm (n :: ns')
+
+/-- The state after a bundled X step: the node replaced by `d ^ mult m ∣ x`. -/
+def xbapply (S : Shape) (p : ℕ) (n : Node) (ns' : List Node) (st : SSt) : SSt :=
+  ⟨st.bs, ns', st.cs ++ [(xbN S n, xexpr st.bs (S.dimv n.dim) n)], st.c * xbN S n % p⟩
+
+theorem tmv_foldr_tmul (p w : ℕ) :
+    ∀ l : List Terms, tmv p w (l.foldr tmul (tc 1)) = (l.map (tmv p w)).prod
+  | [] => by simp [tmv_tc]
+  | a :: l => by simp [tmv_mul, tmv_foldr_tmul p w l]
+
+theorem prod_range_ite (p : ℕ) (a : ZMod p) (c : ℕ → Prop) [DecidablePred c] :
+    ∀ m : ℕ, ((List.range m).map fun i => if c i then a else 0).prod =
+      if ∀ i < m, c i then a ^ m else 0
+  | 0 => by simp
+  | m + 1 => by
+    rw [List.range_succ, List.map_append, List.prod_append, prod_range_ite p a c m]
+    simp only [List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one]
+    by_cases h : ∀ i < m, c i
+    · by_cases hm : c m
+      · have : ∀ i < m + 1, c i := fun i hi => by
+          rcases Nat.lt_succ_iff_lt_or_eq.1 hi with hi | rfl
+          · exact h i hi
+          · exact hm
+        rw [if_pos h, if_pos hm, if_pos this, pow_succ]
+      · have : ¬ ∀ i < m + 1, c i := fun h' => hm (h' m (Nat.lt_succ_self m))
+        rw [if_neg hm, if_neg this, mul_zero]
+    · have : ¬ ∀ i < m + 1, c i := fun h' => h fun i hi => h' i (Nat.lt_succ_of_lt hi)
+      rw [if_neg h, if_neg this, zero_mul]
+
+theorem digits_zero_iff (d m x : ℕ) (hd : 0 < d) :
+    (∀ i < m, d ∣ digit d i x) ↔ d ^ m ∣ x := by
+  constructor
+  · intro h
+    have h0 : ∀ i < m, digit d i x = digit d i 0 := fun i hi => by
+      rw [Nat.eq_zero_of_dvd_of_lt (h i hi) (Nat.mod_lt _ hd)]
+      simp [digit]
+    have := mod_pow_of_digit d m x 0 h0
+    rw [Nat.zero_mod] at this
+    exact Nat.dvd_of_mod_eq_zero this
+  · rintro ⟨q, rfl⟩ i hi
+    unfold digit
+    have e : d ^ m = d ^ i * (d * d ^ (m - i - 1)) := by
+      rw [← pow_succ', ← pow_add]; congr 1; omega
+    rw [e, mul_assoc, Nat.mul_div_cancel_left _ (pow_pos hd i), mul_assoc, Nat.mul_mod_right]
+    exact dvd_zero d
+
+theorem valXB_eq (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (τ : ℕ → ℕ) (m o dim ph : ℕ) (hd : 0 < S.dimv dim)
+    (hMd : M % S.dimv dim = 0) (hP : ∀ k < S.dimv dim, (P ph k).1 = 0) :
+    tmv p w (valW S M P C τ ⟨.Bun m .X, [o], [], dim, ph⟩) =
+      if S.dimv dim ^ S.mult m ∣ τ o then ((S.dimv dim ^ S.mult m : ℕ) : ZMod p) else 0 := by
+  have h1 : ∀ v : ℕ, tmv p w (tXT M (P ph) (S.dimv dim) [v] []) =
+      if S.dimv dim ∣ v then (S.dimv dim : ZMod p) else 0 := by
+    intro v
+    have := valX_eq S M P C p w hw hM (fun _ => v) [0] [] dim ph hd hMd hP
+    simpa [valW, isBS, tensorW, tensorT] using this
+  have hb : isBS ⟨.Bun m .X, [o], [], dim, ph⟩ = false := rfl
+  simp only [valW, hb, Bool.false_eq_true, ite_false, List.map_cons, List.map_nil, tensorW,
+    tensorT]
+  rw [tmv_foldr_tmul, List.map_map]
+  simp only [Function.comp_def, Kind.outCs, Kind.inCs, List.length_cons, List.length_nil,
+    List.replicate, copyLegs, List.zipWith_cons_cons, List.zipWith_nil_left, List.map_nil,
+    List.prod_nil, pow_one, h1]
+  rw [prod_range_ite, Nat.cast_pow]
+  by_cases h : S.dimv dim ^ S.mult m ∣ τ o
+  · rw [if_pos ((digits_zero_iff _ _ _ hd).2 h), if_pos h]
+  · rw [if_neg (fun h' => h ((digits_zero_iff _ _ _ hd).1 h')), if_neg h]
+
+theorem xbstep_pt (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (st : SSt) (n : Node) (ns' : List Node) (h : xbOK S M P st n ns' = true) (τ : ℕ → ℕ) :
+    sval S M P C p w st τ = sval S M P C p w (xbapply S p n ns' st) τ := by
+  simp only [xbOK, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, List.isPerm_iff,
+    List.all_eq_true, List.isEmpty_iff] at h
+  obtain ⟨⟨⟨⟨⟨⟨hX, hi⟩, ho⟩, hd⟩, hMd⟩, hP⟩, hperm⟩ := h
+  obtain ⟨kind, outs, ins, dim, ph⟩ := n
+  simp only at hX hi ho hd hMd hP
+  subst hi
+  obtain ⟨o, rfl⟩ := List.length_eq_one_iff.1 ho
+  cases kind with
+  | Bun m b =>
+    cases b <;> try (simp at hX; done)
+    have hval := valXB_eq S M P C p w hw hM (tval st.bs τ) m o dim ph hd hMd
+      (fun k hk => by simpa using hP k (List.mem_range.2 hk))
+    unfold sval xbapply
+    rw [(hperm.map _).prod_eq, List.map_cons, List.prod_cons, hval]
+    simp only [List.map_append, List.map_cons, List.map_nil, List.prod_append, List.prod_cons,
+      List.prod_nil, cval, xexpr_eval, xbN, ZMod.natCast_mod, Nat.cast_mul, List.sum_cons,
+      List.sum_nil, add_zero, mul_zero]
+    split_ifs <;> ring
+  | _ => simp at hX
+
+/-- A bundled X step over sums. -/
+theorem sym_xbstep (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)
+    (R : List ℕ) (st st' : SSt) (n : Node) (ns' : List Node) (σ : ℕ → ℕ)
+    (h : xbOK S M P st n ns' = true) (hst : xbapply S p n ns' st = st') :
+    sumR S.dim R (sval S M P C p w st) σ = sumR S.dim R (sval S M P C p w st') σ := by
+  subst hst
+  exact sumR_congr S.dim R _ _ σ fun τ _ _ => xbstep_pt S M P C p w hw hM st n ns' h τ
+
 /-! ## Chains of steps -/
 
-/-- A pinned delta step or an X step. -/
+/-- A pinned delta step, an X step or a bundled X step. -/
 inductive SStep where
   | d : ℕ → Src → LX → SStep
   | x : Node → SStep
+  | xb : Node → SStep
   deriving DecidableEq, Repr
 
 /-- The summed labels and state after one step, when it checks. -/
@@ -1352,6 +1471,8 @@ def stepS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p : ℕ) 
   | .d l src e => if dOK S S.dim U R st l src e then some (R.erase l, dapplyU U σ l e st) else none
   | .x n => if xOK S M P st n (st.ns.erase n) then some (R, xapply S p n (st.ns.erase n) st)
       else none
+  | .xb n => if xbOK S M P st n (st.ns.erase n) then
+      some (R, xbapply S p n (st.ns.erase n) st) else none
 
 /-- The summed labels and state after the steps, when each checks. -/
 def runS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p : ℕ) (U : List ℕ) (σ : ℕ → ℕ) :
@@ -1389,6 +1510,12 @@ theorem stepS_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) 
     simp only [Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
     exact ⟨sym_xstep S M P C p w hw hM R st _ n _ σ hx rfl, hUR⟩
+  | xb n =>
+    simp only [stepS] at h
+    split_ifs at h with hx
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact ⟨sym_xbstep S M P C p w hw hM R st _ n _ σ hx rfl, hUR⟩
 
 theorem runS_sound (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
     (p w : ℕ) [Fact p.Prime] (hw : IsPrimitiveRoot (w : ZMod p) M) (hM : 0 < M)

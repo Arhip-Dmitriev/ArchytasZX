@@ -234,6 +234,11 @@ def _bun_z(kind: Any) -> bool:
     return isinstance(kind, tuple) and kind[0] == "Bun" and kind[2] == "Z"
 
 
+def _bun_x(kind: Any) -> bool:
+    """Whether ``kind`` is `.Bun m .X`."""
+    return isinstance(kind, tuple) and kind[0] == "Bun" and kind[2] == "X"
+
+
 def _spair(
     st: State,
     net: LNet,
@@ -360,6 +365,20 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
             steps.append(("X", i, rest))
             states.append(st)
             frees.append(list(free))
+    for i in list(st.ns):
+        n = net.nodes[i]
+        dn = dimv(n.dim)
+        if not _bun_x(n.kind) or len(n.outs) != 1 or n.ins:
+            continue
+        if not 0 < dn <= MAX_XSTEP or m % dn or any(refuter.P(n.ph, k)[0] for k in range(dn)):
+            continue
+        big = dn ** refuter.mult(n.kind[1])
+        rest = [j for j in st.ns if j != i]
+        st = State(list(st.bs), rest, [*st.cs, (big, _xexpr(st, n, dn))], st.c * big % p)
+        steps.append(("XB", i, rest))
+        states.append(st)
+        frees.append(list(free))
+    bare = pinned or any(s[0] == "XB" for s in steps)
 
     def opened(s: State, a: Ex) -> bool:
         if a[0] == "neg" and a[1][0] == "v":
@@ -384,7 +403,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
     def dok(s: State, l: int, src: tuple[Any, ...]) -> Ex | None:
         if l not in fset or s.bound(l):
             return None
-        e = _solve(s, net, dimv, d, l, src, pinned, refuter.mult)
+        e = _solve(s, net, dimv, d, l, src, bare, refuter.mult)
         if e is None or l in vars_(e):
             return None
         if any(x not in fset and x not in bset for x in vars_(e)):
@@ -397,7 +416,7 @@ def sym_plan(refuter: Any, net: LNet, sigma: Mapping[int, int]) -> Plan:
         if src[0] == "cn":
             e = src[1][1]
             if e[0] == "v":
-                return int(e[1]) if pinned and e[1] in fset else None
+                return int(e[1]) if bare and e[1] in fset else None
             if e[0] != "add":
                 return None
             for a in (e[1], e[2]):
@@ -615,6 +634,8 @@ def _sstep_text(tag: str, step: tuple[Any, ...]) -> str:
     """A delta or X step as a Lean `SStep`."""
     if step[0] == "X":
         return f"SStep.x {tag}k{step[1]}"
+    if step[0] == "XB":
+        return f"SStep.xb {tag}k{step[1]}"
     _, l, src, e = step
     return f"SStep.d {l} {_src_text(tag, src)} {text(e)}"
 
@@ -698,6 +719,16 @@ def sym_decls(
                 f"(by decide +kernel) (by decide +kernel) (by decide +kernel)"
             )
             links.append(f"{tag}t{k}")
+        elif step[0] == "XB":
+            _, i, rest = step
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}t{k} [Fact (Nat.Prime {p})] "
+                f"(hw : IsPrimitiveRoot (({w} : ℕ) : ZMod {p}) {M}) : {head} :=\n"
+                f"  sym_xbstep {shape} {M} Pt Ct {p} {w} hw (by norm_num) {tag}R{k} "
+                f"{tag}s{k} {tag}s{k + 1} {tag}k{i} {ns_text(rest)} σ0 (by decide +kernel) "
+                "(by decide +kernel)"
+            )
+            links.append(f"({tag}t{k} hw)")
         else:
             _, l, i1, i2, rest, x, z = step
             out.append(

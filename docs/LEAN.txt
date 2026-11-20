@@ -1378,6 +1378,17 @@ tables of at most 125^2 entries and the witness index (1, 1, 1, 0) gives the bun
 assignment 31, exported in 1.5 s (Lean is killed at 6 GB: the bundled Fourier box's table of
 125^2 entries). n=2 d=5: export 91 -> 65 KB, Lean OOM-killed at 6 GB -> checked in 25 s,
 0.76 GB anon.
+Copies of an X spider with one output, no inputs and zero phases in one box (.Bun m .X) are
+first replaced by their constraint d ^ mult m ∣ x and the constant d ^ mult m (a bundled X
+step: xbOK, xbapply, valXB_eq: copy i is d [d ∣ digit i x], prod_range_ite, digits_zero_iff;
+xbstep_pt, sym_xbstep on its own and SStep.xb in a pinned run), in both routes of sym_plan;
+the delta step then reads the label from that constraint on it alone. bernstein_vazirani/
+main/r0! n=3 d=5: label 2 of the bundled X state is pinned to 0, so the bundled Fourier box's
+table of 125^2 entries becomes one over 125: export 320 -> 63 KB, Lean OOM-killed at 6 GB ->
+checked in 31 s, 1.1 GB anon; n=2 d=5: 65 -> 56 KB, checked in 35 s, 0.54 GB anon (was
+25 s, 0.76 GB). plus_state/main! n=8 d=30 (uncertified: "a residue table is too large after
+substitution", the Bun F table over 30^8 labels) -> exported in 1.1 s, 16 KB, checked in
+17 s, 0.35 GB anon. A copy whose bundled X step states the constraint mod 25 is rejected.
 When φ(M) is above MAX_CYCLOTOMIC_DEGREE = 512, the first refuter is refused and the
 sparse_all refuter (every phase vector sparse) runs (lean_refute.big_field); its scalar factors
 L s k of refute_res are computed modulo ζ^M - 1 and reduced in the subfield they lie in: for
