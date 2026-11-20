@@ -2679,7 +2679,9 @@ def _sum_out(
     serial = 0
 
     def add(expr: sp.Expr) -> None:
-        nonlocal serial
+        nonlocal serial, head
+        free, expr = _peel(expr, frozenset(where))
+        head = head * free
         symbols = frozenset(s for s in expr.free_symbols if s in dims)
         live[serial] = (expr, symbols)
         for symbol in symbols:
@@ -2725,6 +2727,26 @@ def _sum_out(
     return Scalar(head * sp.Mul(*(expr for expr, _symbols in live.values()))).simplify(
         max_steps=max_steps, ranges=boundary
     )
+
+
+def _peel(expr: sp.Expr, open_symbols: frozenset[sp.Symbol]) -> tuple[sp.Expr, sp.Expr]:
+    """(free, rest) with ``expr == free * rest``: ``free`` the factors of ``expr`` and the
+    exponent terms of its exponentials free of ``open_symbols``, ``rest`` the others."""
+    free: list[sp.Expr] = []
+    rest: list[sp.Expr] = []
+    for factor in sp.Mul.make_args(expr):
+        if not factor.free_symbols & open_symbols:
+            free.append(factor)
+        elif isinstance(factor, sp.exp):
+            terms = sp.Add.make_args(sp.expand(factor.args[0]))
+            bound = [t for t in terms if t.free_symbols & open_symbols]
+            loose = [t for t in terms if not t.free_symbols & open_symbols]
+            rest.append(sp.exp(sp.Add(*bound)) if loose else factor)
+            if loose:
+                free.append(sp.exp(sp.Add(*loose)))
+        else:
+            rest.append(factor)
+    return sp.Mul(*free), sp.Mul(*rest)
 
 
 def _drop_scope(working: Diagram, scope: frozenset[NodeId]) -> None:

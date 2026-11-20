@@ -237,7 +237,10 @@ path variable left, exp(2 pi i phase), and [F even] + a [F odd] per amplitude at
 bit k read as index _i{k}. Otherwise, when every summed index has a concrete range, the indices
 are summed out one at a time: the product of only the factors carrying the index is summed and
 simplified, and the index whose factors carry the fewest other summed indices goes first (ties
-by name). A symbolic range keeps one nested sum simplified once.
+by name). Each factor entering the product, and each closed partial sum, gives up its factors
+and the exponent terms of its exponentials free of the indices still to sum; they join the
+constant factor, simplified once with the rest at the end. A symbolic range keeps one nested
+sum simplified once.
 
 5.1 Symbolic comparison
 
