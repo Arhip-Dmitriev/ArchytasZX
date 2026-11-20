@@ -230,7 +230,9 @@ UNEQUAL_UNCERTIFIED with stop (refutation, recheck_failed) and reason "uncertifi
 refutation (residue recheck failed: ...)". A failed interface recheck gives
 UNEQUAL_UNCERTIFIED with the same stop and reason "uncertified: interface recheck failed:
 ...". The residue or ball refutation of a pair with a discard is rechecked on the doubled
-pair it refutes; a DOUBLED INTERFACE verdict on the original pair.
+pair it refutes; a DOUBLED INTERFACE verdict on the original pair. Both refuters walk the
+boundary assignments in product order one tuple at a time (lean_refute._odometer), never
+materialising a boundary axis, so a leg of dimension 30^8 costs nothing until it is read.
 
 2.3 The sample grid
 

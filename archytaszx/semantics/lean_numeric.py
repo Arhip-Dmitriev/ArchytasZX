@@ -24,7 +24,6 @@ zero contradicts the assumed equality.
 
 from __future__ import annotations
 
-import itertools
 import math
 from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
@@ -43,6 +42,7 @@ from archytaszx.semantics.lean_refute import (
     _ints,
     _ktrim,
     _list_pairs,
+    _odometer,
     _Refuter,
 )
 from archytaszx.semantics.lean_scalar import II, NC, Ex, Inv, Om, Rt, ScalarUnsupported
@@ -666,9 +666,9 @@ class _NumRefuter(_Refuter):
         sq0, sq1 = self.sq_list(self.a.net), self.sq_list(self.b.net)
         k0 = sp.Mul(*(Inv(Rt(d)) ** c for d, c in sq0))
         k1 = sp.Mul(*(Inv(Rt(d)) ** c for d, c in sq1))
-        ranges = [range(self.labdim(x)) for x in bnd]
+        ranges = [self.labdim(x) for x in bnd]
         best = None
-        for count, values in enumerate(itertools.product(*ranges)):
+        for count, values in enumerate(_odometer(ranges)):
             if count >= MAX_ASSIGNMENTS:
                 break
             sigma = dict(zip(bnd, values, strict=True))
