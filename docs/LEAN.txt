@@ -996,7 +996,9 @@ final theorem:
     theorem main_at (d : ℕ) (h_d : 0 < d) : DEqual ((F d).env (ksOf [3])) ... :=
       main_diagrams d 3 h_d
 
-(main_at when every clause is n = v or d = v). No translation is involved: the corollary is
+(main_at when every clause is n = v or d = v). A value v of a natural binder is written
+(v : ℕ), or (v : Nat) when the binder is Nat (the opaque export imports no Mathlib); the
+binder of a shift keeps the type of the binder it replaces. No translation is involved: the corollary is
 about the same networks and diagram literals as the family theorem. The kernel's subst steps
 are not exported; the corollary replaces them. When the family export has an axiom, a theorem
 with no free multiplicity after kernel.instantiated (every clause applied to the family pair,

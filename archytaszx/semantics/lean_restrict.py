@@ -180,8 +180,8 @@ def corollary(
             after.setdefault(v, []).extend(hyps)
             continue
         if clause.form == EQ:
-            nat = any(v in b.names and b.type in ("ℕ", "Nat") for b in binders)
-            values[v] = f"({clause.c} : ℕ)" if nat else str(clause.c)
+            nat = next((b.type for b in binders if v in b.names and b.type in ("ℕ", "Nat")), None)
+            values[v] = f"({clause.c} : {nat})" if nat else str(clause.c)
         elif clause.kind != DIMENSION and clause.form == GE:
             after[v] = [_Binder("(", (f"h_{v}_ge",), f"{clause.c} ≤ {v}")]
         else:
@@ -255,7 +255,10 @@ def shift_corollary(source: str, clauses: Clause | Sequence[Clause], name: str =
         return source
     final, binders, body = _final(source, name)
     plain = [
-        x for b in binders if b.open == "(" and b.type == "ℕ" and len(b.names) == 1 for x in b.names
+        x
+        for b in binders
+        if b.open == "(" and b.type in ("ℕ", "Nat") and len(b.names) == 1
+        for x in b.names
     ]
     if len(group) == 1:
         if not binders or binders[-1].open != "(" or len(binders[-1].names) != 1:
@@ -287,7 +290,7 @@ def shift_corollary(source: str, clauses: Clause | Sequence[Clause], name: str =
     for b in binders:
         if len(b.names) == 1 and b.names[0] in renamed:
             k = b.names[0]
-            stated += [_Binder("(", (renamed[k],), "ℕ"), hyps[k]]
+            stated += [_Binder("(", (renamed[k],), b.type), hyps[k]]
         else:
             stated.append(b)
     args = [x for b in binders if b.open == "(" for x in b.names]
