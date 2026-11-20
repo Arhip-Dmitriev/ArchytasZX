@@ -701,6 +701,28 @@ network, about 40 s per chunk of 32 pins on the first chunks). With the range pi
 569 s (6.0 GB); with rounds of RX_STEPS steps n = 3 109 s (2.3 GB) and n = 4 576 s (5.8 GB). A
 copy with the copy register's outputs swapped and a copy with a changed chunk term are rejected.
 
+Long folded rounds and translation blocks (F13). Profiled per theorem (fca n = 8 d = 3: 317 s,
+5.5 GB; draper n = 6 d = 2: 233-330 s, 6.0 GB), the folded rounds cost the kernel most in
+canonTmH (term 0's first round: its 32 pins 10 s, canonTmH of the 120-sum term after them 59 s
+and 5.3 GB), and the unnormalised translations in trNetG / trNetK over the whole network (draper
+N0R 58-80 s at the 6.0 GB peak; fca N0R 48 s, N1R 42 s). rx_cert_f first runs rounds of up to
+C_STEPS f_choice steps with the terms after every RX_STEPS steps (as rx_cert_c), and keeps the
+rounds of RX_STEPS steps only when those do not cancel; fca d = 3 term 0 then cancels in one
+round (n = 8: 153 steps, canonTmH on the 0-sum term). The export checks such a round in chunks
+(chunk_decls with elimAllFS, elimAllF_append, elimAllF_of_S and normTmF_one, the SymCarry lemmas
+for elimStepF). trNetK is proved through trNodesKM (trNetKM_eq: trNodesK with the labels before
+each step as a bit mask, foldOKM / kSingleM / kBlockM), trNetG with the identity through
+trNodesM in blocks of TR_BLOCK = 32 nodes (id_blocks: trBlockM from the stated product of the
+later nodes, trNodesM_block, trNodesM_eq, filter_free), one decide per block. Lean (wall, anon
+peak): fca n = 8 d = 3 182 s (4.0 GB; N0R 30 s, N1R 45 s, the round's 5 chunks 30 s);
+draper n = 6 d = 2 266 s (2.9 GB; the blocks 33 s, the first carry chunks 20-23 s each);
+fca d = 3 n = 3, 4, 5, 6: 13, 19, 43, 52 s (0.5, 0.5, 1.7, 1.4 GB); draper d = 2 n = 2, 3, 4, 5:
+13, 28, 60, 122 s (0.5, 0.6, 1.4, 2.1 GB). Exports changed for both families (n = 2 d = 3 fca,
+not on the compact route, is byte-identical). Rejected: fca n = 5 with one splitter's outputs
+swapped (N0R, D0_bd), fca n = 4 with a changed chunk term of the long round (chkK0_0_0 / _1),
+draper n = 3 with a changed block product (N0T0 / N0T32), draper n = 4 with a changed carry chunk
+term.
+
 Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluates constants and
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.

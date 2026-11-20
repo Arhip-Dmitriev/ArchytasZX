@@ -72,6 +72,9 @@ BLOCK_MAX = 8
 """The most nodes of one ``trBlockM`` theorem."""
 BLOCK_TERMS = 24
 """The most nodes times terms of the largest stated expression in one ``trBlockM`` theorem."""
+TR_BLOCK = 32
+"""The most nodes of one ``trBlockM`` theorem of an unnormalised translation (``trNetG`` with
+the identity)."""
 NORM_TERMS = 1 << 14
 """The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
 
@@ -1610,22 +1613,30 @@ def f_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int,
 
 
 def rx_cert_f(fl: Sequence[int], e: Sequence[STm], ranges: Mapping[int, int]) -> RxCert | None:
-    """``rxNfF``'s labels, rounds and paths as :func:`rx_cert`'s, marked by a fourth entry
-    ``"F"``, for a residual whose terms, normalised with :func:`f_choice`, cancel; None
-    otherwise."""
+    """``rxNfF``'s labels, rounds and paths as :func:`rx_cert`'s, for a residual whose terms,
+    normalised with :func:`f_choice`, cancel; None otherwise. The fourth entry is ``("F",
+    cuts)`` for rounds of at most C_STEPS steps with each round's terms after every RX_STEPS
+    steps (as :func:`rx_cert_c`), tried first, else ``"F"`` for rounds of RX_STEPS steps."""
     if not e or not ranges:
         return None
     r = tuple(sorted(ranges.items()))
-    acc: tuple[STm, ...] = ()
-    hs = []
-    paths: list[tuple[list[STm], STm | None]] = []
-    for t in e:
-        got, h, terms = rx_hints(fl, r, t, f_choice)
-        hs.append(h)
-        paths.append((terms, got))
-        if got is not None:
-            acc = tm_add(got, acc)
-    return (r, hs, paths, "F") if not acc else None  # type: ignore[return-value]
+    for steps in (C_STEPS, RX_STEPS):
+        acc: tuple[STm, ...] = ()
+        hs = []
+        paths: list[tuple[list[STm], STm | None]] = []
+        cuts: list[list[list[STm]]] = []
+        for t in e:
+            mids: list[list[STm]] = []
+            got, h, terms = rx_hints(fl, r, t, f_choice, steps, mids)
+            hs.append(h)
+            paths.append((terms, got))
+            cuts.append(mids)
+            if got is not None:
+                acc = tm_add(got, acc)
+        if not acc:
+            mark = ("F", cuts) if steps == C_STEPS else "F"
+            return (r, hs, paths, mark)  # type: ignore[return-value]
+    return None
 
 
 # carry steps over the labels' ranges (SymCarry)
@@ -5198,11 +5209,13 @@ class _SymExport:
                 raise NetUnsupported("a compact network whose products capture variables")
             e[tag] = got
             out.append(f"def {tag}X : List STm := {_lean_ex(got)}")
-            trn = "trNetK" if fold else "trNetG (fun _ e => e)"
-            out.append(
-                f"set_option maxHeartbeats 0 in\ntheorem {tag}R : {trn} DT PT RL "
-                f"labs {nt} = some {tag}X := by decide +kernel"
-            )
+            if fold:
+                out.append(
+                    f"set_option maxHeartbeats 0 in\ntheorem {tag}R : trNetK DT PT RL labs {nt} = "
+                    f"some {tag}X := by\n  rw [← trNetKM_eq]\n  decide +kernel"
+                )
+            else:
+                out += self.id_blocks(tag, nt, lnet, nodes, internal, labs)
             if all(v == 0 for v in labs.values()) and 0 in self.ix:
                 out.append(f"def {tag}MK : ℕ := {hex(_mask((*bnd, *internal)))}")
                 out.append(
@@ -5228,8 +5241,12 @@ class _SymExport:
         if rxs is None:
             raise NetUnsupported("the compact residual does not cancel")
         rx_labs, _ = _lean_rx(rxs)
-        cx = "X" if len(rxs) <= 3 else ("F" if rxs[3] == "F" else "C")
-        cuts: list[list[list[STm]]] = list(rxs[3:4][0]) if cx == "C" else []  # type: ignore[misc]
+        mark: Any = rxs[3] if len(rxs) > 3 else None
+        cx = "X" if mark is None else ("F" if mark == "F" or mark[0] == "F" else "C")
+        chunked = cx == "C" or (cx == "F" and mark != "F")
+        cuts: list[list[list[STm]]] = []
+        if chunked:
+            cuts = list(mark if cx == "C" else mark[1])
         rxn = "rxNf" if cx == "X" else f"rxNf{cx}"
         out.append(f"def {name}RR : List (ℕ × ℕ) := {rx_labs}")
         rr = f"{name}RR"
@@ -5237,25 +5254,25 @@ class _SymExport:
         for i, (rounds, (terms, last)) in enumerate(zip(rxs[1], rxs[2], strict=True)):
             names = []
             tdefs = [f"def {name}T{i}_{k} : STm := {_lean_tm(t)}" for k, t in enumerate(terms)]
-            if cx == "C":
+            if chunked:
                 out += tdefs
             for k, (c, es) in enumerate(rounds):
                 hn = f"{name}H{i}_{k}"
                 names.append(hn)
-                if cx == "C":
-                    out += self.chunk_decls(name, i, k, c, es, cuts[i][k])
+                if chunked:
+                    out += self.chunk_decls(name, i, k, c, es, cuts[i][k], cx)
                     continue
                 hint = ", ".join(f"({_rn(x)}, {_rn(y)}, {_rn(z)})" for x, y, z in es)
                 out.append(f"def {hn} : RHint := ({_rn(c)}, [{hint}])")
-            if cx != "C":
+            if not chunked:
                 out += tdefs
             m = len(rounds)
             for k in range(m):
                 res = "none" if last is None and k == m - 1 else f"some {name}T{i}_{k + 1}"
                 proof = "by decide +kernel"
-                if cx == "C":
+                if chunked:
                     proof = (
-                        f"by\n  rw [{name}H{i}_{k}, normTmC_one _ _ _ _ _ _ {name}E{i}_{k}]\n"
+                        f"by\n  rw [{name}H{i}_{k}, normTm{cx}_one _ _ _ _ _ _ {name}E{i}_{k}]\n"
                         "  decide +kernel"
                     )
                 out.append(
@@ -5315,15 +5332,96 @@ class _SymExport:
         )
         return ["noncomputable section", *out, "end"]
 
+    def id_blocks(
+        self,
+        tag: str,
+        nt: str,
+        lnet: Any,
+        nodes: Sequence[Node],
+        internal: Sequence[int],
+        labs: dict[int, int],
+    ) -> list[str]:
+        """``{tag}R : trNetG (fun _ e => e) .. = some {tag}X`` through ``trNodesM``: blocks of
+        TR_BLOCK nodes, each one ``decide`` of ``trBlockM`` from the stated product of the nodes
+        after it (``{tag}E{k}``), the free labels by ``filter_free``."""
+        dt, pt = self.dtf, self.ptf
+        m = len(nodes)
+        b: list[STm] = [(of_q(1), (), (), ())]
+        suffix: dict[int, list[STm]] = {m: b}
+        pres: list[tuple[int, ...]] = []
+        pre: tuple[int, ...] = ()
+        for node in nodes:
+            pres.append(pre)
+            pre = pre + (*node[1], *node[2])
+        for k in range(m - 1, -1, -1):
+            node = nodes[k]
+            a = tr_node(dt, pt, OFF + k, *node)
+            assert a is not None
+            legs = (*node[1], *node[2])
+            first = tuple(
+                (lab, lab_dm(dt, labs, lab))
+                for lab in internal
+                if lab in legs and lab not in pres[k]
+            )
+            b = [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, b)]
+            suffix[k] = b
+        args = "(fun _ e => e) DT PT RL labs"
+        out = [f"def {tag}n{k} : Node := {n.lean()}" for k, n in enumerate(lnet.nodes)]
+        out.append(f"def {tag}D{m} : List Node := []")
+        for k in range(m - 1, -1, -1):
+            out.append(f"def {tag}D{k} : List Node := {tag}n{k} :: {tag}D{k + 1}")
+        marks = sorted({*range(0, m, TR_BLOCK), m})
+        pm = 0
+        for k in range(m + 1):
+            if k in marks:
+                out.append(f"def {tag}M{k} : ℕ := {hex(pm)}")
+                out.append(f"def {tag}E{k} : List STm := {_lean_ex(suffix[k])}")
+            if k < m:
+                pm |= _mask((*nodes[k][1], *nodes[k][2]))
+        out.append(
+            f"theorem {tag}B{m} : trNodesM {args} {nt}.int {tag}M{m} {m} {tag}D{m} = "
+            f"some {tag}E{m} := by decide +kernel"
+        )
+        for k, k2 in reversed(list(itertools.pairwise(marks))):
+            xs = "[" + ", ".join(f"{tag}n{j}" for j in range(k, k2)) + "]"
+            out.append(
+                f"set_option maxHeartbeats 0 in\ntheorem {tag}T{k} : trBlockM {args} {nt}.int "
+                f"{tag}E{k2} {tag}M{k} {k} {xs} = some {tag}E{k} := by decide +kernel"
+            )
+            out.append(
+                f"theorem {tag}B{k} : trNodesM {args} {nt}.int {tag}M{k} {k} {tag}D{k} = "
+                f"some {tag}E{k} :=\n  (trNodesM_block {args} {nt}.int {tag}E{k2} {xs} "
+                f"{tag}D{k2} {tag}M{k} {tag}M{k2} {k} (by decide +kernel) {tag}B{k2}).trans "
+                f"{tag}T{k}"
+            )
+        used = {lab for n in nodes for lab in (*n[1], *n[2])}
+        out.append(f"def {tag}ML : ℕ := {hex(_mask(used))}")
+        out.append(
+            "set_option maxHeartbeats 0 in\n"
+            f"theorem {tag}R : trNetG {args} {nt} = some {tag}X := by\n"
+            f"  rw [trNetG_of {args} {nt} {tag}D0 {tag}E0 rfl\n"
+            f"    ((trNodesM_eq {args} {nt}.int {tag}D0 [] 0).symm.trans {tag}B0),\n"
+            f"    filter_free {nt}.int (labelsOf {nt}.nodes) {tag}ML (by decide +kernel)]\n"
+            "  decide +kernel"
+        )
+        return out
+
     @staticmethod
     def chunk_decls(
-        name: str, i: int, k: int, c: int, es: Sequence[tuple[int, int, int]], cut: Sequence[STm]
+        name: str,
+        i: int,
+        k: int,
+        c: int,
+        es: Sequence[tuple[int, int, int]],
+        cut: Sequence[STm],
+        cx: str = "C",
     ) -> list[str]:
-        """Round ``k`` of term ``i`` of the carry route: the hint ``{name}H{i}_{k}`` with its
-        steps as chunks ``{name}C{i}_{k}_{c}`` of RX_STEPS steps, each run by ``elimAllCS`` from
-        the term before it to the next (``{name}K{i}_{k}_{c}``, one ``decide`` each, the terms
-        ``{name}U{i}_{k}_{c}`` from ``cut``), and ``{name}E{i}_{k}``: ``elimAllC`` of the round
-        from ``{name}T{i}_{k}`` to its last term."""
+        """Round ``k`` of term ``i`` of the carry (``cx`` C) or folded (F) route: the hint
+        ``{name}H{i}_{k}`` with its steps as chunks ``{name}C{i}_{k}_{c}`` of RX_STEPS steps,
+        each run by ``elimAll{cx}S`` from the term before it to the next
+        (``{name}K{i}_{k}_{c}``, one ``decide`` each, the terms ``{name}U{i}_{k}_{c}`` from
+        ``cut``), and ``{name}E{i}_{k}``: ``elimAll{cx}`` of the round from ``{name}T{i}_{k}``
+        to its last term."""
         rr = f"{name}RR"
         chunks = [list(es[a : a + RX_STEPS]) for a in range(0, len(es), RX_STEPS)] or [[]]
         assert len(cut) == len(chunks)
@@ -5334,17 +5432,17 @@ class _SymExport:
             hint = ", ".join(f"({_rn(x)}, {_rn(y)}, {_rn(z)})" for x, y, z in ch)
             out.append(f"def {name}C{tag}_{c2} : List (ℕ × ℕ × ℕ) := [{hint}]")
             out.append(
-                f"set_option maxHeartbeats 0 in\ntheorem {name}K{tag}_{c2} : elimAllCS {rr} "
+                f"set_option maxHeartbeats 0 in\ntheorem {name}K{tag}_{c2} : elimAll{cx}S {rr} "
                 f"{name}C{tag}_{c2} {terms[c2]} = some {terms[c2 + 1]} := by decide +kernel"
             )
         cat = f"{name}C{tag}_{len(chunks) - 1}"
         for c2 in reversed(range(len(chunks) - 1)):
             cat = f"{name}C{tag}_{c2} ++ ({cat})"
         out.append(f"def {name}H{tag} : RHint := ({_rn(c)}, {cat})")
-        rws = [f"elimAllC_append _ _ _ _ _ {name}K{tag}_{c2}" for c2 in range(len(chunks) - 1)]
-        rws.append(f"elimAllC_of_S _ _ _ _ {name}K{tag}_{len(chunks) - 1}")
+        rws = [f"elimAll{cx}_append _ _ _ _ _ {name}K{tag}_{c2}" for c2 in range(len(chunks) - 1)]
+        rws.append(f"elimAll{cx}_of_S _ _ _ _ {name}K{tag}_{len(chunks) - 1}")
         out.append(
-            f"theorem {name}E{tag} : elimAllC {rr} ({cat}) {name}T{tag} = {terms[-1]} := by\n"
+            f"theorem {name}E{tag} : elimAll{cx} {rr} ({cat}) {name}T{tag} = {terms[-1]} := by\n"
             f"  rw [{', '.join(rws)}]"
         )
         return out

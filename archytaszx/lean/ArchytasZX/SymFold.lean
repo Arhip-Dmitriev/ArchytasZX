@@ -18,7 +18,9 @@ every valuation: `17` the delta `f = [M ∣ p]` at `j` plus `-(c s)` times the d
 `p`, `M ∣ c s m`), coefficients mod `M`; `18` the root of unity `[M ∣ p]` at `i` split into
 `[M ∣ p₀]` and `[d ∣ p₁ / (M / d)]`, `p₁` the monomials of `p` reading the sum `x` at `j` of
 constant range `d ∣ M`, each coefficient a multiple of `M / d`. `rxNfF` is `rxNfC` with
-`elimStepF`.
+`elimStepF`. `elimAllFS`, `elimAllF_append`, `elimAllF_of_S` and `normTmF_one` check a round's
+steps in chunks; `trNodesKM` is `trNodesK` with the labels before each step as a bit mask
+(`trNetKM_eq`).
 -/
 
 namespace ArchytasZX.Sym
@@ -961,5 +963,150 @@ theorem equal_symSK (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : Fl
     exDen_const ρ S0 hk0 ν (fun _ => 0), exDen_const ρ S1 hk1 ν (fun _ => 0), ← hs0,
     ← hs1] at hz'
   linear_combination hz'
+
+/-! ## Rounds in chunks -/
+
+/-- `elimStepF` along the hints, each result forced; `none` at the first that fails. -/
+def elimAllFS (R : List (ℕ × ℕ)) : List (ℕ × ℕ × ℕ) → STm → Option STm
+  | [], t => some t
+  | (i, r, j) :: hs, t =>
+    match elimStepF R t i r j with
+    | some t' => fTm t' (elimAllFS R hs)
+    | none => none
+
+theorem elimAllF_append (R : List (ℕ × ℕ)) :
+    ∀ (es1 es2 : List (ℕ × ℕ × ℕ)) (t u : STm), elimAllFS R es1 t = some u →
+      elimAllF R (es1 ++ es2) t = elimAllF R es2 u := by
+  intro es1
+  induction es1 with
+  | nil => intro es2 t u h; simp only [elimAllFS, Option.some.injEq] at h; subst h; rfl
+  | cons s es1 ih =>
+    obtain ⟨i, r, j⟩ := s
+    intro es2 t u h
+    simp only [elimAllFS] at h
+    simp only [List.cons_append, elimAllF]
+    cases he : elimStepF R t i r j with
+    | none => simp [he] at h
+    | some t' =>
+      simp only [he, fTm_eq] at h ⊢
+      exact ih es2 t' u h
+
+theorem elimAllF_of_S (R : List (ℕ × ℕ)) (es : List (ℕ × ℕ × ℕ)) (t u : STm)
+    (h : elimAllFS R es t = some u) : elimAllF R es t = u := by
+  have := elimAllF_append R es [] t u h
+  rw [List.append_nil] at this
+  rw [this]; rfl
+
+theorem normTmF_one (R : List (ℕ × ℕ)) (fl : List ℕ) (c : ℕ) (es : List (ℕ × ℕ × ℕ))
+    (t u : STm) (h : elimAllF R es t = u) : normTmF R fl [(c, es)] t = canonTmH c fl u := by
+  simp only [normTmF, fTm_eq, h]
+  cases canonTmH c fl u <;> simp
+
+/-! ## Translation with folded blocks on label masks -/
+
+/-- `foldOK` with the labels before the block as the bit mask `pm`. -/
+def foldOKM (int : List ℕ) (pm k k' : ℕ) (ns : List Node) : Bool :=
+  !pm.testBit k && !pm.testBit k' && !(labelsOf ns).contains k &&
+    !(labelsOf ns).contains k' &&
+    ((int.filter fun l => l == k || l == k') == [k, k'] ||
+      (int.filter fun l => l == k || l == k') == [k', k])
+
+/-- `kSingle` with the labels before the node as the bit mask `pm`. -/
+def kSingleM (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (int : List ℕ) (pm i : ℕ) (n : Node) (rest : Option (List STm)) :
+    Option (List STm) :=
+  match trNode dt pt rl (OFF + i) n, rest with
+  | some a, some b =>
+    if exMulOK a b then
+      some (exSums (labSums dt labs
+        (int.filter fun l => (n.outs ++ n.ins).contains l && !pm.testBit l)) (exMul a b))
+    else none
+  | _, _ => none
+
+/-- `kBlock` with the labels before the block as the bit mask `pm`. -/
+def kBlockM (dt : ℕ → DMon) (labs : List (ℕ × ℕ)) (int L : List ℕ) (pm : ℕ) (t : STm) (k k' : ℕ)
+    (rest : Option (List STm)) : Option (List STm) :=
+  match rest with
+  | some b =>
+    if exMulOK [t] b then
+      some (exSums (labSums dt labs
+        (int.filter fun l => L.contains l && !pm.testBit l && !(l == k || l == k'))) (exMul [t] b))
+    else none
+  | none => none
+
+/-- `trNodesK` with the labels before the nodes as the bit mask `pm`. -/
+def trNodesKM (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (int : List ℕ) : ℕ → ℕ → List Node → Option (List STm)
+  | _, _, [] => some [⟨CMon.ofQ 1, [], [], []⟩]
+  | pm, i, n :: ns =>
+    match ns with
+    | n2 :: n3 :: ns' =>
+      match foldBZS dt pt rl n n2 n3 with
+      | some (t, k, k') =>
+        if foldOKM int pm k k' ns' = true then
+          kBlockM dt labs int (blkL n n2 n3) pm t k k'
+            (trNodesKM dt pt rl labs int (pm ||| maskOf (blkL n n2 n3)) (i + 3) ns')
+        else kSingleM dt pt rl labs int pm i n
+          (trNodesKM dt pt rl labs int (pm ||| maskOf (n.outs ++ n.ins)) (i + 1) (n2 :: n3 :: ns'))
+      | none => kSingleM dt pt rl labs int pm i n
+          (trNodesKM dt pt rl labs int (pm ||| maskOf (n.outs ++ n.ins)) (i + 1) (n2 :: n3 :: ns'))
+    | ns => kSingleM dt pt rl labs int pm i n
+        (trNodesKM dt pt rl labs int (pm ||| maskOf (n.outs ++ n.ins)) (i + 1) ns)
+termination_by structural _ _ ns => ns
+
+theorem foldOKM_eq (int pre : List ℕ) (k k' : ℕ) (ns : List Node) :
+    foldOKM int (maskOf pre) k k' ns = foldOK int pre k k' ns := by
+  simp only [foldOKM, foldOK, testBit_maskOf]
+
+theorem kSingleM_eq (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (int pre : List ℕ) (i : ℕ) (n : Node) (rest : Option (List STm)) :
+    kSingleM dt pt rl labs int (maskOf pre) i n rest = kSingle dt pt rl labs int pre i n rest := by
+  unfold kSingleM kSingle firstAt
+  simp only [testBit_maskOf]
+
+theorem kBlockM_eq (dt : ℕ → DMon) (labs : List (ℕ × ℕ)) (int pre L : List ℕ) (t : STm)
+    (k k' : ℕ) (rest : Option (List STm)) :
+    kBlockM dt labs int L (maskOf pre) t k k' rest = kBlock dt labs int pre L t k k' rest := by
+  unfold kBlockM kBlock firstBlk
+  simp only [testBit_maskOf]
+
+theorem trNodesKM_eq (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (int : List ℕ) : ∀ (m : ℕ) (ns : List Node), ns.length ≤ m →
+    ∀ (pre : List ℕ) (i : ℕ),
+      trNodesKM dt pt rl labs int (maskOf pre) i ns = trNodesK dt pt rl labs int pre i ns := by
+  intro m
+  induction m with
+  | zero =>
+    intro ns hl pre i
+    match ns, hl with
+    | [], _ => rw [trNodesKM.eq_1, trNodesK.eq_1]
+    | _ :: _, hl => simp at hl
+  | succ m ih =>
+    intro ns hl pre i
+    match ns, hl with
+    | [], _ => rw [trNodesKM.eq_1, trNodesK.eq_1]
+    | [n], _ => simp only [trNodesKM, trNodesK, kSingleM_eq]
+    | [n, n2], _ => simp only [trNodesKM, trNodesK, ← maskOf_append, kSingleM_eq]
+    | n :: n2 :: n3 :: ns', hl =>
+      rw [trNodesKM.eq_2, trNodesK.eq_2]
+      rw [← maskOf_append, ← maskOf_append, ih (n2 :: n3 :: ns') (by simp at hl ⊢; omega),
+        ih ns' (by simp at hl ⊢; omega)]
+      cases foldBZS dt pt rl n n2 n3 with
+      | none => simp only [kSingleM_eq]
+      | some v =>
+        obtain ⟨t, k, k'⟩ := v
+        simp only [foldOKM_eq, kSingleM_eq, kBlockM_eq]
+
+/-- `trNetK` through `trNodesKM`. -/
+def trNetKM (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (N : Net) : Option (List STm) :=
+  (trNodesKM dt pt rl labs N.int 0 0 N.nodes).map
+    (exSums (labSums dt labs (N.int.filter fun l => !(labelsOf N.nodes).contains l)))
+
+theorem trNetKM_eq (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
+    (labs : List (ℕ × ℕ)) (N : Net) : trNetKM dt pt rl labs N = trNetK dt pt rl labs N := by
+  unfold trNetKM trNetK
+  rw [← trNodesKM_eq dt pt rl labs N.int N.nodes.length N.nodes le_rfl [] 0]
+  rfl
 
 end ArchytasZX.Sym
