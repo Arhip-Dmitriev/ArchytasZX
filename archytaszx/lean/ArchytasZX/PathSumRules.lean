@@ -605,9 +605,9 @@ def pinS (M : ℕ) (B : F2) (s : Data) : Data :=
     match s.cons.find? (pinAt v B) with
     | none => s
     | some q =>
-      { path := ys, phase := normP M (substP M v B s.phase),
-        cons := (s.cons.erase q).map fun r => normF (substF v B r),
-        rows := s.rows.map fun r => normF (substF v B r) }
+      { path := ys, phase := substNP M v B s.phase,
+        cons := (s.cons.erase q).map fun r => substNF v B r,
+        rows := s.rows.map fun r => substNF v B r }
 
 theorem pin_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (B : F2) (s : Data) (σ : ℕ → ZMod 2)
     (h : pinOK B s = true) : val M c s σ = val M c (pinS M B s) σ := by
@@ -641,19 +641,19 @@ theorem pin_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (B : F2) (s : Data) (σ : �
     have hperm := List.perm_cons_erase hiq
     have key : ∀ w : ZMod 2, summand M c s (Function.update τ v w) =
         if w = fz τ B then summand M c
-          { path := ys, phase := normP M (substP M v B s.phase),
-            cons := (s.cons.erase q).map fun r => normF (substF v B r),
-            rows := s.rows.map fun r => normF (substF v B r) } τ else 0 := by
+          { path := ys, phase := substNP M v B s.phase,
+            cons := (s.cons.erase q).map fun r => substNF v B r,
+            rows := s.rows.map fun r => substNF v B r } τ else 0 := by
       intro w
       unfold summand
       by_cases hw : w = fz τ B
       · rw [if_pos hw]
         subst hw
-        have hsub : ∀ r, fz τ (normF (substF v B r)) = fz (Function.update τ v (fz τ B)) r := by
+        have hsub : ∀ r, fz τ (substNF v B r) = fz (Function.update τ v (fz τ B)) r := by
           intro r
-          rw [fz_normF, fz_substF]
-        have hcond : (∀ r ∈ (s.cons.erase q).map (fun r => normF (substF v B r)) ++
-            s.rows.map (fun r => normF (substF v B r)), fz τ r = 0) ↔
+          rw [fz_substNF]
+        have hcond : (∀ r ∈ (s.cons.erase q).map (fun r => substNF v B r) ++
+            s.rows.map (fun r => substNF v B r), fz τ r = 0) ↔
             (∀ r ∈ s.cons ++ s.rows, fz (Function.update τ v (fz τ B)) r = 0) := by
           simp only [List.mem_append, List.mem_map]
           constructor
@@ -670,7 +670,7 @@ theorem pin_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (B : F2) (s : Data) (σ : �
         simp only [hcond]
         split_ifs
         · congr 1
-          exact (ex_peq hM0 (peq_trans (pn_normP τ M _) (pn_substP τ M v hM B s.phase))).symm
+          exact (ex_peq hM0 (pn_substNP τ M v hM B s.phase)).symm
         · rfl
       · rw [if_neg hw]
         have hne : ¬ (∀ r ∈ s.cons ++ s.rows, fz (Function.update τ v w) r = 0) := by

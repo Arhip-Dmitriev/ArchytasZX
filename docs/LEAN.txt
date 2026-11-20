@@ -1149,6 +1149,12 @@ polynomial's values mod M, so both routes give the same run_chain states and the
 texts. inverse_qft/main n = 9 d = 2: the [HH] pivot cascade's B doubles from 8 to 256 monomials
 over 4 to 9 variables and liftNM's |B| sorts per term took runR over 6 GB at the pivot of step
 198 (35 s and 3.0 GB more at step 195); the export now Lean-checks in 302 s at 2.7 GB anon.
+hhPivot and pin substitute through substNP and substNF: normP (substP ..) and normF (substF ..),
+except that a phase or constraint that is already normal (normalP: strictly ascending by mle,
+strictly ascending monomials, coefficients in [1, M); normalF likewise) and free of the
+substituted variable is kept as it is (pn_substNP, fz_substNF). normP and normF leave a normal
+input unchanged, so the states are the same; a pin of amm_gf24_mult (332 constraints, 114
+phase terms) spent 0.66 s of its 1.4 s normalising constraints it does not touch.
 
 ArchytasZX/PathSumRules.lean adds the steps omega and omegaConj (head linear coefficient M / 4
 or 3 M / 4, half coefficients elsewhere: factor sqrt 2 zeta_8 or sqrt 2 zeta_8^7, the quotient's

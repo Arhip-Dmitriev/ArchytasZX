@@ -1395,6 +1395,52 @@ theorem summand_update_not (M : ℕ) (c : ℂ) (s : Data) (τ : ℕ → ZMod 2) 
   rw [pn_update_not τ y b s.phase (not_mem_pvars hp)]
   simp only [holds_update_not τ y b _ hc]
 
+/-! ## Substitution skipping normal forms free of the variable -/
+
+/-- Whether a monomial is strictly ascending. -/
+def ascB : Mono → Bool
+  | a :: b :: l => decide (a < b) && ascB (b :: l)
+  | _ => true
+
+/-- Whether `Q` is strictly ascending by `mle` with strictly ascending monomials. -/
+def normalF : F2 → Bool
+  | [] => true
+  | [m] => ascB m
+  | m :: u :: Q => ascB m && mle m u && !decide (m = u) && normalF (u :: Q)
+
+/-- Whether `P` is strictly ascending by `mle` with strictly ascending monomials and
+coefficients in `[1, M)`. -/
+def normalP (M : ℕ) : Poly → Bool
+  | [] => true
+  | [t] => ascB t.1 && decide (0 < t.2) && decide (t.2 < M)
+  | t :: u :: P => ascB t.1 && decide (0 < t.2) && decide (t.2 < M) && mle t.1 u.1 &&
+      !decide (t.1 = u.1) && normalP M (u :: P)
+
+/-- `normF (substF z B q)`; `q` when `q` is normal and free of `z`. -/
+def substNF (z : ℕ) (B : F2) (q : F2) : F2 :=
+  if (normalF q && !decide (z ∈ q.flatMap id)) = true then q else normF (substF z B q)
+
+/-- `normP M (substP M z B P)`; `P` when `P` is normal and free of `z`. -/
+def substNP (M z : ℕ) (B : F2) (P : Poly) : Poly :=
+  if (normalP M P && !decide (z ∈ pvars P)) = true then P else normP M (substP M z B P)
+
+theorem fz_substNF (σ : ℕ → ZMod 2) (z : ℕ) (B q : F2) :
+    fz σ (substNF z B q) = fz (Function.update σ z (fz σ B)) q := by
+  unfold substNF
+  split_ifs with h
+  · simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not] at h
+    exact (fz_update_not σ z _ q fun m hm hz => h.2 (List.mem_flatMap.2 ⟨m, hm, hz⟩)).symm
+  · rw [fz_normF, fz_substF]
+
+theorem pn_substNP (σ : ℕ → ZMod 2) (M z : ℕ) (hM : 2 ≤ M) (B : F2) (P : Poly) :
+    peq M (pn σ (substNP M z B P)) (pn (Function.update σ z (fz σ B)) P) := by
+  unfold substNP
+  split_ifs with h
+  · simp only [Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not] at h
+    rw [pn_update_not σ z _ P (not_mem_pvars h.2)]
+    exact peq_refl M _
+  · exact peq_trans (pn_normP σ M _) (pn_substP σ M z hM B P)
+
 /-! ## Permutation of the path -/
 
 /-- The path reordered. -/
@@ -1595,9 +1641,9 @@ def hhPivotS (M : ℕ) (s : Data) : Data :=
   match s.path with
   | y :: z :: ys =>
     let B := (quot y s.phase).erase [z]
-    { path := ys, phase := normP M (substP M z B (rest y s.phase)),
-      cons := s.cons.map fun q => normF (substF z B q),
-      rows := s.rows.map fun q => normF (substF z B q) }
+    { path := ys, phase := substNP M z B (rest y s.phase),
+      cons := s.cons.map fun q => substNF z B q,
+      rows := s.rows.map fun q => substNF z B q }
   | _ => s
 
 theorem pick (v : ZMod 2) (G : ZMod 2 → ℂ) :
@@ -1665,17 +1711,17 @@ theorem hhPivot_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2)
     show 2 * G (fz τ B) = summand M (2 * c) _ τ
     unfold summand
     simp only [G]
-    have hcons : (∀ q ∈ (s.cons.map fun q => normF (substF z B q)) ++
-        (s.rows.map fun q => normF (substF z B q)), fz τ q = 0) ↔
+    have hcons : (∀ q ∈ (s.cons.map fun q => substNF z B q) ++
+        (s.rows.map fun q => substNF z B q), fz τ q = 0) ↔
         (∀ q ∈ s.cons ++ s.rows, fz (Function.update τ z (fz τ B)) q = 0) := by
       simp only [List.mem_append, List.mem_map]
       constructor
       · intro H q hq
-        have := H (normF (substF z B q)) (hq.imp (fun h => ⟨q, h, rfl⟩) (fun h => ⟨q, h, rfl⟩))
-        rwa [fz_normF, fz_substF] at this
+        have := H (substNF z B q) (hq.imp (fun h => ⟨q, h, rfl⟩) (fun h => ⟨q, h, rfl⟩))
+        rwa [fz_substNF] at this
       · rintro H q (⟨q', hq', rfl⟩ | ⟨q', hq', rfl⟩)
-        · rw [fz_normF, fz_substF]; exact H q' (Or.inl hq')
-        · rw [fz_normF, fz_substF]; exact H q' (Or.inr hq')
+        · rw [fz_substNF]; exact H q' (Or.inl hq')
+        · rw [fz_substNF]; exact H q' (Or.inr hq')
     simp only [← hQdef, ← hBdef]
     simp only [hcons]
     split_ifs
@@ -1683,7 +1729,7 @@ theorem hhPivot_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2)
       congr 1
       symm
       apply ex_peq hM0
-      exact peq_trans (pn_normP τ M _) (pn_substP τ M z hM B _)
+      exact pn_substNP τ M z hM B _
     · ring
 
 /-! ## Canonical-form pivot -/
