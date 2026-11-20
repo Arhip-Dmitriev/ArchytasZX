@@ -1625,7 +1625,7 @@ class _Export:
             (
                 int(nid),
                 n.generator_type.name,
-                str(n.phase),
+                n.phase,
                 tuple(str(p.dim) for p in n.inputs),
                 tuple(str(p.dim) for p in n.outputs),
             )

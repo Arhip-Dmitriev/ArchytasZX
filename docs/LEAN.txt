@@ -586,7 +586,9 @@ nfGoX_none (chkz). Pinning per node instead closes nothing past the first geomet
 taken before the later nodes' roots of unity arrive uses the delta the geometric sum needs.
 A compact table above CP_ROW_MIN = 256 entries is stored as cpRow D q (the indices whose
 numerator is no multiple of M, with phC of their phase) and its phases proved by tab_phC (the
-diagram's table read in chunks of TABLE_CHUNK, getD_chunks under chunkOK).
+diagram's table read in chunks of TABLE_CHUNK, getD_chunks under chunkOK). The Python mirrors
+of ptOK (pt_ok, _SymExport.tab_row) look the stored indices up in a set, linear in D; a table is
+checked once per candidate rule, not once per use.
 lean_sym marks the tables (_SymExport.compact_rules: kind 1 when the entries are c j / M, M the
 lcm of their denominators, else kind 2 for Z nodes on d^2) only after the plain check fails or
 exceeds NORM_TERMS, so every export the plain check reaches is unchanged; the compact check

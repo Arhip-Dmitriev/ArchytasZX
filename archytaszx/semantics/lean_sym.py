@@ -2082,8 +2082,8 @@ def cp_num(q: CpData, j: int) -> int:
 
 def pt_ok(lst: Sequence[int], c: int, pt: Sequence[tuple[int, CMon]]) -> bool:
     """``ptOK``."""
-    keys = [j for j, _ in pt]
-    if c <= 0 or len(set(keys)) != len(keys):
+    keys = {j for j, _ in pt}
+    if c <= 0 or len(keys) != len(pt):
         return False
     if not all(m == ph_c(Fraction(lst[j] if j < len(lst) else 0, c), ()) for j, m in pt):
         return False
@@ -3334,7 +3334,7 @@ class _SymExport:
                 if d * d == big_d and d > 1 and all(kind == "Z" for kind, _, _ in uses[p]):
                     cands.append((2, m, int(vals[d + 1] * m) % m, d))
                 for q in cands:
-                    if all(cp_chk(dm, pairs, q, OFF, (), ()) for _ in uses[p]):
+                    if cp_chk(dm, pairs, q, OFF, (), ()):
                         self.rules[p] = (CP_MARK, q)
                         if big_d > CP_ROW_MIN:
                             self.cp_rows[p] = (big_d, q)
@@ -5073,8 +5073,8 @@ class _SymExport:
         if tab is None or (len(tab[0]) > TABLE_CHUNK) != chunked:
             return False
         nums, den = tab
-        keys = [j for j, _, _ in row]
-        if len(set(keys)) != len(keys):
+        keys = {j for j, _, _ in row}
+        if len(keys) != len(row):
             return False
         for j, m, _ in row:
             n = nums[j] if j < len(nums) else 0
