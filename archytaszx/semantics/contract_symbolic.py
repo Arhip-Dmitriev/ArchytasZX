@@ -525,6 +525,35 @@ def _linear_table(node: Node, dim: Dim) -> int | None:
     return a
 
 
+def _rational_slope(node: Node, dim: Dim) -> sp.Rational | None:
+    """The rational ``r`` when ``node``'s stored phases at a concrete dimension ``D >= 3`` are
+    exactly ``r*k`` turns mod 1 at every index ``k`` (entry 1 giving ``r``, ``r*D`` not an
+    integer), else None."""
+    phase = node.phase
+    if phase is None or not dim.is_concrete:
+        return None
+    size = dim.to_int()
+    entries = phase.entries()
+    first = entries.get(1)
+    if size < 3 or first is None:
+        return None
+    turns = sp.sympify(first.to_sympy_turns())
+    if not turns.is_Rational or (turns * size).is_Integer:
+        return None
+    r = sp.Rational(turns)
+    for k in range(2, size):
+        stored = entries.get(k)
+        value = sp.Integer(0) if stored is None else sp.sympify(stored.to_sympy_turns())
+        if not value.is_Rational or not (value - r * k).is_Integer:
+            return None
+    zero = entries.get(0)
+    if any(k >= size for k in entries) or (
+        zero is not None and not sp.sympify(zero.to_sympy_turns()).is_Integer
+    ):
+        return None
+    return r
+
+
 def _z_entry(
     dim: Dim, legs: list[sp.Symbol], corrections: tuple[tuple[int, sp.Expr], ...]
 ) -> sp.Expr:
@@ -786,8 +815,13 @@ def _node_entry(
     if slope is not None and node.generator_type.name == X_SPIDER.name:
         total = sum(outputs, sp.Integer(0)) - sum(inputs, sp.Integer(0))
         return sp.Pow(d_expr, sp.Rational(-len(legs), 2)) * d_expr * ModDelta(total + slope, d_expr)
-    if slope is not None and node.generator_type.name == Z_SPIDER.name and legs:
-        entry = sp.exp(2 * sp.pi * sp.I * slope * legs[0] / d_expr)
+    turns = None
+    if slope is not None:
+        turns = sp.Rational(slope) / d_expr
+    elif node.generator_type.name == Z_SPIDER.name:
+        turns = _rational_slope(node, dim)
+    if turns is not None and node.generator_type.name == Z_SPIDER.name and legs:
+        entry = sp.exp(2 * sp.pi * sp.I * turns * legs[0])
         for leg in legs[1:]:
             entry = entry * _delta(dim, legs[0], leg)
         return cast(sp.Expr, entry)
@@ -2712,8 +2746,17 @@ def _sum_out(
         product = sp.Mul(*(live[i][0] for i in bucket))
         closed = _close_partial(product, symbol, top, max_steps, open_ranges, final)
         if not final and len(closed.atoms(sp.Sum)) > len(product.atoms(sp.Sum)):
-            deferred.add(symbol)
-            continue
+            context = [f for f in sp.Mul.make_args(head) if isinstance(f, ModDelta)]
+            carried = None
+            if context:
+                carried = _close_partial(
+                    product * sp.Mul(*context), symbol, top, max_steps, open_ranges, final
+                )
+            if carried is None or len(carried.atoms(sp.Sum)) > len(product.atoms(sp.Sum)):
+                deferred.add(symbol)
+                continue
+            head = sp.Mul(*(f for f in sp.Mul.make_args(head) if f not in context))
+            closed = carried
         del widths[symbol]
         where.pop(symbol)
         deferred -= touched

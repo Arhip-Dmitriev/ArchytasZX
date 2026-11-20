@@ -186,6 +186,10 @@ Bang boxes:
     denoted [out = in] exp(2 pi i (a x y + b x + c y)) over the binder's inputs (x, y); a
     splitter S(d1, d2) that such a table feeds is denoted [out0 = x][out1 = y]. Any entry that
     does not match leaves the table denoted entry by entry.
+  - A Z spider at a concrete dimension D >= 3 whose stored phases are r k mod 1 turns at every
+    index k (r read from the entry at 1, r D not an integer, every index checked exactly) is
+    denoted exp(2 pi i r k) times the deltas of its legs, k its first leg; r D an integer keeps
+    the slope route exp(2 pi i (r D) k / D).
   - A chain box (DIAGRAM.txt 4.2) is contracted one copy at a time with its link ports open
     (q then p, outputs before inputs). When that tensor is delta(p_j - q_j) times itself at
     p_j = q_j for every link j (carry-copy: syntactically, or by the difference simplifying to
@@ -239,8 +243,11 @@ are summed out one at a time: the product of only the factors carrying the index
 simplified, and the index whose factors carry the fewest other summed indices goes first (ties
 by name). Each factor entering the product, and each closed partial sum, gives up its factors
 and the exponent terms of its exponentials free of the indices still to sum; they join the
-constant factor, simplified once with the rest at the end. A symbolic range keeps one nested
-sum simplified once.
+constant factor, simplified once with the rest at the end. A partial sum that does not close is
+summed again with the constant factor's deltas in its product (a frequency X/t that such a
+delta makes an integer then closes as a character sum, ALGEBRA.txt); when it closes, those
+deltas leave the constant factor, else the index waits as before. A symbolic range keeps one
+nested sum simplified once.
 
 5.1 Symbolic comparison
 
