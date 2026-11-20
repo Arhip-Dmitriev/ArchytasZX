@@ -961,6 +961,8 @@ class _Refuter:
                 if c:
                     needs |= self.atom_needs(Rt(d))
         self.M = math.lcm(*needs)
+        if self.M >= 1 << 64:
+            raise NetUnsupported("the phase order is at least 2^64")
         self.ptab: dict[tuple[int, int], tuple[int, tuple[int, ...]]] = {}
         for (ph, j), t in zip(self.keys, dens, strict=True):
             self.ptab[(ph, j)] = (int((t * self.M) % self.M), ())
@@ -1739,14 +1741,16 @@ class _Refuter:
         return f"(({lcd} : ℂ) * {self.out.sc.text(self.lmul)})"
 
     def prime_proof(self) -> str:
-        """`Nat.Prime p`: by `norm_num`, or with :attr:`sparse_all` by `prime_lucas` with a
+        """`Nat.Prime p`: by `norm_num`, or with :attr:`sparse_all` by `prime_lucas` (by
+        `prime_lucasB` at the bit length of `p` when `p` is at least `2 ^ 64`) with a
         primitive root and the factorisation of `p - 1`."""
         p = self.p
         if not self.sparse_all:
             return "by norm_num"
         g = int(sp.primitive_root(p))
+        head = f"prime_lucas {p} {g}" if p < 1 << 64 else f"prime_lucasB {p.bit_length()} {p} {g}"
         return (
-            f"prime_lucas {p} {g} (by norm_num) (by norm_num) {_fac_list(p - 1)} (by norm_num) "
+            f"{head} (by norm_num) (by norm_num) {_fac_list(p - 1)} (by norm_num) "
             f"(by norm_num) {K} {K}"
         )
 

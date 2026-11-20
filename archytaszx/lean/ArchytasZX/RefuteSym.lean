@@ -1337,21 +1337,29 @@ theorem sym_run (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C :
   runS_sound S M P C p w hw hM U σ hU ss R R' st st'
     (fun x hx => by simpa using List.all_eq_true.1 hUR x hx) h
 
-/-- `p` is prime by Lucas's test with the witness `g` and the prime factors `ps` of `p - 1`. -/
-theorem prime_lucas (p g : ℕ) (hp : 1 < p) (hpb : p < 2 ^ 64) (ps : List (ℕ × ℕ))
+/-- `p` is prime by Lucas's test with the witness `g`, the prime factors `ps` of `p - 1` and
+powers by `b`-bit square-and-multiply. -/
+theorem prime_lucasB (b p g : ℕ) (hp : 1 < p) (hpb : p < 2 ^ b) (ps : List (ℕ × ℕ))
     (hfac : (ps.map fun x => x.1 ^ x.2).prod = p - 1) (hps : ∀ x ∈ ps, x.1.Prime)
-    (h1 : pm p 64 g (p - 1) = 1) (h2 : ps.all (fun x => pm p 64 g ((p - 1) / x.1) != 1) = true) :
+    (h1 : pm p b g (p - 1) = 1) (h2 : ps.all (fun x => pm p b g ((p - 1) / x.1) != 1) = true) :
     p.Prime := by
-  have key : ∀ l, l < 2 ^ 64 → ((g : ZMod p) ^ l = 1 ↔ pm p 64 g l = 1) := by
+  have key : ∀ l, l < 2 ^ b → ((g : ZMod p) ^ l = 1 ↔ pm p b g l = 1) := by
     intro l hl
-    rw [pm_eq p 64 g l hl, ← Nat.cast_pow, ← Nat.cast_one, ZMod.natCast_eq_natCast_iff',
+    rw [pm_eq p b g l hl, ← Nat.cast_pow, ← Nat.cast_one, ZMod.natCast_eq_natCast_iff',
       Nat.mod_eq_of_lt hp]
-  have hlt : p - 1 < 2 ^ 64 := by omega
+  have hlt : p - 1 < 2 ^ b := by omega
   refine lucas_primality p (g : ZMod p) ((key _ hlt).2 h1) ?_
   intro q hq hqd
   obtain ⟨x, hx, rfl⟩ := prime_mem_of_dvd q hq ps hps (hfac ▸ hqd)
   have := List.all_eq_true.1 h2 x hx
   simp only [bne_iff_ne, ne_eq] at this
   exact fun h => this ((key _ (lt_of_le_of_lt (Nat.div_le_self _ _) hlt)).1 h)
+
+/-- `p` is prime by Lucas's test with the witness `g` and the prime factors `ps` of `p - 1`. -/
+theorem prime_lucas (p g : ℕ) (hp : 1 < p) (hpb : p < 2 ^ 64) (ps : List (ℕ × ℕ))
+    (hfac : (ps.map fun x => x.1 ^ x.2).prod = p - 1) (hps : ∀ x ∈ ps, x.1.Prime)
+    (h1 : pm p 64 g (p - 1) = 1) (h2 : ps.all (fun x => pm p 64 g ((p - 1) / x.1) != 1) = true) :
+    p.Prime :=
+  prime_lucasB 64 p g hp hpb ps hfac hps h1 h2
 
 end ArchytasZX
