@@ -246,8 +246,9 @@ and the exponent terms of its exponentials free of the indices still to sum; the
 constant factor, simplified once with the rest at the end. A partial sum that does not close is
 summed again with the constant factor's deltas in its product (a frequency X/t that such a
 delta makes an integer then closes as a character sum, ALGEBRA.txt); when it closes, those
-deltas leave the constant factor, else the index waits as before. A symbolic range keeps one
-nested sum simplified once.
+deltas leave the constant factor, else the index waits as before. When two or more indices
+are left and all wait, the contraction is declined (SymbolicContractionUnsupportedError) and decide goes on
+to its later rungs. A symbolic range keeps one nested sum simplified once.
 
 5.1 Symbolic comparison
 

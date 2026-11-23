@@ -2722,7 +2722,8 @@ def _sum_out(
     carry the fewest other summed indices first, each partial sum simplified with the
     ``boundary`` indices and the summed indices still open sized; otherwise one nested sum
     simplified once, or index by index as at concrete dimensions over more than
-    :data:`_NESTED_INDICES` indices."""
+    :data:`_NESTED_INDICES` indices; raises SymbolicContractionUnsupportedError at concrete
+    dimensions when two or more indices remain, all deferred."""
     if not all(dim.is_concrete for _symbol, dim in summed) and len(summed) <= _NESTED_INDICES:
         entry = head * sp.Mul(*parts)
         for symbol, dim in reversed(summed):
@@ -2752,7 +2753,12 @@ def _sum_out(
     widths = {symbol: width(symbol) for symbol in dims}
     deferred: set[sp.Symbol] = set()
     while widths:
-        ready = [s for s in widths if s not in deferred] or list(widths)
+        ready = [s for s in widths if s not in deferred]
+        if not ready and len(widths) > 1 and all(dims[s].is_concrete for s in widths):
+            raise SymbolicContractionUnsupportedError(
+                f"indices {sorted(str(s.name) for s in widths)} do not close at concrete dimensions"
+            )
+        ready = ready or list(widths)
         symbol = min(ready, key=lambda s: (widths[s], str(s.name)))
         final = symbol in deferred
         bucket = sorted(where[symbol])
