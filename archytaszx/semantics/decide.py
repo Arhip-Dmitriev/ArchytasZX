@@ -62,6 +62,7 @@ import itertools
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Self, cast
 
@@ -217,6 +218,9 @@ class Decision:
     contracted: tuple[Diagram, Diagram, SymbolicTensor, SymbolicTensor] | None = None
     """The pair a SYMBOLIC_CONTRACTION verdict decided (without parameters) and its two
     contractions."""
+    instances: tuple[tuple[Mapping[str, Fraction], Decision], ...] = ()
+    """Each finite-clause value combination of a restricted decision decided instance by
+    instance, with its equal decision."""
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -1758,6 +1762,8 @@ def decide_restricted(
         finite = restriction.finite
         settled: list[str] = []
         left_open: list[str] = []
+        held: list[tuple[Mapping[str, Fraction], Decision]] = []
+        loose: list[str] = []
         last: Decision | None = None
         for combo in itertools.product(*(c.values for c in finite)):
             at = {c.symbol: v for c, v in zip(finite, combo, strict=True)}
@@ -1773,6 +1779,9 @@ def decide_restricted(
                 )
             if one.verdict in (EqualityVerdict.EQUAL, EqualityVerdict.EQUAL_UNCERTIFIED):
                 settled.append(label)
+                held.append((MappingProxyType(dict(at)), one))
+                if one.verdict is EqualityVerdict.EQUAL_UNCERTIFIED:
+                    loose.append(label)
                 last = one
             else:
                 left_open.append(label)
@@ -1784,14 +1793,18 @@ def decide_restricted(
                 + (f" (equal at {'; '.join(settled)})" if settled else ""),
                 restriction=restriction,
             )
+        summary = f"every instance equal ({'; '.join(settled)})"
+        if loose:
+            summary += f"; uncertified: instances without a proof: {'; '.join(loose)}"
         return replace(
             last,
-            verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
-            reason=f"every instance equal ({'; '.join(settled)}); uncertified: the kernel "
-            "has no proof combining the instances",
+            verdict=EqualityVerdict.EQUAL_UNCERTIFIED if loose else EqualityVerdict.EQUAL,
+            reason=summary,
             restriction=restriction,
             family=None,
             family_holds=False,
+            restricted_pair=None,
+            instances=tuple(held),
         )
     family: Decision | None = None
     if family_first and restriction.instance and options.get("samples") is None:

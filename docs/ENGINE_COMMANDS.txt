@@ -163,12 +163,13 @@ intersected; an empty intersection is an error naming the clauses. A bounded mul
 dimension, a bounded lattice and a lattice phase symbol whose phases repeat with period 1 have
 finitely many values, decided one instance at a time:
 
-    decide: equal (uncertified) for n < 4 by normal_form: every instance equal (n = 0; ...)
+    decide: equal for n < 4 by normal_form: every instance equal (n = 0; ...)
 
-A verdict under these forms is certified with each clause as a hypothesis of the theorem,
-except a claim decided instance by instance, which is uncertified ("the kernel has no proof
-combining the instances"); an unequal verdict's point satisfies every clause and side
-condition (PROOFS.txt, section 8.7).
+A verdict under these forms is certified with each clause as a hypothesis of the theorem; a
+claim decided instance by instance is certified by the case split over its instances' proofs,
+and stays uncertified when an instance has none ("instances without a proof: n = 2 ...");
+an unequal verdict's point satisfies every clause and side condition (PROOFS.txt, section
+8.7).
 
     decide [against] [TARGET] only for CLAUSE, ...
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from fractions import Fraction
 
 from archytaszx import trace as _trace
 from archytaszx.algebra.pathsum import PathSumUnsupported
@@ -36,7 +37,12 @@ from archytaszx.semantics.prove import ProofCertificate, ProofOutcome, prove
 from archytaszx.semantics.restrict import Restriction
 
 EqualProof = (
-    ProofCertificate | ProofOutcome | kernel.Theorem | kernel.Symbolic | kernel.RestrictedProof
+    ProofCertificate
+    | ProofOutcome
+    | kernel.Theorem
+    | kernel.Symbolic
+    | kernel.RestrictedProof
+    | kernel.FiniteProof
 )
 
 
@@ -48,6 +54,8 @@ def decision_proof(
 ) -> tuple[EqualProof | None, str]:
     """The proof of an EQUAL ``decision`` of ``left = right`` over the pair it is about, or
     None and the reasons each builder gave."""
+    if decision.restriction is not None and decision.instances:
+        return finite_proof(decision, left, right, describe)
     if decision.restriction is not None:
         return restricted_proof(decision, left, right, describe)
     pair = (left, right) if decision.doubled is None else decision.doubled
@@ -227,6 +235,33 @@ def restricted_proof(
         kernel.RestrictedProof(evidence, decision.restriction, left, right, family, floors),
         "",
     )
+
+
+def finite_proof(
+    decision: Decision,
+    left: Diagram,
+    right: Diagram,
+    describe: Callable[[Diagram], str] | None = None,
+) -> tuple[kernel.FiniteProof | None, str]:
+    """The case split of a restricted EQUAL decided instance by instance: each instance's
+    :func:`restricted_proof`, or None naming the instances without one."""
+    assert decision.restriction is not None
+    proofs: list[tuple[dict[str, Fraction], kernel.RestrictedProof]] = []
+    missing: list[str] = []
+    for at, one in decision.instances:
+        label = ", ".join(f"{k} = {v}" for k, v in at.items())
+        try:
+            with _trace.span("decide.proof.instance"):
+                proof, why = restricted_proof(one, left, right, describe)
+        except RecursionError as exc:
+            proof, why = None, f"{type(exc).__name__}: {exc}"
+        if proof is None:
+            missing.append(f"{label} ({why})")
+        else:
+            proofs.append((dict(at), proof))
+    if missing:
+        return None, f"instances without a proof: {'; '.join(missing)}"
+    return kernel.FiniteProof(tuple(proofs), decision.restriction, left, right), ""
 
 
 def floors_of(pair: tuple[Diagram, Diagram], restriction: Restriction) -> dict[str, int]:

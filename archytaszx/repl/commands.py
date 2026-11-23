@@ -291,7 +291,7 @@ class ErrorDetail:
 
 ProofArtefact: TypeAlias = (
     "Certificate | ProofCertificate | InductionProof | kernel.Theorem | kernel.Refutation"
-    " | kernel.Symbolic | kernel.RestrictedProof"
+    " | kernel.Symbolic | kernel.RestrictedProof | kernel.FiniteProof"
 )
 
 
@@ -1296,6 +1296,7 @@ def _emit(
             kernel.Refutation,
             kernel.Symbolic,
             kernel.RestrictedProof,
+            kernel.FiniteProof,
         ),
     ):
         return proof, None
@@ -1339,6 +1340,11 @@ def _artefact_line(artefact: ProofArtefact) -> str:
         return f"certificate: refutation at {point}"
     if isinstance(artefact, kernel.Symbolic):
         return "certificate: normal form of symbolic sums"
+    if isinstance(artefact, kernel.FiniteProof):
+        return (
+            f"certificate: restricted proof for {artefact.restriction.text()}, "
+            f"{_count(len(artefact.instances), 'instance')} by cases"
+        )
     if isinstance(artefact, kernel.RestrictedProof):
         how = "the family proof specialised" if artefact.family else "the restricted pair"
         return f"certificate: restricted proof for {artefact.restriction.text()}, {how}"
@@ -1413,7 +1419,7 @@ def proof_text(proof: ProofArtefact, *, unicode: bool = False) -> str:
         left, right = proof.initial, proof.final
     elif isinstance(proof, (ProofCertificate, InductionProof)):
         left, right = proof.start, proof.goal
-    elif isinstance(proof, kernel.RestrictedProof):
+    elif isinstance(proof, (kernel.RestrictedProof, kernel.FiniteProof)):
         left, right = proof.left, proof.right
     else:
         left, right = proof.lhs, proof.rhs
@@ -1575,6 +1581,13 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             text = f"kernel: rejected: {_one_line(exc)}"
             return _fail("certificate", [*blocks, Text(text)], Text(text))
         return _kernel_symbolic(restricted, action, path, blocks)
+    if isinstance(session.certificate, kernel.FiniteProof):
+        try:
+            combined = kernel.finite_symbolic(session.certificate, lambda d: _math(d, True))
+        except (kernel.KernelError, *_ORACLE_ERRORS) as exc:  # type: ignore[misc]
+            text = f"kernel: rejected: {_one_line(exc)}"
+            return _fail("certificate", [*blocks, Text(text)], Text(text))
+        return _kernel_symbolic(combined, action, path, blocks)
     try:
         theorem = kernel.check(session.certificate)
     except (kernel.KernelError, *_ORACLE_ERRORS) as exc:  # type: ignore[misc]
@@ -1731,7 +1744,14 @@ def _kernel_refutation(
 
 def _proof_blocks(artefact: ProofArtefact) -> list[Block]:
     if isinstance(
-        artefact, (kernel.Theorem, kernel.Refutation, kernel.Symbolic, kernel.RestrictedProof)
+        artefact,
+        (
+            kernel.Theorem,
+            kernel.Refutation,
+            kernel.Symbolic,
+            kernel.RestrictedProof,
+            kernel.FiniteProof,
+        ),
     ):
         return [Text(_artefact_line(artefact))]
     return [Text(_artefact_line(artefact)), Proof(artefact)]
@@ -1768,6 +1788,14 @@ def _verify(session: Session, args: str) -> Outcome:
         return _verify_refutation(artefact, blocks)
     if isinstance(artefact, kernel.Symbolic):
         text = "verify: verified: certificate lean proves it by the normal form of symbolic sums"
+        return _ok("certificate", [*blocks, Text(text)], artefact)
+    if isinstance(artefact, kernel.FiniteProof):
+        try:
+            kernel.finite_symbolic(artefact)
+        except (kernel.KernelError, *_ORACLE_ERRORS) as exc:  # type: ignore[misc]
+            text = f"verify: failed: {_one_line(exc)}"
+            return _fail("certificate", [*blocks, Text(text)], Text(text))
+        text = "verify: verified: every instance re-checked; certificate lean exports the cases"
         return _ok("certificate", [*blocks, Text(text)], artefact)
     if isinstance(artefact, kernel.RestrictedProof):
         try:

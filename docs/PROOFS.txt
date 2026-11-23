@@ -880,8 +880,20 @@ and is kept and certified as in 8.4: the kernel theorem states each shift, side 
 finite clause as a hypothesis ("for all alpha = s (s >= 0, s <= 1/2; alpha >= 0, alpha <=
 1/2)", "for n >= 1, n in Z, n != 2"), and the Lean corollary main_restricted takes them as
 hypotheses on its binders (0 ≤ s, s ≤ 1/2, n ≠ 2; a lattice step k : ℤ). A claim decided
-instance by instance (a bounded domain or a periodic phase lattice) stays uncertified: the
-kernel has no proof combining the instances.
+instance by instance (a bounded domain or a periodic phase lattice) is EQUAL when every
+instance is EQUAL; its proof is a kernel.FiniteProof, one RestrictedProof per value
+combination of the finite clauses (certify_decision.finite_proof). kernel.finite_symbolic
+rejects a FiniteProof whose instances are not exactly those combinations, in order, or whose
+instance is restricted to other values or about another pair; it writes one Lean file
+(lean_finite.combine): each instance's export with its top-level namespaces tagged I<k>, then
+main_finite in the first instance's namespace. When every instance is the family proof's
+corollary and one finite multiplicity or dimension has natural values over which the
+instance statements agree, main_finite states that statement for every value (lo ≤ n → n ≤ hi
+→ ..., or n = v1 ∨ n = v2 → ... for values with gaps) and proves it by rcases on the values
+(omega from the bounds); otherwise each instance's statement is finite_claim in its namespace
+and main_finite is their conjunction. An instance without a proof leaves the claim EQUAL
+(uncertified), naming that instance ("instances without a proof: n = 2 (...)"); an instance
+EQUAL (uncertified) by the ladder does the same.
 
 The fresh symbol of a shift carries its lower bound as sympy assumptions: real and
 nonnegative for s >= 0, positive for s > 0, integer (and nonnegative) on a lattice. Every rung

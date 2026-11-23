@@ -1183,6 +1183,63 @@ class RestrictedProof:
     floors_used: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, eq=False)
+class FiniteProof:
+    """A proof of ``left = right`` under a ``restriction`` with finitely many values: one
+    :class:`RestrictedProof` per value combination of its finite clauses."""
+
+    instances: tuple[tuple[Mapping[str, Fraction], RestrictedProof], ...]
+    restriction: Restriction
+    left: Diagram
+    right: Diagram
+
+
+def finite_symbolic(
+    proof: FiniteProof, describe: Callable[[Diagram], str] | None = None
+) -> Symbolic:
+    """The Lean proof of a :class:`FiniteProof`: each instance's export, then the case split
+    over the finite clauses' values (:func:`~archytaszx.semantics.lean_finite.combine`); raises
+    KernelError when the instances are not exactly the value combinations of the finite
+    clauses, or an instance is not about ``left = right`` at its values."""
+    from archytaszx.semantics.lean_finite import FiniteUnsupported, combine
+    from archytaszx.semantics.restrict import DIMENSION, MULTIPLICITY
+
+    finite = proof.restriction.finite
+    if not finite:
+        raise KernelError("the restriction has no clause with finitely many values")
+    wanted = [
+        {c.symbol: v for c, v in zip(finite, combo, strict=True)}
+        for combo in itertools.product(*(c.values for c in finite))
+    ]
+    given = [dict(at) for at, _ in proof.instances]
+    if given != wanted:
+        raise KernelError(
+            "the instances are not the value combinations of " + ", ".join(c.text() for c in finite)
+        )
+    sources: list[tuple[Mapping[str, Fraction], str]] = []
+    for at, inner in proof.instances:
+        if inner.restriction != proof.restriction.instance_at(at):
+            raise KernelError(f"an instance is not restricted to {at}")
+        if not (_same(inner.left, proof.left) and _same(inner.right, proof.right)):
+            raise KernelError("an instance is about another pair")
+        if isinstance(inner.proof, Symbolic):
+            source = restricted_symbolic(inner, describe).source
+        else:
+            source = lean(check(inner), describe=describe)
+        sources.append((at, source))
+    integral = {
+        c.symbol: c.kind in (MULTIPLICITY, DIMENSION)
+        and all(v.denominator == 1 and v >= 0 for v in c.values)
+        for c in finite
+    }
+    try:
+        shared = all(inner.family for _, inner in proof.instances)
+        source = combine(sources, integral, proof.restriction.text(), _var, shared)
+    except FiniteUnsupported as exc:
+        raise KernelError(f"no combined export: {exc}") from exc
+    return Symbolic(proof.left, proof.right, source, proof.restriction.clauses)
+
+
 @_trace.traced("proof.kernel_check")
 def check(artefact: object) -> Theorem:
     """The theorem a certificate, proof certificate, induction proof or restricted proof
