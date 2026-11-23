@@ -15,11 +15,11 @@
 
 :func:`recheck_residue` re-evaluates a residue refutation's boundary assignment ``σ`` mod
 ``p`` on a fresh :class:`~archytaszx.semantics.lean_refute._Refuter`, its leaf tables built
-anew; :func:`recheck_numeric` recomputes a ball refutation's entries at ``σ`` through the
-pinned contraction and checks the ball holds their difference; :func:`recheck_interface`
-compares the two boundaries' leg dimensions at a sample point. Each returns None when the
-evidence holds, else what failed; :func:`checked_residue` and :func:`checked_numeric` raise
-:class:`RecheckFailed` instead.
+anew from node residues shared with the search's refuter; :func:`recheck_numeric` recomputes
+a ball refutation's entries at ``σ`` through the pinned contraction and checks the ball holds
+their difference; :func:`recheck_interface` compares the two boundaries' leg dimensions at
+a sample point. Each returns None when the evidence holds, else what failed;
+:func:`checked_residue` and :func:`checked_numeric` raise :class:`RecheckFailed` instead.
 """
 
 from __future__ import annotations
@@ -51,8 +51,8 @@ def _order_ok(p: int, w: int, m: int) -> bool:
 
 
 def _net_residue(r: Any, net: LNet, sigma: Mapping[int, int]) -> int:
-    """The residue of ``net``'s entry at ``sigma`` on ``r``: leaf tables tabulated without a
-    cache and eliminated, else the substitution contraction."""
+    """The residue of ``net``'s entry at ``sigma`` on ``r``: leaf tables tabulated and
+    eliminated, else the substitution contraction."""
     from archytaszx.semantics.lean_refute import SYM_FIRST
     from archytaszx.semantics.lean_subst import sym_plan
 
@@ -71,7 +71,7 @@ def _net_residue(r: Any, net: LNet, sigma: Mapping[int, int]) -> int:
             scope = tuple(x for x in dict.fromkeys((*n.outs, *n.ins)) if x not in sigma)
 
             def leaf(tau: dict[int, int], n: Any = n) -> int:
-                return int(r.res(r.node(n, {**tau, **sigma})))
+                return int(r.node_res(n, {**tau, **sigma}))
 
             leaves.append((scope, r.res_table(scope, leaf)))
         _, _, final = r.res_eliminate(leaves, list(dict.fromkeys(net.summed)))
@@ -116,6 +116,8 @@ def recheck_residue(
         if fresh.M != m:
             return f"the order of ζ is {fresh.M}, not {m}"
         fresh.p, fresh.w = p, w
+        if isinstance(found, _Refuter):
+            fresh.share_node_res(found)
         a, b = fresh.a.net, fresh.b.net
         k0, k1 = _kw(fresh.sqw_list(a)), _kw(fresh.sqw_list(b))
         s0, s1 = fresh.at_point(fresh.s0), fresh.at_point(fresh.s1)

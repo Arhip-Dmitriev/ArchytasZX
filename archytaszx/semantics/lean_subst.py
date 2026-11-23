@@ -587,13 +587,13 @@ def _finish(
     cscopes: list[tuple[int, ...]] = []
     leaves = []
     for sc, g in by_scope.values():
+        legs_of = [(net.nodes[i], [(x, st.texpr(x)) for x in _legs(net, i)]) for i in reversed(g)]
 
-        def group_entry(at: Callable[[int], int], g: list[int] = g) -> int:
+        def group_entry(at: Callable[[int], int], legs_of: list[Any] = legs_of) -> int:
             acc = 1
-            for i in reversed(g):
-                n = net.nodes[i]
-                vals = {x: ev(st.texpr(x), at) for x in _legs(net, i)}
-                acc = int(refuter.res(refuter.node(n, vals))) * acc % p
+            for n, exprs in legs_of:
+                vals = {x: ev(e, at) for x, e in exprs}
+                acc = refuter.node_res(n, vals) * acc % p
             return acc
 
         leaves.append(_reduce(sc, table(sc, group_entry), d))

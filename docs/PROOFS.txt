@@ -216,7 +216,9 @@ at its one point (archytaszx.semantics.refute_check):
     residue refutation     recheck_residue: a fresh _Refuter at the same point, order M,
                            prime p and root w (p prime, w of order exactly M mod p, checked)
                            tabulates each network's leaf tables at the found boundary
-                           assignment σ without a cache, eliminates them, and confirms that
+                           assignment σ (node residues res(node(n, σ)) shared with the
+                           search's _Refuter when both have the same M, phase, coefficient
+                           and dimension tables), eliminates them, and confirms that
                            the residues r0, r1 are the search's and f0(w) r0 != f1(w) r1 mod p;
                            a boundary-size refutation recounts the slots
     ball refutation        recheck_numeric: a fresh ball refuter recomputes both entries at σ

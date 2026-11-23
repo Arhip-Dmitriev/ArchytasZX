@@ -1494,6 +1494,13 @@ d1 d2 entries in integers; parser._phase_vector_parts is kept per (text, symbol 
 renders each diagram's Dirac line once (describe in _cmd_decide). qft_zero_state! (10,57):
 decide 347 -> 283 s under cProfile (_phase_table 21 s -> 0, symbolic contraction 30 -> 13 s,
 Dirac renders 12 -> 6), the rest in lean_subst.table.
+_Refuter.node_res keeps res(node(n, σ)) per (p, w, kind, dimension, phase, leg values), shared by
+the leaf tables of every node with that phase (lean_subst._finish, res_plan); each group's leg
+expressions are taken once per table; recheck_residue's fresh refuter takes the search's
+node residues when M and its phase, coefficient and dimension tables are equal
+(share_node_res). qft_zero_state! (10,57): decide 105.8 -> 35.2 s, Lean export byte-identical;
+(17,158): 220 s either way (sym_plan 11 s, recheck_residue 7 s; the rest parsing and Dirac
+rendering).
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 

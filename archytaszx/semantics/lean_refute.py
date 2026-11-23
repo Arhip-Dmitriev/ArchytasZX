@@ -1582,6 +1582,29 @@ class _Refuter:
         """Mirror of `tmN`."""
         return sum(c * pow(self.w, e % self.M, self.p) for (_ks, e), c in v.items()) % self.p
 
+    def node_res(self, n: LNode, sigma: Mapping[int, int]) -> int:
+        """``res(node(n, sigma))``, kept per (p, w, kind, dimension, phase, leg values)."""
+        key = (
+            self.p,
+            self.w,
+            n.kind,
+            n.dim,
+            n.ph,
+            tuple(sigma.get(x, 0) for x in n.outs),
+            tuple(sigma.get(x, 0) for x in n.ins),
+        )
+        memo: dict[Any, int] = self.__dict__.setdefault("_node_res", {})
+        value = memo.get(key)
+        if value is None:
+            value = memo[key] = int(self.res(self.node(n, sigma)))
+        return value
+
+    def share_node_res(self, other: _Refuter) -> None:
+        """Takes ``other``'s :meth:`node_res` values when both evaluate every node alike."""
+        names = ("M", "ptab", "tabs", "sparse", "ctab", "qtab", "dimv_tab", "ks")
+        if all(getattr(self, k, None) == getattr(other, k, None) for k in names):
+            self.__dict__["_node_res"] = other.__dict__.setdefault("_node_res", {})
+
     def hinted(self, bnd: Sequence[int]) -> list[tuple[int, ...]]:
         """The engine's witness index as a value per boundary label, when it fits: a bundled
         label reads the next entries as the digits of its copies (:meth:`digs_c` inverted)."""
@@ -2187,7 +2210,7 @@ class _Refuter:
             )
 
             def leaf(tau: dict[int, int], n: LNode = n) -> int:
-                return self.res(self.node(n, {**tau, **pinned}))
+                return self.node_res(n, {**tau, **pinned})
 
             if key in cache:
                 self.res_count(math.prod(self.labdim(x) for x in scope))
