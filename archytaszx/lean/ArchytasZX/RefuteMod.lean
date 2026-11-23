@@ -1337,9 +1337,23 @@ theorem leafG_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) :=
   leafG_valW S M P C p w hp hw hM0 U σ n F g h τ hτ hU
 
-/-- The factors of `Fs` without `l`, then `new`. -/
+/-- A factor whose table is one leaf, with no scope; any other factor unchanged. -/
+def RFac.trim (F : RFac) : RFac :=
+  match F.table with
+  | .leaf v => ⟨[], .leaf v⟩
+  | _ => F
+
+theorem RFac.at_trim (F : RFac) (σ : ℕ → ℕ) : F.trim.at σ = F.at σ := by
+  obtain ⟨sc, T⟩ := F
+  cases T <;> simp [RFac.trim, RFac.at, RT.get_leaf]
+
+theorem RFac.scope_trim (F : RFac) : ∀ x ∈ F.trim.scope, x ∈ F.scope := by
+  obtain ⟨sc, T⟩ := F
+  cases T <;> simp [RFac.trim]
+
+/-- The factors of `Fs` without `l`, then `new` trimmed. -/
 def elimStepR (l : ℕ) (Fs : List RFac) (new : RFac) : List RFac :=
-  Fs.filter (fun F => !F.scope.contains l) ++ [new]
+  Fs.filter (fun F => !F.scope.contains l) ++ [new.trim]
 
 theorem elimR_val (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac)
     (h : elimR p D l Fs new = true) (σ : ℕ → ℕ) (hσ : ∀ x ∈ new.scope, σ x < D x) :
@@ -1365,7 +1379,7 @@ theorem elimR_val (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : 
   simp only [split, hout, ← Finset.mul_sum]
   unfold elimStepR
   simp only [rprod, List.map_append, List.prod_append, List.map_cons, List.map_nil,
-    List.prod_cons, List.prod_nil, mul_one]
+    List.prod_cons, List.prod_nil, mul_one, RFac.at_trim]
   congr 1
   obtain ⟨τ, hτ, hτσ⟩ := assigns_cover D new.scope σ hσ
   rw [new.at_congr σ τ fun x hx => (hτσ x hx).symm, h5 τ hτ, ZMod.natCast_mod,
@@ -1418,6 +1432,18 @@ theorem scopesR_leaves (U : List ℕ) (Fs : List RFac) (st : List (ℕ × RFac))
     · exact Or.inr (by simp [h1])
     · exact Or.inr (by simp [h1])
 
+theorem elimR_scope (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac)
+    (h : elimR p D l Fs new = true) (x : ℕ) (hx : x ∈ new.scope) :
+    x ≠ l ∧ ∃ F ∈ Fs, x ∈ F.scope := by
+  unfold elimR at h
+  simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true', List.all_eq_true,
+    List.any_eq_true, Bool.or_eq_true, List.contains_iff_mem] at h
+  obtain ⟨⟨⟨h2, h3⟩, _⟩, _⟩ := h
+  have hnl : l ∉ new.scope := by simpa using h2
+  refine ⟨fun e => hnl (e ▸ hx), ?_⟩
+  obtain ⟨F, hF, hxF⟩ := h3 x hx
+  exact ⟨F, (List.mem_filter.1 hF).1, hxF⟩
+
 theorem chainR_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) : ∀ (st : List (ℕ × RFac)) (Fs final : List RFac),
     chainR p D Fs st final = true → scopesR U Fs st = true →
     ∀ σ, (∀ x ∈ U, σ x < D x) →
@@ -1436,15 +1462,18 @@ theorem chainR_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) : ∀ (st : List (
     simp only [scopesR, Bool.and_eq_true] at hs'
     simp only [List.map_cons, List.reverse_cons]
     rw [sumR_append]
-    have key := scopesR_leaves U (elimStepR l Fs new) st hs'.2
     have inner : ∀ τ, (∀ x ∈ U, τ x < D x) → (∀ x ∈ st.map Prod.fst, τ x < D x) →
         sumR D [l] (rprod p Fs) τ = rprod p (elimStepR l Fs new) τ := by
       intro τ hU hS
       simp only [sumR]
       apply elimR_val p D l Fs new h.1 τ
       intro x hx
-      rcases key new (by simp [elimStepR]) x hx with hu | hs
+      obtain ⟨hxl, F, hF, hxF⟩ := elimR_scope p D l Fs new h.1 x hx
+      have hx' := List.all_eq_true.1 (List.all_eq_true.1 hs'.1 F hF) x hxF
+      simp only [Bool.or_eq_true, List.contains_iff_mem, beq_iff_eq] at hx'
+      rcases hx' with (hu | e) | hs
       · exact hU x hu
+      · exact absurd e hxl
       · exact hS x hs
     calc sumR D (st.map Prod.fst).reverse (sumR D [l] (rprod p Fs)) σ
         = sumR D (st.map Prod.fst).reverse (rprod p (elimStepR l Fs new)) σ := by

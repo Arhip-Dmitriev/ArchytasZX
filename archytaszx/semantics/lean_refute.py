@@ -1758,10 +1758,15 @@ class _Refuter:
         state = [fac(f"{tag}a{i}", f) for i, f in enumerate(leaves)]
         lists = [state]
         news = []
+        untrim = self.__dict__.get("_untrim", {})
         for k, (l, fs) in enumerate(steps):
-            new = fac(f"{tag}b{k}", fs[-1])
+            hit = untrim.get(id(fs[-1]))
+            trim = hit is not None and hit[0] is fs[-1]
+            new = fac(f"{tag}b{k}", hit[1] if hit and trim else fs[-1])
             news.append((l, new))
-            state = [x for x in state if l not in scopes[x]] + [new]
+            kept = f"{new}.trim" if trim else new
+            scopes[kept] = () if trim else scopes[new]
+            state = [x for x in state if l not in scopes[x]] + [kept]
             assert [scopes[x] for x in state] == [tuple(f[0]) for f in fs]
             lists.append(state)
         for k, st in enumerate(lists):
@@ -2167,11 +2172,14 @@ class _Refuter:
             out.append(entry(tau))
         return out
 
-    def res_sum(self, scope: Sequence[int], l: int, ins: Sequence[Any]) -> list[int]:
+    def res_sum(
+        self, scope: Sequence[int], l: int, ins: Sequence[Any], count: bool = True
+    ) -> list[int]:
         """The table over ``scope`` of the sum over ``l`` of the product of ``ins`` mod p, first
         label least significant, by broadcasting `numpy` arrays."""
         dims = [self.labdim(x) for x in scope]
-        self.res_count(math.prod(dims))
+        if count:
+            self.res_count(math.prod(dims))
         axes = [*scope, l]
         full = [*dims, self.labdim(l)]
         dt: Any = np.int64 if self.p < 2**31 else object
@@ -2246,6 +2254,11 @@ class _Refuter:
                 memo[id(f)] = (f, sort(f))
             return memo[id(f)][1]
 
+        untrim = self.__dict__.setdefault("_untrim", {})
+        for _l, fs in steps:
+            if fs and id(fs[-1]) in untrim:
+                t, full = untrim[id(fs[-1])]
+                untrim[id(t)] = (t, sort(full))
         return (
             [once(f) for f in leaves],
             [(l, [once(f) for f in fs]) for l, fs in steps],
@@ -2256,7 +2269,8 @@ class _Refuter:
         self, leaves: list[Any], labels: Sequence[int]
     ) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
         """The elimination of ``labels`` from the residue factors ``leaves``, a mirror of
-        `elimR`."""
+        `elimR` and `elimStepR`, each next label the one whose new table has the fewest nonzero
+        entries; a constant new factor is kept with no scope, its full form in `_untrim`."""
         facd: dict[int, Any] = dict(enumerate(leaves))
         nid = len(facd)
         idx: dict[int, set[int]] = {}
@@ -2264,31 +2278,50 @@ class _Refuter:
             for x in f[0]:
                 idx.setdefault(x, set()).add(i)
 
-        def cost(l: int) -> int:
-            sc: set[int] = set()
-            for i in idx.get(l, ()):
-                sc.update(facd[i][0])
-            return math.prod(self.labdim(x) for x in sc if x != l)
+        trial: dict[int, tuple[tuple[int, ...], list[int]] | None] = {}
+
+        def table(l: int) -> tuple[tuple[int, ...], list[int]] | None:
+            if l not in trial:
+                hit = idx.get(l, set())
+                ins = [f for i, f in facd.items() if i in hit]
+                scope = tuple(dict.fromkeys(x for f in ins for x in f[0] if x != l))
+                big = math.prod(self.labdim(x) for x in scope) > self.MAX_TABLE
+                trial[l] = None if big else (scope, self.res_sum(scope, l, ins, count=False))
+            return trial[l]
+
+        def cost(l: int) -> tuple[int, int]:
+            t = table(l)
+            return (1, 0) if t is None else (0, sum(1 for v in t[1] if v))
 
         steps = []
+        untrim: dict[int, tuple[Any, Any]] = self.__dict__.setdefault("_untrim", {})
         left: list[int] = list(labels)
         costs = {x: cost(x) for x in left}
         while left:
             l = min(left, key=lambda x: (costs[x], x))
             left.remove(l)
+            t = trial.pop(l, None)
             hit = idx.pop(l, set())
             ins = [f for i, f in facd.items() if i in hit]
             scope = tuple(dict.fromkeys(x for f in ins for x in f[0] if x != l))
-            new = (scope, self.res_sum(scope, l, ins))
+            if t is None:
+                new = (scope, self.res_sum(scope, l, ins))
+            else:
+                self.res_count(math.prod(self.labdim(x) for x in scope))
+                new = t
+            if scope and len(set(new[1])) == 1:
+                full, new = new, ((), new[1][:1])
+                untrim[id(new)] = (new, full)
             for i in hit:
                 for x in facd.pop(i)[0]:
                     if x != l:
                         idx[x].discard(i)
             facd[nid] = new
-            for x in scope:
+            for x in new[0]:
                 idx.setdefault(x, set()).add(nid)
             nid += 1
             for x in scope:
+                trial.pop(x, None)
                 if x in costs:
                     costs[x] = cost(x)
             steps.append((l, list(facd.values())))

@@ -1501,6 +1501,22 @@ node residues when M and its phase, coefficient and dimension tables are equal
 (share_node_res). qft_zero_state! (10,57): decide 105.8 -> 35.2 s, Lean export byte-identical;
 (17,158): 220 s either way (sym_plan 11 s, recheck_residue 7 s; the rest parsing and Dirac
 rendering).
+Elimination order and constant factors (F46): lean_refute.res_eliminate eliminates next the
+label whose new table has the fewest nonzero entries (trial sums, uncounted, recomputed for
+the labels of each new scope); it was the label with the smallest new scope. A new factor
+whose table is one value is kept with no scope: elimStepR appends new.trim (RFac.trim: a table
+.leaf v becomes ⟨[], .leaf v⟩; RFac.at_trim), elimR still checks it at its full scope, and
+chainR_val bounds its labels by elimR_scope. The exporter defines the full factor and lists
+it as `b.trim` (res_decls, mirror in res_eliminate/_untrim). qft_zero_state! n=10 d=3: the
+constant factors' scopes had grown to 9 labels (elimC chunks, 375 of 420 profiled s); the
+table route now fits MAX_RES_ENTRIES (export 1162581 -> 438738 bytes, descent steps 962181 ->
+161763), Lean 472 s -> 267 s, 4.8 GB anon; a copy with one leaf entry changed is rejected.
+Exports byte-identical on qft_zero_state! (10,57), qft! (2,5), (7,6); changed and accepted on
+qft_zero_state! (5,4) (164166 -> 139155 bytes, 71 -> 72 s), incrementer! (4,2) (21 s both),
+deutsch_jozsa/balanced! (23,9) (5.5 -> 5.8 s); cluster_state_2d! (2,8) exceeds 6 GB before
+and after.
+qft_zero_state! n=27 d=96 is unchanged (substitution route; its 23 sym_run theorems of 64
+delta steps take 25-70 s each and its 1081 leafS theorems about 0.8 s each, > 600 s).
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 
