@@ -2409,7 +2409,7 @@ def _semantic_pair(x: Diagram, y: Diagram) -> str | None:
     for build in builders:
         try:
             return build()
-        except (lean_net.NetUnsupported, ScalarUnsupported, PathSumError):
+        except (lean_net.NetUnsupported, ScalarUnsupported, PathSumError, ValueError):
             continue
     return None
 

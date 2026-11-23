@@ -1913,9 +1913,10 @@ def _c_split(r: Sequence[tuple[int, int]], t: STm) -> Any:
 def _c_lpin(r: Sequence[tuple[int, int]], t: STm) -> Any:
     """Rule 16 at a delta's greatest variable of the delta's range read by another factor."""
     for j, f in enumerate(t[2]):
-        if not (dm_const(f[0]) and f[0][0] > 0) or not f[1]:
+        vs = ip_varset(f[1])
+        if not (dm_const(f[0]) and f[0][0] > 0) or not vs:
             continue
-        x = max(ip_varset(f[1]))
+        x = max(vs)
         if not any(fac_has(x, g) for k, g in enumerate((*t[2], *t[3])) if k != j):
             continue
         if _lookup(rg_u(r, t[1], x, f), x) == f[0]:
