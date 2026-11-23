@@ -1487,7 +1487,13 @@ prime_lucasB 127, w by prim_ofB 125): unequal_uncertified ("the phase order is a
 -> UNEQUAL certified, Lean 562 s / 3.6 GB anon. Decide there takes about 760 s; profiled (2.8x
 under cProfile): loading the 95 MB script (_phase_vector_parts) 14%, rendering the Dirac
 output of the session (printer.phase) 20%, symbolic contraction (_bilinear_table) 22%, the
-refutation (lean_net._phase_table 27%, recheck_residue 12%).
+refutation (lean_net._phase_table 27%, recheck_residue 12%). lean_net._phase_table is kept
+per phase vector and reads the turns as integers over one denominator;
+contract_symbolic._bilinear_table keeps (a, b, c) per (phase vector, d1, d2) and checks the
+d1 d2 entries in integers; parser._phase_vector_parts is kept per (text, symbol table); decide
+renders each diagram's Dirac line once (describe in _cmd_decide). qft_zero_state! (10,57):
+decide 347 -> 283 s under cProfile (_phase_table 21 s -> 0, symbolic contraction 30 -> 13 s,
+Dirac renders 12 -> 6), the rest in lean_subst.table.
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 
