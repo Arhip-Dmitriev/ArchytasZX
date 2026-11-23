@@ -39,7 +39,8 @@ import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from fractions import Fraction
+from typing import Any, TypeAlias, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -645,7 +646,6 @@ def _bilinear_table(
     """For a Z(1 -> 1) phase table fed by a binder B(d1, d2): the binder, d1, d2 and (a, b, c)
     with every stored entry at index x*d2 + y equal to ``a x y + b x + c y`` mod 1 turns, a,
     b, c read from the entries at (1, 1), (1, 0), (0, 1); None otherwise."""
-    from fractions import Fraction
 
     node = diagram.nodes[node_id]
     phase = node.phase
@@ -677,28 +677,49 @@ def _bilinear_table(
     d1, d2 = d1_dim.to_int(), d2_dim.to_int()
     if d1 * d2 != dim.to_int():
         return None
-    turns: dict[int, Fraction] = {}
+    key = (phase, d1, d2)
+    if key not in _BILINEAR:
+        if len(_BILINEAR) >= _BILINEAR_MAX:
+            _BILINEAR.clear()
+        _BILINEAR[key] = _bilinear_coefficients(entries, d1, d2)
+    found = _BILINEAR[key]
+    if found is None:
+        return None
+    a, b, c = (sp.Rational(f.numerator, f.denominator) for f in found)
+    return source.node_id, d1, d2, (a, b, c)
+
+
+_BILINEAR: dict[tuple[object, int, int], tuple[Fraction, Fraction, Fraction] | None] = {}
+_BILINEAR_MAX = 4096
+
+
+def _bilinear_coefficients(
+    entries: Mapping[int, Any], d1: int, d2: int
+) -> tuple[Fraction, Fraction, Fraction] | None:
+    """(a, b, c) with every entry at index x*d2 + y equal to ``a x y + b x + c y`` mod 1 turns,
+    read from the entries at (1, 1), (1, 0), (0, 1), checked in integers over the common
+    denominator; None otherwise."""
+    pq: dict[int, tuple[int, int]] = {}
     for index, value in entries.items():
         t = value.to_sympy_turns()
         if not t.is_Rational:
             return None
-        turns[index] = Fraction(int(t.p), int(t.q))
+        pq[index] = (int(t.p), int(t.q))
+    den = math.lcm(1, *(q for _p, q in pq.values()))
+    nums = {i: p * (den // q) for i, (p, q) in pq.items()}
 
-    def at(j: int) -> Fraction:
-        return turns.get(j, Fraction(0))
+    def at(j: int) -> int:
+        return nums.get(j, 0)
 
-    b = at(d2) if d1 > 1 else Fraction(0)
-    c = at(1) if d2 > 1 else Fraction(0)
-    a = at(d2 + 1) - b - c if d1 > 1 and d2 > 1 else Fraction(0)
+    b = at(d2) if d1 > 1 else 0
+    c = at(1) if d2 > 1 else 0
+    a = at(d2 + 1) - b - c if d1 > 1 and d2 > 1 else 0
     for x in range(d1):
+        row = x * d2
         for y in range(d2):
-            if (a * x * y + b * x + c * y - at(x * d2 + y)) % 1:
+            if (a * x * y + b * x + c * y - at(row + y)) % den:
                 return None
-
-    def rational(f: Fraction) -> sp.Rational:
-        return sp.Rational(f.numerator, f.denominator)
-
-    return source.node_id, d1, d2, (rational(a), rational(b), rational(c))
+    return Fraction(a, den), Fraction(b, den), Fraction(c, den)
 
 
 def _binder_digits(

@@ -102,19 +102,31 @@ DOC_MAX = 65536
 """Doc comments are cut to this many characters."""
 
 
+_PHASE_TABLES: dict[PhaseVector, tuple[list[int], int] | None] = {}
+_PHASE_TABLES_MAX = 4096
+
+
 def _phase_table(pv: PhaseVector) -> tuple[list[int], int] | None:
     """The numerators by index and the common denominator of ``pv``'s phases in turns, when it
-    has more than ``PHASE_TABLE_MIN`` entries, all rational, and no rule."""
+    has more than ``PHASE_TABLE_MIN`` entries, all rational, and no rule; kept per phase vector
+    in ``_PHASE_TABLES``."""
     if pv.rule is not None:
         return None
+    if pv in _PHASE_TABLES:
+        return _PHASE_TABLES[pv]
     entries = {i: ph.to_sympy_turns() for i, ph in pv.entries().items()}
-    if len(entries) <= PHASE_TABLE_MIN or any(not v.is_Rational for v in entries.values()):
-        return None
-    den = math.lcm(*(int(sp.Rational(v).q) for v in entries.values()))
-    nums = [0] * (max(entries) + 1)
-    for i, v in entries.items():
-        nums[i] = int(sp.Rational(v) * den)
-    return nums, den
+    tab: tuple[list[int], int] | None = None
+    if len(entries) > PHASE_TABLE_MIN and all(v.is_Rational for v in entries.values()):
+        pq = {i: (int(v.p), int(v.q)) for i, v in entries.items()}
+        den = math.lcm(*(q for _p, q in pq.values()))
+        nums = [0] * (max(entries) + 1)
+        for i, (p, q) in pq.items():
+            nums[i] = p * (den // q)
+        tab = (nums, den)
+    if len(_PHASE_TABLES) >= _PHASE_TABLES_MAX:
+        _PHASE_TABLES.clear()
+    _PHASE_TABLES[pv] = tab
+    return tab
 
 
 @dataclass(frozen=True)

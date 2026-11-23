@@ -979,6 +979,26 @@ def _plain_phase(expr: str) -> Phase | None:
 def _phase_vector_parts(
     text: str, table: Mapping[str, sp.Symbol]
 ) -> tuple[dict[int, Phase], Phase | None]:
+    """``i: expr, ..., k: rule`` as index -> Phase and the rule in :data:`INDEX`; kept per text
+    and symbol table in ``_PHASE_PARTS``."""
+    key = (text, tuple(sorted(table.items())))
+    hit = _PHASE_PARTS.get(key)
+    if hit is None:
+        if len(_PHASE_PARTS) >= _PHASE_PARTS_MAX:
+            _PHASE_PARTS.clear()
+        hit = _PHASE_PARTS[key] = _phase_vector_parts_of(text, table)
+    return dict(hit[0]), hit[1]
+
+
+_PHASE_PARTS: dict[
+    tuple[str, tuple[tuple[str, sp.Symbol], ...]], tuple[dict[int, Phase], Phase | None]
+] = {}
+_PHASE_PARTS_MAX = 32
+
+
+def _phase_vector_parts_of(
+    text: str, table: Mapping[str, sp.Symbol]
+) -> tuple[dict[int, Phase], Phase | None]:
     """``i: expr, ..., k: rule`` as index -> Phase and the rule in :data:`INDEX`."""
     entries: dict[int, Phase] = {}
     rule: Phase | None = None

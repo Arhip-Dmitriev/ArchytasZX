@@ -906,11 +906,20 @@ def _verdict_text(verdict: EqualityVerdict) -> str:
 def _cmd_decide(session: Session, args: str) -> Outcome:
     text, restriction, family_first = _split_for(args)
     left, right = _pair_args(session, text)
+    described: dict[int, tuple[Diagram, str]] = {}
+
+    def describe(d: Diagram) -> str:
+        """The Dirac line of ``d``, rendered once per diagram object."""
+        seen = described.get(id(d))
+        if seen is None or seen[0] is not d:
+            seen = described[id(d)] = (d, _math(d, True))
+        return seen[1]
+
     decision = decide_equal(
         left,
         right,
         restrict=restriction,
-        describe=lambda d: _math(d, True),
+        describe=describe,
         family_first=family_first,
         enumerate_residual=session.tgateenum,
     )
