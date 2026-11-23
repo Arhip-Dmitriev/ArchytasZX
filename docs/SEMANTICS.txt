@@ -316,7 +316,7 @@ cyclotomic polynomial Phi_N at a common N; k is an integer. The module uses Pyth
 Fractions only and never enumerates a sum.
 
 Translation (from_diagram). Every dimension must be a concrete power of two and every
-generator Z, X, F, B or S; a W, triangle, discard, symbolic dimension, weighted or irrational
+generator Z, X, F, B or S (W with w_nodes, T and Ti with triangles); a W, triangle, discard, symbolic dimension, weighted or irrational
 phase, symbolic bang box or non-cyclotomic scalar raises PathSumUnsupported naming it. Bang
 boxes of concrete multiplicity are expanded first. A leg of dimension 2^k is k Boolean places.
 A Z spider identifies the places of all its legs and adds the multilinear interpolation of its
@@ -336,8 +336,15 @@ constraint, its atoms alpha^(f (1 + y)) and beta^(f y) with f free of y, is drop
 2 and the atom ((alpha + beta) / 2)^f. [Average] through a half phase: y in no constraint, its
 phase terms y Q / 2 with Q free of path variables, its atoms alpha^(1 + y) and beta^y, is
 dropped with factor 2 and the atoms ((alpha + beta) / 2)^(1 + Q) and ((alpha - beta) / 2)^Q
-(a weighted X spider's fresh digit on an open leg or into a Z spider); substitutions reach the
-exponents; an atom with exponent 1 folds into the constant and 0^F with F free of path
+(a weighted X spider's fresh digit on an open leg or into a Z spider). In compare_path_sums
+(from_diagram with triangles: T and Ti on dimension 2, output digit y and input digit x, are
+the atom 0^(y (1 + x)), Ti also the phase x (1 + y) / 2) a fourth rule applies in the
+pathsum.zero_indicators() scope; the Lean exports never take it. [Indicator]: y in no
+constraint, its phase terms y L / 2, its atoms zero-base 0^(y q + r) with q, r free of y; with
+R the disjunction of the r and Q that of the q + r, y is dropped with the atoms
+0^(R Q or (1 + R)(1 + Q) L), 2^((1 + R)(1 + Q)(1 + L)) and (-1)^(R (1 + Q) L)
+(incrementer/main! n = 12 d = 2: 12 path variables left and unknown -> none left, UNEQUAL
+certified at a path-sum witness); substitutions reach the exponents; an atom with exponent 1 folds into the constant and 0^F with F free of path
 variables becomes the constraint [F = 0] ([Zero]). The canonical form substitutes the rows
 into the exponents, writes root-of-unity atoms as phase, merges equal exponents and compares
 the rest syntactically (sound, not complete).

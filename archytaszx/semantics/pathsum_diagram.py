@@ -54,12 +54,15 @@ from archytaszx.algebra.pathsum import (
     with_sqrt2,
     witness_points,
     witness_points_qudit,
+    zero_indicators,
 )
 from archytaszx.diagram.bangbox import expand_concrete_boxes
 from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
     FOURIER_BOX,
+    TRIANGLE,
+    TRIANGLE_INVERSE,
     W_NODE,
     X_SPIDER,
     Z_SPIDER,
@@ -280,7 +283,10 @@ def port_bits(diagram: Diagram, base: int = 2) -> list[int]:
 
 
 def from_diagram(
-    diagram: Diagram, layout: dict[str, object] | None = None, w_nodes: bool = False
+    diagram: Diagram,
+    layout: dict[str, object] | None = None,
+    w_nodes: bool = False,
+    triangles: bool = False,
 ) -> PathSum | QuditPathSum:
     """The path sum of ``diagram`` (a :class:`QuditPathSum` at an odd prime base); raises
     :class:`PathSumUnsupported` naming the first node outside the class: a generator other than
@@ -291,7 +297,9 @@ def from_diagram(
     digits (``zdigits``). With ``w_nodes``, a W node on dimension 2 adds the constraints: its
     input digit plus its output digits is 0, and each two output digits' product is 0 (on
     boundary variables once every pin is substituted); the first is pinned at its least path
-    variable when it has one, each pin listed in ``wpins`` of ``layout``."""
+    variable when it has one, each pin listed in ``wpins`` of ``layout``. With ``triangles``, a
+    T or Ti on dimension 2 (output digit y, input digit x) is the amplitude 0 where y (1 + x),
+    Ti also the phase x (1 + y) / 2."""
     if diagram.bang_boxes:
         diagram = expand_concrete_boxes(diagram)
         if diagram.bang_boxes:
@@ -299,6 +307,8 @@ def from_diagram(
     allowed = {Z_SPIDER.name, X_SPIDER.name, FOURIER_BOX.name, DIM_BINDER.name, DIM_SPLITTER.name}
     if w_nodes:
         allowed.add(W_NODE.name)
+    if triangles:
+        allowed |= {TRIANGLE.name, TRIANGLE_INVERSE.name}
     for node_id in sorted(diagram.nodes):
         name = diagram.nodes[node_id].generator_type.name
         if name not in allowed:
@@ -386,6 +396,9 @@ def from_diagram(
     if base != 2:
         if any(n.generator_type.name == W_NODE.name for n in diagram.nodes.values()):
             raise PathSumUnsupported(f"a W node on dimensions {base}^k")
+        tri = (TRIANGLE.name, TRIANGLE_INVERSE.name)
+        if any(n.generator_type.name in tri for n in diagram.nodes.values()):
+            raise PathSumUnsupported(f"a triangle on dimensions {base}^k")
         return _qudit_sum(diagram, base, bits, uf, var_of, boundary, path, same, fresh, digit)
     phase = PhasePoly()
     amps: list[tuple[Cyclo, F2Poly]] = []
@@ -445,6 +458,16 @@ def from_diagram(
             w_cons.append(
                 (total, [frozenset({frozenset({a, b})}) for a, b in combinations(outs, 2)])
             )
+        elif name in (TRIANGLE.name, TRIANGLE_INVERSE.name):
+            out, inp = PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 0)
+            if bits[out] != 1:
+                raise PathSumUnsupported(f"node {node_id!r} is a {name} on dimension 2^k, k != 1")
+            y, x = digit(out, 0), digit(inp, 0)
+            yx: F2Poly = frozenset({frozenset({y}), frozenset({x, y})})
+            amps.append((Cyclo.rational(0), yx))
+            if name == TRIANGLE_INVERSE.name:
+                phase.add((x,), Fraction(1, 2))
+                phase.add((x, y), Fraction(1, 2))
     pins: list[tuple[int, F2Poly]] = []
     for total, pairs in w_cons:
         for v, value in pins:
@@ -633,9 +656,10 @@ def compare_path_sums(
         raise PathSumUnsupported("the boundaries carry different layouts")
     if base != 2:
         return _compare_qudit(left, right, base, bits_l, max_residual_paths)
-    raw_l, raw_r = from_diagram(left), from_diagram(right)
+    raw_l, raw_r = from_diagram(left, triangles=True), from_diagram(right, triangles=True)
     assert isinstance(raw_l, PathSum) and isinstance(raw_r, PathSum)
-    ps_l, ps_r = reduce(raw_l), reduce(raw_r)
+    with zero_indicators():
+        ps_l, ps_r = reduce(raw_l), reduce(raw_r)
     canon_l, canon_r = canonical(ps_l, parity=True), canonical(ps_r, parity=True)
     if canon_l is None or canon_r is None:
         left_n = len(ps_l.path)

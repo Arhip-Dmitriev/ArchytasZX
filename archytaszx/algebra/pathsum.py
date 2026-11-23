@@ -1488,6 +1488,66 @@ def _try_average_half(ps: PathSum) -> bool:
     return False
 
 
+_INDICATORS: ContextVar[bool] = ContextVar("pathsum_indicators", default=False)
+"""Whether :func:`reduce` may take :func:`_try_indicator`."""
+
+
+@contextmanager
+def zero_indicators() -> Iterator[None]:
+    """A scope in which :func:`reduce` sums path variables of zero-base atoms by
+    :func:`_try_indicator`."""
+    token = _INDICATORS.set(True)
+    try:
+        yield
+    finally:
+        _INDICATORS.reset(token)
+
+
+def _f2_or(polys: Iterable[F2Poly]) -> F2Poly:
+    """The F_2 polynomial of the disjunction of ``polys``."""
+    out = ONE
+    for p in polys:
+        out = f2_mul(out, f2_add(ONE, p))
+    return f2_add(ONE, out)
+
+
+def _try_indicator(ps: PathSum) -> bool:
+    """[Indicator]: y in no constraint, its phase terms y L / 2, its atoms zero-base
+    ``0^(y q + r)``, q and r free of y: with R the disjunction of the r and Q that of the q + r,
+    Sum_y = 0^(R Q or (1 + R)(1 + Q) L) 2^((1 + R)(1 + Q)(1 + L)) (-1)^(R (1 + Q) L)."""
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    occ = _occurrences(ps.phase, ps.path)
+    for y in sorted(ps.path & ps.amp_vars() - cons_vars):
+        terms = occ.get(y, [])
+        if any(c != Fraction(1, 2) for _m, c in terms):
+            continue
+        hit = [i for i, (_a, f) in enumerate(ps.amps) if any(y in m for m in f)]
+        if not all(ps.amps[i][0].is_zero for i in hit):
+            continue
+        rs, qrs = [], []
+        for i in hit:
+            f = ps.amps[i][1]
+            q = frozenset(m - {y} for m in f if y in m)
+            r = frozenset(m for m in f if y not in m)
+            rs.append(r)
+            qrs.append(f2_add(q, r))
+        big_l = frozenset(m - {y} for m, _c in terms)
+        big_r, big_q = _f2_or(rs), _f2_or(qrs)
+        both = f2_mul(f2_add(ONE, big_r), f2_add(ONE, big_q))
+        _drop_terms(ps, terms)
+        ps.amps = [t for i, t in enumerate(ps.amps) if i not in hit]
+        ps.amps += [
+            (Cyclo.rational(0), _f2_or((f2_mul(big_r, big_q), f2_mul(both, big_l)))),
+            (Cyclo.rational(2), f2_mul(both, f2_add(ONE, big_l))),
+            (Cyclo.rational(-1), f2_mul(f2_mul(big_r, f2_add(ONE, big_q)), big_l)),
+        ]
+        ps.path.discard(y)
+        ps.trace.append(Step("indicator", y, None, big_l))
+        _fold_amps(ps)
+        return True
+    return False
+
+
 QUARTER_BASE = (Cyclo.rational(1) + Cyclo.root(Fraction(1, 4))).scale(Fraction(1, 2))
 """(1 + i) / 2, the atom base of [Quarter]."""
 
@@ -1736,7 +1796,8 @@ def reduce(ps: PathSum) -> PathSum:
     for a boundary low digit), [Rem], [HH] on a boundary constraint, [HHnl], [Quarter] and
     [Average] applied to a fixpoint, in that order, the lowest variable first, and [Turn] when
     none applies; variables in an amplitude exponent take only [Pin], [Average] and [Average]
-    through a half phase, and substitutions reach the exponents. When path variables are left,
+    through a half phase ([Indicator] in :func:`zero_indicators`), and substitutions reach the
+    exponents. When path variables are left,
     the reduction again with [Turn] on S reading path variables tried first and [Average] on a
     context, taken when it leaves none."""
     out = _reduce(ps, False)
@@ -1770,6 +1831,8 @@ def _reduce(ps: PathSum, held: bool) -> PathSum:
                 _fold_amps(out)
                 continue
             if _try_pin(out) or _try_average(out) or _try_average_half(out):
+                continue
+            if _INDICATORS.get() and _try_indicator(out):
                 continue
             if held and _try_average_ctx(out):
                 continue
