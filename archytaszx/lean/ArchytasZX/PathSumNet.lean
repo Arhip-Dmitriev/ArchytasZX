@@ -8,7 +8,8 @@ import ArchytasZX.PathSumRules
 # Qubit networks as path sums
 
 A `Frag` is one generator's path sum: path variables, phase terms, constraints and a constant.
-`fval_join` multiplies two fragments with disjoint path variables, `sumOver_bsum` turns the
+`fval_join` multiplies two fragments with disjoint path variables (`disjB_pairwise`: checked in
+one pass with bit masks of the earlier fragments' variables), `sumOver_bsum` turns the
 network's sum over labels of dimension 2 into a sum over Boolean variables, and `eval_frags`
 gives a network's value as `val` of its joined fragments with the summed labels as path
 variables. `z_frag`, `x_frag` and `f_frag` are the fragments of the Z spider (constraints
@@ -168,6 +169,136 @@ theorem fval_joinAll (M : ℕ) (τ : ℕ → ZMod 2) :
         disj_joinAll_left f fs fun g hg => (h.1 g hg).2⟩
     rw [joinAll, fval_join M f _ hd.1 hd.2, fval_joinAll M τ fs h.2, List.map_cons,
       List.prod_cons]
+
+/-! ## Disjoint fragments in one pass -/
+
+/-- Whether `xs` repeats no value and sets no bit of `acc`, by a bit mask of the values seen. -/
+def nodupB : List ℕ → ℕ → Bool
+  | [], _ => true
+  | x :: xs, acc => !acc.testBit x && nodupB xs (acc ||| 2 ^ x)
+
+theorem nodupB_sound : ∀ (xs : List ℕ) (acc : ℕ), nodupB xs acc = true →
+    xs.Nodup ∧ ∀ x ∈ xs, acc.testBit x = false
+  | [], _, _ => ⟨List.nodup_nil, by simp⟩
+  | x :: xs, acc, h => by
+    simp only [nodupB, Bool.and_eq_true, Bool.not_eq_true'] at h
+    obtain ⟨h1, h2⟩ := nodupB_sound xs _ h.2
+    refine ⟨List.nodup_cons.2 ⟨fun hx => ?_, h1⟩, ?_⟩
+    · have := h2 x hx
+      rw [Nat.testBit_lor, Nat.testBit_two_pow_self, Bool.or_true] at this
+      exact Bool.noConfusion this
+    · intro y hy
+      rcases List.mem_cons.1 hy with rfl | hy
+      · exact h.1
+      · have := h2 y hy
+        rw [Nat.testBit_lor, Bool.or_eq_false_iff] at this
+        exact this.1
+
+/-- `xs.Nodup`, by a bit mask when every value is below `2 ^ 24`. -/
+def nodupF (xs : List ℕ) : Bool :=
+  if xs.all (· < 2 ^ 24) then nodupB xs 0 else decide xs.Nodup
+
+theorem nodupF_nodup (xs : List ℕ) (h : nodupF xs = true) : xs.Nodup := by
+  unfold nodupF at h
+  split_ifs at h
+  · exact (nodupB_sound xs 0 h).1
+  · simpa using h
+
+/-- `acc` with the bits of `xs` set. -/
+def maskOf : List ℕ → ℕ → ℕ
+  | [], acc => acc
+  | x :: xs, acc => maskOf xs (acc ||| 2 ^ x)
+
+theorem testBit_maskOf : ∀ (xs : List ℕ) (acc y : ℕ),
+    (maskOf xs acc).testBit y = (acc.testBit y || decide (y ∈ xs))
+  | [], acc, y => by simp [maskOf]
+  | x :: xs, acc, y => by
+    rw [maskOf, testBit_maskOf xs, Nat.testBit_lor, Nat.testBit_two_pow]
+    by_cases h : y = x
+    · subst h; simp
+    · have h' : x ≠ y := fun e => h e.symm
+      simp [h, h']
+
+/-- A fragment's variables. -/
+def fragVars (f : Frag) : List ℕ := f.path ++ pvars f.phase ++ fvars f.cons
+
+/-- Whether no path variable of a fragment is a variable of another, checked with the masks
+`A` of the earlier fragments' variables and `B` of their path variables. -/
+def disjB : List Frag → ℕ → ℕ → Bool
+  | [], _, _ => true
+  | f :: fs, A, B =>
+    maskOf f.path 0 &&& A == 0 && maskOf (fragVars f) 0 &&& B == 0 &&
+      disjB fs (A ||| maskOf (fragVars f) 0) (B ||| maskOf f.path 0)
+
+theorem land_zero_bit (P A y : ℕ) (h : P &&& A = 0) (hP : P.testBit y = true) :
+    A.testBit y = false := by
+  have := congrArg (fun n => n.testBit y) h
+  simp only [Nat.testBit_land, hP, Bool.true_and, Nat.zero_testBit] at this
+  exact this
+
+theorem disjB_sound : ∀ (fs : List Frag) (A B : ℕ), disjB fs A B = true →
+    (∀ f ∈ fs, ∀ y ∈ f.path, A.testBit y = false) ∧
+      (∀ f ∈ fs, ∀ y ∈ fragVars f, B.testBit y = false) ∧
+      fs.Pairwise fun a b => Disj a b ∧ Disj b a
+  | [], _, _, _ => ⟨by simp, by simp, List.Pairwise.nil⟩
+  | f :: fs, A, B, h => by
+    simp only [disjB, Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨⟨hA, hB⟩, h⟩ := h
+    obtain ⟨iA, iB, ip⟩ := disjB_sound fs _ _ h
+    have pA : ∀ y ∈ f.path, A.testBit y = false := fun y hy =>
+      land_zero_bit _ _ y hA (by simp [testBit_maskOf, hy])
+    have pB : ∀ y ∈ fragVars f, B.testBit y = false := fun y hy =>
+      land_zero_bit _ _ y hB (by simp [testBit_maskOf, hy])
+    have gA : ∀ g ∈ fs, ∀ y ∈ g.path, A.testBit y = false ∧ y ∉ fragVars f := by
+      intro g hg y hy
+      have := iA g hg y hy
+      simp only [Nat.testBit_lor, testBit_maskOf, Nat.zero_testBit, Bool.false_or,
+        Bool.or_eq_false_iff, decide_eq_false_iff_not] at this
+      exact this
+    have gB : ∀ g ∈ fs, ∀ y ∈ fragVars g, B.testBit y = false ∧ y ∉ f.path := by
+      intro g hg y hy
+      have := iB g hg y hy
+      simp only [Nat.testBit_lor, testBit_maskOf, Nat.zero_testBit, Bool.false_or,
+        Bool.or_eq_false_iff, decide_eq_false_iff_not] at this
+      exact this
+    refine ⟨?_, ?_, List.pairwise_cons.2 ⟨fun g hg => ⟨?_, ?_⟩, ip⟩⟩
+    · intro g hg y hy
+      rcases List.mem_cons.1 hg with rfl | hg
+      · exact pA y hy
+      · exact (gA g hg y hy).1
+    · intro g hg y hy
+      rcases List.mem_cons.1 hg with rfl | hg
+      · exact pB y hy
+      · exact (gB g hg y hy).1
+    · intro y hy
+      have h3 : ∀ z ∈ fragVars g, z ≠ y := fun z hz e => (gB g hg z hz).2 (e ▸ hy)
+      refine ⟨fun h' => h3 y (by simp [fragVars, h']) rfl,
+        fun h' => h3 y (by simp [fragVars, h']) rfl,
+        fun h' => h3 y (by simp [fragVars, h']) rfl⟩
+    · intro y hy
+      have := (gA g hg y hy).2
+      refine ⟨fun h' => this (by simp [fragVars, h']), fun h' => this (by simp [fragVars, h']),
+        fun h' => this (by simp [fragVars, h'])⟩
+
+theorem disjB_pairwise (fs : List Frag) (h : disjB fs 0 0 = true) :
+    fs.Pairwise fun a b => Disj a b ∧ Disj b a :=
+  (disjB_sound fs 0 0 h).2.2
+
+/-- Whether every value of `xs` is in `ys`, by a bit mask of `ys`. -/
+def allIn (ys xs : List ℕ) : Bool := xs.all fun x => (maskOf ys 0).testBit x
+
+theorem allIn_sound (ys xs : List ℕ) (h : allIn ys xs = true) : ∀ x ∈ xs, x ∈ ys := by
+  intro x hx
+  have := List.all_eq_true.1 h x hx
+  simpa [testBit_maskOf] using this
+
+theorem cover_of (N : Net) (h : allIn (N.int ++ N.bnd) (labelsOf N.nodes) = true) :
+    ∀ l ∈ labelsOf N.nodes, l ∈ N.int ∨ l ∈ N.bnd := fun l hl =>
+  List.mem_append.1 (allIn_sound _ _ h l hl)
+
+theorem sub_of (N : Net) (labs : List ℕ) (h : allIn labs (N.int ++ N.bnd) = true) :
+    ∀ l ∈ N.int ++ N.bnd, l ∈ labs :=
+  allIn_sound _ _ h
 
 /-! ## Labels of dimension 2 -/
 

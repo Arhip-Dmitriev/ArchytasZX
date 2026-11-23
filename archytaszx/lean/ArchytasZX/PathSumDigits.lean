@@ -9,7 +9,8 @@ import ArchytasZX.Positional
 # Labels of dimension 2^k as digit variables
 
 A label of dimension `2^k` is `k` Boolean digit variables `dig l`, low digit first; `own` lists
-each digit variable with its label and index (`ownOK`), and `dbits own σ` reads the digit
+each digit variable with its label and index (`ownOK`; `ownOK_tab` from one pass over a digit
+table), and `dbits own σ` reads the digit
 variables from label values. `sumOver_dbits` turns the network's sum over such labels into a
 sum over their digits, and `z_frag_dig` gives a Z spider on `2^k` as a fragment: digit `j` of
 every leg equal to an anchor leg's digit `j`, the phase table interpolated over the anchor
@@ -126,6 +127,135 @@ theorem ownOK_nodup {own : Own} {labs : List ℕ} {dig : ℕ → List ℕ}
     (h : ownOK own labs dig = true) {l : ℕ} (hl : l ∈ labs) : (dig l).Nodup := by
   simp only [ownOK, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
   exact (h.2 l hl).1
+
+/-- The owner rows of a label's digits `xs`, the first at index `i`. -/
+def ownRow (l : ℕ) : ℕ → List ℕ → Own
+  | _, [] => []
+  | i, x :: xs => (x, (l, i)) :: ownRow l (i + 1) xs
+
+/-- The owner table of the digit table `T`, label by label. -/
+def ownRows (T : List (ℕ × List ℕ)) : Own := T.flatMap fun e => ownRow e.1 0 e.2
+
+/-- Whether `own` and `labs` are the owner table and the labels of the digit table `T`, no
+digit variable or label repeated. -/
+def ownT (own : Own) (labs : List ℕ) (T : List (ℕ × List ℕ)) : Bool :=
+  labs == T.map Prod.fst && own == ownRows T && nodupF (own.map Prod.fst) && nodupF labs
+
+theorem ownRow_keys (l : ℕ) : ∀ (i : ℕ) (xs : List ℕ), (ownRow l i xs).map Prod.fst = xs
+  | _, [] => rfl
+  | i, x :: xs => by simp [ownRow, ownRow_keys l (i + 1) xs]
+
+theorem mem_ownRow (l : ℕ) : ∀ (i : ℕ) (xs : List ℕ) (x l' j : ℕ),
+    (x, (l', j)) ∈ ownRow l i xs → l' = l ∧ i ≤ j ∧ xs[j - i]? = some x
+  | _, [], _, _, _, h => by simp [ownRow] at h
+  | i, y :: xs, x, l', j, h => by
+    simp only [ownRow, List.mem_cons, Prod.mk.injEq] at h
+    rcases h with ⟨rfl, rfl, rfl⟩ | h
+    · simp
+    · obtain ⟨h1, h2, h3⟩ := mem_ownRow l (i + 1) xs x l' j h
+      refine ⟨h1, by omega, ?_⟩
+      rw [show j - i = (j - (i + 1)) + 1 by omega]
+      simpa using h3
+
+theorem getElem_mem_ownRow (l : ℕ) : ∀ (i : ℕ) (xs : List ℕ) (k : ℕ) (hk : k < xs.length),
+    (xs[k], (l, i + k)) ∈ ownRow l i xs
+  | _, [], k, hk => by simp at hk
+  | i, y :: xs, 0, _ => by simp [ownRow]
+  | i, y :: xs, k + 1, hk => by
+    have := getElem_mem_ownRow l (i + 1) xs k (by simpa using hk)
+    simp only [ownRow, List.getElem_cons_succ, List.mem_cons]
+    right
+    rwa [show i + (k + 1) = i + 1 + k by omega]
+
+theorem lookup_of_mem {β : Type*} : ∀ (own : List (ℕ × β)) (a : ℕ) (b : β),
+    (own.map Prod.fst).Nodup → (a, b) ∈ own → own.lookup a = some b
+  | [], _, _, _, h => by simp at h
+  | e :: own, a, b, hnd, h => by
+    obtain ⟨hn, hnd'⟩ := List.nodup_cons.1 hnd
+    rcases List.mem_cons.1 h with rfl | h
+    · simp [List.lookup]
+    · have hne : a ≠ e.1 := by
+        intro hae
+        exact hn (List.mem_map.2 ⟨(a, b), h, hae⟩)
+      have hb : (a == e.1) = false := by simpa using hne
+      simp only [List.lookup, hb]
+      exact lookup_of_mem own a b hnd' h
+
+theorem ownOK_tab (own : Own) (labs : List ℕ) (T : List (ℕ × List ℕ))
+    (h : ownT own labs T = true) : ownOK own labs (fun l => (T.lookup l).getD []) = true := by
+  simp only [ownT, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨⟨hl, ho⟩, hk⟩, hL⟩ := h
+  have hk' := nodupF_nodup _ hk
+  have hL' := nodupF_nodup _ hL
+  subst hl ho
+  have keys : (ownRows T).map Prod.fst = T.flatMap Prod.snd := by
+    simp only [ownRows, List.map_flatMap, ownRow_keys]
+  have hdig : ∀ e ∈ T, (T.lookup e.1).getD [] = e.2 := fun e he => by
+    rw [lookup_of_mem T e.1 e.2 hL' he]; rfl
+  have hown : ∀ e ∈ ownRows T, List.lookup e.1 (ownRows T) = some e.2 := fun e he =>
+    lookup_of_mem _ e.1 e.2 hk' he
+  simp only [ownOK, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true]
+  refine ⟨⟨⟨hk', hL'⟩, ?_⟩, ?_⟩
+  · rintro ⟨x, l, j⟩ he
+    obtain ⟨e, heT, he'⟩ := List.mem_flatMap.1 he
+    obtain ⟨rfl, -, hj⟩ := mem_ownRow _ _ _ x l j he'
+    refine ⟨List.mem_map.2 ⟨e, heT, rfl⟩, ?_⟩
+    rw [hdig e heT]
+    simpa using hj
+  · intro l hl
+    obtain ⟨e, heT, rfl⟩ := List.mem_map.1 hl
+    rw [hdig e heT]
+    refine ⟨?_, ?_⟩
+    · rw [keys] at hk'
+      exact (List.nodup_flatMap.1 hk').1 e heT
+    · intro i hi
+      have hi' := List.mem_range.1 hi
+      rw [List.getElem?_eq_getElem hi', Option.bind_some]
+      have hm := getElem_mem_ownRow e.1 0 e.2 i hi'
+      rw [zero_add] at hm
+      exact hown _ (List.mem_flatMap.2 ⟨e, heT, hm⟩)
+
+/-- Whether the keys of the digit table `T` are a subsequence of those of `L` in order, each
+with `D` of its `L` value equal to `2 ^` its digit count. -/
+def dimsM (D : ℕ → ℕ) : List (ℕ × ℕ) → List (ℕ × List ℕ) → Bool
+  | _, [] => true
+  | [], _ :: _ => false
+  | (a, k) :: L, (l, ds) :: T =>
+    if a = l then D k == 2 ^ ds.length && dimsM D L T else dimsM D L ((l, ds) :: T)
+
+theorem dimsM_sound (D : ℕ → ℕ) : ∀ (L : List (ℕ × ℕ)) (T : List (ℕ × List ℕ)),
+    dimsM D L T = true → ∀ e ∈ T, ∃ k, (e.1, k) ∈ L ∧ D k = 2 ^ e.2.length
+  | _, [], _, e, he => by simp at he
+  | [], _ :: _, h, _, _ => by simp [dimsM] at h
+  | (a, k) :: L, (l, ds) :: T, h, e, he => by
+    unfold dimsM at h
+    split_ifs at h with hal
+    · simp only [Bool.and_eq_true, beq_iff_eq] at h
+      rcases List.mem_cons.1 he with rfl | he
+      · exact ⟨k, by simp [hal], h.1⟩
+      · obtain ⟨k', hk', hD⟩ := dimsM_sound D L T h.2 e he
+        exact ⟨k', List.mem_cons_of_mem _ hk', hD⟩
+    · obtain ⟨k', hk', hD⟩ := dimsM_sound D L _ h e he
+      exact ⟨k', List.mem_cons_of_mem _ hk', hD⟩
+
+/-- Whether `labs` are the labels of the digit table `T` and each has dimension `2 ^` its
+digit count in `E`, by one merged pass over `E.labs`. -/
+def dimsT (E : Env) (labs : List ℕ) (T : List (ℕ × List ℕ)) : Bool :=
+  labs == T.map Prod.fst && nodupF (T.map Prod.fst) && nodupF (E.labs.map Prod.fst) &&
+    dimsM E.dimv E.labs T
+
+theorem dims_tab (E : Env) (labs : List ℕ) (T : List (ℕ × List ℕ))
+    (h : dimsT E labs T = true) : ∀ l ∈ labs, labDim E l = 2 ^ ((T.lookup l).getD []).length := by
+  simp only [dimsT, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨⟨hl, hT⟩, hL⟩, hm⟩ := h
+  subst hl
+  intro l hl
+  obtain ⟨e, he, rfl⟩ := List.mem_map.1 hl
+  obtain ⟨k, hk, hD⟩ := dimsM_sound E.dimv E.labs T hm e he
+  unfold labDim
+  rw [lookup_of_mem E.labs e.1 k (nodupF_nodup _ hL) hk,
+    lookup_of_mem T e.1 e.2 (nodupF_nodup _ hT) he]
+  exact hD
 
 theorem dbits_get {own : Own} {labs : List ℕ} {dig : ℕ → List ℕ}
     (h : ownOK own labs dig = true) (σ : ℕ → ℕ) {l : ℕ} (hl : l ∈ labs) {i : ℕ}

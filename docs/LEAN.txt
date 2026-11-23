@@ -1226,8 +1226,8 @@ s1 * val L tau = s2 * val R tau for every tau into Equal E s1 N1 s2 N2. PathSumR
 steps pin B (the head variable v with a constraint [v] + B, B free of v: v := B throughout,
 the constraint dropped, factor 1; pin_sound) and norm (phase, constraints and rows normalised;
 norm_sound), and val_smul. ArchytasZX/PathSumDigits.lean reads a label of dimension 2^k as k Boolean digit variables:
-an owner table own lists each digit variable with its label and index (ownOK, checked by
-decide +kernel), dbits own sigma reads them from label values, sum_setBits and sumOver_dbits turn the
+an owner table own lists each digit variable with its label and index (ownOK), dbits own sigma
+reads them from label values, sum_setBits and sumOver_dbits turn the
 network's sum over such labels into bsum over their digits, and the fragments are z_frag_dig
 (digit j of every leg equal to an anchor leg's digit j, the phase table interpolated over the
 anchor digits, tableOK by decide), b_frag and s_frag (the whole label's digits equal the low
@@ -1235,6 +1235,25 @@ part's then the high part's), f_frag_dig and x_frag_dig (ex_prod_digits: ex (o j
 digit products with a + b < k; X's fresh digits summed by sum_setBits, its inputs through
 negP). NetPSD, NetPSD.eval_eq and equal_psd2 (one owner table per side, the final sums matched
 on the boundary digits by val_agree) give Equal from both sides' digit path sums.
+The export's NetPSD facts are each one kernel pass over its tables (F36): a side's digit table
+digT [(l, dig l)] in label order, dig l its lookup, and ownOK by ownOK_tab from ownT (labs the
+table's keys, own equal to ownRows digT, the digit variables and labels without repeats by
+nodupF: a bit mask of the values seen, nodupB, below 2^24); disj by disjB_pairwise (disjB: one
+pass with masks of the earlier fragments' variables and path variables, maskOf); dims by
+dims_tab (dimsM: the table's keys a subsequence of E.labs, both in label order, each with
+dimension 2 ^ its digit count; keys without repeats); cover and sub by cover_of and sub_of
+(allIn: membership in a mask). Before, each was a decide over List.Nodup, List.lookup and
+List.mem, quadratic in the labels. The side conditions of z_frag_dig, x_frag_dig, f_frag_dig,
+b_frag and s_frag are decided by the kernel (lean_pathsum.DK). honeycomb_code/encoding d=2
+(368 + 279 digit variables): ownLOK 112 s -> 0.6 s, ownROK 32 s -> under 0.5 s, disj 33 + 19 s
+-> 7 + 4 s; the declarations before run_chain 529 s / 6.0 GB -> 123 s. The whole check still
+takes over 600 s: run_chain runL spends 33 s in knorm and 366 s in 191 blocks of 4 steps (median
+1.9 s a block), runR 18 s and about 260 s in 136 blocks. amm_gf24_mult/main d=2: declarations
+before run_chain 162 -> 66 s (dims, cover and sub under 0.5 s each, were 1.8 + 10.4, 0.8 + 3.1
+and 0.8 + 3.0 s), whole check 596 s / 5.4 GB -> 423 - 440 s / 1.4 - 1.8 GB.
+cuccaro_adder/main n=4 d=2 512 s / 4.1 GB -> 418 s / 1.4 GB, inverse_qft/main n=9 257 -> 198 -
+218 s, multi_controlled_toffoli/main n=3 64 -> 42 s. A copy with a repeated digit variable fails
+ownT; one whose X fragment takes another fragment's path variable fails disjB.
 lean_pathsum.export_net(left, right) writes the networks of two diagrams of Z, X, F, B and S
 nodes on dimensions 2^k with their digit tables, numbered from from_diagram's: boundary port i
 is label i with its boundary digits, a summed wire's digit j is its class's variable when that

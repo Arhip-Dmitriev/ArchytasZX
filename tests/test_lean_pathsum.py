@@ -132,6 +132,15 @@ def test_the_phase_modulus_covers_every_table() -> None:
     assert "/ ((8 : ℕ) : ℝ)" in _qubit_net("eighths")
 
 
+def test_net_facts_are_one_pass_checks() -> None:
+    source = _qubit_net("eighths")
+    assert "ownOK_tab ownL labsL digTL (by decide +kernel)" in source
+    assert "disj := disjB_pairwise _ (by decide +kernel)" in source
+    assert "dims := dims_tab E labsL digTL (by decide +kernel)" in source
+    assert "cover := cover_of NL (by decide +kernel)" in source
+    assert "sub := sub_of NL labsL (by decide +kernel)" in source
+
+
 def _export_net(name: str) -> str:
     left, right = PAIRS[name]
     return export_qudit_net(parse_dsl(left), parse_dsl(right), name)

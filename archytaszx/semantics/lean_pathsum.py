@@ -1232,8 +1232,8 @@ def _net_side(
             frags.append(f"bFrag digL {whole} {a} {b}")
             lemma = "b_frag" if kind == ".B" else "s_frag"
             proofs.append(
-                f"{lemma} {common} {p} {q} rfl rfl {whole} {a} {b} rfl rfl (by decide) "
-                f"(by decide) (by decide) rfl rfl rfl {m}"
+                f"{lemma} {common} {p} {q} rfl rfl {whole} {a} {b} rfl rfl {DK} "
+                f"{DK} {DK} rfl rfl rfl {m}"
             )
             side_atoms.append([])
             if amp is not None:
@@ -1256,7 +1256,7 @@ def _net_side(
             nodes.append(f"⟨.F, {os_}, {is_}, {k}, 0⟩")
             frags.append(f"fFragD {m} {1 << k} {k} digL {os_[0]} {is_[0]}")
             proofs.append(
-                f"f_frag_dig {common} {k} rfl {os_[0]} {is_[0]} rfl rfl (by decide) (by decide) "
+                f"f_frag_dig {common} {k} rfl {os_[0]} {is_[0]} rfl rfl {DK} {DK} "
                 f"rfl rfl {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num)"
             )
             side_atoms.append([])
@@ -1303,16 +1303,16 @@ def _net_side(
         if kind == ".Z" and legs:
             frag = f"zFragD digL {as_} {legs} {poly}"
             proof = (
-                f"z_frag_dig {common} {k} rfl (by decide) (by decide) {as_} rfl (by decide) "
-                f"{legs[0]} (by decide) {m} (by norm_num) {poly} {ts_text} (fun v => rfl) "
-                "(by decide) (by decide) (by decide)"
+                f"z_frag_dig {common} {k} rfl {DK} {DK} {as_} rfl {DK} "
+                f"{legs[0]} {DK} {m} (by norm_num) {poly} {ts_text} (fun v => rfl) "
+                f"{DK} {DK} {DK}"
             )
         else:
             frag = f"xFragD {m} {1 << k} {k} digL {poly} {ys} {os_} {is_}"
             proof = (
-                f"x_frag_dig {common} {k} rfl (by decide) (by decide) {ys} rfl (by decide) "
-                f"(by decide) {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num) "
-                f"{poly} {ts_text} (fun v => rfl) (by decide) (by decide)"
+                f"x_frag_dig {common} {k} rfl {DK} {DK} {ys} rfl {DK} "
+                f"{DK} {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num) "
+                f"{poly} {ts_text} (fun v => rfl) {DK} {DK}"
             )
             k_inv += k * len(legs)
         if legless:
@@ -1480,24 +1480,33 @@ def _weights_text(side: _NetSide) -> str:
     return "".join(f"{sc.text(w)} * " for w in side.weights)
 
 
+def _own_lines(tag: str, side: _NetSide) -> list[str]:
+    """The owner table, labels and digit table of one side and their ownOK fact by `ownOK_tab`."""
+    own = [(x, (lab, j)) for lab in side.labels for j, x in enumerate(side.dig[lab])]
+    dig_tbl = [(lab, side.dig[lab]) for lab in side.labels]
+    return [
+        f"def own{tag} : Own := {own}",
+        f"def labs{tag} : List ℕ := {side.labels}",
+        f"def digT{tag} : List (ℕ × List ℕ) := {dig_tbl}",
+        f"def dig{tag} (l : ℕ) : List ℕ := (digT{tag}.lookup l).getD []",
+        "",
+        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true :=",
+        f"  ownOK_tab own{tag} labs{tag} digT{tag} (by decide +kernel)",
+        "",
+    ]
+
+
 def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
     """The digit tables, the network, its fragments and the NetPSD facts of one side: each
     node's fact its own theorem, the fragment list in chunks of NODE_CHUNK, each chunk's facts
     one theorem."""
-    own = [(x, (lab, j)) for lab in side.labels for j, x in enumerate(side.dig[lab])]
-    dig_tbl = [(lab, side.dig[lab]) for lab in side.labels]
     proofs = [
         p.replace("ownL", f"own{tag}").replace("labsL", f"labs{tag}").replace("digL", f"dig{tag}")
         for p in side.proofs
     ]
     hyp = f"(∀ l ∈ labs{tag}, σ l < 2 ^ (dig{tag} l).length)"
     out = [
-        f"def own{tag} : Own := {own}",
-        f"def labs{tag} : List ℕ := {side.labels}",
-        f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
-        "",
-        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide +kernel",
-        "",
+        *_own_lines(tag, side),
         (
             f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
             f"{list(range(side.boundary))}⟩"
@@ -1554,10 +1563,10 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         f"  ownok := own{tag}OK",
         "  nodes := rfl",
         *node,
-        "  disj := by decide +kernel",
-        "  dims := by decide",
-        "  cover := by decide +kernel",
-        "  sub := by decide +kernel",
+        "  disj := disjB_pairwise _ (by decide +kernel)",
+        f"  dims := dims_tab E labs{tag} digT{tag} (by decide +kernel)",
+        f"  cover := cover_of N{tag} (by decide +kernel)",
+        f"  sub := sub_of N{tag} labs{tag} (by decide +kernel)",
         "",
         (
             f"theorem c{tag} : (joinAll (ps{tag}.map Prod.snd)).c = "
@@ -1576,6 +1585,9 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
 
 NODE_CHUNK = 25
 """Nodes per chunk theorem of a NetPSD node fact."""
+
+DK = "(by decide +kernel)"
+"""The side conditions of the Z, X, F, B and S fragment lemmas."""
 
 
 @dataclass
@@ -1836,19 +1848,12 @@ def _anet_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         f"({n}, {f}, {a})" for n, f, a in zip(side.nodes, side.frags, side.atoms, strict=True)
     )
     cases = " | ".join("rfl" for _ in side.nodes)
-    own = [(x, (lab, j)) for lab in side.labels for j, x in enumerate(side.dig[lab])]
-    dig_tbl = [(lab, side.dig[lab]) for lab in side.labels]
     proofs = [
         p.replace("ownL", f"own{tag}").replace("labsL", f"labs{tag}").replace("digL", f"dig{tag}")
         for p in side.proofs
     ]
     return [
-        f"def own{tag} : Own := {own}",
-        f"def labs{tag} : List ℕ := {side.labels}",
-        f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
-        "",
-        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide +kernel",
-        "",
+        *_own_lines(tag, side),
         (
             f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
             f"{list(range(side.boundary))}⟩"
