@@ -2560,12 +2560,29 @@ def _concrete_export(theorem: Theorem, text: str) -> str | None:
             return None
     if free_mult_symbols(lhs) | free_mult_symbols(rhs) or lhs.bang_boxes or rhs.bang_boxes:
         return None
-    if _wide_rule(lhs) or _wide_rule(rhs):
+    if _wide_rule(lhs) or _wide_rule(rhs) or _stuck_path_sums(lhs, rhs):
         return None
     source = _semantic_pair(lhs, rhs)
     if source is None:
         return None
     return header(source, f"restricted to {text}: the instantiated pair over its networks")
+
+
+def _stuck_path_sums(x: Diagram, y: Diagram) -> bool:
+    """Whether both diagrams are qubit path sums without amplitude atoms and the reduction of
+    either leaves no canonical form."""
+    from archytaszx.algebra.pathsum import PathSum, PathSumError, canonical, reduce
+    from archytaszx.semantics.pathsum_diagram import from_diagram
+
+    try:
+        with _trace.span("lean.concrete.path_sum_gate"):
+            raws = (from_diagram(x, w_nodes=True), from_diagram(y, w_nodes=True))
+            sums = [r for r in raws if isinstance(r, PathSum) and not r.amps]
+            if len(sums) != 2:
+                return False
+            return any(canonical(reduce(r)) is None for r in sums)
+    except (PathSumError, ValueError):
+        return False
 
 
 WIDE_RULE = 1 << 16

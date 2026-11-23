@@ -25,6 +25,7 @@ enumerated.
 from __future__ import annotations
 
 import math
+import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -123,11 +124,12 @@ def _prime_coordinates(
 class Cyclo:
     """An element of Q(zeta_n) as rational coefficients over zeta_n^0 .. zeta_n^(n-1)."""
 
-    __slots__ = ("c", "n")
+    __slots__ = ("_zero", "c", "n")
 
     def __init__(self, n: int, c: Mapping[int, Fraction] | None = None) -> None:
         """Build from exponent -> coefficient, exponents taken mod ``n``."""
         self.n = n
+        self._zero: bool | None = None
         self.c: dict[int, Fraction] = {}
         for e, v in (c or {}).items():
             k = e % n
@@ -239,8 +241,10 @@ class Cyclo:
 
     @property
     def is_zero(self) -> bool:
-        """Whether this number is zero."""
-        return not self.sparse_reduced()
+        """Whether this number is zero, computed once."""
+        if self._zero is None:
+            self._zero = not self.sparse_reduced()
+        return self._zero
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Cyclo):
@@ -925,16 +929,164 @@ class PathSum:
         return self.const.is_zero or any(c == frozenset({EMPTY}) for c in self.constraints)
 
 
+class _Indexed(dict[Mono, Fraction]):
+    """Phase terms with each variable's monomials in term order, a version per variable bumped
+    by every change to its terms, and the live occurrence views copied on write."""
+
+    def __init__(self, terms: Mapping[Mono, Fraction]) -> None:
+        super().__init__()
+        self.index: dict[int, dict[Mono, None]] = {}
+        self.version: dict[int, int] = {}
+        self.views: weakref.WeakSet[_OccView] = weakref.WeakSet()
+        self.quotients: dict[int, tuple[int, F2Poly | None]] = {}
+        for m, c in terms.items():
+            self[m] = c
+
+    def _touch(self, key: Mono, fresh: bool, gone: bool) -> None:
+        for view in self.views:
+            view.freeze(key)
+        version = self.version
+        for v in key:
+            version[v] = version.get(v, 0) + 1
+            if fresh:
+                self.index.setdefault(v, {})[key] = None
+            elif gone:
+                monos = self.index[v]
+                del monos[key]
+                if not monos:
+                    del self.index[v]
+
+    def __setitem__(self, key: Mono, value: Fraction) -> None:
+        self._touch(key, key not in self, False)
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key: Mono) -> None:
+        self._touch(key, False, True)
+        super().__delitem__(key)
+
+    def pop(self, key: Mono, *default: Any) -> Any:
+        if key in self:
+            self._touch(key, False, True)
+        return super().pop(key, *default)
+
+    def reset(self, terms: Mapping[Mono, Fraction]) -> None:
+        """Replace every term by ``terms``, in their order."""
+        for key in list(self):
+            del self[key]
+        for m, c in terms.items():
+            self[m] = c
+
+    def setdefault(self, key: Mono, default: Any = None) -> Any:
+        raise NotImplementedError("indexed phase terms take item assignment only")
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("indexed phase terms take item assignment only")
+
+    def popitem(self) -> tuple[Mono, Fraction]:
+        raise NotImplementedError("indexed phase terms take item assignment only")
+
+    def clear(self) -> None:
+        raise NotImplementedError("indexed phase terms take item assignment only")
+
+
+class _OccView(Mapping[int, list[tuple[Mono, Fraction]]]):
+    """:func:`_occurrences` over indexed terms, each variable's list read on first access, or
+    when its terms change before that."""
+
+    def __init__(self, terms: _Indexed, path: set[int] | None) -> None:
+        self.terms = terms
+        self.path = None if path is None else set(path)
+        self.frozen: dict[int, list[tuple[Mono, Fraction]] | None] = {}
+        terms.views.add(self)
+
+    __hash__ = object.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def _read(self, v: int) -> list[tuple[Mono, Fraction]] | None:
+        monos = self.terms.index.get(v)
+        if not monos:
+            return None
+        terms = self.terms
+        return [(m, dict.__getitem__(terms, m)) for m in monos]
+
+    def freeze(self, key: Mono) -> None:
+        """Keep the lists of ``key``'s variables as they are now."""
+        for v in key:
+            if v not in self.frozen and (self.path is None or v in self.path):
+                self.frozen[v] = self._read(v)
+
+    def _get(self, v: int) -> list[tuple[Mono, Fraction]] | None:
+        if self.path is not None and v not in self.path:
+            return None
+        if v in self.frozen:
+            return self.frozen[v]
+        return self._read(v)
+
+    def __getitem__(self, v: int) -> list[tuple[Mono, Fraction]]:
+        out = self._get(v)
+        if out is None:
+            raise KeyError(v)
+        return out
+
+    def __contains__(self, v: object) -> bool:
+        if not isinstance(v, int) or (self.path is not None and v not in self.path):
+            return False
+        if v in self.frozen:
+            return self.frozen[v] is not None
+        return bool(self.terms.index.get(v))
+
+    def get(self, v: int, default: Any = None) -> Any:
+        out = self._get(v)
+        return default if out is None else out
+
+    def __iter__(self) -> Iterator[int]:
+        raise NotImplementedError("occurrence views are read by variable")
+
+    def __len__(self) -> int:
+        raise NotImplementedError("occurrence views are read by variable")
+
+    def quotient(self, y: int) -> F2Poly | None:
+        """:func:`_hh_quotient` of ``y``'s terms, kept per term version of ``y``."""
+        if y in self.frozen:
+            return _hh_quotient(y, self.frozen[y] or [])
+        version = self.terms.version.get(y, 0)
+        hit = self.terms.quotients.get(y)
+        if hit is not None and hit[0] == version:
+            return hit[1]
+        q = _hh_quotient(y, self._get(y) or [])
+        self.terms.quotients[y] = (version, q)
+        return q
+
+
 def _occurrences(
     phase: PhasePoly, path: set[int] | None = None
-) -> dict[int, list[tuple[Mono, Fraction]]]:
+) -> Mapping[int, list[tuple[Mono, Fraction]]]:
     """Each variable's terms in term order; with ``path``, the path variables' only."""
+    if type(phase.terms) is _Indexed:
+        return _OccView(phase.terms, path)
     out: dict[int, list[tuple[Mono, Fraction]]] = {}
     for m, c in phase.terms.items():
         for v in m:
             if path is None or v in path:
                 out.setdefault(v, []).append((m, c))
     return out
+
+
+def _quotient(occ: Mapping[int, list[tuple[Mono, Fraction]]], y: int) -> F2Poly | None:
+    """:func:`_hh_quotient` of ``y``'s terms in ``occ``."""
+    if isinstance(occ, _OccView):
+        return occ.quotient(y)
+    return _hh_quotient(y, occ.get(y, []))
+
+
+def _restore(phase: PhasePoly, saved: dict[Mono, Fraction]) -> None:
+    """``phase``'s terms set back to ``saved``, indexed when they were."""
+    if isinstance(phase.terms, _Indexed):
+        phase.terms.reset(saved)
+    else:
+        phase.terms = saved
 
 
 def _try_elim(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
@@ -993,7 +1145,7 @@ def _hh_choice(
     path = ps.path
     found: list[tuple[int, F2Poly]] = []
     for y in sorted(path):
-        q = _hh_quotient(y, occ.get(y, []))
+        q = _quotient(occ, y)
         if q is None:
             continue
         found.append((y, q))
@@ -1062,7 +1214,7 @@ def _try_omega(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> b
 def _try_hh_gen(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
     """[HHgen]: y Q / 2 with Q = z A + B, z a path variable, (1 + A)(1 + B) = 0: z := B."""
     for y in sorted(ps.path):
-        q = _hh_quotient(y, occ.get(y, []))
+        q = _quotient(occ, y)
         if not q:
             continue
         for z in sorted({v for m in q for v in m} & ps.path):
@@ -1169,7 +1321,7 @@ def _try_low_digit(
     except PathSumUnsupported:
         if saved is None:
             raise
-        ps.phase.terms = saved
+        _restore(ps.phase, saved)
         return False
     ps.constraints.append(b0)
     ps.path.discard(top)
@@ -1322,7 +1474,7 @@ def _try_dyadic(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> 
 def _try_rem(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
     """[Rem] for a monomial quotient: y m / 2 forces m = 0, so terms divisible by m drop."""
     for y in sorted(ps.path):
-        q = _hh_quotient(y, occ.get(y, []))
+        q = _quotient(occ, y)
         if q is None or len(q) != 1:
             continue
         (m,) = q
@@ -1363,7 +1515,7 @@ def _try_hh_nl(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> b
     """[HHnl]: y Q / 2 + y' Q' / 2, y and y' in neither quotient: y' := y + y Q, factor 2."""
     forms = {}
     for y in sorted(ps.path):
-        q = _hh_quotient(y, occ.get(y, []))
+        q = _quotient(occ, y)
         if q:
             forms[y] = q
     for y, q in forms.items():
@@ -1460,7 +1612,7 @@ def _try_average_half(ps: PathSum) -> bool:
     cons_vars = {v for c in ps.constraints for m in c for v in m}
     occ = _occurrences(ps.phase, ps.path)
     for y in sorted(ps.path & ps.amp_vars() - cons_vars):
-        q = _hh_quotient(y, occ.get(y, []))
+        q = _quotient(occ, y)
         if not q or any(v in ps.path for m in q for v in m):
             continue
         alpha, beta = Cyclo.rational(1), Cyclo.rational(1)
@@ -1812,7 +1964,17 @@ def _reduce(ps: PathSum, held: bool) -> PathSum:
     """reduce's rules to a fixpoint, with ``held`` [Turn] on S reading path variables first and
     [Average] on a context."""
     out = ps.copy()
+    out.phase.terms = _Indexed(out.phase.terms)
     _fold_amps(out)
+    try:
+        _reduce_loop(out, held)
+    finally:
+        out.phase.terms = dict(out.phase.terms)
+    return out
+
+
+def _reduce_loop(out: PathSum, held: bool) -> None:
+    """:func:`_reduce`'s rounds on ``out`` in place."""
     while out.path and not out.is_zero:
         if out.amps:
             blocked = out.path & out.amp_vars()
@@ -1841,7 +2003,6 @@ def _reduce(ps: PathSum, held: bool) -> PathSum:
             break
         if not _reduce_round(out, held) and not _turn_round(out):
             break
-    return out
 
 
 def _turn_round(out: PathSum) -> bool:
