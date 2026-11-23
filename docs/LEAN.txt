@@ -1440,6 +1440,14 @@ hzM, then writes it as R(ζ^k) with Φ_m ∣ R over hzM and the hg_p of the prim
 y^m - 1 and Σ_{j<p} y^{jm/p} at y = ζ^k, by their Bézout coefficients (sub_terms); below 512
 the route over Φ_M is unchanged. qft_roundtrip/main! n=4 d=3: M = 2268 (φ = 648, refused
 before), scalar subfields of orders 12 and 42; refuted mod a prime p = 1 mod 2268.
+A power b^n modulo ζ^M - 1 (lean_refute power, big field) is square and multiply over sparse
+polynomials, exponents mod M (_cyclic_mul), the same polynomial as the dense product before:
+qft/main! n=3 d=27 (M = 78732): decide > 600 s in the dense squarings of degree 78731 ->
+10.5 s, UNEQUAL certified. The hzM step of a combination divides by ζ^M - 1 term by term
+(_div_cyclic: c ζ^(aM+b) leaves c ζ^b and the quotient c ζ^b (1 + ζ^M + ... + ζ^((a-1)M))),
+the quotient and remainder sympy's division gives. inverse_qft/main! n=7 d=7 (M = 3294172)
+still spends > 600 s: the polynomials of poly_expr are dense sympy polynomials of degree up
+to M - 1.
 The prime p is proved prime by norm_num, or, when every phase vector is sparse (sparse_all),
 by Lucas's test (prime_lucas: a primitive root, the factorisation of p - 1, powers by 64-bit
 square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64. prim_of needs

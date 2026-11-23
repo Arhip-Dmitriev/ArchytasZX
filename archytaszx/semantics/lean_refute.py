@@ -28,6 +28,7 @@ import itertools
 import math
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -70,6 +71,40 @@ PT_DENSE_MIN = 16
 
 _Z = sp.Symbol("zeta_lean")
 _Y = sp.Symbol("zeta_sub_lean")
+
+
+def _cyclic_mul(
+    a: Mapping[int, Fraction], b: Mapping[int, Fraction], m: int
+) -> dict[int, Fraction]:
+    """The product of two sparse polynomials (exponent to coefficient) modulo ``z^m - 1``."""
+    out: dict[int, Fraction] = {}
+    for ea, ca in a.items():
+        for eb, cb in b.items():
+            e = (ea + eb) % m
+            c = out.get(e, Fraction(0)) + ca * cb
+            if c:
+                out[e] = c
+            else:
+                out.pop(e, None)
+    return out
+
+
+def _div_cyclic(e: sp.Expr, m: int) -> tuple[sp.Expr, sp.Expr]:
+    """Quotient and remainder of ``e`` (expanded, polynomial in ζ) by ``ζ^m - 1``: a term
+    ``c ζ^(a m + b)`` with ``0 <= b < m`` gives ``c ζ^b (1 + ζ^m + ... + ζ^((a-1) m))`` and
+    ``c ζ^b``; sympy's division when an exponent of ζ is not a nonnegative integer."""
+    quot: list[sp.Expr] = []
+    rem: list[sp.Expr] = []
+    for term in sp.Add.make_args(e):
+        c, k = term.as_coeff_exponent(_Z)
+        if not (k.is_Integer and k >= 0) or c.has(_Z):
+            q, r = sp.div(e, _Z**m - 1, _Z)
+            return q, r
+        a, b = divmod(int(k), m)
+        rem.append(c * _Z**b)
+        quot.extend(c * _Z ** (b + j * m) for j in range(a))
+    return sp.Add(*quot), sp.Add(*rem)
+
 
 Key = tuple[tuple[int, ...], int]
 Vec = dict[Key, int]
@@ -1078,17 +1113,22 @@ class _Refuter:
         return self.lift(k, sp.Poly(inv, _Y, domain="QQ"))
 
     def power(self, base: sp.Poly, n: int) -> sp.Poly:
-        """``base ** n`` modulo :meth:`modulus`."""
-        mod = self.modulus()
+        """``base ** n`` modulo :meth:`modulus`; for a big field by square and multiply of
+        sparse polynomials modulo ``ζ^M - 1`` (:func:`_cyclic_mul`)."""
         if not self.big_field():
-            return (base**n).rem(mod)
-        out = sp.Poly(1, _Z, domain="QQ")
+            return (base**n).rem(self.modulus())
+        M = self.M
+        b = {int(e) % M: Fraction(int(c.numerator), int(c.denominator)) for (e,), c in base.terms()}
+        out: dict[int, Fraction] = {0: Fraction(1)}
         while n:
             if n & 1:
-                out = (out * base).rem(mod)
-            base = (base * base).rem(mod)
+                out = _cyclic_mul(out, b, M)
             n >>= 1
-        return out
+            if n:
+                b = _cyclic_mul(b, b, M)
+        return sp.Poly.from_dict(
+            {(e,): sp.Rational(c.numerator, c.denominator) for e, c in out.items()}, _Z, domain="QQ"
+        )
 
     def poly(self, e: sp.Expr) -> sp.Poly:
         """``e`` as a polynomial in ζ reduced modulo Φ_M (:meth:`reduced`)."""
@@ -1278,7 +1318,7 @@ class _Refuter:
         if rest != 0 and not self.rel_lines:
             self.relations()
         if rest != 0:
-            q, r = sp.div(rest, _Z**self.M - 1, _Z)
+            q, r = _div_cyclic(rest, self.M)
             if sp.expand(q) != 0:
                 terms.append((sp.expand(q), "hzM"))
             rest = sp.expand(r)
