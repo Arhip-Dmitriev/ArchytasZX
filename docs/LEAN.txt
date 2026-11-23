@@ -1469,6 +1469,14 @@ square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64. 
 M < 2^64; a pair whose phase order M reaches 2^64 has no residue refutation (NetUnsupported).
 qft_zero_state! n=10 d=57: M = 4 * 57^10, first prime p = 13 M + 1 > 2^64, proved by
 prime_lucasB 65 (was prime_lucas, rejected at p < 2^64): 186 s, 1.45 GB anon.
+The hF case of a sparse phase vector (lean_refute sparse_proof) splits k by membership in its
+key list: each key by rcases rfl and simp only [↓reduceIte, Nat.reduceEqDiff] with decide,
+then rw [ex_atoms, List.map_nil] (closed by reducible rfl, so a wrong exponent fails at once
+instead of unfolding om M ^ e); any other k by
+the hypotheses k ≠ key and if_false, then ex_zero. qft/main! n=7 d=6 (6 vectors of 25 keys):
+split_ifs over the three if chains of Φ and Pt exceeded simp's maximum steps in all 6 cases
+(322 s, rejected) -> accepted in 145 s, 0.96 GB anon; a copy with a wrong ex_atoms exponent is
+rejected in 140 s. qft/main! n=3 d=27 (export unchanged) is accepted in 36 s, 0.42 GB anon.
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 

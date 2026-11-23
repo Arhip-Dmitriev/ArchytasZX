@@ -2001,12 +2001,27 @@ class _Refuter:
     def sparse_proof(self, ph: int, unfold: str) -> str:
         """The `hF` case of the sparse phase vector ``ph``, one `ex_atoms` per entry."""
         M = self.M
-        out = f"\n    · simp only [{unfold}, Pt, List.map_nil, mono_nil]\n      split_ifs"
+        ks = list(self.sparse[ph])
+        hs = ", ".join(f"h{i}" for i in range(len(ks)))
+        out = (
+            f"\n    · simp only [{unfold}, Pt, List.map_nil, mono_nil]"
+            f"\n      by_cases hk : k ∈ ({_ints(ks)} : List ℕ)"
+            "\n      · simp only [List.mem_cons, List.mem_nil_iff, or_false] at hk"
+            f"\n        rcases hk with {' | '.join(['rfl'] * len(ks))}"
+        )
         for t in self.sparse[ph].values():
             e = int((t * M) % M)
             z = int((t * M - e) / M)
-            out += f"\n      · rw [ex_atoms {M} {e} ({z}) [] [] (by norm_num) (by norm_num)]; rfl"
-        return out + "\n      · simp [ex_zero, mono_nil]"
+            out += (
+                "\n        · simp (config := {decide := true}) only [↓reduceIte, Nat.reduceEqDiff]"
+                f"; rw [ex_atoms {M} {e} ({z}) [] [] (by norm_num) (by norm_num), List.map_nil]"
+            )
+        return out + (
+            "\n      · simp only [List.mem_cons, List.mem_nil_iff, or_false, not_or] at hk"
+            f"\n        obtain ⟨{hs}⟩ := hk"
+            f"\n        simp only [{hs}, if_false]"
+            "\n        simp [ex_zero, mono_nil]"
+        )
 
     def coef_proof(self, ph: int, j: int) -> str:
         """`Qt ph * coef ph j = tv (om M) [] (Ct ph j)` by the atom facts."""
