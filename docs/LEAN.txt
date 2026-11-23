@@ -1450,9 +1450,11 @@ polynomials, exponents mod M (_cyclic_mul), the same polynomial as the dense pro
 qft/main! n=3 d=27 (M = 78732): decide > 600 s in the dense squarings of degree 78731 ->
 10.5 s, UNEQUAL certified. The hzM step of a combination divides by ζ^M - 1 term by term
 (_div_cyclic: c ζ^(aM+b) leaves c ζ^b and the quotient c ζ^b (1 + ζ^M + ... + ζ^((a-1)M))),
-the quotient and remainder sympy's division gives. inverse_qft/main! n=7 d=7 (M = 3294172)
-still spends > 600 s: the polynomials of poly_expr are dense sympy polynomials of degree up
-to M - 1.
+the quotient and remainder sympy's division gives. In a big field poly_expr evaluates sums,
+products, powers and inverses on sparse polynomials (sparse_expr, exponent to coefficient,
+products by _cyclic_mul) and builds one sympy polynomial at the end: inverse_qft/main! n=7
+d=7 (M = 3294172): decide > 600 s in dense products of degree up to M - 1 -> 55 s, UNEQUAL
+certified (export 241995 bytes, its Lean check over 600 s).
 The prime p is proved prime by norm_num, or, when every phase vector is sparse (sparse_all),
 by Lucas's test (prime_lucas: a primitive root, the factorisation of p - 1, powers by 64-bit
 square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64. prim_of needs

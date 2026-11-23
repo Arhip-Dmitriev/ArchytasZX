@@ -89,6 +89,17 @@ def _cyclic_mul(
     return out
 
 
+def _poly_of(a: Mapping[int, Fraction]) -> sp.Poly:
+    """The sparse polynomial ``a`` as a polynomial in ζ."""
+    terms = {(k,): sp.Rational(c.numerator, c.denominator) for k, c in a.items()}
+    return sp.Poly.from_dict(terms or {(0,): 0}, _Z, domain="QQ")
+
+
+def _sparse_of(f: sp.Poly) -> dict[int, Fraction]:
+    """The nonzero terms of ``f`` as exponent to coefficient."""
+    return {int(e): Fraction(int(c.numerator), int(c.denominator)) for (e,), c in f.terms() if c}
+
+
 def _div_cyclic(e: sp.Expr, m: int) -> tuple[sp.Expr, sp.Expr]:
     """Quotient and remainder of ``e`` (expanded, polynomial in ζ) by ``ζ^m - 1``: a term
     ``c ζ^(a m + b)`` with ``0 <= b < m`` gives ``c ζ^b (1 + ζ^m + ... + ζ^((a-1) m))`` and
@@ -1138,6 +1149,62 @@ class _Refuter:
         return self.reduced(self.poly_expr(e))
 
     def poly_expr(self, e: sp.Expr) -> sp.Poly:
+        """``e`` as a polynomial in ζ modulo :meth:`modulus`."""
+        if self.big_field():
+            return _poly_of(self.sparse_expr(e))
+        return self.dense_expr(e)
+
+    def sparse_expr(self, e: sp.Expr) -> dict[int, Fraction]:
+        """``e`` as a sparse polynomial in ζ (exponent to coefficient) modulo ``ζ^M - 1``."""
+        e = sp.sympify(e)
+        M = self.M
+        if e.is_Rational:
+            return {0: Fraction(int(e.p), int(e.q))} if e else {}
+        if e == _Z or isinstance(e, Om) and _int(e.args[0]) == M:
+            return {1 % M: Fraction(1)}
+        if e.is_Add:
+            out: dict[int, Fraction] = {}
+            for x in e.args:
+                for k, c in self.sparse_expr(x).items():
+                    v = out.get(k, Fraction(0)) + c
+                    if v:
+                        out[k] = v
+                    else:
+                        out.pop(k, None)
+            return out
+        if e.is_Mul:
+            out = {0: Fraction(1)}
+            for x in e.args:
+                out = _cyclic_mul(out, self.sparse_expr(x), M)
+            return out
+        if e.is_Pow and e.args[1].is_Integer:
+            n = int(e.args[1])
+            b = self.sparse_expr(e.args[0])
+            if n < 0:
+                b, n = _sparse_of(self.inverse(_poly_of(b))), -n
+            out = {0: Fraction(1)}
+            while n:
+                if n & 1:
+                    out = _cyclic_mul(out, b, M)
+                n >>= 1
+                if n:
+                    b = _cyclic_mul(b, b, M)
+            return out
+        if isinstance(e, NC):
+            k = _int(e.args[0])
+            return {0: Fraction(k)} if k else {}
+        if isinstance(e, Inv):
+            inner = self.sparse_expr(e.args[0])
+            if not inner:
+                return inner
+            return _sparse_of(self.inverse(_poly_of(inner)))
+        sub = self.substitute(e, emit=False)
+        if sub is None:
+            raise NetUnsupported(f"no exact value for {e}")
+        return self.sparse_expr(sub[0])
+
+    def dense_expr(self, e: sp.Expr) -> sp.Poly:
+        """``e`` as a polynomial in ζ by dense sympy arithmetic modulo :meth:`modulus`."""
         e = sp.sympify(e)
         phi = self.modulus()
         if e.is_Rational:
