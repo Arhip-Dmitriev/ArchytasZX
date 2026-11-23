@@ -527,16 +527,17 @@ theorem prime_mem_of_dvd (q : ℕ) (hq : q.Prime) :
     · obtain ⟨x, hx, e⟩ := ih (fun x hx => hps x (by simp [hx])) h1
       exact ⟨x, by simp [hx], e⟩
 
-/-- `w` has order `M` mod the prime `p`, from the prime factors `ps` of `M`. -/
-theorem prim_of (p w M : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M < 2 ^ 64)
+/-- `w` has order `M` mod the prime `p`, from the prime factors `ps` of `M` and powers by
+`b`-bit square-and-multiply. -/
+theorem prim_ofB (b p w M : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M < 2 ^ b)
     (ps : List (ℕ × ℕ)) (hfac : (ps.map fun x => x.1 ^ x.2).prod = M)
-    (hps : ∀ x ∈ ps, x.1.Prime) (h1 : pm p 64 w M = 1)
-    (h2 : ps.all (fun x => pm p 64 w (M / x.1) != 1) = true) :
+    (hps : ∀ x ∈ ps, x.1.Prime) (h1 : pm p b w M = 1)
+    (h2 : ps.all (fun x => pm p b w (M / x.1) != 1) = true) :
     IsPrimitiveRoot (w : ZMod p) M := by
   have hp1 : 1 < p := (Fact.out : p.Prime).one_lt
-  have key : ∀ l, l < 2 ^ 64 → ((w : ZMod p) ^ l = 1 ↔ pm p 64 w l = 1) := by
+  have key : ∀ l, l < 2 ^ b → ((w : ZMod p) ^ l = 1 ↔ pm p b w l = 1) := by
     intro l hl
-    rw [pm_eq p 64 w l hl, ← Nat.cast_pow, ← Nat.cast_one, ZMod.natCast_eq_natCast_iff',
+    rw [pm_eq p b w l hl, ← Nat.cast_pow, ← Nat.cast_one, ZMod.natCast_eq_natCast_iff',
       Nat.mod_eq_of_lt hp1]
   have ho : orderOf (w : ZMod p) = M := by
     refine orderOf_eq_of_pow_and_pow_div_prime hM ((key M hMb).2 h1) ?_
@@ -548,20 +549,29 @@ theorem prim_of (p w M : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M < 2 ^ 64)
   rw [← ho]
   exact IsPrimitiveRoot.orderOf _
 
+/-- `w` has order `M` mod the prime `p`, from the prime factors `ps` of `M`. -/
+theorem prim_of (p w M : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M < 2 ^ 64)
+    (ps : List (ℕ × ℕ)) (hfac : (ps.map fun x => x.1 ^ x.2).prod = M)
+    (hps : ∀ x ∈ ps, x.1.Prime) (h1 : pm p 64 w M = 1)
+    (h2 : ps.all (fun x => pm p 64 w (M / x.1) != 1) = true) :
+    IsPrimitiveRoot (w : ZMod p) M :=
+  prim_ofB 64 p w M hM hMb ps hfac hps h1 h2
+
 theorem pow_eq_one_of (p w M : ℕ) (h1 : w ^ M % p = 1) : (w : ZMod p) ^ M = 1 := by
   rw [← Nat.cast_pow, ← ZMod.natCast_mod, h1, Nat.cast_one]
 
 /-- A formal sum at `ζ ↦ w` mod `p`, atoms read as `1`. -/
 def tmN (p w M : ℕ) (t : Terms) : ℕ :=
-  t.foldr (fun q acc => ((q.1 % (p : ℤ)).toNat * pm p 64 w (q.2.1 % M) + acc) % p) 0
+  t.foldr (fun q acc => ((q.1 % (p : ℤ)).toNat * pm p M w (q.2.1 % M) + acc) % p) 0
 
-theorem tmN_cast (p w M : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M)
-    (hMb : M ≤ 2 ^ 64) (t : Terms) : (tmN p w M t : ZMod p) = tmv p w t := by
+/-- `tmN_cast` for every `M`. -/
+theorem tmN_castW (p w M : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M)
+    (t : Terms) : (tmN p w M t : ZMod p) = tmv p w t := by
   induction t with
   | nil => simp [tmN, tmv]
   | cons q t ih =>
     simp only [tmN, List.foldr_cons] at ih ⊢
-    rw [pm_eq p 64 w _ (lt_of_lt_of_le (Nat.mod_lt _ hM0) hMb)]
+    rw [pm_eq p M w _ ((Nat.mod_lt _ hM0).trans M.lt_two_pow_self)]
     simp only [ZMod.natCast_mod, Nat.cast_add, Nat.cast_mul, Nat.cast_pow]
     rw [ih]
     have h1 : (((q.1 % (p : ℤ)).toNat : ℕ) : ZMod p) = (q.1 : ZMod p) := by
@@ -571,6 +581,10 @@ theorem tmN_cast (p w M : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 :
       conv_rhs => rw [← Nat.div_add_mod q.2.1 M, pow_add, pow_mul, hw, one_pow, one_mul]
     rw [h1, h2]
     simp [tmv]
+
+theorem tmN_cast (p w M : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M)
+    (hMb : M ≤ 2 ^ 64) (t : Terms) : (tmN p w M t : ZMod p) = tmv p w t :=
+  tmN_castW p w M hp hw hM0 t
 
 /-! ## Sums over labels in a commutative ring -/
 
@@ -732,15 +746,16 @@ theorem valW_congr (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (
     List.map_congr_left fun l hl => h l (List.mem_append_right _ hl)
   simp only [valW, valBS, ho, hi]
 
-theorem leafR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+/-- `leafR_val` for every `M`. -/
+theorem leafR_valW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
     (σ : ℕ → ℕ) (n : Node) (F : RFac)
     (h : leafR S M P C p w U σ n F = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
     (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
   simp only [leafR, Bool.and_eq_true, List.all_eq_true, List.contains_iff_mem,
     beq_iff_eq, Bool.or_eq_true] at h
   obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim F.scope τ hτ
-  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, h.2 ρ hρ, tmN_cast p w M hp hw hM0 hMb]
+  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, h.2 ρ hρ, tmN_castW p w M hp hw hM0]
   congr 1
   refine valW_congr S M P C n τ (pin U σ ρ) fun l hl => ?_
   unfold pin
@@ -748,6 +763,13 @@ theorem leafR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   · simp [hu, hU l hu]
   · have hF : l ∈ F.scope := (h.1 l hl).resolve_right hu
     simp [hu, hρτ l hF]
+
+theorem leafR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) (n : Node) (F : RFac)
+    (h : leafR S M P C p w U σ n F = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
+    (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) :=
+  leafR_valW S M P C p w hp hw hM0 U σ n F h τ hτ hU
 
 /-- Summing `l` out of the factors of `Fs` containing it gives `new`. -/
 def elimR (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs : List RFac) (new : RFac) : Bool :=
@@ -1174,8 +1196,9 @@ def leafXR (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (p w : �
     (assigns S.dim F.scope).all fun τ => F.at τ == g.get (fun _ =>
       ((n.outs.map (pin U σ τ)).sum + (d - 1) * (n.ins.map (pin U σ τ)).sum) % d) [0]
 
-theorem leafXR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+/-- `leafXR_val` for every `M`. -/
+theorem leafXR_valW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
     (σ : ℕ → ℕ) (n : Node) (F : RFac) (g : RT)
     (h : leafXR S M P p w U σ n F g = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
     (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
@@ -1192,10 +1215,17 @@ theorem leafXR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (
     · have hF' : l ∈ F.scope := (hcov l hl).resolve_right hu
       simp [hu, hρτ l hF']
   have hbs : isBS n = false := by simp [isBS, hk]
-  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, hF ρ hρ, hval, ← tmN_cast p w M hp hw hM0 hMb]
+  rw [F.at_congr τ ρ fun l hl => (hρτ l hl).symm, hF ρ hρ, hval, ← tmN_castW p w M hp hw hM0]
   congr 1
   simp only [valW, hbs, Bool.false_eq_true, ite_false, hk, tensorW, tensorT]
   rw [tmN_tXT p w M _ (P n.ph) hd hdM, hg _ (Nat.mod_lt _ hd)]
+
+theorem leafXR_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) (n : Node) (F : RFac) (g : RT)
+    (h : leafXR S M P p w U σ n F g = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
+    (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) :=
+  leafXR_valW S M P C p w hp hw hM0 U σ n F g h τ hτ hU
 
 /-- The table over `xs` of the entry of the packed table `G` (`b` bits each) at `s` plus the
 weighted sum of the labels mod `d`; a level whose entries are one leaf is that leaf. -/
@@ -1249,8 +1279,9 @@ theorem sum_cf (d : ℕ) (os is : List ℕ) (hnd : (os ++ is).Nodup) (τ : ℕ �
     have : x ∉ os := fun h => hdis x h x hx rfl
     simp [hx, this]
 
-theorem leafXD_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+/-- `leafXD_val` for every `M`. -/
+theorem leafXD_valW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
     (n : Node) (F : RFac) (G b : ℕ)
     (h : leafXD S M P p w U n F G b = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l) :
     tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
@@ -1260,12 +1291,19 @@ theorem leafXD_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (
   have hT := RT.eq_of_beq _ _ hT
   have hdM : S.dimv n.dim ∣ M := Nat.dvd_of_mod_eq_zero hmod
   have hbs : isBS n = false := by simp [isBS, hk]
-  rw [← tmN_cast p w M hp hw hM0 hMb]
+  rw [← tmN_castW p w M hp hw hM0]
   simp only [valW, hbs, Bool.false_eq_true, ite_false, hk, tensorW, tensorT]
   have key : ∀ f : ℕ → ℕ, (F.scope.map f).sum = ((n.outs ++ n.ins).map f).sum :=
     fun f => ((hperm.map f).sum_eq).symm
   rw [tmN_tXT p w M _ (P n.ph) hd hdM, ← hG _ (Nat.mod_lt _ hd), RFac.at, hT,
     xdesc_get _ _ _ _ _ τ _ _ hτ, Nat.zero_add, key, sum_cf _ _ _ hnd τ]
+
+theorem leafXD_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (n : Node) (F : RFac) (G b : ℕ)
+    (h : leafXD S M P p w U n F G b = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l) :
+    tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) :=
+  leafXD_valW S M P C p w hp hw hM0 U n F G b h τ hτ
 
 /-- How a leaf is checked: by `leafR`, by `leafXR` with the table `g`, or by `leafXD` with
 the packed table `G` of `b`-bit entries. -/
@@ -1281,15 +1319,23 @@ def leafG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ �
   | .x g => leafXR S M P p w U σ n F g
   | .xd G b => leafXD S M P p w U n F G b
 
-theorem leafG_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+/-- `leafG_val` for every `M`. -/
+theorem leafG_valW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
     (σ : ℕ → ℕ) (n : Node) (F : RFac) (g : LeafH)
     (h : leafG S M P C p w U σ n F g = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
     (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) := by
   cases g with
-  | plain => exact leafR_val S M P C p w hp hw hM0 hMb U σ n F h τ hτ hU
-  | x g => exact leafXR_val S M P C p w hp hw hM0 hMb U σ n F g h τ hτ hU
-  | xd G b => exact leafXD_val S M P C p w hp hw hM0 hMb U n F G b h τ hτ
+  | plain => exact leafR_valW S M P C p w hp hw hM0 U σ n F h τ hτ hU
+  | x g => exact leafXR_valW S M P C p w hp hw hM0 U σ n F g h τ hτ hU
+  | xd G b => exact leafXD_valW S M P C p w hp hw hM0 U n F G b h τ hτ
+
+theorem leafG_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) (n : Node) (F : RFac) (g : LeafH)
+    (h : leafG S M P C p w U σ n F g = true) (τ : ℕ → ℕ) (hτ : ∀ l ∈ F.scope, τ l < S.dim l)
+    (hU : ∀ l ∈ U, τ l = σ l) : tmv p w (valW S M P C τ n) = (F.at τ : ZMod p) :=
+  leafG_valW S M P C p w hp hw hM0 U σ n F g h τ hτ hU
 
 /-- The factors of `Fs` without `l`, then `new`. -/
 def elimStepR (l : ℕ) (Fs : List RFac) (new : RFac) : List RFac :=
@@ -1412,8 +1458,9 @@ theorem chainR_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) : ∀ (st : List (
           · intro x hx; exact hr x (by simpa using hx)
       _ = rprod p final σ := ih _ final h.2 hs'.2 σ hσ
 
-theorem prod_leavesR (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+/-- `prod_leavesR` for every `M`. -/
+theorem prod_leavesRW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
     (σ : ℕ → ℕ) :
     ∀ (ns : List Node) (leaves : List RFac), leaves.length = ns.length →
       (ns.zip leaves).all (fun q => leafR S M P C p w U σ q.1 q.2) = true →
@@ -1430,12 +1477,20 @@ theorem prod_leavesR (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ)
       simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hleaf
       have h1 := ih Fs (by simpa using hlen) hleaf.2 τ (fun F hF => hτ F (by simp [hF])) hU
       simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
-      rw [h1, leafR_val S M P C p w hp hw hM0 hMb U σ n F hleaf.1 τ (hτ F (by simp)) hU]
+      rw [h1, leafR_valW S M P C p w hp hw hM0 U σ n F hleaf.1 τ (hτ F (by simp)) hU]
 
-/-- A network's formal entry mod `p` at `σ` by a checked contraction of residue factors whose
-leaves read the boundary labels from `σ`. -/
-theorem eval_res (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (N : Net)
+theorem prod_leavesR (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) :
+    ∀ (ns : List Node) (leaves : List RFac), leaves.length = ns.length →
+      (ns.zip leaves).all (fun q => leafR S M P C p w U σ q.1 q.2) = true →
+      ∀ τ, (∀ F ∈ leaves, ∀ x ∈ F.scope, τ x < S.dim x) → (∀ x ∈ U, τ x = σ x) →
+        (ns.map fun n => tmv p w (valW S M P C τ n)).prod = rprod p leaves τ :=
+  prod_leavesRW S M P C p w hp hw hM0 U σ
+
+/-- `eval_res` for every `M`. -/
+theorem eval_resW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (N : Net)
     (σ : ℕ → ℕ) (leaves : List RFac)
     (hlen : leaves.length = N.nodes.length)
     (hleaf : (N.nodes.zip leaves).all (fun q => leafR S M P C p w N.bnd σ q.1 q.2) = true)
@@ -1453,7 +1508,7 @@ theorem eval_res (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C 
   intro τ hτ hr
   show tmv p w (prodW S M P C N.nodes τ) = rprod p leaves τ
   rw [tmv_prodW]
-  refine prod_leavesR S M P C p w hp hw hM0 hMb N.bnd σ N.nodes leaves hlen hleaf τ ?_ ?_
+  refine prod_leavesRW S M P C p w hp hw hM0 N.bnd σ N.nodes leaves hlen hleaf τ ?_ ?_
   · intro F hF x hxF
     rcases scopesR_leaves N.bnd leaves steps hscope F hF x hxF with hb | hs
     · by_cases hm : x ∈ (steps.map Prod.fst).reverse
@@ -1465,8 +1520,25 @@ theorem eval_res (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C 
     have := hdis x hx
     simpa using this
 
-theorem prod_leavesG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+/-- A network's formal entry mod `p` at `σ` by a checked contraction of residue factors whose
+leaves read the boundary labels from `σ`. -/
+theorem eval_res (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (N : Net)
+    (σ : ℕ → ℕ) (leaves : List RFac)
+    (hlen : leaves.length = N.nodes.length)
+    (hleaf : (N.nodes.zip leaves).all (fun q => leafR S M P C p w N.bnd σ q.1 q.2) = true)
+    (steps : List (ℕ × RFac)) (final : List RFac)
+    (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainR p S.dim leaves steps final = true)
+    (hscope : scopesR N.bnd leaves steps = true)
+    (hdis : N.bnd.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hσ : ∀ x ∈ N.bnd, σ x < S.dim x) :
+    tmv p w (sumLT S.dim N.int (prodW S M P C N.nodes) σ) = (rfold p final σ : ZMod p) :=
+  eval_resW S M P C p w hp hw hM0 N σ leaves hlen hleaf steps final hperm hchain hscope hdis hσ
+
+/-- `prod_leavesG` for every `M`. -/
+theorem prod_leavesGW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
     (σ : ℕ → ℕ) :
     ∀ (ns : List Node) (leaves : List RFac) (gs : List LeafH), leaves.length = ns.length →
       gs.length = ns.length →
@@ -1488,11 +1560,21 @@ theorem prod_leavesG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ)
         have h1 := ih Fs gs (by simpa using hlen) (by simpa using hglen) hleaf.2 τ
           (fun F hF => hτ F (by simp [hF])) hU
         simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
-        rw [h1, leafG_val S M P C p w hp hw hM0 hMb U σ n F g hleaf.1 τ (hτ F (by simp)) hU]
+        rw [h1, leafG_valW S M P C p w hp hw hM0 U σ n F g hleaf.1 τ (hτ F (by simp)) hU]
 
-/-- `eval_res` with each leaf checked by `leafG` and its table in `gs`. -/
-theorem eval_resG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
-    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (N : Net)
+theorem prod_leavesG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (U : List ℕ)
+    (σ : ℕ → ℕ) :
+    ∀ (ns : List Node) (leaves : List RFac) (gs : List LeafH), leaves.length = ns.length →
+      gs.length = ns.length →
+      (ns.zip (leaves.zip gs)).all (fun q => leafG S M P C p w U σ q.1 q.2.1 q.2.2) = true →
+      ∀ τ, (∀ F ∈ leaves, ∀ x ∈ F.scope, τ x < S.dim x) → (∀ x ∈ U, τ x = σ x) →
+        (ns.map fun n => tmv p w (valW S M P C τ n)).prod = rprod p leaves τ :=
+  prod_leavesGW S M P C p w hp hw hM0 U σ
+
+/-- `eval_resG` for every `M`. -/
+theorem eval_resGW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (N : Net)
     (σ : ℕ → ℕ) (leaves : List RFac) (gs : List LeafH)
     (hlen : leaves.length = N.nodes.length ∧ gs.length = N.nodes.length)
     (hleaf : (N.nodes.zip (leaves.zip gs)).all
@@ -1511,7 +1593,7 @@ theorem eval_resG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   intro τ hτ hr
   show tmv p w (prodW S M P C N.nodes τ) = rprod p leaves τ
   rw [tmv_prodW]
-  refine prod_leavesG S M P C p w hp hw hM0 hMb N.bnd σ N.nodes leaves gs hlen.1 hlen.2 hleaf τ
+  refine prod_leavesGW S M P C p w hp hw hM0 N.bnd σ N.nodes leaves gs hlen.1 hlen.2 hleaf τ
     ?_ ?_
   · intro F hF x hxF
     rcases scopesR_leaves N.bnd leaves steps hscope F hF x hxF with hb | hs
@@ -1523,6 +1605,22 @@ theorem eval_resG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     apply hτ x
     have := hdis x hx
     simpa using this
+
+/-- `eval_res` with each leaf checked by `leafG` and its table in `gs`. -/
+theorem eval_resG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (N : Net)
+    (σ : ℕ → ℕ) (leaves : List RFac) (gs : List LeafH)
+    (hlen : leaves.length = N.nodes.length ∧ gs.length = N.nodes.length)
+    (hleaf : (N.nodes.zip (leaves.zip gs)).all
+      (fun q => leafG S M P C p w N.bnd σ q.1 q.2.1 q.2.2) = true)
+    (steps : List (ℕ × RFac)) (final : List RFac)
+    (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainR p S.dim leaves steps final = true)
+    (hscope : scopesR N.bnd leaves steps = true)
+    (hdis : N.bnd.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hσ : ∀ x ∈ N.bnd, σ x < S.dim x) :
+    tmv p w (sumLT S.dim N.int (prodW S M P C N.nodes) σ) = (rfold p final σ : ZMod p) :=
+  eval_resGW S M P C p w hp hw hM0 N σ leaves gs hlen hleaf steps final hperm hchain hscope hdis hσ
 
 /-! ## Refutation -/
 
@@ -1555,11 +1653,9 @@ theorem tmv_tneg (p w : ℕ) (t : Terms) : tmv p w (tneg t) = -tmv p w t := by
     push_cast
     ring
 
-/-- Two scaled networks whose entries at `σ` are `K` times formal sums with residues `r₁`,
-`r₂` are not equal when `L s K` are the integer vectors `f₁`, `f₂` and
-`f₁(w) r₁ ≠ f₂(w) r₂` mod `p`. -/
-theorem refute_res {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (σ : ℕ → ℕ) (hin : InRange E N₁.bnd σ)
-    (M p w : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M ≤ 2 ^ 64) (hw : IsPrimitiveRoot (w : ZMod p) M)
+/-- `refute_res` for every `M`. -/
+theorem refute_resW {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (σ : ℕ → ℕ) (hin : InRange E N₁.bnd σ)
+    (M p w : ℕ) [Fact p.Prime] (hM : 0 < M) (hw : IsPrimitiveRoot (w : ZMod p) M)
     (K₁ K₂ : ℂ) (T₁ T₂ : Terms) (r₁ r₂ : ℕ)
     (h₁ : eval E N₁ σ = K₁ * tv (om M) [] T₁ ∧ tmv p w T₁ = r₁)
     (h₂ : eval E N₂ σ = K₂ * tv (om M) [] T₂ ∧ tmv p w T₂ = r₂)
@@ -1577,11 +1673,24 @@ theorem refute_res {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (σ : ℕ → �
   have hz := tmv_eq_zero p w M hM hw _ hR
   simp only [tmv_append, tmv_tneg, tmv_mul] at hz
   simp only [h₁.2, h₂.2] at hz
-  simp only [← tmN_cast p w M hp0 hwM hM hMb (vterms f₁), ← tmN_cast p w M hp0 hwM hM hMb (vterms f₂)]
+  simp only [← tmN_castW p w M hp0 hwM hM (vterms f₁), ← tmN_castW p w M hp0 hwM hM (vterms f₂)]
     at hz
   apply hne
   rw [← ZMod.natCast_eq_natCast_iff']
   push_cast
   linear_combination hz
+
+/-- Two scaled networks whose entries at `σ` are `K` times formal sums with residues `r₁`,
+`r₂` are not equal when `L s K` are the integer vectors `f₁`, `f₂` and
+`f₁(w) r₁ ≠ f₂(w) r₂` mod `p`. -/
+theorem refute_res {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (σ : ℕ → ℕ) (hin : InRange E N₁.bnd σ)
+    (M p w : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M ≤ 2 ^ 64) (hw : IsPrimitiveRoot (w : ZMod p) M)
+    (K₁ K₂ : ℂ) (T₁ T₂ : Terms) (r₁ r₂ : ℕ)
+    (h₁ : eval E N₁ σ = K₁ * tv (om M) [] T₁ ∧ tmv p w T₁ = r₁)
+    (h₂ : eval E N₂ σ = K₂ * tv (om M) [] T₂ ∧ tmv p w T₂ = r₂)
+    (he : Equal E s₁ N₁ s₂ N₂) (L : ℂ) (f₁ f₂ : List ℤ)
+    (hf₁ : L * (s₁ * K₁) = cvz (om M) f₁) (hf₂ : L * (s₂ * K₂) = cvz (om M) f₂)
+    (hne : tmN p w M (vterms f₁) * r₁ % p ≠ tmN p w M (vterms f₂) * r₂ % p) : False :=
+  refute_resW σ hin M p w hM hw K₁ K₂ T₁ T₂ r₁ r₂ h₁ h₂ he L f₁ f₂ hf₁ hf₂ hne
 
 end ArchytasZX

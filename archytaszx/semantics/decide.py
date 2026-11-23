@@ -2313,8 +2313,9 @@ def _decide(
             return finish(
                 EqualityVerdict.UNEQUAL,
                 DecisionMethod.SYMBOLIC_WITNESS,
-                f"symbolic contractions differ at {dict(witness.assignment)!r}, boundary index "
-                f"{witness.index}: {witness.left} vs {witness.right}",
+                "symbolic contractions differ at "
+                + (f"{dict(witness.assignment)!r}, " if witness.assignment else "")
+                + f"boundary index {witness.index}: {witness.left} vs {witness.right}",
                 assumptions=(),
                 counterexample=witness.assignment,
                 comparison=ComparisonResult(

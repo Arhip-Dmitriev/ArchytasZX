@@ -1465,8 +1465,7 @@ d=7 (M = 3294172): decide > 600 s in dense products of degree up to M - 1 -> 55 
 certified (export 241995 bytes, its Lean check over 600 s).
 The prime p is proved prime by norm_num, or, when every phase vector is sparse (sparse_all),
 by Lucas's test (prime_lucas: a primitive root, the factorisation of p - 1, powers by 64-bit
-square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64. prim_of needs
-M < 2^64; a pair whose phase order M reaches 2^64 has no residue refutation (NetUnsupported).
+square-and-multiply pm), by prime_lucasB at the bit length of p when p >= 2^64.
 qft_zero_state! n=10 d=57: M = 4 * 57^10, first prime p = 13 M + 1 > 2^64, proved by
 prime_lucasB 65 (was prime_lucas, rejected at p < 2^64): 186 s, 1.45 GB anon.
 The hF case of a sparse phase vector (lean_refute sparse_proof) splits k by membership in its
@@ -1477,6 +1476,18 @@ the hypotheses k ≠ key and if_false, then ex_zero. qft/main! n=7 d=6 (6 vector
 split_ifs over the three if chains of Φ and Pt exceeded simp's maximum steps in all 6 cases
 (322 s, rejected) -> accepted in 145 s, 0.96 GB anon; a copy with a wrong ex_atoms exponent is
 rejected in 140 s. qft/main! n=3 d=27 (export unchanged) is accepted in 36 s, 0.42 GB anon.
+Phase orders M of any size: the order of w is proved by prim_of (64-bit powers, M < 2^64) or
+prim_ofB b (b-bit powers, M < 2^b; the exporter takes b = bit length of M when M >= 2^64).
+tmN takes its powers with M bits (pm p M), so tmN_castW needs no bound on M; tmN_cast,
+leafR_val, leafXR_val, leafXD_val, leafG_val, prod_leavesR/G, eval_res, eval_resG and
+refute_res keep their hypothesis M <= 2^64 and are wrappers of their W forms (same statement
+without it); RefuteSym adds leafS_valW, prod_leavesSW and sym_finalW. lean_subst.wide picks the
+W lemma when M > 2^64. qft_zero_state! n=17 d=158 (M = 2^17 * 79^17, about 2^124; p by
+prime_lucasB 127, w by prim_ofB 125): unequal_uncertified ("the phase order is at least 2^64")
+-> UNEQUAL certified, Lean 562 s / 3.6 GB anon. Decide there takes about 760 s; profiled (2.8x
+under cProfile): loading the 95 MB script (_phase_vector_parts) 14%, rendering the Dirac
+output of the session (printer.phase) 20%, symbolic contraction (_bilinear_table) 22%, the
+refutation (lean_net._phase_table 27%, recheck_residue 12%).
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 

@@ -1063,6 +1063,29 @@ theorem leafS_val (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
   exact LX.norm_agree U σ τ ρ sc _
     (fun y hy => by simpa using hv n hn x (by simpa [nlegs] using hx) y hy) hρτ hU
 
+/-- `leafS_val` for every `M`. -/
+theorem leafS_valW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (U : List ℕ)
+    (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (g : List Node) (sc : List ℕ) (F : RFac)
+    (h : leafS S M P C p w U σ bs g sc F = true) (τ : ℕ → ℕ)
+    (hτ : ∀ y ∈ sc, τ y < S.dim y) (hU : ∀ y ∈ U, τ y = σ y) :
+    (g.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod = (F.at τ : ZMod p) := by
+  simp only [leafS, Bool.and_eq_true, List.all_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨hs, hv⟩, hc⟩ := h
+  obtain ⟨ρ, hρ, hρτ⟩ := assigns_cover S.dim sc τ hτ
+  have hFs : ∀ y ∈ F.scope, y ∈ sc := fun y hy => by simpa using hs y hy
+  rw [F.at_congr τ ρ fun l hl => (hρτ l (hFs l hl)).symm, hc ρ hρ, foldr_mod_cast, List.map_map]
+  congr 1
+  apply List.map_congr_left
+  intro n hn
+  simp only [Function.comp_apply]
+  rw [tmN_castW p w M hp hw hM0, valQ_eq]
+  congr 1
+  apply valW_congr
+  intro x hx
+  exact LX.norm_agree U σ τ ρ sc _
+    (fun y hy => by simpa using hv n hn x (by simpa [nlegs] using hx) y hy) hρτ hU
+
 theorem leafQ_val (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (sc : List ℕ)
     (F : RFac) (h : leafQ p D U σ q sc F = true) (τ : ℕ → ℕ) (hτ : ∀ y ∈ sc, τ y < D y)
     (hU : ∀ y ∈ U, τ y = σ y) : cval p q τ = (F.at τ : ZMod p) := by
@@ -1100,6 +1123,34 @@ theorem prod_leavesS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ)
         simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
         rw [List.flatten_cons, List.map_append, List.prod_append, h1,
           leafS_val S M P C p w hp hw hM0 hMb U σ bs g sc F hl.1 τ (hτ sc (by simp)) hU]
+
+/-- `prod_leavesS` for every `M`. -/
+theorem prod_leavesSW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M)
+    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) :
+    ∀ (gss : List (List Node)) (scs : List (List ℕ)) (ln : List RFac),
+      scs.length = gss.length → ln.length = gss.length →
+      (gss.zip (scs.zip ln)).all (fun q => leafS S M P C p w U σ bs q.1 q.2.1 q.2.2) = true →
+      ∀ τ, (∀ sc ∈ scs, ∀ y ∈ sc, τ y < S.dim y) → (∀ y ∈ U, τ y = σ y) →
+        (gss.flatten.map fun n => tmv p w (valW S M P C (tval bs τ) n)).prod =
+          rprod p ln τ := by
+  intro gss
+  induction gss with
+  | nil => intro scs ln _ hlen _ τ _ _; cases ln <;> simp_all [rprod]
+  | cons g gss ih =>
+    intro scs ln hsl hlen hl τ hτ hU
+    cases scs with
+    | nil => simp at hsl
+    | cons sc scs =>
+      cases ln with
+      | nil => simp at hlen
+      | cons F Fs =>
+        simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at hl
+        have h1 := ih scs Fs (by simpa using hsl) (by simpa using hlen) hl.2 τ
+          (fun s hs => hτ s (by simp [hs])) hU
+        simp only [rprod, List.map_cons, List.prod_cons] at h1 ⊢
+        rw [List.flatten_cons, List.map_append, List.prod_append, h1,
+          leafS_valW S M P C p w hp hw hM0 U σ bs g sc F hl.1 τ (hτ sc (by simp)) hU]
 
 theorem prod_leavesQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) :
     ∀ (cs : List (ℕ × LX)) (sqs : List (List ℕ)) (lq : List RFac),
@@ -1167,6 +1218,55 @@ theorem sym_final (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     simpa using this
   simp only [List.all_eq_true, List.contains_iff_mem] at hsc
   have e1 := prod_leavesS S M P C p w hp hw hM0 hMb U σ st.bs gss scs ln hsl hln hl1 τ
+    (fun sc hs y hy => hr y (by simpa using hsc sc (by simp [hs]) y hy)) hU
+  have e2 := prod_leavesQ p S.dim U σ st.cs sqs lq hsq hlq hl2 τ
+    (fun sc hs y hy => hr y (by simpa using hsc sc (by simp [hs]) y hy)) hU
+  unfold sval
+  rw [(hns.map _).prod_eq, e1, e2]
+  simp only [rprod, List.map_append, List.prod_append, List.map_cons, List.map_nil,
+    List.prod_cons, List.prod_nil, mul_one, kleaf, RFac.at, RT.get, ZMod.natCast_mod]
+  ring
+
+/-- `sym_final` for every `M`. -/
+theorem sym_finalW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (p w : ℕ) (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M)
+    (U R : List ℕ) (σ : ℕ → ℕ) (st : SSt) (gss : List (List Node)) (scs : List (List ℕ))
+    (ln lq : List RFac)
+    (hns : st.ns.isPerm gss.flatten = true) (hsl : scs.length = gss.length)
+    (hln : ln.length = gss.length)
+    (hl1 : (gss.zip (scs.zip ln)).all (fun q => leafS S M P C p w U σ st.bs q.1 q.2.1 q.2.2) =
+      true)
+    (sqs : List (List ℕ)) (hsq : sqs.length = st.cs.length) (hlq : lq.length = st.cs.length)
+    (hl2 : (st.cs.zip (sqs.zip lq)).all (fun q => leafQ p S.dim U σ q.1 q.2.1 q.2.2) = true)
+    (steps : List (ℕ × RFac)) (final : List RFac)
+    (hperm : R.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainR p S.dim (ln ++ lq ++ [kleaf p st.c]) steps final = true)
+    (hscope : scopesR U (ln ++ lq ++ [kleaf p st.c]) steps = true)
+    (hdis : U.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hsc : (scs ++ sqs).all (fun sc => sc.all fun y => (steps.map Prod.fst).contains y) =
+      true)
+    (hσ : ∀ x ∈ U, σ x < S.dim x) :
+    sumR S.dim R (sval S M P C p w st) σ = (rfold p final σ : ZMod p) := by
+  rw [List.isPerm_iff] at hns
+  rw [sumR_perm _ hperm, rfold_cast]
+  simp only [List.all_eq_true, Bool.not_eq_true'] at hdis
+  rw [← chainR_val p S.dim U steps _ final hchain hscope σ hσ]
+  apply sumR_congr
+  intro τ hτ hr
+  have hrange : ∀ F ∈ ln ++ lq ++ [kleaf p st.c], ∀ y ∈ F.scope, τ y < S.dim y := by
+    intro F hF y hy
+    rcases scopesR_leaves U _ steps hscope F hF y hy with hb | hs
+    · by_cases hm : y ∈ (steps.map Prod.fst).reverse
+      · exact hr y hm
+      · rw [hτ y hm]; exact hσ y hb
+    · exact hr y (by simpa using hs)
+  have hU : ∀ y ∈ U, τ y = σ y := by
+    intro y hy
+    apply hτ y
+    have := hdis y hy
+    simpa using this
+  simp only [List.all_eq_true, List.contains_iff_mem] at hsc
+  have e1 := prod_leavesSW S M P C p w hp hw hM0 U σ st.bs gss scs ln hsl hln hl1 τ
     (fun sc hs y hy => hr y (by simpa using hsc sc (by simp [hs]) y hy)) hU
   have e2 := prod_leavesQ p S.dim U σ st.cs sqs lq hsq hlq hl2 τ
     (fun sc hs y hy => hr y (by simpa using hsc sc (by simp [hs]) y hy)) hU

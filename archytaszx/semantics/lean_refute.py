@@ -49,7 +49,7 @@ from archytaszx.semantics.lean_net import (
     _paren,
 )
 from archytaszx.semantics.lean_scalar import II, NC, Ex, Inv, Om, Rt, ScalarUnsupported
-from archytaszx.semantics.lean_subst import sym_decls, sym_plan
+from archytaszx.semantics.lean_subst import bound, prim_head, sym_decls, sym_plan, wide
 
 K = "(by decide +kernel)"
 MAX_ASSIGNMENTS = 4096
@@ -1008,8 +1008,6 @@ class _Refuter:
                 if c:
                     needs |= self.atom_needs(Rt(d))
         self.M = math.lcm(*needs)
-        if self.M >= 1 << 64:
-            raise NetUnsupported("the phase order is at least 2^64")
         self.ptab: dict[tuple[int, int], tuple[int, tuple[int, ...]]] = {}
         for (ph, j), t in zip(self.keys, dens, strict=True):
             self.ptab[(ph, j)] = (int((t * self.M) % self.M), ())
@@ -1867,7 +1865,8 @@ class _Refuter:
             f"  have he := h {' '.join(args)}" if args and binders else "  have he := h",
             f"  have hp : Fact (Nat.Prime {p}) := ⟨{self.prime_proof()}⟩",
             (
-                f"  have hw := prim_of {p} {w} {M} (by norm_num) (by norm_num) {_fac_list(M)} "
+                f"  have hw := {prim_head(M)} {p} {w} {M} (by norm_num) (by norm_num) "
+                f"{_fac_list(M)} "
                 f"{K} (by norm_num) {K} {K}"
             ),
             f"  have hw1 : (({w} : ℕ) : ZMod {p}) ^ {M} = 1 := hw.pow_eq_one",
@@ -1896,15 +1895,15 @@ class _Refuter:
                         f"def G{tag} : List LeafH := [{items}]"
                     )
                     body.append(
-                        f"  have r{i} := eval_resG {env}.shape {M} Pt Ct {p} {w} (by norm_num) "
-                        f"hw1 (by norm_num) (by norm_num) {tag} σ0 L{tag} G{tag} {K} {K} "
+                        f"  have r{i} := {wide(M, 'eval_resG')} {env}.shape {M} Pt Ct {p} {w} "
+                        f"(by norm_num) hw1 (by norm_num) {bound(M)}{tag} σ0 L{tag} G{tag} {K} {K} "
                         f"ST{tag} FN{tag} {K} CH{tag} {K} {K} {K}"
                     )
                 else:
                     body.append(
-                        f"  have r{i} := eval_res {env}.shape {M} Pt Ct {p} {w} (by norm_num) "
-                        f"hw1 (by norm_num) (by norm_num) {tag} σ0 L{tag} {K} {K} ST{tag} "
-                        f"FN{tag} {K} CH{tag} {K} {K} {K}"
+                        f"  have r{i} := {wide(M, 'eval_res')} {env}.shape {M} Pt Ct {p} {w} "
+                        f"(by norm_num) hw1 (by norm_num) {bound(M)}{tag} σ0 L{tag} {K} {K} "
+                        f"ST{tag} FN{tag} {K} CH{tag} {K} {K} {K}"
                     )
             else:
                 more, term = sym_decls(
@@ -1914,8 +1913,8 @@ class _Refuter:
                 body.append(f"  have r{i} := {term}")
         two = "1" if len(nets) > 1 else "0"
         body.append(
-            f"  refine refute_res σ0 (inRange_of _ _ _ {K}) {M} {p} {w} (by norm_num) "
-            f"(by norm_num) hw "
+            f"  refine {wide(M, 'refute_res')} σ0 (inRange_of _ _ _ {K}) {M} {p} {w} (by norm_num) "
+            f"{bound(M)}hw "
             f"_ _ _ _ _ _ ⟨e0, r0⟩ ⟨e{two}, r{two}⟩ he {self.l_text(lcd)} {_ints(vecs[0])} "
             f"{_ints(vecs[1])} ?_ ?_ {K}"
         )

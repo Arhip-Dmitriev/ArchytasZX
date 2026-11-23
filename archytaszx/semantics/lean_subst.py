@@ -37,6 +37,21 @@ MAX_XSTEP = 4096
 RUN_STEPS = 64
 
 
+def wide(m: int, name: str) -> str:
+    """The lemma `name`, or its `W` form without `M ≤ 2 ^ 64` when ``m`` exceeds `2 ^ 64`."""
+    return name + "W" if m > 1 << 64 else name
+
+
+def bound(m: int) -> str:
+    """The `M ≤ 2 ^ 64` argument of :func:`wide`'s lemma at ``m``, with a trailing space."""
+    return "" if m > 1 << 64 else "(by norm_num) "
+
+
+def prim_head(m: int) -> str:
+    """`prim_of`, or `prim_ofB` at the bit length of ``m`` when ``m`` is at least `2 ^ 64`."""
+    return "prim_of" if m < 1 << 64 else f"prim_ofB {m.bit_length()}"
+
+
 def ev(e: Ex, t: Callable[[int], int]) -> int:
     """Mirror of `LX.eval`."""
     h = e[0]
@@ -785,7 +800,8 @@ def sym_decls(
         f"(hw1 : (({w} : ℕ) : ZMod {p}) ^ {M} = 1) :\n"
         f"    sumR {dim} {tag}R{last} ({sv} {st_last}) σ0 = "
         f"(rfold {p} FN{xt} σ0 : ZMod {p}) :=\n"
-        f"  sym_final {shape} {M} Pt Ct {p} {w} (by norm_num) hw1 (by norm_num) (by norm_num) "
+        f"  {wide(M, 'sym_final')} {shape} {M} Pt Ct {p} {w} (by norm_num) hw1 (by norm_num) "
+        f"{bound(M)}"
         f"{unbnd} {tag}R{last} σ0 {st_last} {gss} {scs} {ln} {lq} (by decide +kernel) "
         f"(by decide +kernel) (by decide +kernel) ({zs1}) {sqs} (by decide +kernel) "
         f"(by decide +kernel) ({zs2}) ST{xt} FN{xt} (by decide +kernel) CH{xt} "
