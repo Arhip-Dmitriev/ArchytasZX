@@ -1020,6 +1020,25 @@ class TestReviewRegressions:
         assert list(decision.assumptions) == expected
         assert_oracle_agrees(left, right, decision)
 
+    @pytest.mark.parametrize("own", [(), (1,)])
+    def test_induction_equal_states_only_its_own_assumptions(
+        self, monkeypatch: pytest.MonkeyPatch, own: tuple[int, ...]
+    ) -> None:
+        mine = tuple(deferred_constraint() for _ in own)
+        evidence: dict[str, object] = {"assumptions": mine} if own else {}
+        monkeypatch.setattr(decide_module, "same_normal_form", lambda a, b: False)
+        monkeypatch.setattr(
+            decide_module,
+            "_decide_by_induction",
+            lambda *a, **k: (EqualityVerdict.EQUAL, DecisionMethod.INDUCTION, "patched", evidence),
+        )
+        monkeypatch.setattr(decide_module, "free_mult_symbols", lambda d: frozenset({"n"}))
+        left, right = deferred_fusion_diagram(), deferred_fusion_diagram()
+        decision = decide_equal(left, right, use_saturation=False, use_symbolic=False)
+        assert decision.method is DecisionMethod.INDUCTION, decision.reason
+        assert decision.left_nf is not None and decision.left_nf.assumed_constraints
+        assert decision.assumptions == mine
+
     def test_symbolic_equal_drops_normal_form_assumptions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

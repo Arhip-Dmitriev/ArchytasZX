@@ -30,6 +30,10 @@ generality the question is undecidable, so every procedure below is sound and in
 
 Equations that a derivation assumed rather than verified (DEFERRED and BOUND dimension
 constraints, one per equation up to orientation) are reported with the verdict as its assumptions; the verdict is conditional on them.
+Each verdict states the assumptions of the derivations behind it only: a normal-form match the
+normal forms', an induction EQUAL its own (the base case and the step's rewrites; the normal
+forms' too when it inducts on them; the nested decisions' of the periodic, carry-open and
+chain-end routes; none for the column-count and per-copy routes), an UNKNOWN none.
 
 
 2. DECIDING EQUALITY: archytaszx.semantics.decide

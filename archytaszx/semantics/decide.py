@@ -60,7 +60,7 @@ import contextvars
 import enum
 import itertools
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from types import MappingProxyType
@@ -2143,7 +2143,7 @@ def _decide(
         method: DecisionMethod,
         reason: str,
         *,
-        assumptions: tuple[DimensionConstraint, ...] = nf_assumptions,
+        assumptions: tuple[DimensionConstraint, ...],
         proofs: tuple[Certificate, ...] = certificates,
         **evidence: object,
     ) -> Decision:
@@ -2229,6 +2229,7 @@ def _decide(
             EqualityVerdict.EQUAL,
             DecisionMethod.NORMAL_FORM,
             f"normal forms agree{conditional}; {sampled}",
+            assumptions=nf_assumptions,
             samples_checked=checked,
         )
 
@@ -2468,7 +2469,15 @@ def _decide(
                 if late_decision is not None:
                     return late_decision
                 reason = "; ".join([*notes, f"induction: {reason}"])
-            return finish(verdict, method, reason, samples_checked=checked, **evidence)  # type: ignore[arg-type]
+            own = cast("tuple[DimensionConstraint, ...]", evidence.pop("assumptions", ()))
+            return finish(
+                verdict,
+                method,
+                reason,
+                assumptions=own,
+                samples_checked=checked,
+                **evidence,  # type: ignore[arg-type]
+            )
     elif not use_induction:
         notes.append("induction disabled")
     elif not live:
@@ -2483,6 +2492,7 @@ def _decide(
         EqualityVerdict.UNKNOWN,
         DecisionMethod.NONE,
         "; ".join(notes),
+        assumptions=(),
         samples_checked=checked,
         base_case=induction_base,
     )
@@ -2553,7 +2563,13 @@ def _induction_on_normal_forms(
         verdict,
         method,
         f"on the normal forms: {reason}",
-        {**evidence, "induction_proof": theorem},
+        {
+            **evidence,
+            "induction_proof": theorem,
+            "assumptions": _joined(
+                evidence, (*nf_l.assumed_constraints, *nf_r.assumed_constraints)
+            ),
+        },
     )
 
 
@@ -2718,6 +2734,7 @@ def _induction_rung(
                 {
                     "induction": result,
                     "induction_reversed": reversed_,
+                    "assumptions": (),
                     "base_case": base_decision,
                 },
             )
@@ -2854,7 +2871,7 @@ def _decide_column_count(
             f"holds for {index} >= {c}; kernel proof carried to {found.symbol} = {index} by "
             "instance"
         ),
-        {"induction_proof": carried},
+        {"induction_proof": carried, "assumptions": ()},
     )
 
 
@@ -2943,7 +2960,7 @@ def _value_count_by_copies(
             f"{power} counted by {found.symbol}: induction over {found.symbol} with a per-copy "
             f"lemma; kernel proof carried to {found.symbol} = {power} by instance"
         ),
-        {"induction_proof": carried},
+        {"induction_proof": carried, "assumptions": ()},
     )
 
 
@@ -3128,7 +3145,11 @@ def _decide_periodic(
         f"power of each chain's transfer matrix) and the pairs at {index} = 0 .. {step - 1} are "
         f"equal; {built}"
     )
-    return EqualityVerdict.EQUAL, DecisionMethod.INDUCTION, reason, {"induction_proof": theorem}
+    evidence = {
+        "induction_proof": theorem,
+        "assumptions": assumed(c for b, _p in bases for c in b.assumptions),
+    }
+    return EqualityVerdict.EQUAL, DecisionMethod.INDUCTION, reason, evidence
 
 
 def _decide_carry_open(
@@ -3224,7 +3245,11 @@ def _decide_carry_open(
             EqualityVerdict.EQUAL,
             DecisionMethod.INDUCTION,
             reason,
-            {**evidence, "induction_proof": theorem},
+            {
+                **evidence,
+                "induction_proof": theorem,
+                "assumptions": _joined(evidence, closing.assumptions),
+            },
         )
     for which in CHAIN_END_CUTS:
         cut_open = _decide_open_ends(
@@ -3338,5 +3363,17 @@ def _decide_open_ends(
         EqualityVerdict.EQUAL,
         DecisionMethod.INDUCTION,
         reason,
-        {**evidence, "induction_proof": theorem},
+        {
+            **evidence,
+            "induction_proof": theorem,
+            "assumptions": _joined(evidence, (*sides[0].assumptions, *sides[1].assumptions)),
+        },
     )
+
+
+def _joined(
+    evidence: Mapping[str, object], more: Iterable[DimensionConstraint]
+) -> tuple[DimensionConstraint, ...]:
+    """The assumptions of an induction ``evidence``, then ``more``, by :func:`assumed`."""
+    own = cast("tuple[DimensionConstraint, ...]", evidence.get("assumptions", ()))
+    return assumed((*own, *more))
