@@ -565,7 +565,8 @@ fails and the pair has no phase parameter, induction.generalized_constant takes 
 coefficient magnitude c (not 0 or 1) of the additive phase terms reading the index and puts a
 fresh real a for c in every phase term +-c t; the lifted pair goes through the induction rung,
 and its theorem is taken at a = c by kernel.phase_instance (inference kind phase_instance), then
-joined to the original sides by iso. Neither kind has a Lean export yet.
+joined to the original sides by iso. A lifted EQUAL without a kernel theorem at a = c is
+dropped, so the later rungs decide the pair. Neither kind has a Lean export yet.
 
 Cooley-Tukey lemma (lemmas.COOLEY_TUKEY, in lemmas.LIBRARY). For registers of dims s (top)
 and t (low) bound by B(s, t): the shift by one over s t (X(1 -> 1, s t) phase{k: -k/(s t)})

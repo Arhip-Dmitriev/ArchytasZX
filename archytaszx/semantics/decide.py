@@ -2609,7 +2609,8 @@ def _generalized_induction(
     """An EQUAL of :func:`_induction_rung` on the pair with one phase constant ``c`` read by
     the index made a real symbol ``a``
     (:func:`~archytaszx.semantics.induction.generalized_constant`), its kernel theorem taken
-    at ``a = c`` (:func:`~archytaszx.semantics.kernel.phase_instance`); else None."""
+    at ``a = c`` (:func:`~archytaszx.semantics.kernel.phase_instance`); None when no such
+    EQUAL carries a kernel theorem."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.induction import _phase_symbols, generalized_constant
 
@@ -2629,21 +2630,20 @@ def _generalized_induction(
             continue
         verdict, method, reason, evidence = settled
         theorem = evidence.get("induction_proof")
-        built = ""
-        if theorem is not None:
-            try:
-                moved = kernel.phase_instance(cast("kernel.Theorem", theorem), name, c)
-                theorem = kernel.trans(
-                    kernel.iso(left, moved.lhs),
-                    kernel.trans(moved, kernel.iso(moved.rhs, right)),
-                )
-            except kernel.KernelError as exc:
-                theorem = None
-                built = f"; no kernel proof at {name} = {c}: {exc}"
+        if theorem is None:
+            continue
+        try:
+            moved = kernel.phase_instance(cast("kernel.Theorem", theorem), name, c)
+            theorem = kernel.trans(
+                kernel.iso(left, moved.lhs),
+                kernel.trans(moved, kernel.iso(moved.rhs, right)),
+            )
+        except kernel.KernelError:
+            continue
         return (
             verdict,
             method,
-            f"for every real {name} in place of {c}: {reason}; taken at {name} = {c}{built}",
+            f"for every real {name} in place of {c}: {reason}; taken at {name} = {c}",
             {**evidence, "induction_proof": theorem},
         )
     return None
