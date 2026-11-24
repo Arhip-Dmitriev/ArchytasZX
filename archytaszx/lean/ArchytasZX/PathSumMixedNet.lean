@@ -745,5 +745,68 @@ theorem node_z6 (E : Env) (M : ℕ) (A : ℕ → ℂ) (ms : List MLab) (hw : mOK
     | exact (ex_peq hM ⟨q, by linarith⟩).symm
     | exact (ex_peq hM ⟨-q, by linarith⟩).symm
 
+/-! ## Steps for the Z_3 replay -/
+
+/-- A mixed path sum with its Z_3 path permuted. -/
+theorem mval_perm (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (q : AData) (t : QSem.Data)
+    (es : List Ent) (τ : ℕ → ZMod 2) (ρ : ℕ → ZMod 3) (p' : List ℕ) (h : t.path.Perm p') :
+    mval M c A q t es τ ρ = mval M c A q ⟨p', t.phase, t.cons, t.rows⟩ es τ ρ := by
+  unfold mval
+  exact QSem.qsum_perm _ h ρ
+
+/-- Two entries with one reading take one value. -/
+theorem liftA_dup (ρ : ℕ → ZMod 3) (τ : ℕ → ZMod 2) (es : List Ent)
+    (hes : (es.map (·.1)).Nodup) (e e' : Ent) (he : e ∈ es) (he' : e' ∈ es)
+    (h : e.2 = e'.2) : liftA es ρ τ e'.1 = liftA es ρ τ e.1 := by
+  rw [liftA_get ρ τ es hes e he, liftA_get ρ τ es hes e' he']
+  unfold entVal
+  rw [h]
+
+/-- `z` replaced by `B` in a qubit path sum with atoms. -/
+def substA (M z : ℕ) (B : F2) (q : AData) : AData :=
+  ⟨⟨q.s.path, substP M z B q.s.phase, q.s.cons.map (substF z B), q.s.rows.map (substF z B)⟩,
+    q.held, q.atoms.map fun a => (a.1, substF z B a.2)⟩
+
+theorem bsum_update_dep (G : (ℕ → ZMod 2) → ℂ) (z : ℕ) (B : F2) :
+    ∀ (ys : List ℕ) (τ : ℕ → ZMod 2), z ∉ ys → (∀ m ∈ B, ∀ v ∈ m, v ∉ ys) →
+      bsum ys (fun ρ => G (Function.update ρ z (fz ρ B))) τ =
+        bsum ys G (Function.update τ z (fz τ B))
+  | [], _, _, _ => rfl
+  | y :: ys, τ, hz, hB => by
+    have hy : y ≠ z := fun e => hz (e ▸ List.mem_cons_self)
+    have hz' : z ∉ ys := fun e => hz (List.mem_cons_of_mem _ e)
+    have hB' : ∀ m ∈ B, ∀ v ∈ m, v ∉ ys := fun m hm v hv e =>
+      hB m hm v hv (List.mem_cons_of_mem _ e)
+    have hBy : ∀ m ∈ B, y ∉ m := fun m hm e => hB m hm y e List.mem_cons_self
+    simp only [bsum]
+    rw [bsum_update_dep G z B ys _ hz' hB', bsum_update_dep G z B ys _ hz' hB',
+      fz_update_not τ y 0 B hBy, fz_update_not τ y 1 B hBy, Function.update_comm hy,
+      Function.update_comm hy]
+
+/-- A free variable `z` of a qubit path sum with atoms set to `B`: the sum with `z` replaced. -/
+theorem valA_subst (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (z : ℕ) (B : F2) (q : AData)
+    (hz : z ∉ q.held ++ q.s.path) (hB : ∀ m ∈ B, ∀ v ∈ m, v ∉ q.held ++ q.s.path)
+    (hpa : ∀ y ∈ q.s.path, y ∉ avars q.atoms)
+    (hpa' : ∀ y ∈ q.s.path, y ∉ avars (substA M z B q).atoms) (τ : ℕ → ZMod 2) :
+    valA M c A q (Function.update τ z (fz τ B)) = valA M c A (substA M z B q) τ := by
+  rw [valA_flat M c A q _ hpa, valA_flat M c A _ τ hpa']
+  show _ = bsum (q.held ++ q.s.path) _ τ
+  rw [← bsum_update_dep _ z B _ τ hz hB]
+  apply bsum_congr
+  intro ρ
+  congr 1
+  · unfold aval substA
+    simp only [List.map_map]
+    congr 1
+    apply List.map_congr_left
+    intro a _
+    simp only [Function.comp, fz_substF]
+  · unfold summand substA
+    simp only [← List.map_append, List.forall_mem_map, fz_substF]
+    split_ifs
+    · congr 1
+      exact (ex_peq (by omega) (pn_substP ρ M z hM B q.s.phase)).symm
+    · rfl
+
 end MSem
 end ArchytasZX
