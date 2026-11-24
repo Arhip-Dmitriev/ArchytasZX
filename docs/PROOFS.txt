@@ -107,7 +107,11 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             section 5.2): equal canonical forms are EQUAL; different canonical
                             forms are UNEQUAL as SYMBOLIC_WITNESS at the boundary index where
                             the entries differ; otherwise the reason names the path variables
-                            left and the ladder goes on. use_path_sum=False turns it off. With
+                            left and the ladder goes on. use_path_sum=False turns it off. A
+                            pair on dimensions 1, 2, 3, 6 with a 2 and a 3 factor
+                            (pathsum_mixed.is_mixed_pair) takes this rung first, right after
+                            the interface check; only EQUAL or UNEQUAL there ends the ladder.
+                            With
                             enumerate_residual=True (--tgateenum) a pair left with differing
                             residual forms is evaluated exactly: each entry's residual sum over
                             its 2^k path assignments, or p^k over Z_p for an odd-prime sum (k at

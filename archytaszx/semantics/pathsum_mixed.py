@@ -82,6 +82,18 @@ def is_mixed(diagram: Diagram) -> bool:
     return bool(dims & {2, 6}) and bool(dims & {3, 6})
 
 
+def is_mixed_pair(left: Diagram, right: Diagram) -> bool:
+    """Whether one side is :func:`is_mixed` and both are box-free with every leg of dimension
+    1, 2, 3 or 6."""
+    if not (is_mixed(left) or is_mixed(right)):
+        return False
+    for diagram in (left, right):
+        dims = _dims(diagram)
+        if diagram.bang_boxes or dims is None or not dims <= {1, 2, 3, 6}:
+            return False
+    return True
+
+
 def _dim(diagram: Diagram, ref: PortRef) -> int:
     return int(diagram.nodes[ref.node_id].legs(ref.direction)[ref.index].dim.to_int())
 

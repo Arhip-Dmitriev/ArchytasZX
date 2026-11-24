@@ -470,6 +470,10 @@ both atoms of one s is 0). The Z_3 digits are removed by two rules, neither enum
 A Z_3 digit neither rule removes raises PathSumUnsupported. The result is reduced, compared
 and certified as any qubit path sum; with a layout (Lean exports) from_diagram raises.
 e91/main and six_state_qkd/main at d = 2 decide EQUAL this way (doubled, 93 and 47 steps).
+A pair that pathsum_mixed.is_mixed_pair accepts (one side is_mixed, both box-free with every
+leg of dimension 1, 2, 3 or 6) is compared by this rung first, before normal forms, the oracle,
+saturation and symbolic contraction; an EQUAL or UNEQUAL there is the decision (its one stop
+path_sum), anything else falls through to the full ladder.
 
 Odd prime d (QuditPathSum). When every leg dimension is a power of one odd prime p
 (diagram_base), the sum is const [C(i) = 0] Sum_{y in Z_p^m} omega_p^P(i, y), P and each

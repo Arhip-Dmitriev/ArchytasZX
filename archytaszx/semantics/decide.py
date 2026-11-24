@@ -2042,6 +2042,51 @@ def _point_refuted(
     return oracle.mismatch is not None
 
 
+def _mixed_path_sum_first(left: Diagram, right: Diagram, parameters_agree: bool) -> Decision | None:
+    """The path-sum rung's decision on a pair that
+    :func:`~archytaszx.semantics.pathsum_mixed.is_mixed_pair` accepts, when it settles; else
+    None."""
+    from archytaszx.semantics.pathsum_mixed import is_mixed_pair
+
+    if not is_mixed_pair(left, right):
+        return None
+    found = _path_sum_rung(left, right, {})
+    if isinstance(found, str) or found.status not in ("equal", "unequal"):
+        return None
+    stops = (("path_sum", found.status),)
+    if found.status == "equal":
+        return Decision(
+            EqualityVerdict.EQUAL,
+            DecisionMethod.PATH_SUM,
+            f"{found.reason}; mixed path sum before the other rungs",
+            parameters_agree=parameters_agree,
+            stops=stops,
+        )
+    assert found.index is not None and found.left is not None and found.right is not None
+    witness = EntryWitness(
+        MappingProxyType(dict(found.point)),
+        found.index,
+        found.left.to_complex(),
+        found.right.to_complex(),
+    )
+    return Decision(
+        EqualityVerdict.UNEQUAL,
+        DecisionMethod.SYMBOLIC_WITNESS,
+        f"path sums differ at boundary index {witness.index}: "
+        f"{witness.left} vs {witness.right} ({found.reason})",
+        parameters_agree=parameters_agree,
+        stops=stops,
+        counterexample=witness.assignment,
+        comparison=ComparisonResult(
+            EqualityMode.EXACT,
+            False,
+            f"entry {witness.index} differs by {witness.deviation}",
+            witness.deviation,
+        ),
+        witness=witness,
+    )
+
+
 def _decide(
     left: Diagram,
     right: Diagram,
@@ -2136,6 +2181,11 @@ def _decide(
             interface,
             parameters_agree=parameters_agree,
         )
+
+    if _USE_PATH_SUM.get():
+        early = _mixed_path_sum_first(family_l, family_r, parameters_agree)
+        if early is not None:
+            return early
 
     nf_l: NormalForm | None = None
     nf_r: NormalForm | None = None
