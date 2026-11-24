@@ -35,6 +35,7 @@ from archytaszx.algebra.pathsum import (
     ONE,
     Canon,
     Cyclo,
+    F2Poly,
     ModPoly,
     PathSum,
     PathSumUnsupported,
@@ -1033,6 +1034,14 @@ def _poly_text(terms: Iterable[tuple[Iterable[int], int]]) -> str:
 def _table_poly(digits: list[int], table: list[Fraction], m: int) -> tuple[str, list[int]]:
     """The interpolation of ``table`` over ``digits`` as a Poly in units of 1 / m, and the table
     in units of 1 / m; raises when an entry is off the 1 / m grid."""
+    terms, ts = _table_terms(digits, table, m)
+    return _poly_text(terms), ts
+
+
+def _table_terms(
+    digits: list[int], table: list[Fraction], m: int
+) -> tuple[list[tuple[list[int], int]], list[int]]:
+    """The terms of :func:`_table_poly`'s Poly and the table in units of 1 / m."""
     from archytaszx.semantics.pathsum_diagram import _interpolate
 
     ts = []
@@ -1050,7 +1059,7 @@ def _table_poly(digits: list[int], table: list[Fraction], m: int) -> tuple[str, 
             raise PathSumUnsupported(f"a phase coefficient {c} off the 1/{m} grid")
         if int(v):
             terms.append((sorted(mono), int(v)))
-    return _poly_text(terms), ts
+    return terms, ts
 
 
 @dataclass
@@ -2683,6 +2692,9 @@ class _MixSide:
     path3: list[int] = field(default_factory=list)
     phase3: ModPoly = field(default_factory=lambda: ModPoly(3))
     cons3: list[ModPoly] = field(default_factory=list)
+    path2: list[int] = field(default_factory=list)
+    phase2: PhasePoly = field(default_factory=PhasePoly)
+    cons2: list[F2Poly] = field(default_factory=list)
 
 
 def _mixed_modulus(diagram: Diagram) -> int:
@@ -2758,6 +2770,18 @@ def _mixed_net_side(
     path3 = [lab for lab in summed if dims[lab] in (3, 6)]
     phase3 = ModPoly(3)
     cons3: list[ModPoly] = []
+    path2: list[int] = []
+    phase2 = PhasePoly()
+    cons2: list[F2Poly] = []
+
+    def eq2(x: int, y: int) -> None:
+        if x != y:
+            cons2.append(frozenset({frozenset({x}), frozenset({y})}))
+
+    def add2(terms: Iterable[tuple[Iterable[int], int]]) -> None:
+        for mono, c in terms:
+            phase2.add(mono, Fraction(c, m))
+
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
         name = node.generator_type.name
@@ -2777,6 +2801,7 @@ def _mixed_net_side(
                 raise PathSumUnsupported(f"node {nid!r} is not a (3, 2) {name} on 6")
             kind, lemma = (".B", "val_binder") if binder else (".S", "val_splitter")
             cons3.append(_qvar(3, whole) + _qvar(3, a).scale(-1))
+            eq2(whole, b)
             nodes.append(f"⟨{kind}, {os_}, {is_}, 3, 2⟩")
             frags3.append(f"bFrag3 {whole} {a}")
             frags2.append(f"bFrag2 {whole} {b}")
@@ -2799,7 +2824,11 @@ def _mixed_net_side(
             ent += 2
             ents += [(u1, l0, 1, 0, 1), (u2, l0, 1, 0, 2)]
             cons3 += [_qvar(3, l0) + _qvar(3, lab).scale(-1) for lab in ls]
-            poly, ts8 = _table_poly([l0, u1, u2], t8, m)
+            terms8, ts8 = _table_terms([l0, u1, u2], t8, m)
+            poly = _poly_text(terms8)
+            add2(terms8)
+            for lab in ls:
+                eq2(l0, lab)
             ts = ts8[:6]
             ph = 0
             if any(ts):
@@ -2878,12 +2907,21 @@ def _mixed_net_side(
             )
             vs = [o, i]
             inv2 += 1
+            add2([([o, i], m // 2)])
         else:
             z = name == Z_SPIDER.name
             ys = [ls[0]] if z else [fresh]
             if not z:
                 fresh += 1
-            poly, ts = _table_poly(ys, table, m)
+            terms, ts = _table_terms(ys, table, m)
+            poly = _poly_text(terms)
+            add2(terms)
+            if z:
+                for lab in ls:
+                    eq2(ys[0], lab)
+            else:
+                path2.append(ys[0])
+                add2([([lab, ys[0]], m // 2) for lab in ls])
             ph = 0
             if any(ts):
                 phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", m))
@@ -2926,6 +2964,9 @@ def _mixed_net_side(
         path3,
         phase3,
         [c for c in cons3 if c.terms],
+        path2,
+        phase2,
+        cons2,
     )
 
 
@@ -3033,6 +3074,8 @@ class _Z3Run:
     thm: list[str]
     q: str
     fac: int
+    subs: list[tuple[int, int]] = field(default_factory=list)
+    pairs: list[tuple[int, int]] = field(default_factory=list)
 
 
 def _z3_lines(tag: str, side: _MixSide, m: int) -> _Z3Run:
@@ -3049,6 +3092,8 @@ def _z3_lines(tag: str, side: _MixSide, m: int) -> _Z3Run:
     steps: list[tuple[str, dict[str, str], str]] = []
     count = [0]
     fac = 0
+    subs: list[tuple[int, int]] = []
+    pairs: list[tuple[int, int]] = []
 
     def new(kind: str, ty: str, body: str) -> None:
         count[0] += 1
@@ -3144,6 +3189,7 @@ def _z3_lines(tag: str, side: _MixSide, m: int) -> _Z3Run:
             "(by decide +kernel) (by decide +kernel) (by decide +kernel) τ ρ"
         )
         new("q", "AData", f"substA {m} {e[0]} [[{e1[0]}]] {q0}")
+        subs.append((e[0], e1[0]))
         new("e", "List Ent", f"{e0}.erase {e}")
     left = list(first.values())
     for s in sorted({z for _u, z, *_ in left}):
@@ -3156,6 +3202,7 @@ def _z3_lines(tag: str, side: _MixSide, m: int) -> _Z3Run:
         q0, t0 = cur["q"], cur["t"]
         rest = path[1:]
         u1, u2 = pair[0][0], pair[1][0]
+        pairs.append((u1, u2))
         step(
             f"mval_count3 {common} {q0} {t0} {others} {u1} {u2} {s} 0 {rest} "
             "(by decide +kernel) (by decide) (by decide +kernel) (by decide +kernel) "
@@ -3197,13 +3244,271 @@ def _z3_lines(tag: str, side: _MixSide, m: int) -> _Z3Run:
             f"{join3}.phase, {join3}.cons, []⟩"
         ),
     ]
-    return _Z3Run([*head, *defs, ""], thm, cur["q"], fac)
+    return _Z3Run([*head, *defs, ""], thm, cur["q"], fac, subs, pairs)
+
+
+def _mix_qubit(
+    side: _MixSide, z3: _Z3Run, amp: Any, boundary: tuple[int, ...]
+) -> tuple[PathSum, Any]:
+    """The qubit path sum of a mixed side's final data after its Z_3 replay and its F_2 pins, in
+    Lean labels, and its AmpRun: held the entry pairs (last first), the summed F_2 labels and
+    the fragments' paths, the duplicate entries substituted, one zero atom per entry pair; each
+    equality constraint's class pinned deepest first along a search from its boundary labels
+    (else its least variable)."""
+    from archytaszx.algebra.pathsum import f2_substitute
+    from archytaszx.semantics.lean_amp import AmpRun
+
+    held = [lab for lab in side.summed if side.dims[lab] != 3] + list(side.path2)
+    phase = side.phase2.copy()
+    cons = list(side.cons2)
+    for z, b in z3.subs:
+        new = PhasePoly()
+        for mono, c in phase.terms.items():
+            new.add((mono - {z}) | {b} if z in mono else mono, c)
+        phase = new
+        one = frozenset({frozenset({b})})
+        cons = [f2_substitute(eq, z, one) for eq in cons]
+    atoms: list[tuple[int, F2Poly]] = []
+    zero = amp.index(Cyclo.rational(0))
+    for u1, u2 in z3.pairs:
+        held = [u1, u2, *held]
+        atoms = [(zero, frozenset({frozenset({u1, u2})})), *atoms]
+    adj: dict[int, list[int]] = {}
+    for eq in cons:
+        if len(eq) == 2 and all(len(mo) == 1 for mo in eq):
+            x, y = sorted(next(iter(mo)) for mo in eq)
+            adj.setdefault(x, []).append(y)
+            adj.setdefault(y, []).append(x)
+    path = set(held)
+    seen: set[int] = set()
+    reached: list[tuple[int, int]] = []
+    starts = [v for v in boundary if v in adj] + sorted(adj)
+    for v0 in starts:
+        if v0 in seen:
+            continue
+        comp, stack = {v0}, [v0]
+        while stack:
+            u = stack.pop()
+            for w in adj[u]:
+                if w not in comp:
+                    comp.add(w)
+                    stack.append(w)
+        roots = [v for v in starts if v in comp and v not in path] or [v0]
+        roots = list(dict.fromkeys(roots))
+        seen |= set(roots)
+        queue = list(roots)
+        while queue:
+            u = queue.pop(0)
+            for w in sorted(adj[u]):
+                if w not in seen:
+                    seen.add(w)
+                    reached.append((w, u))
+                    queue.append(w)
+    run = AmpRun(amp, [], held, atoms)
+    run.release()
+    read = run.avars()
+    for x, p in reversed(reached):
+        if x not in path or x in read:
+            raise PathSumUnsupported(f"the F_2 variable {x} of the mixed side is not a free pin")
+        one = frozenset({frozenset({p})})
+        new = PhasePoly()
+        for mono, c in phase.terms.items():
+            new.add((mono - {x}) | {p} if x in mono else mono, c)
+        phase = new
+        cons = [f2_substitute(eq, x, one) for eq in cons]
+        path.discard(x)
+        rest = [v for v in run.cur if v != x]
+        run.inner([f".front {x}", f".pin [[{p}]]"])
+        run.cur = rest
+    run.inner([".norm"])
+    raw = PathSum(
+        boundary,
+        path,
+        phase,
+        Cyclo.rational(1),
+        0,
+        list(dict.fromkeys(eq for eq in cons if eq)),
+        [],
+        [(Cyclo.rational(0), f) for _j, f in atoms],
+    )
+    return raw, run
+
+
+def _mix_c_lines(tag: str, side: _MixSide) -> list[str]:
+    """The constants of a mixed side's joined F_2 and Z_3 fragments."""
+    nodes = [f"p{tag}{i}" for i in range(len(side.nodes))]
+    chunks = [f"ps{tag}c{j}" for j in range((len(nodes) + NODE_CHUNK - 1) // NODE_CHUNK)]
+    unfold = ", ".join([f"ps{tag}", *chunks, *nodes])
+    common = "List.map_append, List.map_cons, List.map_nil, List.cons_append, List.nil_append"
+    return [
+        f"theorem c{tag} : (joinAll (ps{tag}.map (·.2.1))).c = (rt 2)⁻¹ ^ {side.inv2} := by",
+        f"  simp only [{unfold}, {common}, joinAll, Frag.join, Frag.unit, zFragD, xFragD,",
+        "    fFragD, bFrag2, z6Frag2, List.length_cons, List.length_nil]",
+        "  ring",
+        "",
+        (
+            f"theorem c3{tag} : (QSem.qjoinAll (ps{tag}.map (·.1.2))).c = "
+            f"(rt 3)⁻¹ ^ {side.inv3} := by"
+        ),
+        f"  simp only [{unfold}, {common}, QSem.qjoinAll, QSem.QFrag.join, QSem.QFrag.unit,",
+        "    QSem.zFragQ, QSem.xFragQ, QSem.fFragQ, bFrag3, z6Frag3, List.length_cons,",
+        "    List.length_nil]",
+        "  ring",
+        "",
+    ]
+
+
+def mixed_net_body(
+    left: Diagram, right: Diagram, name: str, phases: list[tuple[str, int]]
+) -> tuple[NetBody, Any]:
+    """The lines proving ``Equal E sL NL sR NR`` for a mixed network on the left and a qubit
+    network with atoms on the right: NetPSM.eval_mval and the Z_3 replay z3L give the left as a
+    qubit path sum with zero atoms, then each side's AmpRun steps, the boundary bits matched
+    (mbits_dbits) and the final comparison; and the atoms' coefficients."""
+    from archytaszx.algebra.pathsum import constant
+    from archytaszx.semantics.lean_amp import Coefs, afac_lines, qreqs_lines, reqs_lines
+    from archytaszx.semantics.lean_scalar import Inv, Om, Rt
+
+    raw_r = from_diagram(right, w_nodes=True)
+    if not isinstance(raw_r, PathSum):
+        raise PathSumUnsupported("the right side of the mixed export is not a qubit path sum")
+    m = math.lcm(8, _mixed_modulus(left), _table_modulus(right))
+    side_l = _mixed_net_side(left, "L", 1 << 16, m, phases)
+    z3 = _z3_lines("L", side_l, m)
+    amp = Coefs(m)
+    if amp.index(Cyclo.rational(0)) != 0:
+        raise PathSumUnsupported("the zero coefficient is not at index 0")
+    bnd = tuple(range(side_l.boundary))
+    if raw_r.boundary != bnd:
+        raise PathSumUnsupported("the right side's boundary digits are not its port labels")
+    raw_l, run_l = _mix_qubit(side_l, z3, amp, bnd)
+    side_r, _ = _net_side(right, m, phases, 1 << 17, {}, amp, {})
+    if side_r.boundary != side_l.boundary or any(
+        side_r.dig[i] != [i] for i in range(side_r.boundary)
+    ):
+        raise PathSumUnsupported("the right side's boundary labels are not one bit each")
+    run_r = _net_run(side_r, amp)
+    plan, _red_l, _red_r = amp_plan(((raw_l, run_l), (raw_r, run_r)))
+    k_l, k_r = plan.turns
+    sc = _scalars()
+    fl_lines, f_l = afac_lines("L", run_l, sc)
+    fr_lines, f_r = afac_lines("R", run_r, sc)
+    c, kc = constant(left.scalar.to_sympy())
+    scal_l = _const_model(c, kc)
+    s_l, s_r = sc.text(scal_l), sc.text(side_r.scalar)
+    w_r = sp.Mul(*side_r.weights)
+    lhs = (
+        scal_l
+        * Inv(Rt(3)) ** side_l.inv3
+        * sp.Integer(3) ** z3.fac
+        * f_l
+        * Inv(Rt(2)) ** side_l.inv2
+        * Om(m) ** k_l
+    )
+    rhs = f_r * side_r.scalar * w_r * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
+    proof = sc.prove(lhs, rhs)
+    t_r = "(netDataA digR NR (psR.map (·.2.1)) (psR.map (·.2.2)))"
+    bl = list(bnd)
+    labs = {**side_l.dims, **{lab: 1 << k for lab, k in side_r.k_of.items()}}
+    lines = [
+        *_mix_lines("L", side_l, m),
+        *_mix_c_lines("L", side_l),
+        *z3.defs,
+        *z3.thm,
+        *_anet_lines("R", side_r, m),
+        f"def stepsL : List AStep := [{', '.join(run_l.steps)}]",
+        f"def stepsR : List AStep := [{', '.join(run_r.steps)}]",
+        "",
+        *fl_lines,
+        *fr_lines,
+        *reqs_lines("L", run_l.reqs, amp, sc, "stepsL"),
+        *reqs_lines("R", run_r.reqs, amp, sc, "stepsR"),
+        *qreqs_lines("L", run_l, sc, "stepsL"),
+        *qreqs_lines("R", run_r, sc, "stepsR"),
+        f"theorem key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
+        *("  " + ln for ln in proof.splitlines()),
+        "",
+        *_chain_lines("aruns", m, z3.q, t_r),
+        "theorem evalL (σ : ℕ → ℕ) (hσ : InRange E NL.bnd σ) :",
+        "    eval E NL σ = (QSem.qjoinAll (psL.map (·.1.2))).c *",
+        f"      (3 ^ {z3.fac} * valA {m} (joinAll (psL.map (·.2.1))).c A {z3.q}",
+        "        (mbits msL (clamp NL.bnd σ))) := by",
+        "  rw [netL.eval_mval (by decide +kernel) (by decide +kernel) σ hσ]",
+        "  exact congrArg _ (z3L _ _ _)",
+        "",
+        "/-- The two networks are equal. -/",
+        f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
+        "  refine ⟨List.Perm.refl _, fun σ hσ => ?_⟩",
+        "  have hσR : InRange E NR.bnd σ := hσ",
+        "  rw [evalL σ hσ, netR.eval_eq σ hσR, show clamp NL.bnd σ = clamp NR.bnd σ from rfl,",
+        f"    c3L, cL, cR, aruns_sound {m} (by norm_num) A stepsL {z3.q} _ _ reqsL qreqsL",
+        f"    arunsL_ok, arunsL_eq, aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR",
+        f"    qreqsR arunsR_ok, arunsR_eq, valA_agree {m} _ A arunsL {bl} _ _ (by decide +kernel)",
+        "      (by decide +kernel) (by decide +kernel) (by decide +kernel)",
+        f"      (mbits_dbits msL ownR labsR digR ownROK (by decide +kernel) _ {bl}",
+        "        (by decide +kernel))]",
+        "  simp only [← valA_smul]",
+        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r}",
+        "    (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)",
+        "    (by decide +kernel) (by decide +kernel)",
+        "  rw [facL, facR]",
+        "  linear_combination key",
+        "",
+    ]
+    return NetBody(lines, labs, s_l, s_r, m), amp
+
+
+MIX_DIMS = "if k = 1 then 2 else k"
+"""The dimension of a label's value in a mixed network proof: 2 for one bit, else itself."""
+
+
+def export_mixed_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+    """Lean 4 source proving ``Equal E sL NL sR NR`` for a diagram on dimensions 2, 3 and 6 against
+    a qubit diagram (ArchytasZX/PathSumMixedNet.lean, see :func:`mixed_net_body`); raises
+    :class:`PathSumUnsupported` outside that class or when the sums do not reduce to one
+    canonical form."""
+    from archytaszx.semantics.pathsum_mixed import is_mixed
+
+    if not is_mixed(left):
+        raise PathSumUnsupported("the mixed network export takes a mixed left side")
+    phases: list[tuple[str, int]] = []
+    body, amp = mixed_net_body(left, right, name, phases)
+    sc = _scalars()
+    support = any("afinalS_perm" in ln for ln in body.lines)
+    ns = "ArchytasZX.PathSumMixedProof"
+    lines = [
+        "import ArchytasZX.PathSumMixedNet",
+        "import ArchytasZX.PathSumChain",
+        *(["import ArchytasZX.PathSumSupport"] if support else []),
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}` over a mixed network and a qubit network",
+        "",
+        "The mixed network's value is its Z_3 and F_2 fragments' mixed path sum; the Z_3 replay",
+        "leaves a qubit path sum with zero atoms, the F_2 pins and both sides' reduction steps",
+        "follow, and the final comparison gives `Equal`.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem ArchytasZX.MSem",
+        "",
+        *QNET_OPTIONS,
+        "",
+        *amp.lean_def(sc),
+        *net_env(phases, body.labs, MIX_DIMS, body.m),
+        *body.lines,
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 __all__ = [
     "NET_OPTIONS",
     "QNET_OPTIONS",
     "NetBody",
+    "export_mixed_net",
     "export_net",
     "export_pair",
     "export_proof",

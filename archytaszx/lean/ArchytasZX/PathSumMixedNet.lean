@@ -1066,5 +1066,22 @@ theorem disj2_of (fs : List (Frag × Atoms))
         simp only [fragVars, List.mem_append, not_or] at this
         tauto⟩⟩
 
+/-- The F_2 variables of labels `(x, 2, x, x)` are the digits of an owner table with
+`dig x = [x]`. -/
+theorem mbits_dbits (ms : List MLab) (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ)
+    (h : ownOK own labs dig = true) (hb : (bvars ms).Nodup) (σ : ℕ → ℕ) (vs : List ℕ)
+    (hv : vs.all (fun x => decide ((x, 2, x, x) ∈ ms) && decide (x ∈ labs) &&
+      decide (dig x = [x])) = true) :
+    ∀ x ∈ vs, mbits ms σ x = dbits own σ x := by
+  intro x hx
+  have := List.all_eq_true.1 hv x hx
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at this
+  obtain ⟨⟨hm, hl⟩, hd⟩ := this
+  have h1 := mbits_get σ (m := (x, 2, x, x)) (by simp) ms hm hb
+  have h2 := dbits_get h σ hl (i := 0) (by simp [hd])
+  simp only [hd, List.getElem_cons_zero] at h2
+  rw [h1, h2]
+  simp [mbit, digit]
+
 end MSem
 end ArchytasZX

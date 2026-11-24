@@ -134,10 +134,14 @@ def _concrete_pair(left: Diagram, right: Diagram) -> bool:
 
 
 def path_sum_proof(left: Diagram, right: Diagram) -> tuple[kernel.Symbolic | None, str]:
-    """The Lean network export of the path sums of ``left = right``, qubit, qudit, then qudit over
-    digits, or None and the reasons."""
+    """The Lean network export of the path sums of ``left = right``, qubit, qudit, qudit over
+    digits, then mixed on dimensions 2, 3 and 6, or None and the reasons."""
     from archytaszx.algebra.pathsum import PathSumError
-    from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net
+    from archytaszx.semantics.lean_pathsum import (
+        export_mixed_net,
+        export_net,
+        export_qudit_net,
+    )
     from archytaszx.semantics.lean_qdigits import export_qudit_digits_net
 
     try:
@@ -154,7 +158,12 @@ def path_sum_proof(left: Diagram, right: Diagram) -> tuple[kernel.Symbolic | Non
         with _trace.span("decide.proof.path_sum_qudit_digits"):
             return kernel.Symbolic(left, right, export_qudit_digits_net(left, right)), ""
     except (PathSumError, ScalarUnsupported) as exc:
-        return None, f"{why_net}; {why_qudit}; qudit digit network export: {exc}"
+        why_digits = f"qudit digit network export: {exc}"
+    try:
+        with _trace.span("decide.proof.path_sum_mixed"):
+            return kernel.Symbolic(left, right, export_mixed_net(left, right)), ""
+    except (PathSumError, ScalarUnsupported) as exc:
+        return None, f"{why_net}; {why_qudit}; {why_digits}; mixed network export: {exc}"
 
 
 def restricted_proof(

@@ -1443,7 +1443,7 @@ F node beside atoms, a weighted X state into a Z effect (pin), a weighted X stat
 leg and two fused weighted X spiders (averageH).
 
 ArchytasZX/PathSumMixed.lean (namespace MSem) holds the Z_3 side of the mixed path sums of
-pathsum_mixed (dimensions 2, 3, 6; no exporter uses it yet). sum_six writes a sum over a label of
+pathsum_mixed (dimensions 2, 3, 6; used by lean_pathsum.export_mixed_net). sum_six writes a sum over a label of
 dimension 6 as the sum over its digit pair (s, f) of 2 s + f; ind k s is [s = k] in F_2, with
 ind_zero (I_0 = 1 - I_1 - I_2 over the integers), ind_one_two (I_1 I_2 = 0) and ind_affine
 (I_k(a z + b) = I_{(k - b)/a}(z)); elim3 is [Elim3] (Sum_s zeta_3^(s L) H = 3 [L = 0] H) and
@@ -1460,7 +1460,7 @@ mval_count3 ([Count3] on a head variable outside the Z_3 phase and constraints r
 0^(u1 u2), valA_zero_atom).
 
 ArchytasZX/PathSumMixedNet.lean (namespace MSem) bridges networks on dimensions 2, 3, 6 to mval
-(no exporter uses it yet). A mixed label (l, k, b, t) is the label l of dimension k with F_2
+(used by lean_pathsum.export_mixed_net). A mixed label (l, k, b, t) is the label l of dimension k with F_2
 variable b (k = 2, 6) and Z_3 variable t (k = 3, 6); mbits and mtrits read them from label values
 (j % 2 and j / 2 on 6), mOK checks labels and variables distinct, and sumOver_mixed is the sum
 over labels as bsum over their F_2 variables of qsum over their Z_3 variables. NetPSM gives each
@@ -1484,7 +1484,7 @@ reading like an entry e (e.2 = e'.2), replacing e'.1 by e.1 in the qubit part (s
 [[e.1]]); liftA_perm reorders entries; mval_entN puts every entry of a unit coefficient in the
 form (u, z, 1, 0, k') with k' = (k + 2 b) a mod 3.
 
-lean_pathsum._mixed_net_side and _mix_lines (no exporter calls them yet) write one mixed side's
+lean_pathsum._mixed_net_side and _mix_lines write one mixed side's
 NetPSM: boundary port i is label i, wire w label label0 + w, each label its own digit
 variables (l, k, l, l); X spiders take path variables from label0 + MIX_FRESH, each Z spider on
 6 the entries (u1, l0, 1, 0, 1), (u2, l0, 1, 0, 2) of its first leg l0 with u1, u2 from
@@ -1502,6 +1502,19 @@ zero atom coefficient index 0) and mval_end (mval_fin with no entries and wt3_on
 and zero constraints give weight 1); each intermediate state is a definition. Left side NetPSM
 plus z3 (f = 3): six_state_qkd/main d=2 (146 nodes) 84 s at 1.2 GB; e91/main d=2 (260 nodes)
 163 s at 2.8 GB.
+lean_pathsum.export_mixed_net (the 4th try of certify_decision.path_sum_proof, after the
+qubit, qudit and qudit digit exports) proves Equal E sL NL sR NR for a mixed left side and a
+qubit right side with atoms (NetPSDA, _net_side). _mix_qubit builds the final qubit data of
+z3L as a PathSum in Lean labels: held the entry pairs (last first), the summed F_2 labels and
+the F_2 paths, the duplicate entries substituted (mval_dup), one zero atom 0^(u1 u2) per pair
+(coefficient index 0, A 0 = 0); the F_2 equality constraints of zFragD, bFrag2 and z6Frag2 are
+pinned class by class (boundary labels as roots, deepest first) as .front/.pin steps, then
+amp_plan reduces both sides. evalL joins NetPSM.eval_mval with z3L; the final theorem
+rewrites with c3L ((rt 3)⁻¹ ^ inv3), cL, cR, both aruns chains, valA_agree on the boundary
+labels with mbits_dbits (mbits of (x, 2, x, x) = dbits of an owner table with dig x = [x]),
+folds the constants into valA (valA_smul) and closes with afinal_perm and the scalar identity
+key. The environment has Δ k = if k = 1 then 2 else k (the right side's one-bit labels and the
+mixed labels by dimension). Full proofs at d=2: six_state_qkd/main 139 s at 1.3 GB, e91/main 493 s at 3.0 GB.
 
 5. REFUTATIONS
 --------------
