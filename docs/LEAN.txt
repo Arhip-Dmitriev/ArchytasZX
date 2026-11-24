@@ -1479,7 +1479,20 @@ entries with one reading take one value) and valA_subst (a free qubit variable z
 is substA, z replaced by B in the phase, constraints and atoms; B = [] or [[]] for a constant
 entry, [[u]] for a duplicate). mval_fin ends the Z_3 replay: with t.path = [] and every entry
 of coefficient a % 3 = 0, mval is wt3 t ρ times valA of substEs es q, each entry variable
-replaced by its constant cB e ([[]] when b = k mod 3, else []).
+replaced by its constant cB e ([[]] when b = k mod 3, else []). mval_dup drops an entry e'
+reading like an entry e (e.2 = e'.2), replacing e'.1 by e.1 in the qubit part (substA with
+[[e.1]]); liftA_perm reorders entries; mval_entN puts every entry of a unit coefficient in the
+form (u, z, 1, 0, k') with k' = (k + 2 b) a mod 3.
+
+lean_pathsum._mixed_net_side and _mix_lines (no exporter calls them yet) write one mixed side's
+NetPSM: boundary port i is label i, wire w label label0 + w, each label its own digit
+variables (l, k, l, l); X spiders take path variables from label0 + MIX_FRESH, each Z spider on
+6 the entries (u1, l0, 1, 0, 1), (u2, l0, 1, 0, 2) of its first leg l0 with u1, u2 from
+label0 + MIX_ENT; its table over (l0, u1, u2) takes t(6) = t(2) + t(4) - t(0) and t(7) =
+t(3) + t(5) - t(1), so P has no u1 u2 term. Qubit nodes are node_q2 over z_frag_dig,
+x_frag_dig, f_frag_dig (k = 1), nodes on 3 node_q3 over z_frag_q, x_frag_q, f_frag_q (each with
+its own phase vector over 3), binders and splitters node_b, Z on 6 node_z6. The environment has
+Δ k = k. six_state_qkd/main d=2 left (146 nodes) checks in 92 s at 1.2 GB.
 
 5. REFUTATIONS
 --------------

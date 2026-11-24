@@ -2657,6 +2657,302 @@ def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     return "\n".join(lines)
 
 
+MIX_FRESH = 1 << 12
+"""The offset of X spiders' path variables past a mixed side's first label."""
+
+MIX_ENT = 1 << 13
+"""The offset of indicator entry variables past a mixed side's first label."""
+
+
+@dataclass
+class _MixSide:
+    """One mixed diagram's network over labels of dimension 2, 3 and 6 that are their own digit
+    variables: nodes, Z_3 and F_2 fragments, node proofs, labels with their dimensions, summed
+    labels, indicator entries and the powers of ``1 / sqrt 2`` and ``1 / sqrt 3``."""
+
+    nodes: list[str]
+    frags3: list[str]
+    frags2: list[str]
+    proofs: list[str]
+    dims: dict[int, int]
+    summed: list[int]
+    boundary: int
+    ents: list[tuple[int, int, int, int, int]]
+    inv2: int
+    inv3: int
+
+
+def _mixed_modulus(diagram: Diagram) -> int:
+    """The least common denominator of 1/2 and the phase tables (in turns) of the Z and X
+    spiders on dimensions 2 and 6."""
+    from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+    from archytaszx.semantics.pathsum_diagram import _legs, _turns_table
+    from archytaszx.semantics.pathsum_mixed import _dim
+
+    out = 2
+    for nid in sorted(diagram.nodes):
+        node = diagram.nodes[nid]
+        legs = _legs(nid, node)
+        if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name) or not legs:
+            continue
+        d = _dim(diagram, legs[0][0])
+        if d in (2, 6):
+            for t in _turns_table(nid, node, d):
+                out = math.lcm(out, Fraction(t % 1).denominator)
+    return out
+
+
+def _mixed_net_side(
+    diagram: Diagram, tag: str, label0: int, m: int, phases: list[tuple[str, int]]
+) -> _MixSide:
+    """The network of a mixed diagram: boundary port i is label i, wire w label ``label0 + w``,
+    each label its own F_2 and Z_3 digit variable; X spiders take fresh variables from
+    ``label0 + MIX_FRESH``, each Z spider on 6 the indicator entries ``(u1, l0, 1, 0, 1)``,
+    ``(u2, l0, 1, 0, 2)`` of its first leg l0 with u1, u2 from ``label0 + MIX_ENT``; node
+    proofs by node_q2, node_q3, node_b and node_z6."""
+    from archytaszx.diagram.generators import (
+        DIM_BINDER,
+        DIM_SPLITTER,
+        FOURIER_BOX,
+        X_SPIDER,
+        Z_SPIDER,
+    )
+    from archytaszx.diagram.graph import Direction, PortRef
+    from archytaszx.semantics.pathsum_diagram import _legs, _qudit_table, _turns_table
+    from archytaszx.semantics.pathsum_mixed import _dim, is_mixed
+
+    if not is_mixed(diagram):
+        raise PathSumUnsupported("the mixed network export covers diagrams on 2, 3 and 6")
+    d = diagram
+    bnd = [*d.boundary_outputs, *d.boundary_inputs]
+    label: dict[PortRef, int] = {}
+    dims: dict[int, int] = {}
+    for i, ref in enumerate(bnd):
+        if _dim(d, ref) != 2:
+            raise PathSumUnsupported("a boundary leg of the mixed diagram is not of dimension 2")
+        label[ref] = i
+        dims[i] = 2
+    summed: list[int] = []
+    for w, wire in enumerate(sorted(d.wires, key=lambda w: w.sort_key())):
+        if wire.a in label or wire.b in label:
+            raise PathSumUnsupported("a wire on a boundary port")
+        if _dim(d, wire.a) != _dim(d, wire.b):
+            raise PathSumUnsupported("a wire joins two dimensions")
+        lab = label0 + w
+        label[wire.a] = label[wire.b] = lab
+        dims[lab] = _dim(d, wire.a)
+        summed.append(lab)
+    if len(summed) >= MIX_FRESH:
+        raise PathSumUnsupported("too many wires for the mixed label offsets")
+    hw = f"ms{tag}OK"
+    q2 = f"E {m} A ms{tag} {hw} es{tag} own{tag} qlabs{tag} dig{tag} own{tag}OK"
+    common = f"E σ' own{tag} qlabs{tag} dig{tag} own{tag}OK hσ' _ rfl"
+    nodes, frags3, frags2, proofs = [], [], [], []
+    ents: list[tuple[int, int, int, int, int]] = []
+    fresh = label0 + MIX_FRESH
+    ent = label0 + MIX_ENT
+    inv2 = inv3 = 0
+    for nid in sorted(d.nodes):
+        node = d.nodes[nid]
+        name = node.generator_type.name
+        legs = _legs(nid, node)
+        if not legs:
+            raise PathSumUnsupported(f"node {nid!r} has no legs")
+        if node.phase is not None and node.phase.is_weighted:
+            raise PathSumUnsupported(f"node {nid!r} carries weights")
+        os_ = [label[PortRef(nid, Direction.OUTPUT, j)] for j in range(len(node.outputs))]
+        is_ = [label[PortRef(nid, Direction.INPUT, j)] for j in range(len(node.inputs))]
+        ls = os_ + is_
+        k = _dim(d, legs[0][0])
+        if name in (DIM_BINDER.name, DIM_SPLITTER.name):
+            binder = name == DIM_BINDER.name
+            whole, (a, b) = (os_[0], is_) if binder else (is_[0], os_)
+            if (dims[whole], dims[a], dims[b]) != (6, 3, 2):
+                raise PathSumUnsupported(f"node {nid!r} is not a (3, 2) {name} on 6")
+            kind, lemma = (".B", "val_binder") if binder else (".S", "val_splitter")
+            nodes.append(f"⟨{kind}, {os_}, {is_}, 3, 2⟩")
+            frags3.append(f"bFrag3 {whole} {a}")
+            frags2.append(f"bFrag2 {whole} {b}")
+            proofs.append(
+                f"node_b E {m} A ms{tag} {hw} es{tag} _ {whole} {a} {b} "
+                f"(fun σ => {lemma} E σ _ {whole} {a} {b} rfl rfl rfl rfl rfl) "
+                f"⟨by decide, by decide, by decide⟩ ⟨by decide, by decide⟩ σ hσ"
+            )
+            continue
+        if any(dims[lab] != k for lab in ls):
+            raise PathSumUnsupported(f"node {nid!r} joins legs of different dimensions")
+        if name not in (Z_SPIDER.name, X_SPIDER.name, FOURIER_BOX.name):
+            raise PathSumUnsupported(f"node {nid!r} is a {name}")
+        if k == 6:
+            if name != Z_SPIDER.name:
+                raise PathSumUnsupported(f"node {nid!r} is a {name} on dimension 6")
+            table = _turns_table(nid, node, 6)
+            t8 = [*table, table[2] + table[4] - table[0], table[3] + table[5] - table[1]]
+            l0, u1, u2 = ls[0], ent, ent + 1
+            ent += 2
+            ents += [(u1, l0, 1, 0, 1), (u2, l0, 1, 0, 2)]
+            poly, ts8 = _table_poly([l0, u1, u2], t8, m)
+            ts = ts8[:6]
+            ph = 0
+            if any(ts):
+                phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", m))
+                ph = len(phases)
+            nodes.append(f"⟨.Z, {os_}, {is_}, 6, {ph}⟩")
+            frags3.append(f"z6Frag3 {l0} {ls}")
+            frags2.append(f"z6Frag2 {l0} {ls} {poly}")
+            proofs.append(
+                f"node_z6 E {m} A ms{tag} {hw} es{tag} _ rfl rfl {l0} {u1} {u2} (by decide) "
+                f"(by norm_num) {poly} ({ts if ph else []} : List ℕ) {ts8} (fun v => rfl) "
+                f"(by decide) (by decide) (by decide) (by decide) (by decide) es{tag}nd "
+                f"(by decide) (by decide) σ hσ"
+            )
+            continue
+        if k == 3:
+            kind = {Z_SPIDER.name: ".Z", X_SPIDER.name: ".X", FOURIER_BOX.name: ".F"}[name]
+            if kind == ".F":
+                o, i = os_[0], is_[0]
+                if o == i:
+                    raise PathSumUnsupported(f"node {nid!r} is an F on a self-loop")
+                nodes.append(f"⟨.F, {os_}, {is_}, 3, 0⟩")
+                frags3.append(f"QSem.fFragQ 3 {o} {i}")
+                inner = f"fun σ' _ => QSem.f_frag_q (p := 3) E σ' _ rfl rfl {o} {i} rfl rfl"
+                inv3 += 1
+            else:
+                var = ls[0] if kind == ".Z" else fresh
+                if kind == ".X":
+                    fresh += 1
+                poly3 = _qpoly(_qudit_table(nid, node, [var], 3))
+                ts = []
+                for t in _turns_table(nid, node, 3):
+                    v = (t % 1) * 3
+                    if v.denominator != 1:
+                        raise PathSumUnsupported(f"node {nid!r} has a phase {t} off the 1/3 grid")
+                    ts.append(int(v))
+                phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", 3))
+                ph = len(phases)
+                nodes.append(f"⟨{kind}, {os_}, {is_}, 3, {ph}⟩")
+                if kind == ".Z":
+                    frags3.append(f"QSem.zFragQ 3 {var} {ls} {poly3}")
+                    lemma = "QSem.z_frag_q"
+                else:
+                    frags3.append(f"QSem.xFragQ 3 {var} {poly3} {os_} {is_}")
+                    lemma = "QSem.x_frag_q"
+                    inv3 += len(ls)
+                inner = (
+                    f"fun σ' hσ' => {lemma} (p := 3) E σ' hσ' _ rfl rfl {var} (by decide) "
+                    f"{poly3} ({ts} : List ℕ) (fun v => rfl) (by decide)"
+                )
+            frags2.append("Frag.unit")
+            proofs.append(
+                f"node_q3 E {m} A ms{tag} {hw} _ _ ({inner}) (by decide) (by decide) σ hσ _"
+            )
+            continue
+        # dimension 2
+        table = _turns_table(nid, node, 2)
+        if name == FOURIER_BOX.name:
+            o, i = os_[0], is_[0]
+            nodes.append(f"⟨.F, {os_}, {is_}, 2, 0⟩")
+            frag = f"fFragD {m} 2 1 dig{tag} {o} {i}"
+            inner = (
+                f"f_frag_dig {common} 1 (by decide) {o} {i} rfl rfl {DK} {DK} rfl rfl "
+                f"{m} 2 {m // 2} (by norm_num) (by norm_num) (by norm_num)"
+            )
+            vs = [o, i]
+            inv2 += 1
+        else:
+            z = name == Z_SPIDER.name
+            ys = [ls[0]] if z else [fresh]
+            if not z:
+                fresh += 1
+            poly, ts = _table_poly(ys, table, m)
+            ph = 0
+            if any(ts):
+                phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", m))
+                ph = len(phases)
+            ts_text = f"({ts if ph else []} : List ℕ)"
+            nodes.append(f"⟨{'.Z' if z else '.X'}, {os_}, {is_}, 2, {ph}⟩")
+            if z:
+                frag = f"zFragD dig{tag} {ys} {ls} {poly}"
+                inner = (
+                    f"z_frag_dig {common} 1 (by decide) {DK} {DK} {ys} rfl {DK} {ls[0]} {DK} "
+                    f"{m} (by norm_num) {poly} {ts_text} (fun v => rfl) {DK} {DK} {DK}"
+                )
+                vs = list(dict.fromkeys(ls))
+            else:
+                frag = f"xFragD {m} 2 1 dig{tag} {poly} {ys} {os_} {is_}"
+                inner = (
+                    f"x_frag_dig {common} 1 (by decide) {DK} {DK} {ys} rfl {DK} {DK} "
+                    f"{m} 2 {m // 2} (by norm_num) (by norm_num) (by norm_num) {poly} "
+                    f"{ts_text} (fun v => rfl) {DK} {DK}"
+                )
+                vs = [*ys, *dict.fromkeys(ls)]
+                inv2 += len(ls)
+        frags3.append("QSem.QFrag.unit")
+        frags2.append(frag)
+        proofs.append(
+            f"node_q2 {q2} _ _ [] (fun σ' hσ' => fvalA_of {m} A _ _ _ (by decide) "
+            f"(atoms_nil A {m} _ _ ({inner}))) ql{tag} {vs} {DK} {DK} {DK} σ hσ _"
+        )
+    return _MixSide(nodes, frags3, frags2, proofs, dims, summed, len(bnd), ents, inv2, inv3)
+
+
+def _mix_lines(tag: str, side: _MixSide, m: int) -> list[str]:
+    """The labels, owner table, network, fragments, entries and NetPSM fact of one mixed side."""
+    qlabs = sorted(lab for lab, k in side.dims.items() if k == 2)
+    ms = [(lab, k, lab, lab) for lab, k in sorted(side.dims.items())]
+    mi = [(lab, side.dims[lab], lab, lab) for lab in side.summed]
+    own = [(lab, (lab, 0)) for lab in qlabs]
+    quads = ", ".join(
+        f"(({n}, {f3}), {f2}, [])"
+        for n, f3, f2 in zip(side.nodes, side.frags3, side.frags2, strict=True)
+    )
+    cases = " | ".join("rfl" for _ in side.nodes)
+    return [
+        f"def ms{tag} : List MLab := {ms}",
+        f"def mi{tag} : List MLab := {mi}",
+        f"def es{tag} : List Ent := {side.ents}",
+        f"def own{tag} : Own := {own}",
+        f"def qlabs{tag} : List ℕ := {qlabs}",
+        f"def digT{tag} : List (ℕ × List ℕ) := {[(lab, [lab]) for lab in qlabs]}",
+        f"def dig{tag} (l : ℕ) : List ℕ := (digT{tag}.lookup l).getD []",
+        "",
+        f"theorem ms{tag}OK : mOK ms{tag} = true := by decide +kernel",
+        "",
+        f"theorem own{tag}OK : ownOK own{tag} qlabs{tag} dig{tag} = true :=",
+        f"  ownOK_tab own{tag} qlabs{tag} digT{tag} (by decide +kernel)",
+        "",
+        f"theorem ql{tag} : qlabs{tag}.all (fun l => decide ((l, 2, l, l) ∈ ms{tag}) &&",
+        f"    decide (dig{tag} l = [l]) && decide (l ∉ es{tag}.map (·.1))) = true := by",
+        "  decide +kernel",
+        "",
+        f"theorem es{tag}nd : (es{tag}.map (·.1)).Nodup := by decide +kernel",
+        "",
+        (
+            f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
+            f"{list(range(side.boundary))}⟩"
+        ),
+        "",
+        f"noncomputable def ps{tag} : List ((Node × QSem.QFrag) × Frag × Atoms) := [{quads}]",
+        "",
+        f"theorem net{tag} : NetPSM E N{tag} {m} A ms{tag} mi{tag} es{tag} ps{tag} where",
+        f"  ok := ms{tag}OK",
+        "  nodes := rfl",
+        "  node := by",
+        "    intro p hp σ hσ",
+        f"    simp only [ps{tag}, List.mem_cons, List.not_mem_nil, or_false] at hp",
+        f"    rcases hp with {cases}",
+        *(f"    · exact {pr}" for pr in side.proofs),
+        "  disj3 := by decide +kernel",
+        "  disj2 := by decide +kernel",
+        "  dims := by decide +kernel",
+        "  sub := by decide +kernel",
+        "  int := rfl",
+        "  bnd := by decide +kernel",
+        "  cover := by decide +kernel",
+        "",
+    ]
+
+
 __all__ = [
     "NET_OPTIONS",
     "QNET_OPTIONS",

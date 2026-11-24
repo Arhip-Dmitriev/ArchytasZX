@@ -884,5 +884,87 @@ theorem mval_fin (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (q : AData
   show wt3 t ρ * _ = _
   rw [valA_substEs M hM c A ρ es q τ ha hz hp]
 
+
+/-! ## Duplicate and normalised entries -/
+
+theorem liftA_perm (ρ : ℕ → ZMod 3) (τ : ℕ → ZMod 2) (es es' : List Ent) (hp : es.Perm es')
+    (hn : (es.map (·.1)).Nodup) : liftA es ρ τ = liftA es' ρ τ := by
+  have hn' : (es'.map (·.1)).Nodup := (hp.map _).nodup_iff.1 hn
+  funext x
+  by_cases hx : x ∈ es.map (·.1)
+  · obtain ⟨e₀, he₀, rfl⟩ := List.mem_map.1 hx
+    rw [liftA_get ρ τ es hn e₀ he₀, liftA_get ρ τ es' hn' e₀ (hp.subset he₀)]
+  · have hx' : x ∉ es'.map (·.1) := fun h => hx ((hp.map _).mem_iff.2 h)
+    rw [liftA_out ρ τ x es hx, liftA_out ρ τ x es' hx']
+
+/-- An entry `e'` with the reading of another entry `e` dropped, its variable replaced by
+`e`'s in the qubit part. -/
+theorem mval_dup (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (q : AData) (t : QSem.Data)
+    (es : List Ent) (e e' : Ent) (hes : (es.map (·.1)).Nodup) (he : e ∈ es) (he' : e' ∈ es)
+    (h : e.2 = e'.2) (hne : e.1 ≠ e'.1) (hz : e'.1 ∉ q.held ++ q.s.path)
+    (hu : e.1 ∉ q.held ++ q.s.path) (hpa : ∀ y ∈ q.s.path, y ∉ avars q.atoms)
+    (hpa' : ∀ y ∈ q.s.path, y ∉ avars (substA M e'.1 [[e.1]] q).atoms)
+    (τ : ℕ → ZMod 2) (ρ : ℕ → ZMod 3) :
+    mval M c A q t es τ ρ = mval M c A (substA M e'.1 [[e.1]] q) t (es.erase e') τ ρ := by
+  have hperm := List.perm_cons_erase he'
+  have hn2 : ((e' :: es.erase e').map (·.1)).Nodup := (hperm.map _).nodup_iff.1 hes
+  have hn3 : ((es.erase e').map (·.1)).Nodup := (List.nodup_cons.1 (by simpa using hn2)).2
+  have hee : e ∈ es.erase e' := (List.mem_erase_of_ne (fun h' => hne (congrArg Prod.fst h'))).2 he
+  have hB : ∀ m ∈ ([[e.1]] : F2), ∀ v ∈ m, v ∉ q.held ++ q.s.path := by
+    intro m hm v hv
+    simp only [List.mem_singleton] at hm
+    subst hm
+    simp only [List.mem_singleton] at hv
+    exact hv ▸ hu
+  unfold mval
+  apply QSem.qsum_congr
+  intro ρ'
+  congr 1
+  rw [liftA_perm ρ' τ es _ hperm hes, liftA]
+  have hv : entVal ρ' e' = fz (liftA (es.erase e') ρ' τ) [[e.1]] := by
+    rw [show fz (liftA (es.erase e') ρ' τ) [[e.1]] = liftA (es.erase e') ρ' τ e.1 by
+      simp [fz, mz], liftA_get ρ' τ _ hn3 e hee]
+    unfold entVal
+    rw [h]
+  rw [hv, valA_subst M hM c A e'.1 [[e.1]] q hz hB hpa hpa']
+
+/-- An entry with a unit coefficient in the form `(u, z, 1, 0, k')`. -/
+def entN (e : Ent) : Ent :=
+  if e.2.2.1 % 3 = 0 then e
+  else (e.1, e.2.1, 1, 0, ((e.2.2.2.2 + 2 * e.2.2.2.1) * e.2.2.1) % 3)
+
+theorem ind_unit (α β κ s : ZMod 3) (hα : α ≠ 0) :
+    (if α * s + β = κ then (1 : ZMod 2) else 0) = if s = (κ + 2 * β) * α then 1 else 0 := by
+  revert α β κ s
+  decide
+
+theorem entVal_entN (ρ : ℕ → ZMod 3) (e : Ent) : entVal ρ (entN e) = entVal ρ e := by
+  unfold entN
+  split_ifs with h0
+  · rfl
+  · have hα : (e.2.2.1 : ZMod 3) ≠ 0 := by
+      intro h
+      apply h0
+      have := (ZMod.natCast_eq_zero_iff e.2.2.1 3).1 h
+      omega
+    unfold entVal ind
+    simp only [Nat.cast_one, one_mul, Nat.cast_zero, add_zero, ZMod.natCast_mod, Nat.cast_mul,
+      Nat.cast_add, Nat.cast_ofNat]
+    exact (ind_unit _ _ _ _ hα).symm
+
+theorem liftA_entN (ρ : ℕ → ZMod 3) (τ : ℕ → ZMod 2) :
+    ∀ es : List Ent, liftA (es.map entN) ρ τ = liftA es ρ τ
+  | [] => rfl
+  | e :: es => by
+    have h1 : (entN e).1 = e.1 := by unfold entN; split_ifs <;> rfl
+    rw [List.map_cons, liftA, liftA, liftA_entN ρ τ es, h1, entVal_entN]
+
+/-- A mixed path sum with its entries in normal form. -/
+theorem mval_entN (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (q : AData) (t : QSem.Data) (es : List Ent)
+    (τ : ℕ → ZMod 2) (ρ : ℕ → ZMod 3) :
+    mval M c A q t es τ ρ = mval M c A q t (es.map entN) τ ρ := by
+  unfold mval
+  simp only [liftA_entN]
+
 end MSem
 end ArchytasZX
