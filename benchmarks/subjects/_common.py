@@ -27,6 +27,7 @@ from benchmarks.ir import (  # noqa: F401
     Measure,
     Neighbours,
     Oracle,
+    PairPhase,
     Pairs,
     Perm,
     PhaseFn,
