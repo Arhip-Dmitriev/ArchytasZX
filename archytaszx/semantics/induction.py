@@ -2218,17 +2218,26 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
             obligation.left_at_successor,
         ),
     )
-    for own_successor, own_k, other_k, other_successor in sides:
+    for last, (own_successor, own_k, other_k, other_successor) in (
+        (False, sides[0]),
+        (False, sides[1]),
+        (True, sides[0]),
+        (True, sides[1]),
+    ):
         if not _chain_owned(own_successor, index):
-            reasons.append("no chain box carries the step index")
+            if not last:
+                reasons.append("no chain box carries the step index")
             continue
-        replaced = _side_replaced(own_successor, own_k, other_k, index)
+        if last and not first_peelers(own_successor, index):
+            continue
+        replaced = _side_replaced(own_successor, own_k, other_k, index, last=last)
         if isinstance(replaced, str):
-            reasons.append(replaced)
+            reasons.append(f"last copy: {replaced}" if last else replaced)
             continue
         targets = [other_successor]
         try:
-            targets.insert(0, peel_owners(other_successor, index).diagram)
+            firsts = first_peelers(other_successor, index) if last else frozenset()
+            targets.insert(0, peel_owners(other_successor, index, last=firsts).diagram)
         except BangBoxError:
             pass
         for target in targets:
@@ -2448,6 +2457,22 @@ def chain_cores(
     return _open_region(hypothesis, core), core_a, core_b
 
 
+def _scope_cores(
+    hypothesis: Diagram, a: Diagram, b: Diagram, index: str
+) -> tuple[Diagram, frozenset[NodeId], frozenset[NodeId]] | None:
+    """The node scope of ``hypothesis``'s chain box over ``index`` as an open diagram and the
+    scopes of ``a``'s and ``b``'s, each box's multiplicity ``hypothesis``'s; else None."""
+    boxes = []
+    for d in (hypothesis, a, b):
+        owner = _chain_owner(d, index)
+        if owner is None:
+            return None
+        boxes.append(d.bang_boxes[owner])
+    if any(x.multiplicity != boxes[0].multiplicity for x in boxes[1:]):
+        return None
+    return _open_region(hypothesis, boxes[0].node_scope), boxes[1].node_scope, boxes[2].node_scope
+
+
 def _close_by_chain_core(
     replaced: Diagram, target: Diagram, hypothesis: Diagram, index: str, max_steps: int
 ) -> tuple[bool, str]:
@@ -2457,6 +2482,8 @@ def _close_by_chain_core(
     from archytaszx.semantics import kernel
 
     found = chain_cores(hypothesis, replaced, target, index)
+    if isinstance(found, str):
+        found = _scope_cores(hypothesis, replaced, target, index) or found
     if isinstance(found, str):
         return False, f"chain core: {found}"
     opened, core_a, core_b = found

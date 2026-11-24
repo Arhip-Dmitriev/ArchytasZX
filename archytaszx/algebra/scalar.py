@@ -2455,8 +2455,71 @@ def _canonical_top(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
         _residue_pivots(_collapse_residues(_pin_residues(t, ranges), ranges), ranges) for t in terms
     )
     if _CARRIES.get():
-        pinned = (_parity_echelon(t, ranges) for t in pinned)
+        pinned = (_symbolic_pivots(_parity_echelon(t, ranges), ranges) for t in pinned)
     return _expand(cast(sp.Expr, sp.Add(*(_canonical_deltas(t, ranges) for t in pinned))))
+
+
+def _signed_bounds(
+    expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, sp.Expr] | None:
+    """``(least, greatest)`` of ``expr`` linear over the indices of ``ranges`` with coefficients
+    free of them of known sign, the rest free of them; else None."""
+    rest = sp.expand(expr)
+    least = greatest = sp.Integer(0)
+    for var in sorted(rest.free_symbols & set(ranges), key=lambda symbol: str(symbol.name)):
+        coefficient = rest.coeff(var, 1)
+        if coefficient.free_symbols & set(ranges):
+            return None
+        rest = sp.expand(rest - coefficient * var)
+        if var in rest.free_symbols:
+            return None
+        top = coefficient * (ranges[var] - 1)
+        if coefficient.is_nonnegative is True:
+            greatest += top
+        elif coefficient.is_nonpositive is True:
+            least += top
+        else:
+            return None
+    if rest.is_integer is not True:
+        return None
+    return sp.expand(least + rest), sp.expand(greatest + rest)
+
+
+def _symbolic_pivots(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """``term`` with, per delta factor ``[c*v + r == 0 mod M]`` (``c = +-1``, ``r`` free of
+    ``v``, a coefficient not an integer) that ``ranges`` force exactly (:func:`_signed_bounds` of
+    ``c*v + r`` inside ``(-M, M)``), the first such ``v`` by name replaced by ``-c*r`` in the
+    other factors."""
+    if not ranges:
+        return term
+    bound = _bound_symbols(term)
+    factors = list(sp.Mul.make_args(term))
+    for position, factor in enumerate(factors):
+        delta = _delta_base(factor)
+        if delta is None or _linear_form(delta.args[0]) is not None:
+            continue
+        frequency, modulus = delta.args
+        if frequency.free_symbols & bound or not frequency.free_symbols & set(ranges):
+            continue
+        span = _signed_bounds(frequency, ranges)
+        if span is None or not (
+            sp.expand(modulus + span[0]).is_positive is True
+            and sp.expand(modulus - span[1]).is_positive is True
+        ):
+            continue
+        flat = sp.expand(frequency)
+        for var in sorted(flat.free_symbols & set(ranges), key=lambda symbol: str(symbol.name)):
+            coefficient = flat.coeff(var, 1)
+            if coefficient not in (1, -1):
+                continue
+            value = sp.expand(-coefficient * (flat - coefficient * var))
+            others = [
+                f.xreplace({var: value}) if i != position else f for i, f in enumerate(factors)
+            ]
+            if others != factors:
+                return _symbolic_pivots(cast(sp.Expr, sp.Mul(*others)), ranges)
+            break
+    return term
 
 
 def _parity_echelon(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:

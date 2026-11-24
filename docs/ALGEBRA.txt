@@ -292,7 +292,10 @@ the carries c from ceil(min B / p) to floor(max B / p), when each B - p c is bou
 (-p q, p q). The high delta splits again on the next pass. Under split_carries the parity
 deltas of a term over bits, one of them non-linear, are put in Gauss-Jordan form mod 2: each
 pivot is the greatest-named bit read only in its own linear term, substituted into every other
-such delta with powers of bits read as the bits.
+such delta with powers of bits read as the bits. Also under split_carries, a delta
+[c v + r == 0 mod M] with c = +-1 and a non-integer coefficient in r (as d i at modulus 3 d),
+linear over ranged indices with coefficients of known sign and bounded in (-M, M), forces
+v = -c r exactly: v (the first such index by name) is replaced by -c r in the other factors.
 At a concrete modulus m the echelon form takes every substituted row and pivot value with an
 integer coefficient c of |c| >= m to sign(c) (|c| mod m), so coefficients stay below m
 instead of growing with each Gauss-Jordan step.

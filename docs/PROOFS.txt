@@ -528,6 +528,17 @@ holding a boundary slot becomes a hub (its phase, its legs off the copy but the 
 slot's place wired to a leaf) and a phaseless leaf (the slot and the legs into the copy); the
 kernel induction exposes the split by the reversed spider fusion of hub and leaf.
 
+A chain that peels its first copy is also peeled at its last copy (the carry-in end): that
+side's residual read as its hypothesis through cut wires and replaced by the other side's,
+the result compared with the other successor peeled at its last copy. When the chain cores
+(box and head) are not separate, both diagrams are compared over the chain box scopes alone:
+the scopes read as the hypothesis's box scope through cut wires, the rest of each, cut ends
+open, by symbolic contraction (kernel.local_contraction). The kernel theorem
+(induction_kernel._last_window) is the induction rule over the last-copy re-peel (repeel), its
+step trans(local_contraction, symm(repeel of the other side)) when the lemma close fails.
+The telescoping carry lemma U (open carry-in, end terms Zp(c_out, y) x y/d and Zp(c_in, y)
+-x y/d^(n+1)) is proved this way for every n and d.
+
 When no chain attempt settles, the chain window takes a plain box (no links) carrying the
 step index the same way: that side's successor peeled, its residual read as its hypothesis
 through cut wires (expose_cut) and replaced by the other side's, the result compared with the

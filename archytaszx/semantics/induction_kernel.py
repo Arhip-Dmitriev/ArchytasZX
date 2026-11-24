@@ -441,14 +441,49 @@ def _last_window(
     _split, cut, steps = found
     expose = kernel.trans(moved, _steps_theorem(exposed, steps))
     replaced = replace_cut_region(expose.rhs, cut, own_k, other_k)
-    step = _lemma_step(
-        replaced,
-        other_peeled,
-        induction_renamed(other, index, k),
-        k,
-        NoInductionTheorem("chains at their last copy"),
-    )
+    try:
+        step = _lemma_step(
+            replaced,
+            other_peeled,
+            induction_renamed(other, index, k),
+            k,
+            NoInductionTheorem("chains at their last copy"),
+        )
+    except NoInductionTheorem as exc:
+        step = _scope_step(
+            replaced, other_peeled, induction_renamed(other, index, k), other_k, k, exc
+        )
     return kernel.induction(start, goal, index, k, base, side, expose, cut.region, step, cut=cut)
+
+
+def _scope_step(
+    replaced: Diagram,
+    target: Diagram,
+    source: Diagram,
+    hypothesis: Diagram,
+    k: str,
+    failed: NoInductionTheorem,
+) -> kernel.Theorem:
+    """``replaced = target`` through ``source`` re-peeled at its first-peeling chains' last
+    copies: the chain box scopes read as ``hypothesis``'s, the rest by contraction; raises
+    ``failed`` extended with why not."""
+    from archytaszx.semantics.induction import _scope_cores
+
+    firsts = first_peelers(source, k)
+    if not firsts:
+        raise failed
+    moved = kernel.repeel(source, k, frozenset(), firsts)
+    if not kernel._same(moved.lhs, target):
+        raise NoInductionTheorem(f"{failed}; scope: the re-peel does not start at the target")
+    found = _scope_cores(hypothesis, replaced, moved.rhs, k)
+    if found is None:
+        raise NoInductionTheorem(f"{failed}; scope: no chain box over the index on all sides")
+    opened, core_a, core_b = found
+    try:
+        local = kernel.local_contraction(replaced, core_a, moved.rhs, core_b, opened)
+    except (kernel.KernelError, InductionDomainError) as exc:
+        raise NoInductionTheorem(f"{failed}; scope: {exc}") from exc
+    return kernel.trans(local, kernel.symm(moved))
 
 
 def _lemma_step(
