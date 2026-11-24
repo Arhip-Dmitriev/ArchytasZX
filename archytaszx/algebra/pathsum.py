@@ -473,7 +473,11 @@ class PhasePoly:
         """Replace ``var`` by the Boolean lift of the F_2 polynomial ``value``; unchanged when
         the lift raises."""
         terms = self.terms
-        hit = [(m, c) for m, c in terms.items() if var in m]
+        indexed = terms if type(terms) is _Indexed else None
+        if indexed is not None:
+            hit = [(m, dict.__getitem__(terms, m)) for m in indexed.index.get(var, ())]
+        else:
+            hit = [(m, c) for m, c in terms.items() if var in m]
         if not hit:
             return
         dens = math.lcm(*(c.denominator for _m, c in hit))
@@ -481,7 +485,12 @@ class PhasePoly:
         lift = _decode_all(raw, names)
         for m, _c in hit:
             del terms[m]
-        g = math.lcm(dens, *{c.denominator for c in terms.values()})
+        if indexed is not None:
+            g = math.lcm(dens, *indexed.dens)
+            nonzero = not indexed.zeros
+        else:
+            g = math.lcm(dens, *{c.denominator for c in terms.values()})
+            nonzero = all(terms.values())
         bit = {v: 1 << i for i, v in enumerate(names)}
         top = len(names)
         rows: list[tuple[Mono, int, int, int]] = []
@@ -500,7 +509,7 @@ class PhasePoly:
             if den not in kept:
                 kept[den] = [t for t in lift if t[2] % den]
         pairs = sum(len(kept[den]) for _r, _m, den, _a in rows)
-        if pairs >= SUBSTITUTE_ARRAY_PAIRS and top < 63 and g < 1 << 31 and all(terms.values()):
+        if pairs >= SUBSTITUTE_ARRAY_PAIRS and top < 63 and g < 1 << 31 and nonzero:
             _substitute_array(terms, rows, kept, g)
             return
         num: dict[int, list[Any]] = {}
@@ -939,8 +948,22 @@ class _Indexed(dict[Mono, Fraction]):
         self.version: dict[int, int] = {}
         self.views: weakref.WeakSet[_OccView] = weakref.WeakSet()
         self.quotients: dict[int, tuple[int, F2Poly | None]] = {}
+        self.dens: dict[int, int] = {}
+        self.zeros = 0
         for m, c in terms.items():
             self[m] = c
+
+    def _count(self, value: Fraction, step: int) -> None:
+        """Adds ``step`` to the count of ``value``'s denominator, or of zero values."""
+        if not value:
+            self.zeros += step
+            return
+        den = value.denominator
+        left = self.dens.get(den, 0) + step
+        if left:
+            self.dens[den] = left
+        else:
+            del self.dens[den]
 
     def _touch(self, key: Mono, fresh: bool, gone: bool) -> None:
         for view in self.views:
@@ -957,15 +980,21 @@ class _Indexed(dict[Mono, Fraction]):
                     del self.index[v]
 
     def __setitem__(self, key: Mono, value: Fraction) -> None:
-        self._touch(key, key not in self, False)
+        old = dict.get(self, key)
+        if old is not None:
+            self._count(old, -1)
+        self._count(value, 1)
+        self._touch(key, old is None, False)
         super().__setitem__(key, value)
 
     def __delitem__(self, key: Mono) -> None:
+        self._count(dict.__getitem__(self, key), -1)
         self._touch(key, False, True)
         super().__delitem__(key)
 
     def pop(self, key: Mono, *default: Any) -> Any:
         if key in self:
+            self._count(dict.__getitem__(self, key), -1)
             self._touch(key, False, True)
         return super().pop(key, *default)
 
@@ -1090,7 +1119,14 @@ def _restore(phase: PhasePoly, saved: dict[Mono, Fraction]) -> None:
 
 
 def _try_elim(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
-    for y in sorted(ps.path):
+    if isinstance(occ, _OccView) and not occ.frozen:
+        free = ps.path.difference(occ.terms.index)
+        if occ.path is not None:
+            free |= ps.path - occ.path
+        candidates: Iterable[int] = (min(free),) if free else ()
+    else:
+        candidates = sorted(ps.path)
+    for y in candidates:
         if y not in occ:
             ps.path.discard(y)
             ps.sqrt2 += 2

@@ -549,7 +549,7 @@ def _qudit_sum(
     c, s2 = constant(diagram.scalar.to_sympy())
     if s2:
         c = with_sqrt2(c, s2)
-    inv_root = sqrt_prime(p).scale(Fraction(1, p))
+    roots = 0
     for node_id in sorted(diagram.nodes):
         node = diagram.nodes[node_id]
         name = node.generator_type.name
@@ -570,7 +570,7 @@ def _qudit_sum(
                 if digit(out, 0) == digit(inp, 0):
                     raise PathSumUnsupported(f"node {node_id!r} is an F on a self-loop")
                 phase.add(tuple(sorted(((digit(out, 0), 1), (digit(inp, 0), 1)))), 1)
-                c = c * inv_root
+                roots += 1
                 continue
             y = fresh()
             for ref, sign in legs:
@@ -584,8 +584,10 @@ def _qudit_sum(
                     sign,
                 )
             phase = phase + _qudit_part(node_id, node, [y], p, atoms, katoms)
-            for _leg in legs:
-                c = c * inv_root
+            roots += len(legs)
+    c = c.scale(Fraction(1, p ** (roots // 2)))
+    if roots % 2:
+        c = c * sqrt_prime(p).scale(Fraction(1, p))
     constraints = [ModPoly(p, {((a, 1),): 1, ((b, 1),): p - 1}) for a, b in same]
     return QuditPathSum(p, tuple(boundary), path, phase, c, constraints, [], atoms, katoms)
 

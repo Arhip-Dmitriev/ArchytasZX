@@ -454,7 +454,8 @@ Odd prime d (QuditPathSum). When every leg dimension is a power of one odd prime
 constraint a polynomial over F_p in reduced form (ModPoly: exponents below p, x^p = x). A Z
 spider on p^k adds the tensor Lagrange interpolation of p times its phase table (indicators
 1 - (x - c)^(p-1)); every table entry must be a multiple of 1/p. An X spider on p adds
-y (Sum outputs - Sum inputs) + table(y) and p^(-1/2) per leg; F on p adds x z and p^(-1/2);
+y (Sum outputs - Sum inputs) + table(y) and p^(-1/2) per leg; F on p adds x z and p^(-1/2)
+(the m factors p^(-1/2) enter the constant once, as p^(-floor(m/2)) times sqrt(p)/p for odd m);
 B and S regroup base-p digits; X and F on p^k with k > 1 raise PathSumUnsupported. Rules
 (reduce_qudit), each an identity over Z_p:
 

@@ -500,7 +500,7 @@ _MAX_EXPR_DEPTH = 100
 _MAX_EXPR_DIGITS = 1000
 _INT_LIMIT = 10**_MAX_EXPR_DIGITS
 _MAX_POWER_BITS = 4096
-_MAX_ROOT_BITS = 256
+_MAX_ROOT_BITS = 4096
 _MAX_TERMS = 4096
 _SCALAR_BITS_PER_NODE = 64
 _INT_CHUNK_DIGITS = 4000
@@ -646,6 +646,16 @@ def _bits(value: sp.Rational) -> int:
     return max(int(value.p).bit_length(), int(value.q).bit_length())
 
 
+def _odd_bits(value: sp.Rational) -> int:
+    """:func:`_bits` of ``value`` with every factor 2 of its numerator and denominator removed."""
+
+    def odd(x: int) -> int:
+        x = abs(x)
+        return x >> ((x & -x).bit_length() - 1) if x else 0
+
+    return max(odd(int(value.p)).bit_length(), odd(int(value.q)).bit_length())
+
+
 def _numeric_bits(expr: sp.Expr) -> int:
     """Total bit size of the rational atoms of ``expr`` other than 0 and +-1."""
     return sum(_bits(a) for a in expr.atoms(sp.Rational) if a not in (0, 1, -1))
@@ -685,9 +695,11 @@ def _power(base: sp.Expr, exponent: sp.Expr) -> sp.Expr:
                 f"power ({format_count(base)})^({format_count(exponent)}) is too large"
             )
         if any(not a.is_Integer for a in exponent.atoms(sp.Rational)) and any(
-            _bits(a) > _MAX_ROOT_BITS for a in base.atoms(sp.Rational)
+            _odd_bits(a) > _MAX_ROOT_BITS for a in base.atoms(sp.Rational)
         ):
-            raise ParseDomainError(f"fractional power of an integer above {_MAX_ROOT_BITS} bits")
+            raise ParseDomainError(
+                f"fractional power of an integer with an odd part above {_MAX_ROOT_BITS} bits"
+            )
     return _bounded(base**exponent)
 
 
