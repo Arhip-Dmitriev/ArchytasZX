@@ -741,6 +741,49 @@ def match_template(
     yield from extend(placed, pending)
 
 
+def _connected(template: Template) -> bool:
+    """Whether ``template``'s wires join all its nodes."""
+    links: dict[str, set[str]] = {node.key: set() for node in template.nodes}
+    for a, b in template.wires:
+        links[a[0]].add(b[0])
+        links[b[0]].add(a[0])
+    start = template.nodes[0].key
+    seen = {start}
+    todo = [start]
+    while todo:
+        for nxt in links[todo.pop()]:
+            if nxt not in seen:
+                seen.add(nxt)
+                todo.append(nxt)
+    return len(seen) == len(links)
+
+
+def _distances(
+    diagram: Diagram,
+    sources: frozenset[NodeId],
+    partner: Mapping[PortRef, PortRef],
+    reach: int,
+) -> dict[NodeId, int]:
+    """Wire-hop distance from ``sources`` of every node of ``diagram`` at most ``reach`` away."""
+    dist = {node_id: 0 for node_id in sources if node_id in diagram.nodes}
+    frontier = list(dist)
+    for step in range(1, reach + 1):
+        nxt: list[NodeId] = []
+        for node_id in frontier:
+            node = diagram.nodes[node_id]
+            for direction, legs in (
+                (Direction.INPUT, node.inputs),
+                (Direction.OUTPUT, node.outputs),
+            ):
+                for index in range(len(legs)):
+                    far = partner.get(PortRef(node_id, direction, index))
+                    if far is not None and far.node_id not in dist:
+                        dist[far.node_id] = step
+                        nxt.append(far.node_id)
+        frontier = nxt
+    return dist
+
+
 def _has_arities(axiom: TemplateAxiom) -> bool:
     """Whether the built side of an insertion depends on arity parameters."""
     try:
@@ -875,6 +918,70 @@ class TemplatePattern(Pattern):
                     if key not in found:
                         found[key] = match
         return tuple(sorted(found.values(), key=self.order_key))
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """The matches whose support meets ``anchors``: the template search runs only from
+        host nodes within a connected template's diameter of ``anchors``; a full scan for a
+        disconnected or empty template or a resolved view other than ``diagram``."""
+        if self.axiom.concrete_only and not CONCRETE_AXIOMS:
+            return ()
+        host = diagram
+        diagram = resolved_view(host)
+        if diagram is not host:
+            return super().find_matches_anchored(host, anchors)
+        try:
+            insertion = self.axiom.left.template(Dim.symbol("d"), {})
+        except (KeyError, IndexError, ValueError, RewriteDomainError):
+            insertion = None
+        if insertion is not None and not insertion.nodes:
+            return super().find_matches_anchored(host, anchors)
+        partner = _partner_map(diagram)
+        boxed = _boxed_nodes(diagram)
+        templates: dict[object, Template | None] = {}
+        plan: list[tuple[NodeId, Dim, Arities, Template]] = []
+        reach = 0
+        for anchor in sorted(diagram.nodes, key=int):
+            dim = _node_dim(diagram, anchor)
+            if dim is None:
+                continue
+            if self.axiom.concrete_only and not dim.is_concrete:
+                continue
+            if self.axiom.left.min_size(dim) > len(diagram.nodes) + len(diagram.wires):
+                continue
+            for arities in self.axiom.left.arities(diagram, anchor, dim):
+                token = _TEMPLATE_BUDGET.set(len(diagram.nodes) + len(diagram.wires))
+                try:
+                    template = _cached_template(self.axiom.left, dim, arities, templates)
+                finally:
+                    _TEMPLATE_BUDGET.reset(token)
+                if template is None or not template.nodes:
+                    continue
+                if diagram.nodes[anchor].generator_type.name != template.nodes[0].gen.name:
+                    continue
+                if not _connected(template):
+                    return super().find_matches_anchored(host, anchors)
+                plan.append((anchor, dim, arities, template))
+                reach = max(reach, len(template.nodes) - 1)
+        near = _distances(diagram, anchors, partner, reach)
+        found: dict[tuple[object, ...], TemplateMatch] = {}
+        for anchor, dim, arities, template in plan:
+            far = near.get(anchor)
+            if far is None or far > len(template.nodes) - 1:
+                continue
+            for state in match_template(diagram, template, anchor, dim, partner, boxed):
+                match = self._to_match(diagram, template, state, dim, arities, dim)
+                if match is None:
+                    continue
+                key = (frozenset(match.support_node_ids), frozenset(match.wires), match.arities)
+                if key not in found:
+                    found[key] = match
+        return tuple(
+            match
+            for match in sorted(found.values(), key=self.order_key)
+            if not anchors.isdisjoint(match.support_node_ids)
+        )
 
     def _insertions(self, host: Diagram, diagram: Diagram, template: Template) -> tuple[Match, ...]:
         """Matches of an empty side: one per wire for a bare wire, else one per dimension."""

@@ -386,6 +386,11 @@ the one cache object the strategy, saturation and search functions accept.
     region and re-matches only inside it. Each held match's identity (support ids and repr)
     is computed once per match object; the anchored matchers share one neighbour map per
     wire-set snapshot (diagram.wires) and so one anchor closure per rematch.
+    TemplatePattern.find_matches_anchored runs the template search only from host nodes at
+    most (template node count - 1) wire hops from the anchors; a disconnected or empty
+    template, or a resolved view other than the diagram, takes the filtered full scan.
+    surface_code_family/encoding n = 15 d = 2: normal_form 24.6 -> 19.6 s CPU, normal forms
+    identical.
   - ValueMemo(compute, key): a generic content-keyed memo; numpy results are stored as
     private copies and returned read-only.
   - CacheStats: hits, misses, evictions, invalidations, hit rate.
