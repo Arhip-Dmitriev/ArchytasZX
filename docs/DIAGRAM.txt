@@ -34,13 +34,21 @@ the validator (section 5).
   B     DIM_BINDER        2       1        none         product of inputs = product of outputs
   S     DIM_SPLITTER      1       2        none         product of inputs = product of outputs
   G     DISCARD           one leg in total  none         all legs equal
+  Zp    PAIR_PHASE        two legs in total pair phase   per leg (any two dimensions)
 
 "Tied to leg" means a phase vector, when present, is built over the same dimension as the
 node's legs. A phase vector may carry complex weights (ALGEBRA.txt, section 3.4), which makes
 a Z spider the Z box of [P1]; an X spider with weights is the Fourier conjugate of that Z box. The binder takes legs of dimensions s and t to one leg of dimension s*t, the
 splitter the reverse. G, the discard, has exactly one leg in either direction (LegPolicy
 total_legs = 1) and no pure denotation; it is in MIXED_ONLY, and a diagram holding one is
-mixed (MIXED.txt).
+mixed (MIXED.txt). Zp, the pair phase, has exactly two legs (Zp(2 -> 0, D), Zp(1 -> 1, D),
+Zp(0 -> 2, D), or in: [D1, ...], out: [...] for two dimensions) and the phase
+phase{x, y: EXPR}, a PairPhase (ALGEBRA.txt) in the values x of its first leg and y of its
+second, legs read outputs first, then inputs. EXPR may read the copy and pair indices of the
+boxes holding it (x*y/d^(m-j+1) in a pair box over V index j, pair index m); validate
+reports PHASE_DIMENSION_MISMATCH when the pair phase is not over the leg dimensions. Two pair
+boxes over one parent may not share a node with pair ports; one pair box holds every such
+pair node.
 
 2.2 Types
 

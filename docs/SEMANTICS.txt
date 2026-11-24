@@ -50,6 +50,10 @@ F[j][k] = omega_d^{j k} / sqrt(d):
   B (binder), S (splitter):
                           the pair (a, b), a < s, b < t, corresponds to k = a*t + b < s*t;
                           B . S = id and S . B = id exactly
+  Zp (pair phase):        Zp[x, y] = e^{2 pi i f(x, y)}, x the first leg's value, y the
+                          second's (outputs, then inputs), f its pair phase in turns; denote
+                          and contract_symbolic write this entry, other rungs (path sums,
+                          the Dirac printer, Lean) decline a diagram holding Zp
 
 The sign of the Fourier exponent and the normalisation 1/sqrt(d) are fixed here and nowhere
 else.

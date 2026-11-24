@@ -88,7 +88,7 @@ from archytaszx.algebra.dimension import (
     solve,
     unify_all,
 )
-from archytaszx.algebra.phase import INDEX
+from archytaszx.algebra.phase import INDEX, PairPhase
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import BangBox, Mult, aligned_members, outside_crossings, zip_wires
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
@@ -970,6 +970,20 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                     node_id=node.id,
                 )
             )
+        elif gen.phase_schema is PhaseSchema.PAIR:
+            legs = tuple(port.dim for port in (*node.outputs, *node.inputs))
+            phase = node.phase
+            if not isinstance(phase, PairPhase) or (phase.dim, phase.dim2) != legs:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.PHASE_DIMENSION_MISMATCH,
+                        message=(
+                            f"node {node.id!r} ({gen.name}) needs a pair phase over its leg "
+                            f"dimensions {[str(dim) for dim in legs]}, got {phase}"
+                        ),
+                        node_id=node.id,
+                    )
+                )
         elif (
             gen.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
             and leg_unify is not None

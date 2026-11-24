@@ -61,13 +61,16 @@ vector's own ``Dim``. A zero-leg node with no phase is rejected as malformed, no
 from __future__ import annotations
 
 import numpy as np
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import INDEX, INDEX2, PairPhase
 from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
     FOURIER_BOX,
     MIXED_ONLY,
+    PAIR_PHASE,
     REGISTRY,
     TRIANGLE,
     TRIANGLE_INVERSE,
@@ -349,6 +352,27 @@ def _connective_tensor(node: Node) -> np.ndarray:
     return tensor
 
 
+def _pair_phase_tensor(node: Node) -> np.ndarray:
+    """The pair-phase tensor ``e^{2 pi i f(x, y)}``, axes outputs then inputs."""
+    phase = node.phase
+    dims = leg_dimensions(node)
+    if not isinstance(phase, PairPhase) or len(dims) != 2:
+        raise DenoteGrammarError(f"node {node.id!r} (Zp) needs two legs and a PairPhase")
+    if not phase.is_concrete:
+        raise DenoteDomainError(
+            f"node {node.id!r} (Zp) has a non-concrete phase {phase}; denote() requires every "
+            "phase in scope to be concrete"
+        )
+    turns = phase.pair.to_sympy_turns()
+    tensor = np.zeros(dims, dtype=np.complex128)
+    for x in range(dims[0]):
+        for y in range(dims[1]):
+            value = sp.Rational(turns.xreplace({INDEX: x, INDEX2: y}))
+            value -= sp.floor(value)
+            tensor[x, y] = np.exp(2j * np.pi * float(value))
+    return tensor
+
+
 def denote(node: Node) -> np.ndarray:
     """The denotation of ``node`` as a ``complex128`` numpy tensor. See the module docstring.
 
@@ -370,6 +394,8 @@ def denote(node: Node) -> np.ndarray:
         )
     if name in (DIM_BINDER.name, DIM_SPLITTER.name):
         return _connective_tensor(node)
+    if name == PAIR_PHASE.name:
+        return _pair_phase_tensor(node)
     d = resolve_dimension(node)
     if name == Z_SPIDER.name:
         return _z_tensor(node, d)

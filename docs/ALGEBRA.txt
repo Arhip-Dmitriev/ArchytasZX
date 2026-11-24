@@ -197,6 +197,20 @@ rule. is_zero is False for a weighted vector, so every rule requiring a
 phaseless spider refuses it. v + w multiplies weights and adds phases (the fusion of Z boxes).
 A vector without weights is stored, compared, hashed and printed exactly as before.
 
+3.5 class PairPhase
+
+The phase of a Zp node (DIAGRAM.txt 2.1): one Phase f in INDEX and INDEX2 (the symbol
+_phase_k2), the values of the node's first and second leg.
+
+    PairPhase(dim: Dim, dim2: Dim, pair: Phase)    a PhaseVector subclass, no entries
+    p.dim, p.dim2                                  the two leg dimensions
+    p.pair -> Phase                                f
+    p.at_pair(x, y) -> sympy.Expr                  f at x, y (turns)
+    p.substitute(mapping) -> PairPhase             both dimensions and f; INDEX, INDEX2 kept
+
+free_symbols and sympy_symbols leave out INDEX and INDEX2; p + q adds f over equal
+dimensions; a PairPhase equals no plain PhaseVector.
+
 
 4. SCALARS: archytaszx.algebra.scalar
 -------------------------------------

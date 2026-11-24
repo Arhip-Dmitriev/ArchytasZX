@@ -55,10 +55,16 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionDomainError, DimensionError, format_count
-from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
+from archytaszx.algebra.phase import INDEX, INDEX2, PairPhase, Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import BangBoxError, Mult, abstract_port_count
-from archytaszx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.generators import (
+    REGISTRY,
+    X_SPIDER,
+    Z_SPIDER,
+    GeneratorType,
+    PhaseSchema,
+)
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef
 from archytaszx.diagram.validate import IssueKind, validate
 from archytaszx.rewrite.engine import RewriteResult, apply
@@ -1175,10 +1181,33 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
         )
 
 
+_PAIR_PHASE_RE = re.compile(
+    rf"\s*(?P<x>{_IDENTIFIER})\s*,\s*(?P<y>{_IDENTIFIER})\s*:(?P<expr>.+)", re.DOTALL
+)
+
+
+def _pair_phase_of(draft: _NodeDraft, table: Mapping[str, sp.Symbol]) -> PairPhase:
+    """The pair phase ``x, y: EXPR`` of a ``Zp`` draft over its legs, outputs first."""
+    legs = (*draft.outputs, *draft.inputs)
+    match = _PAIR_PHASE_RE.fullmatch(draft.phase_entries or "")
+    if len(legs) != 2 or match is None:
+        raise ParseGrammarError(
+            f"a Zp node takes two legs and 'phase{{x, y: EXPR}}', got {draft.phase_entries!r}"
+        )
+    x, y = match["x"], match["y"]
+    if x == y:
+        raise ParseGrammarError(f"pair phase names {x!r} twice")
+    turns = _phase_of(_parse_expr(match["expr"], "phase"), {**table, x: INDEX, y: INDEX2})
+    return PairPhase(legs[0], legs[1], turns)
+
+
 def _set_phases(
     diagram: Diagram, drafts: Mapping[int, _NodeDraft], table: Mapping[str, sp.Symbol]
 ) -> None:
     for i, draft in sorted(drafts.items()):
+        if draft.generator.phase_schema is PhaseSchema.PAIR:
+            diagram.set_phase(NodeId(i), _pair_phase_of(draft, table))
+            continue
         if draft.phase_dim is not None:
             diagram.set_phase(
                 NodeId(i),

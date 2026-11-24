@@ -28,8 +28,9 @@ dims equals the product of the output dims, an empty side having product ``Dim.c
 Leg policy is likewise a value object (:class:`LegPolicy`), so a validation report can name
 *which* policy a node's leg count violates.
 
-Registered here: ``"Z"``, ``"X"``, ``"F"``, ``"T"``, ``"Ti"``, ``"W"``, ``"B"``, ``"S"``, and the
-discard ``"G"``, which has no pure denotation. No bang box is defined here.
+Registered here: ``"Z"``, ``"X"``, ``"F"``, ``"T"``, ``"Ti"``, ``"W"``, ``"B"``, ``"S"``, the
+discard ``"G"``, which has no pure denotation, and the pair phase ``"Zp"``. No bang box is
+defined here.
 """
 
 from __future__ import annotations
@@ -68,6 +69,7 @@ class DimensionPolicy(enum.Enum):
 
     ALL_LEGS_EQUAL = "all_legs_equal"
     PRODUCT_OF_LEGS_EQUAL = "product_of_legs_equal"
+    PER_LEG = "per_leg"
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +139,7 @@ class PhaseSchema(enum.Enum):
     """
 
     TIED_TO_LEG_DIM = "tied_to_leg_dim"
+    PAIR = "pair"
     NONE = "none"
 
 
@@ -301,6 +304,16 @@ DISCARD = GeneratorType(
 """The discard (ground): one leg of any dimension, as an input the trace effect, as an output
 the unnormalised maximally mixed state. Denoted only through doubling."""
 
+PAIR_PHASE = GeneratorType(
+    name="Zp",
+    leg_policy=LegPolicy(total_legs=2),
+    phase_schema=PhaseSchema.PAIR,
+    dimension_policy=DimensionPolicy.PER_LEG,
+)
+"""The pair phase: two legs of dims D1, D2 (outputs first, then inputs), entry
+``e^{2 pi i f(x, y)}`` at leg values ``(x, y)``, ``f`` its
+:class:`~archytaszx.algebra.phase.PairPhase`."""
+
 MIXED_ONLY: frozenset[str] = frozenset({DISCARD.name})
 """Names of the generators that have no pure denotation."""
 
@@ -313,3 +326,4 @@ REGISTRY.register(W_NODE)
 REGISTRY.register(DIM_BINDER)
 REGISTRY.register(DIM_SPLITTER)
 REGISTRY.register(DISCARD)
+REGISTRY.register(PAIR_PHASE)

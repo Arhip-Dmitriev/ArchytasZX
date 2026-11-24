@@ -847,6 +847,111 @@ def _scalar_mapping(
     return out
 
 
+INDEX2 = sp.Symbol("_phase_k2", integer=True, nonnegative=True)
+"""The second index symbol a :class:`PairPhase` phase is written in."""
+
+
+class PairPhase(PhaseVector):
+    """The phase of a pair-phase node: a Phase ``f`` in :data:`INDEX` (first leg value) and
+    :data:`INDEX2` (second leg value) over the leg dimensions ``(dim, dim2)``; the node's
+    entry at ``(x, y)`` is ``e^{2 pi i f(x, y)}``."""
+
+    __slots__ = ("_dim2", "_pair")
+    _dim2: Dim
+    _pair: Phase
+
+    def __init__(self, dim: Dim, dim2: Dim, pair: Phase) -> None:
+        """Build the pair phase ``pair`` over the leg dimensions ``dim`` and ``dim2``."""
+        super().__init__(dim)
+        if not isinstance(dim2, Dim):
+            raise TypeError(f"PairPhase requires a Dim, got {type(dim2).__name__}")
+        if not isinstance(pair, Phase):
+            raise PhaseGrammarError(f"pair phase must be a Phase, got {pair!r}")
+        self._dim2 = dim2
+        self._pair = pair
+
+    @property
+    def dim2(self) -> Dim:
+        """The second leg's dimension."""
+        return self._dim2
+
+    @property
+    def pair(self) -> Phase:
+        """The phase in :data:`INDEX` and :data:`INDEX2`."""
+        return self._pair
+
+    def at_pair(self, x: sp.Expr, y: sp.Expr) -> sp.Expr:
+        """The turns at leg values ``x`` and ``y``."""
+        return cast(sp.Expr, self._pair.to_sympy_turns().xreplace({INDEX: x, INDEX2: y}))
+
+    @property
+    def free_symbols(self) -> frozenset[str]:
+        """The free symbols of both dimensions and of the phase, the indices excluded."""
+        own = self._pair.to_sympy_turns().free_symbols - {INDEX, INDEX2}
+        return frozenset(
+            {str(s.name) for s in own} | self._dim.free_symbols | self._dim2.free_symbols
+        )
+
+    def sympy_symbols(self) -> frozenset[sp.Symbol]:
+        """The sympy symbols of both dimensions and of the phase, the indices excluded."""
+        found = self._pair.to_sympy_turns().free_symbols - {INDEX, INDEX2}
+        return frozenset(
+            found | self._dim.to_sympy().free_symbols | self._dim2.to_sympy().free_symbols
+        )
+
+    @property
+    def is_zero(self) -> bool:
+        """True iff the phase is the zero expression."""
+        return bool(self._pair.to_sympy_turns() == 0)
+
+    @property
+    def is_concrete(self) -> bool:
+        """True iff both dimensions and the phase carry no free symbol."""
+        return not self.free_symbols
+
+    def __add__(self, other: PhaseVector) -> PhaseVector:
+        """The sum of two pair phases over the same dimensions."""
+        if not isinstance(other, PairPhase) or (self._dim, self._dim2) != (
+            other._dim,
+            other._dim2,
+        ):
+            raise PhaseDomainError("a pair phase adds only to a pair phase over the same dims")
+        return PairPhase(self._dim, self._dim2, self._pair + other._pair)
+
+    def substitute(self, mapping: Mapping[PhaseSymbolKey, PhaseSubstituteValue]) -> PhaseVector:
+        """Symbols substituted in both dimensions and in the phase."""
+        names = {k if isinstance(k, str) else Phase._phase_symbol_name(k) for k in mapping}
+        if not names & self.free_symbols:
+            return self
+        own = {k: v for k, v in mapping.items() if k not in (INDEX.name, INDEX2.name)}
+        dims = [PhaseVector(dim).substitute(own).dim for dim in (self._dim, self._dim2)]
+        return PairPhase(dims[0], dims[1], self._pair.substitute(own))
+
+    def __eq__(self, other: object) -> bool:
+        """Equal iff both dimensions and the phase are equal."""
+        if not isinstance(other, PairPhase):
+            return False if isinstance(other, PhaseVector) else NotImplemented
+        return (self._dim, self._dim2, self._pair) == (other._dim, other._dim2, other._pair)
+
+    def __hash__(self) -> int:
+        """Hash of both dimensions and the phase."""
+        return hash(("pair", self._dim, self._dim2, self._pair))
+
+    def digest(self) -> str:
+        """A 128-bit blake2b digest of :meth:`__repr__`."""
+        import hashlib
+
+        return hashlib.blake2b(repr(self).encode(), digest_size=16).hexdigest()
+
+    def __repr__(self) -> str:
+        return f"PairPhase(dim={self._dim!r}, dim2={self._dim2!r}, pair={self._pair!r})"
+
+    def __str__(self) -> str:
+        names = {INDEX: sp.Symbol("x"), INDEX2: sp.Symbol("y")}
+        expr = self._pair.to_sympy_turns().xreplace(names)
+        return f"PairPhase[{self._dim}, {self._dim2}]({{x, y: {expr}}})"
+
+
 def _rule_values(rule: Phase, r: int) -> list[Phase]:
     """``rule`` at indices 1 .. r - 1, through exact rational arithmetic when it is a
     polynomial in :data:`INDEX` with rational coefficients."""

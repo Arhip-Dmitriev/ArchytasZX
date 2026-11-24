@@ -45,7 +45,7 @@ from typing import Any, TypeAlias, cast
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey, format_count
-from archytaszx.algebra.phase import INDEX, PhaseVector
+from archytaszx.algebra.phase import INDEX, PairPhase, PhaseVector
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
@@ -68,6 +68,7 @@ from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
     FOURIER_BOX,
+    PAIR_PHASE,
     REGISTRY,
     TRIANGLE,
     TRIANGLE_INVERSE,
@@ -795,6 +796,15 @@ def _node_entry(
     if name in (DIM_BINDER.name, DIM_SPLITTER.name):
         split = _table_splitter_entry(diagram, node_id, port_index)
         return split if split is not None else _connective_entry(node, node_id, port_index)
+    if name == PAIR_PHASE.name:
+        legs = [
+            port_index[PortRef(node_id, direction, i)]
+            for direction in (Direction.OUTPUT, Direction.INPUT)
+            for i in range(len(node.legs(direction)))
+        ]
+        if not isinstance(node.phase, PairPhase) or len(legs) != 2:
+            raise SymbolicContractionGrammarError(f"node {node_id!r} (Zp) has no pair phase")
+        return cast(sp.Expr, sp.exp(2 * sp.pi * sp.I * node.phase.at_pair(legs[0], legs[1])))
     dim = resolve_dim(node)
     d_expr = dim.to_sympy()
     outputs = [port_index[PortRef(node_id, Direction.OUTPUT, i)] for i in range(node.num_outputs)]
