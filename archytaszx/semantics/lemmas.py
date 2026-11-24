@@ -67,6 +67,7 @@ class Lemma:
     statement: str
     build: Callable[[sp.Expr], tuple[Diagram, Diagram]]
     prove: Callable[[Diagram, Diagram, str], object] | None = None
+    values: Callable[[Diagram], list[sp.Expr]] | None = None
 
 
 def _out(node: NodeId, index: int = 0) -> PortRef:
@@ -309,7 +310,109 @@ ZERO_REGISTER = Lemma(
     build=lambda p: _dsl_sides(_ZERO_LEFT, _ZERO_RIGHT, p),
 )
 
-LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT, AND_REGISTER, AND_GATED, AND_SPLIT, ZERO_REGISTER)
+
+def _radix_dims(value: sp.Expr) -> tuple[Dim, Dim]:
+    """The top and low dimensions ``(s, t)`` of a :data:`COOLEY_TUKEY` value: a pair ``(s, t)``,
+    or ``t`` alone with ``s`` the formal symbol ``d``."""
+    if isinstance(value, sp.Tuple):
+        return Dim.from_sympy(value[0]), Dim.from_sympy(value[1])
+    return Dim.symbol("d"), Dim.from_sympy(value)
+
+
+def _cooley_tukey_sides(value: sp.Expr) -> tuple[Diagram, Diagram]:
+    """Left: (top, low) of dims ``(s, t)`` bound by B(s, t), shifted by one over ``s*t``, split
+    by S(s, t). Right: F on top, a Z spider of phase ``k/(s t)`` with two pair legs, F^3; low
+    through a Z spider, shifted by one over ``t``, through a Z spider; pair phases ``x y/(s t)``
+    from the top spider to the low input spider and ``-x y/(s t)`` to the low output spider."""
+    from archytaszx.algebra.phase import INDEX2, PairPhase
+    from archytaszx.diagram.generators import PAIR_PHASE
+
+    top, low = _radix_dims(value)
+    reg = Dim.from_sympy(top.to_sympy() * low.to_sympy())
+    whole = reg.to_sympy()
+
+    left = Diagram()
+    b = left.add_node(DIM_BINDER, [top, low], [reg])
+    x = _shift(left, reg, 1)
+    s = left.add_node(DIM_SPLITTER, [reg], [top, low])
+    left.add_wire(_out(b), _in(x))
+    left.add_wire(_out(x), _in(s))
+    left.set_boundary_inputs([_in(b, 0), _in(b, 1)])
+    left.set_boundary_outputs([_out(s, 0), _out(s, 1)])
+
+    right = Diagram()
+    f = right.add_node(FOURIER_BOX, [top], [top])
+    m = right.add_node(
+        Z_SPIDER, [top], [top, top, top], phase=PhaseVector(top, rule=Phase(INDEX / whole))
+    )
+    f1, f2, f3 = (right.add_node(FOURIER_BOX, [top], [top]) for _ in range(3))
+    zi = right.add_node(Z_SPIDER, [low, low], [low])
+    lx = _shift(right, low, 1)
+    zo = right.add_node(Z_SPIDER, [low, low], [low])
+    p0, p1 = (
+        right.add_node(
+            PAIR_PHASE,
+            [top],
+            [low],
+            phase=PairPhase(low, top, Phase(sign * INDEX * INDEX2 / whole)),
+        )
+        for sign in (1, -1)
+    )
+    for a, i, z, j in (
+        (f, 0, m, 0),
+        (m, 0, f1, 0),
+        (f1, 0, f2, 0),
+        (f2, 0, f3, 0),
+        (m, 1, p0, 0),
+        (p0, 0, zi, 1),
+        (m, 2, p1, 0),
+        (p1, 0, zo, 1),
+        (zi, 0, lx, 0),
+        (lx, 0, zo, 0),
+    ):
+        right.add_wire(_out(a, i), _in(z, j))
+    right.set_boundary_inputs([_in(f), _in(zi)])
+    right.set_boundary_outputs([_out(f3), _out(zo)])
+    return left, right
+
+
+def _cooley_tukey_values(diagram: Diagram) -> list[sp.Expr]:
+    """``(s, t)`` per binder B(s, t) of ``diagram`` feeding an X(1 -> 1) over ``s*t``."""
+    partners = _partners(diagram)
+    found: list[sp.Expr] = []
+    for node_id, node in sorted(diagram.nodes.items()):
+        if node.generator_type is not DIM_BINDER:
+            continue
+        nxt = partners.get(_out(node_id))
+        if nxt is None or diagram.nodes[nxt.node_id].generator_type is not X_SPIDER:
+            continue
+        value = sp.Tuple(node.inputs[0].dim.to_sympy(), node.inputs[1].dim.to_sympy())
+        if value not in found:
+            found.append(value)
+    return found
+
+
+COOLEY_TUKEY = Lemma(
+    name="cooley_tukey",
+    symbol="t",
+    statement=(
+        "the shift by one over s*t, with the top s register and the low t register bound by "
+        "B(s, t), is the low register shifted by one over t, its input and output values read "
+        "into pair phases x y/(s t) and -x y/(s t) against the Fourier side of the top register, "
+        "which carries phase k/(s t)"
+    ),
+    build=_cooley_tukey_sides,
+    values=_cooley_tukey_values,
+)
+
+LIBRARY: tuple[Lemma, ...] = (
+    CARRY_SHIFT,
+    AND_REGISTER,
+    AND_GATED,
+    AND_SPLIT,
+    ZERO_REGISTER,
+    COOLEY_TUKEY,
+)
 
 _SPLIT_BIND_LEFT = """
 count p
@@ -475,8 +578,11 @@ def instance(entry: Lemma, value: sp.Expr) -> object:
 
 
 def _values(diagram: Diagram, entry: Lemma) -> list[sp.Expr]:
-    """The symbolic values ``e``, ``e - 1`` and ``e - 2`` of ``entry``'s symbol for each
-    dimension ``2^e`` of ``diagram``, in order of first appearance."""
+    """``entry``'s own ``values`` of ``diagram``, else the symbolic values ``e``, ``e - 1`` and
+    ``e - 2`` of its symbol for each dimension ``2^e`` of ``diagram``, in order of first
+    appearance."""
+    if entry.values is not None:
+        return entry.values(diagram)
     found: list[sp.Expr] = []
     for _node_id, node in sorted(diagram.nodes.items()):
         for port in (*node.inputs, *node.outputs):

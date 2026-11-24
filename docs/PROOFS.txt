@@ -567,6 +567,20 @@ fresh real a for c in every phase term +-c t; the lifted pair goes through the i
 and its theorem is taken at a = c by kernel.phase_instance (inference kind phase_instance), then
 joined to the original sides by iso. Neither kind has a Lean export yet.
 
+Cooley-Tukey lemma (lemmas.COOLEY_TUKEY, in lemmas.LIBRARY). For registers of dims s (top)
+and t (low) bound by B(s, t): the shift by one over s t (X(1 -> 1, s t) phase{k: -k/(s t)})
+between B(s, t) and S(s, t) equals the digit-wise form: on the low register a Z spider, the
+shift by one over t, a Z spider; on the top register F, a Z spider of phase k/(s t), F^3;
+pair phases x y/(s t) from that top spider to the low input spider and -x y/(s t) to the low
+output spider. Proved once with s = d and t formal by symbolic contraction (lemmas.proved);
+an instance at (s, t) is a symbolic contraction of the instantiated sides (at (2, 2^n),
+(d, d^n), (d^n, d); at (d, d) the contraction is indeterminate and the instance fails).
+lemmas.rewrite finds it at each binder B(s, t) feeding an X(1 -> 1) (Lemma.values), so the
+induction lemma close (close_with_lemmas, rewrite_all) applies it. The form holds for an
+integer shift; with the shift a real a the low part F, Z phase{k: a k/t}, F^3 and the left
+side B, F, Z phase{k: a k/(s t)}, F^3, S are equal for every a, while X(1 -> 1) phase{k: -a
+k/(s t)} differs from F Z F^3 at a non-integer a (at s = t = 2, a = 1/2).
+
 4.5 Periodic chains: decide._decide_periodic
 
 When each side reads the index only in its scalar and in the multiplicity of at most one
