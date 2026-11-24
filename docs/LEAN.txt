@@ -1492,7 +1492,8 @@ label0 + MIX_ENT; its table over (l0, u1, u2) takes t(6) = t(2) + t(4) - t(0) an
 t(3) + t(5) - t(1), so P has no u1 u2 term. Qubit nodes are node_q2 over z_frag_dig,
 x_frag_dig, f_frag_dig (k = 1), nodes on 3 node_q3 over z_frag_q, x_frag_q, f_frag_q (each with
 its own phase vector over 3), binders and splitters node_b, Z on 6 node_z6. The environment has
-Δ k = k. six_state_qkd/main d=2 left (146 nodes) checks in 92 s at 1.2 GB.
+Δ k = k. six_state_qkd/main d=2 left (146 nodes) checks in 92 s at 1.2 GB; e91/main
+d=2 left (260 nodes) takes over 600 s.
 
 5. REFUTATIONS
 --------------
