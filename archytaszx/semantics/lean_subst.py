@@ -186,6 +186,28 @@ def lnorm(e: Ex, u: Sequence[int] | set[int], sigma: Mapping[int, int]) -> Ex:
     return ("c", (n - a[1] % n) % n if n else 0) if a[0] == "c" else ("neg", a, n)
 
 
+def bt_text(bs: Sequence[tuple[int, Ex]]) -> str:
+    """The `BT` term `toBT bs` reduces to, a trie on label bits, least significant first."""
+    root: list[Any] = [None, None, None]
+    for a, e in bs:
+        node, x = root, a
+        while x:
+            i = 1 if x % 2 == 0 else 2
+            if node[i] is None:
+                node[i] = [None, None, None]
+            node, x = node[i], x // 2
+        if node[0] is None:
+            node[0] = e
+
+    def go(n: list[Any] | None) -> str:
+        if n is None:
+            return "BT.nil"
+        v = "none" if n[0] is None else f"(some {text(n[0])})"
+        return f"(BT.node {v} {go(n[1])} {go(n[2])})"
+
+    return go(root)
+
+
 def text(e: Ex) -> str:
     """An expression as a Lean `LX` term."""
     h = e[0]
@@ -775,11 +797,18 @@ def sym_decls(
     lq = "[" + ", ".join(lq_names) + "]" if lq_names else "([] : List RFac)"
     lemmas = []
     st_last = f"{tag}s{last}"
-    for gi, g in enumerate(plan.groups):
+    if plan.groups:
+        out.append(f"def {xt}bt : BT := {bt_text(plan.states[-1].bs)}")
         out.append(
-            f"set_option maxHeartbeats 0 in\ntheorem {xt}L{gi} : leafS {shape} {M} Pt Ct {p} {w} "
-            f"{unbnd} σ0 {st_last}.bs {ns_text(g)} {nat_list(plan.scopes[gi])} {names[gi]} = true "
-            ":= by decide +kernel"
+            f"set_option maxHeartbeats 0 in\ntheorem {xt}btE : toBT {st_last}.bs = {xt}bt := "
+            "by decide +kernel"
+        )
+    for gi, g in enumerate(plan.groups):
+        args = f"{shape} {M} Pt Ct {p} {w} {unbnd} σ0"
+        rest = f"{ns_text(g)} {nat_list(plan.scopes[gi])} {names[gi]}"
+        out.append(
+            f"set_option maxHeartbeats 0 in\ntheorem {xt}L{gi} : leafS {args} {st_last}.bs {rest} "
+            f"= true :=\n  leafS_ofT {args} {st_last}.bs {xt}bt {xt}btE {rest} (by decide +kernel)"
         )
         lemmas.append(f"{xt}L{gi}")
     for qi, (nq, e) in enumerate(plan.states[-1].cs):

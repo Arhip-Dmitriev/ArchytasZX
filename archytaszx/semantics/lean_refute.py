@@ -2043,9 +2043,10 @@ class _Refuter:
                 "\n        · simp (config := {decide := true}) only [↓reduceIte, Nat.reduceEqDiff]"
                 f"; rw [ex_atoms {M} {e} ({z}) [] [] (by norm_num) (by norm_num), List.map_nil]"
             )
+        split = f"obtain ⟨{hs}⟩ := hk" if len(ks) > 1 else "have h0 := hk"
         return out + (
             "\n      · simp only [List.mem_cons, List.mem_nil_iff, or_false, not_or] at hk"
-            f"\n        obtain ⟨{hs}⟩ := hk"
+            f"\n        {split}"
             f"\n        simp only [{hs}, if_false]"
             "\n        simp [ex_zero, mono_nil]"
         )
@@ -2180,6 +2181,16 @@ class _Refuter:
         dims = [self.labdim(x) for x in scope]
         if count:
             self.res_count(math.prod(dims))
+        memo: dict[Any, list[int]] = self.__dict__.setdefault("_rsum", {})
+        key = (tuple(scope), l, tuple((tuple(fs), tuple(tab)) for fs, tab in ins))
+        if key not in memo:
+            memo[key] = self._res_sum(scope, l, ins, dims)
+        return memo[key]
+
+    def _res_sum(
+        self, scope: Sequence[int], l: int, ins: Sequence[Any], dims: list[int]
+    ) -> list[int]:
+        """`res_sum` without its memo."""
         axes = [*scope, l]
         full = [*dims, self.labdim(l)]
         dt: Any = np.int64 if self.p < 2**31 else object

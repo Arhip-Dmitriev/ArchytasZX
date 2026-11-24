@@ -1522,8 +1522,27 @@ Exports byte-identical on qft_zero_state! (10,57), qft! (2,5), (7,6); changed an
 qft_zero_state! (5,4) (164166 -> 139155 bytes, 71 -> 72 s), incrementer! (4,2) (21 s both),
 deutsch_jozsa/balanced! (23,9) (5.5 -> 5.8 s); cluster_state_2d! (2,8) exceeds 6 GB before
 and after.
-qft_zero_state! n=27 d=96 is unchanged (substitution route; its 23 sym_run theorems of 64
-delta steps take 25-70 s each and its 1081 leafS theorems about 0.8 s each, > 600 s).
+The trial sums are kept per (scope, label, input tables) (_Refuter.res_sum memo, _res_sum the
+sum itself): qft_zero_state! (10,3) decide 26.7 -> 22.5 s (4.0 s before the trial order),
+qft! (7,6) 11.8 -> 8.5 s (8.2 s before); (27,96) 388 -> 347 s and (17,158) 236 -> 218 s with
+the trial order, exports unchanged.
+Leaf bindings by trie (F46): each leafS theorem of the substitution route is proved by
+leafS_ofT from leafT, which reads a label's binding from a BT (binary trie on the label's bits,
+least significant first; BT.look, BT.insF, BT.look_insF) instead of walking the state's
+binding list (blook); the exporter writes the trie {tag}xbt (lean_subst.bt_text) and proves
+toBT bs = {tag}xbt once (toBT keeps the first binding of a label; toBT_look: look = blook).
+qft_zero_state! n=27 d=96: its 1081 leaf theorems 193 s -> 21 s (with the trie theorem, over
+the definitions as one module); a copy with one leaf factor changed is rejected. Accepted:
+qft_zero_state! (10,57) 42 -> 29 s, (17,158) 562 -> 143 s / 4.1 GB anon, qft! (7,6) 145 ->
+101 s; exports byte-identical on qft_zero_state! (5,4), (10,3), qft! (2,5), incrementer! (4,2).
+A sparse phase vector with one key takes its k ≠ key hypothesis by have, not obtain
+(sparse_proof); (27,96)'s phase vector of key 1 was rejected there.
+qft_zero_state! n=27 d=96 still exceeds 600 s: its 23 sym_run theorems (64 delta steps each,
+each step walking and substituting the whole binding list of up to 1458 entries in dapplyU)
+take more than 600 s together; definitions 59-144 s.
+cluster_state_2d! (2,8) exceeds 6 GB in main at eval_res's hleaf for the first net (one
+decide +kernel over all its leafR leaves at d = 8); every other side condition and theorem of
+the export checks in under 600 MB.
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 

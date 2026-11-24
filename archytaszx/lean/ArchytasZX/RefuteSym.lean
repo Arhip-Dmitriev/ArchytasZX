@@ -1012,6 +1012,126 @@ def leafS (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ �
         tmN p w M (valQ S M P C (fun x => ((texpr bs x).norm U σ).eval τ) n)).foldr
         (fun a b => a * b % p) 1
 
+/-- A binary trie of bindings, keyed by the bits of a label, least significant first. -/
+inductive BT where
+  | nil : BT
+  | node : Option LX → BT → BT → BT
+  deriving DecidableEq
+
+/-- The expression the trie binds to `x`. -/
+def BT.look : BT → ℕ → Option LX
+  | .nil, _ => none
+  | .node v l r, x => if x = 0 then v else if x % 2 = 0 then l.look (x / 2) else r.look (x / 2)
+
+/-- The trie with `x ↦ e` added unless `x` is bound, at most `f` levels deep. -/
+def BT.insF : ℕ → BT → ℕ → LX → BT
+  | 0, t, _, _ => t
+  | f + 1, .nil, x, e =>
+    if x = 0 then .node (some e) .nil .nil
+    else if x % 2 = 0 then .node none (BT.nil.insF f (x / 2) e) .nil
+    else .node none .nil (BT.nil.insF f (x / 2) e)
+  | f + 1, .node v l r, x, e =>
+    if x = 0 then .node (v.orElse fun _ => some e) l r
+    else if x % 2 = 0 then .node v (l.insF f (x / 2) e) r else .node v l (r.insF f (x / 2) e)
+
+theorem BT.insF_nil (f x : ℕ) (e : LX) :
+    BT.nil.insF (f + 1) x e = (BT.node none .nil .nil).insF (f + 1) x e := by
+  simp only [BT.insF]
+  split_ifs <;> rfl
+
+theorem BT.look_insF : ∀ (f : ℕ) (t : BT) (x y : ℕ) (e : LX), x < f →
+    (t.insF f x e).look y = if x = y then (t.look y).orElse fun _ => some e else t.look y := by
+  intro f
+  induction f with
+  | zero => intro t x y e h; omega
+  | succ f ih =>
+    intro t x y e h
+    have hx2 : x ≠ 0 → x / 2 < f := fun _ => by omega
+    have key : ∀ (v : Option LX) (l r : BT),
+        ((BT.node v l r).insF (f + 1) x e).look y =
+          if x = y then ((BT.node v l r).look y).orElse fun _ => some e
+          else (BT.node v l r).look y := by
+      intro v l r
+      by_cases hx : x = 0
+      · subst hx
+        simp only [BT.insF, if_true, BT.look]
+        by_cases hy : y = 0
+        · subst hy; simp
+        · simp [hy, Ne.symm hy]
+      · by_cases hp : x % 2 = 0
+        · simp only [BT.insF, hx, hp, if_false, if_true, BT.look]
+          by_cases hy : y = 0
+          · subst hy; simp [hx]
+          · by_cases hq : y % 2 = 0
+            · simp only [hy, hq, if_false, if_true]
+              rw [ih l (x / 2) (y / 2) e (hx2 hx)]
+              by_cases hxy : x = y
+              · subst hxy; simp
+              · have : x / 2 ≠ y / 2 := by omega
+                simp [hxy, this]
+            · have hxy : x ≠ y := by omega
+              simp [hy, hq, hxy]
+        · simp only [BT.insF, hx, hp, if_false, BT.look]
+          by_cases hy : y = 0
+          · subst hy; simp [hx]
+          · by_cases hq : y % 2 = 0
+            · have hxy : x ≠ y := by omega
+              simp [hy, hq, hxy]
+            · simp only [hy, hq, if_false]
+              rw [ih r (x / 2) (y / 2) e (hx2 hx)]
+              by_cases hxy : x = y
+              · subst hxy; simp
+              · have : x / 2 ≠ y / 2 := by omega
+                simp [hxy, this]
+    cases t with
+    | nil =>
+      rw [BT.insF_nil, key]
+      simp [BT.look]
+    | node v l r => exact key v l r
+
+/-- The bindings as a trie, the first binding of each label kept. -/
+def toBT (bs : List (ℕ × LX)) : BT :=
+  bs.foldl (fun t b => t.insF (b.1 + 1) b.1 b.2) .nil
+
+theorem toBT_look_aux : ∀ (bs : List (ℕ × LX)) (t : BT) (x : ℕ),
+    (bs.foldl (fun t b => t.insF (b.1 + 1) b.1 b.2) t).look x =
+      (t.look x).orElse fun _ => blook bs x := by
+  intro bs
+  induction bs with
+  | nil => intro t x; cases h : t.look x <;> simp [blook, h]
+  | cons b bs ih =>
+    intro t x
+    obtain ⟨a, e⟩ := b
+    simp only [List.foldl_cons]
+    rw [ih, BT.look_insF (a + 1) t a x e (Nat.lt_succ_self a)]
+    simp only [blook]
+    by_cases h : a = x
+    · subst h; cases t.look a <;> simp
+    · simp [h]
+
+theorem toBT_look (bs : List (ℕ × LX)) (x : ℕ) : (toBT bs).look x = blook bs x := by
+  rw [toBT, toBT_look_aux]; rfl
+
+/-- `leafS` with the bindings read from a trie. -/
+def leafT (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (U : List ℕ) (σ : ℕ → ℕ) (t : BT) (g : List Node) (sc : List ℕ) (F : RFac) : Bool :=
+  F.scope.all (sc.contains ·) &&
+  g.all (fun n => (nlegs n).all fun x => (((t.look x).getD (.v x)).norm U σ).vars.all
+    (sc.contains ·)) &&
+    (assigns S.dim sc).all fun τ =>
+      F.at τ == (g.map fun n =>
+        tmN p w M (valQ S M P C (fun x => (((t.look x).getD (.v x)).norm U σ).eval τ) n)).foldr
+        (fun a b => a * b % p) 1
+
+theorem leafS_ofT (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (t : BT) (ht : toBT bs = t) (g : List Node)
+    (sc : List ℕ) (F : RFac) (h : leafT S M P C p w U σ t g sc F = true) :
+    leafS S M P C p w U σ bs g sc F = true := by
+  subst ht
+  have e : ∀ x, ((toBT bs).look x).getD (.v x) = texpr bs x := fun x => by
+    rw [toBT_look]; rfl
+  simpa only [leafT, leafS, e] using h
+
 /-- A constraint's residue factor, checked at every assignment of the labels `sc`, its labels
 in `U` read from `σ`. -/
 def leafQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (sc : List ℕ) (F : RFac) :
