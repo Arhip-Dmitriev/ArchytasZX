@@ -1459,6 +1459,23 @@ mval_count3 ([Count3] on a head variable outside the Z_3 phase and constraints r
 (u1, s, 1, 0, 1) and (u2, s, 1, 0, 2): u1, u2 become held F_2 variables with the zero atom
 0^(u1 u2), valA_zero_atom).
 
+ArchytasZX/PathSumMixedNet.lean (namespace MSem) bridges networks on dimensions 2, 3, 6 to mval
+(no exporter uses it yet). A mixed label (l, k, b, t) is the label l of dimension k with F_2
+variable b (k = 2, 6) and Z_3 variable t (k = 3, 6); mbits and mtrits read them from label values
+(j % 2 and j / 2 on 6), mOK checks labels and variables distinct, and sumOver_mixed is the sum
+over labels as bsum over their F_2 variables of qsum over their Z_3 variables. NetPSM gives each
+node a Z_3 fragment (QFrag at mtrits) times an F_2 fragment with atoms (at liftA es of mbits);
+NetPSM.eval_eq joins them, sum_mval and NetPSM.eval_mval give the network's value as the joined
+Z_3 constant times mval, with the summed F_2 variables and F_2 paths held and the summed Z_3
+variables and Z_3 paths as path. Node lemmas, labels being their own digit variables: node_q3
+(a node on 3 from its QSem fragment, e.g. z_frag_q, x_frag_q, f_frag_q), node_q2 (a qubit node
+from its fragment over dbits with dig l = [l]), node_b with val_binder / val_splitter (a (3, 2)
+binder or splitter on 6: bFrag3 [k_3 = a], bFrag2 [k_2 = b], tB_six), node_z6 (a Z spider on 6:
+z6Frag3 and z6Frag2 equate each leg's digits with the anchor l0's, the F_2 phase P over
+(l0, u1, u2) checked by tableOK against a table ts8 with sixOK ts8 ts, ts8 at sixIdx (2 s + f) =
+f + 2 [s = 1] + 4 [s = 2] being the node's table at 2 s + f, entries (u1, l0, 1, 0, 1) and
+(u2, l0, 1, 0, 2) in es).
+
 5. REFUTATIONS
 --------------
 

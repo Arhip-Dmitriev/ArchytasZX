@@ -90,6 +90,7 @@ import ArchytasZX.PathSumQudit
 import ArchytasZX.PathSumQuditNet
 import ArchytasZX.PathSumQuditDigits
 import ArchytasZX.PathSumMixed
+import ArchytasZX.PathSumMixedNet
 import ArchytasZX.ChainInduct
 import ArchytasZX.ChainLink
 import ArchytasZX.ChainEvery
