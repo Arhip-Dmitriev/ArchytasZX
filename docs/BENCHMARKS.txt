@@ -643,9 +643,13 @@ benchmarks/config.toml.
 
 Units run platform.jobs at a time; a unit's runs go in order. Every run is a fresh worker process
 (python -m benchmarks.worker) under a memory cap of memory_fraction of the available memory
-(at most the Slurm allocation) divided by the workers (a systemd scope without swap, unloaded on exit even when it failed (--collect), else a soft RLIMIT_AS, which Lean and
-the Quantomatic JVM lift: they are bounded by the Lean slot budget (10.4) and -Xmx2g). The worker announces each
-stage, so a killed run records the stage it died in. The worker and every driver lift Python's
+(at most the Slurm allocation) divided by the workers. The cap's mechanism is chosen at run
+time by benchmarks/memcap.py (10.4a): a systemd scope without swap, unloaded on exit even when it
+failed (--collect); else a cgroup v2 child cgroup (memory.max, memory.swap.max 0,
+memory.oom.group 1) made in a delegated subtree, the worker moved in before exec; else a soft
+RLIMIT_AS on the worker, which bounds the engine stages, which run inside the worker. Every run
+record carries memcap, the worker's mechanism (systemd, cgroup_v2 or rlimit_as). The worker
+announces each stage, so a killed run records the stage it died in. The worker and every driver lift Python's
 integer string conversion limit (sys.set_int_max_str_digits(0)) at start.
 
 Each run record carries an outcome, a stage and a cause code (10.6).
@@ -739,6 +743,34 @@ address space per thread (VmData 4.5 GiB with 4 threads and 36 MiB RssAnon), whi
 RLIMIT_AS and RLIMIT_DATA count, so the worker's soft RLIMIT_AS is raised to its hard limit for
 Lean. Lean's own out-of-memory exits (out of memory, std::bad_alloc) are oom too. Every run
 record carries memory_cap_mb, the worker cap. Peak memory is recorded per stage.
+
+10.4a Child memory caps
+
+benchmarks/memcap.py caps one child process tree by one of four mechanisms:
+  systemd    systemd-run --user --scope -p MemoryMax (lean.cgroups());
+  cgroup_v2  a child cgroup azx-TAG-PID-K made in a delegated cgroup v2 directory
+             (BENCH_CGROUP_PARENT, else the parent of the process's cgroup, else the cgroup
+             itself; usable when a probe child can be moved into a cgroup made there),
+             memory.max at the cap, the child moved in by its preexec, the cgroup removed after;
+  srun       a Slurm step, srun --overlap -n1 -N1 --mem=CAPM (only when BENCH_MEMCAP=srun: the
+             step's processes are not children of the worker, so the tree RssAnon and rusage
+             CPU of Lean are not seen);
+  watchdog   the child's process-tree RssAnon polled every 0.25 s, the process group SIGKILLed
+             above the cap.
+BENCH_MEMCAP names the mechanism when it is usable; otherwise the first usable of systemd,
+cgroup_v2, watchdog. Lean checks use it with the cgroup cap of 10.4 (the smaller of
+memory_fraction of T and 5120 MiB plus the budget); their RssAnon budget watcher runs under every
+mechanism, so a check under budget gives the same record. Each check records lean_memcap; a
+cgroup or srun memory kill not caught by the watcher records lean_status oom and lean_kill
+memcap.MECH. Rival drivers and binaries (rival.run_driver, rival.run_binary, the Quantomatic JVM
+with its address space lifted included) run in a session of their own under a cap at the
+worker's BENCH_MEMORY_MB when the worker itself is under rlimit_as, and in the worker's cgroup
+otherwise; their stage records carry memcap and, when the cap killed them, status oom and kill
+memcap.MECH (cause memory.rival).
+
+python -m benchmarks.tools.memcap_probe [--cap-mb M] checks enforcement on a node: per mechanism,
+whether it is usable, whether a child touching 2 M MiB is killed as oom and one touching M / 2
+MiB exits 0; then the chosen mechanism. It exits 0 when every usable mechanism enforced the cap.
 
 10.5 Laptop
 

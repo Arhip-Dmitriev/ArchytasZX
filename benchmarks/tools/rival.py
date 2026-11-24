@@ -39,7 +39,7 @@ from typing import Any
 
 import numpy as np
 
-from benchmarks import ir, stages, subject
+from benchmarks import ir, memcap, stages, subject
 from benchmarks.outcomes import allocation_failure, is_wrong
 from benchmarks.tools import common
 
@@ -548,25 +548,27 @@ def run_driver(
         cpu = max(1, int(limit))
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 5))
 
+    cap = memcap.child_cap("rival")
+    tag = {"memcap": cap.mech if cap else memcap.worker_mechanism()}
     w0 = time.perf_counter()
     try:
-        proc = subprocess.run(
+        proc, capped = memcap.run(
             [str(python(env)), "-I", str(DRIVERS / f"{driver}.py"), path],
-            capture_output=True,
-            text=True,
-            timeout=limit * wall_factor,
-            preexec_fn=caps,
-            env={**os.environ, "OMP_NUM_THREADS": "1"},
-            check=False,
+            cap,
+            limit * wall_factor,
+            caps,
+            {**os.environ, "OMP_NUM_THREADS": "1"},
         )
     except subprocess.TimeoutExpired:
-        return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0}
+        return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0, **tag}
     finally:
         os.unlink(path)
     peak = round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1)
-    if proc.returncode != 0:
+    if proc.returncode != 0 or capped:
         status = (
-            "timeout"
+            "oom"
+            if capped
+            else "timeout"
             if proc.returncode in (-24, 152)
             else (
                 "oom"
@@ -579,11 +581,15 @@ def run_driver(
             "detail": proc.stderr.strip()[-2000:],
             "wall": time.perf_counter() - w0,
             "peak_mb": peak,
+            **tag,
         }
         if status == "timeout":
             out["limit"] = "cpu"
+        if capped:
+            out["kill"] = f"memcap.{tag['memcap']}"
         return out
-    return {"status": "ok", "peak_mb": peak, **json.loads(proc.stdout.strip().splitlines()[-1])}
+    res = json.loads(proc.stdout.strip().splitlines()[-1])
+    return {"status": "ok", "peak_mb": peak, **tag, **res}
 
 
 def binary(env: str, name: str) -> Path:
@@ -602,7 +608,8 @@ def run_binary(
     cmd: list[str], limit: float, wall_factor: float = 4.0, lift_memory: bool = False
 ) -> dict[str, Any]:
     """A tool binary's stdout, its CPU (children's rusage) and wall seconds, or a status;
-    ``lift_memory`` runs it without the worker's soft address-space cap."""
+    ``lift_memory`` runs it without the worker's soft address-space cap; either way the
+    worker's memory cap holds it (memcap.child_cap)."""
 
     def caps() -> None:
         cpu = max(1, int(limit))
@@ -610,19 +617,14 @@ def run_binary(
         if lift_memory:
             lift_address_space()
 
+    cap = memcap.child_cap("rival")
+    tag = {"memcap": cap.mech if cap else memcap.worker_mechanism()}
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     w0 = time.perf_counter()
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=limit * wall_factor,
-            preexec_fn=caps,
-            check=False,
-        )
+        proc, capped = memcap.run(cmd, cap, limit * wall_factor, caps)
     except subprocess.TimeoutExpired:
-        return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0}
+        return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0, **tag}
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu = (after.ru_utime + after.ru_stime) - (before.ru_utime + before.ru_stime)
     out: dict[str, Any] = {
@@ -633,12 +635,15 @@ def run_binary(
         "cpu": cpu,
         "wall": time.perf_counter() - w0,
         "peak_mb": round(after.ru_maxrss / 1024, 1),
+        **tag,
     }
     text = (proc.stderr or "") + (proc.stdout or "")
     alloc_failed = proc.returncode == 1 and allocation_failure(text)
-    if proc.returncode not in (0, 1) or alloc_failed:
-        killed = proc.returncode in (-24, 152)
-        oom = proc.returncode in (-9, 137) or allocation_failure(text)
+    if proc.returncode not in (0, 1) or alloc_failed or capped:
+        killed = proc.returncode in (-24, 152) and not capped
+        oom = capped or proc.returncode in (-9, 137) or allocation_failure(text)
+        if capped:
+            out["kill"] = f"memcap.{tag['memcap']}"
         out["status"] = "timeout" if killed else ("oom" if oom else "error")
         if killed:
             out["limit"] = "cpu"

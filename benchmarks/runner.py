@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from benchmarks import breaks, config, lean, log, outcomes, points, sources, stats, subject
+from benchmarks import breaks, config, lean, log, memcap, outcomes, points, sources, stats, subject
 
 ROOT = Path(__file__).resolve().parent.parent
 STAGE_MARK = "@@STAGE "
@@ -107,6 +107,7 @@ class Context:
     stale: set[str] = field(default_factory=set)
     lean_slots: int = 1
     lean_budget_mb: int = 0
+    memcap: str = ""
 
     def writer(self) -> log.Writer:
         tid = threading.get_ident()
@@ -186,6 +187,16 @@ def environment(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def worker_memcap(ctx: Context) -> str:
+    """The mechanism capping a worker: systemd when ctx.cgroup, cgroup_v2 when
+    memcap.mechanism() is cgroup_v2 (ctx.memcap overrides), else rlimit_as (the worker's soft
+    RLIMIT_AS)."""
+    if ctx.cgroup:
+        return "systemd"
+    mech = ctx.memcap or memcap.mechanism()
+    return mech if mech == "cgroup_v2" else "rlimit_as"
+
+
 def memory_cap_mb(cfg: dict[str, Any], jobs: int) -> int:
     """memory_fraction of the available memory (at most the Slurm allocation), shared by the
     workers."""
@@ -250,6 +261,10 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         json.dump(job, fh, default=str)
         job_path = fh.name
     cmd = [sys.executable, "-m", "benchmarks.worker", job_path]
+    mech = worker_memcap(ctx)
+    cap = memcap.Cap(ctx.mem_mb, "cgroup_v2", tag="worker") if mech == "cgroup_v2" else None
+    if cap is not None and cap.path is None:
+        cap, mech = None, "rlimit_as"
     if ctx.cgroup:
         cmd = [
             "systemd-run",
@@ -269,7 +284,8 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         "OPENBLAS_NUM_THREADS": "1",
         "PYTHONHASHSEED": "0",
         "PYTHONPATH": str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
-        "BENCH_MEMORY_MB": "" if ctx.cgroup else str(ctx.mem_mb),
+        "BENCH_MEMORY_MB": "" if mech != "rlimit_as" else str(ctx.mem_mb),
+        "BENCH_MEMCAP_WORKER": mech,
         "BENCH_SPAN_FILE": job_path + ".spans",
     }
     if ctx.lean_budget_mb:
@@ -285,6 +301,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        preexec_fn=cap.preexec() if cap is not None else None,  # noqa: PLW1509
     )
     with _children_lock:
         _children.add(proc)
@@ -313,6 +330,9 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     err = proc.stderr.read() if proc.stderr is not None else ""
     code = proc.wait()
     timer.cancel()
+    cgroup_oom = cap is not None and cap.oom(code)
+    if cap is not None:
+        cap.close()
     with _children_lock:
         _children.discard(proc)
     os.unlink(job_path)
@@ -331,8 +351,9 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         raise InterruptedError
     if result is not None:
         result["process_wall"] = wall
+        result["memcap"] = mech
         return result
-    status, kill = killed_status(killed.is_set(), code, oom_rise)
+    status, kill = killed_status(killed.is_set(), code, oom_rise or int(cgroup_oom))
     term = code in (143, -signal.SIGTERM)
     if status == "error" and term and ctx.cgroup and _journal_oom(proc.pid, w0):
         status, kill = "oom", "cgroup oom_kill"
@@ -343,6 +364,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         "kill": kill,
         "detail": err.strip()[-400:],
         "process_wall": wall,
+        "memcap": mech,
     }
     if spans is not None:
         from archytaszx.trace import open_path
@@ -848,7 +870,7 @@ def run(
         env["machine"],
         {"median": calib["median"], "tag": tag},
         memory_cap_mb(cfg, jobs),
-        lean.cgroups(),
+        memcap.mechanism() == "systemd",
         {"commit": env["git_commit"], "dirty": env["git_dirty"]},
     )
     ctx.lean_slots, ctx.lean_budget_mb = lean.slots(jobs), lean.budget_mb(jobs)

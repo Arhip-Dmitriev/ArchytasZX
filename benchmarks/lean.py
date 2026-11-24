@@ -34,7 +34,6 @@ attempt (import, lean_status, CPU, wall, peak memory, lean_kill, lean_detail) an
 from __future__ import annotations
 
 import fcntl
-import functools
 import os
 import re
 import shutil
@@ -46,6 +45,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from benchmarks import memcap
 
 ROOT = Path(__file__).resolve().parent.parent
 LEAN_DIR = ROOT / "archytaszx" / "lean"
@@ -76,22 +77,9 @@ FULL_IMPORT = "import ArchytasZX"
 LIGHT_IMPORT = "import ArchytasZX.Light"
 
 
-@functools.cache
 def cgroups() -> bool:
     """True when ``systemd-run --user --scope`` can hold a process to a memory cap."""
-    if shutil.which("systemd-run") is None:
-        return False
-    cmd = [
-        "systemd-run",
-        "--user",
-        "--scope",
-        "--quiet",
-        "--collect",
-        "-p",
-        "MemoryMax=64M",
-        "true",
-    ]
-    return subprocess.run(cmd, capture_output=True, check=False).returncode == 0
+    return memcap.systemd_ok()
 
 
 def slurm_memory_mb() -> float | None:
@@ -147,15 +135,20 @@ def total_memory_mb() -> float:
     return total
 
 
+def cap_mb(fraction: float, budget: float | None = None) -> int:
+    """The cgroup cap of one check: ``fraction`` of the total memory, at most OLEAN_MB plus
+    ``budget``."""
+    cap = int(fraction * total_memory_mb())
+    return min(cap, int(OLEAN_MB + budget)) if budget is not None else cap
+
+
 def scoped(cmd: list[str], fraction: float, budget: float | None = None) -> list[str]:
     """``cmd`` in a systemd scope of its own capped at ``fraction`` of the total memory and at
     OLEAN_MB plus ``budget``, outside the calling worker's scope; ``cmd`` itself without
     systemd."""
     if not cgroups():
         return cmd
-    cap = int(fraction * total_memory_mb())
-    if budget is not None:
-        cap = min(cap, int(OLEAN_MB + budget))
+    cap = cap_mb(fraction, budget)
     return [
         "systemd-run",
         "--user",
@@ -477,19 +470,20 @@ def _attempt(
     probe = path.with_name(path.stem + "_probe.lean")
     probe.write_text(instrument(source, name), encoding="utf-8")
     budget = budget_mb()
-    out: dict[str, Any] = {"lean_budget_mb": budget}
+    cap = memcap.Cap(cap_mb(memory_fraction, budget), tag="lean", no_swap=False)
+    out: dict[str, Any] = {"lean_budget_mb": budget, "lean_memcap": cap.mech}
     slot = _slot()
     proc: subprocess.Popen[bytes] | None = None
     done = threading.Event()
     try:
         w0 = time.perf_counter()
         proc = subprocess.Popen(
-            scoped([lake(), "env", "lean", str(probe)], memory_fraction, budget),
+            cap.command([lake(), "env", "lean", str(probe)]),
             cwd=LEAN_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            preexec_fn=_child_limits(timeout),  # noqa: PLW1509
+            preexec_fn=memcap.chain(cap.preexec(), _child_limits(timeout)),  # noqa: PLW1509
         )
         err_chunks: list[bytes] = []
         err_reader = threading.Thread(target=_drain, args=(proc.stderr, err_chunks), daemon=True)
@@ -521,13 +515,15 @@ def _attempt(
         if timer is not None:
             timer.cancel()
         wall = time.perf_counter() - w0
+        code = os.waitstatus_to_exitcode(status)
+        cgroup_oom = cap.oom(code, text)
     finally:
+        cap.close()
         done.set()
         if proc is not None:
             _ACTIVE.discard(proc.pid)
         slot.close()
         probe.unlink(missing_ok=True)
-    code = os.waitstatus_to_exitcode(status)
     rusage_cpu = usage.ru_utime + usage.ru_stime
     out |= {
         "lean_cpu": max(rusage_cpu, stats.get("cpu_tree", 0.0)),
@@ -541,6 +537,9 @@ def _attempt(
     if over.is_set():
         out["lean_status"] = "oom"
         out["lean_kill"] = "budget"
+    elif cgroup_oom:
+        out["lean_status"] = "oom"
+        out["lean_kill"] = f"memcap.{cap.mech}"
     elif killed.is_set() or code in (-signal.SIGXCPU, 128 + signal.SIGXCPU):
         out["lean_status"] = "timeout"
     elif code in (-signal.SIGKILL, 128 + signal.SIGKILL):
