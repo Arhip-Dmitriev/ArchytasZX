@@ -232,15 +232,30 @@ class Tree:
 
 
 @dataclass(frozen=True)
+class PairPhase:
+    """The diagonal gate |x, y> -> e^(2 pi i rule(x, y)) |x, y> on wires ``a`` (x) and ``b`` (y)."""
+
+    a: str
+    b: str
+    rule: str
+
+
+@dataclass(frozen=True)
 class Pairs:
     """For every pair of copies ``j < k`` of register ``over``, ``body`` on the wires ``"left"``
-    (copy j) and ``"right"`` (copy k), ``index`` reading j and ``pair_index`` reading k, at
-    this point of both copies' wires. The translator takes one CZ body."""
+    (copy j) and ``"right"`` (copy k of ``right_over``, ``over`` when None), ``index`` reading j
+    and ``pair_index`` reading k. Each copy's wire meets its right anchor, then the gates
+    ``between`` (on ``over``, reading ``index`` as the copy), then its left anchor; with
+    ``left_first`` the left anchor, ``between``, the right anchor. The translator takes one CZ
+    or PairPhase body."""
 
     over: str
     body: tuple[Gate, ...]
     index: str = "j"
     pair_index: str = "m"
+    between: tuple[Gate, ...] = ()
+    left_first: bool = False
+    right_over: str | None = None
 
 
 @dataclass(frozen=True)
@@ -297,6 +312,7 @@ Gate = Union[  # noqa: UP007
     Prepare,
     Chain,
     Pairs,
+    PairPhase,
     Tree,
     LowerMCX,
     IndexedMCX,
@@ -360,7 +376,13 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         seen = [q for h in g.body for q in gate_wires(h)]
         seen += [q for pair in g.carries for q in pair] + list(g.through)
         return tuple(dict.fromkeys(seen))
-    if isinstance(g, (Pairs, Neighbours)):
+    if isinstance(g, Pairs):
+        seen = [g.over] + ([g.right_over] if g.right_over is not None else [])
+        seen += [q for h in g.between for q in gate_wires(h)]
+        return tuple(dict.fromkeys(seen))
+    if isinstance(g, PairPhase):
+        return (g.a, g.b)
+    if isinstance(g, Neighbours):
         return (g.over,)
     if isinstance(g, Tree):
         return (g.parent,)

@@ -49,9 +49,13 @@ its out1 linked to the next copy's F (F^3 for s = -1) into in1; the head is an X
 tail a Z(1 -> 0) outside the box, with D^(1/2) per copy and D^(-1/2) once. Pairs puts
 Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1 the left port) on the register's
 wire in the register's box, which takes the index, and the CZ's F nodes in a pair box with
-copy scalar D^(1/2). LowerMCX (D = 2) puts, per copy k in the register's box (index j), a
-Z(1 -> 2) fan on the wire (before the target, after it with ``reverse``), the target X(2 -> 1)
-(scalar 2^(1/2) per copy) fed by Ti after a Z AND spider, and one T per single control into
+copy scalar D^(1/2); a PairPhase body is one Zp(1 -> 1) in the pair box, from the left port to
+the right port, phase{x, y: rule}, no copy scalar. A Pairs with ``between`` puts those gates on
+the wire between its two anchors (the left anchor Z(1 -> 2) first with ``left_first``); with
+``right_over`` the right anchor sits on that register's wire. LowerMCX (D = 2) puts, per copy k
+in the register's box (index j), a Z(1 -> 2) fan on the wire (before the target, after it
+with ``reverse``), the target X(2 -> 1) (scalar 2^(1/2) per copy) fed by Ti after a Z AND
+spider, and one T per single control into
 the AND (through X(pi) for value 0); a pair box (index m) holds one T from copy j's fan leg to
 copy k's AND, so the AND reads T|0> + prod x |1> = T|prod x>. IndexedMCX (D = 2) puts, per
 value copy v in the cells' box (index v), a fan Z(1 -> 2) on the cell, |v> as X(0 -> 1, 2^n)
@@ -877,14 +881,19 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
 
 def _pairs(b: _Builder, g: ir.Pairs) -> None:
     """The anchors and pair box of :class:`ir.Pairs` (see the module docstring)."""
-    if b.chain is not None or len(g.body) != 1 or not isinstance(g.body[0], ir.CZ):
-        raise Unsupported("a pair loop other than one CZ outside a chain")
-    cz = g.body[0]
-    if {cz.c, cz.t} != {"left", "right"}:
-        raise Unsupported("a pair CZ not between the two copies")
+    body = g.body[0] if len(g.body) == 1 else None
+    if b.chain is not None or not isinstance(body, (ir.CZ, ir.PairPhase)):
+        raise Unsupported("a pair loop other than one CZ or PairPhase outside a chain")
+    ends = (body.c, body.t) if isinstance(body, ir.CZ) else (body.a, body.b)
+    if set(ends) != {"left", "right"}:
+        raise Unsupported("a pair gate not between the two copies")
     q = g.over
-    if b.c.count(q) is None or q in b.chained:
-        raise Unsupported("a pair loop over a wire that is not a free register")
+    qr = q if g.right_over is None else g.right_over
+    for w in (q, qr):
+        if b.c.count(w) is None or w in b.chained:
+            raise Unsupported("a pair loop over a wire that is not a free register")
+    if str(b.c.count(qr)) != str(b.c.count(q)):
+        raise Unsupported("a pair loop across registers of different counts")
     key = str(b.c.count(q))
     box = b.boxes.setdefault(key, _Box(key))
     if box.name is None:
@@ -892,30 +901,65 @@ def _pairs(b: _Builder, g: ir.Pairs) -> None:
     if box.index not in (None, g.index):
         raise Unsupported("two pair loops reading different indices")
     box.index = g.index
-    dt = b.dim(q)
-    tn = b.node(f"Z(2 -> 1, {dt})", key)
-    b.take(q, f"{tn}.in0")
-    b.gives(q, f"{tn}.out0")
-    zc = b.node(f"Z(1 -> 2, {dt})", key)
-    b.take(q, f"{zc}.in0")
-    b.gives(q, f"{zc}.out0")
-    left, right = (f"{zc}.out1", f"{tn}.in1")
-    if cz.c == "right":
-        left, right = right, left
-    hops = 3 if cz.s == -1 else 1
+    if qr != q and g.between:
+        raise Unsupported("a pair loop across registers with gates between its anchors")
+
+    def anchor_right() -> str:
+        dt = b.dim(qr)
+        tn = b.node(f"Z(2 -> 1, {dt})", key)
+        b.take(qr, f"{tn}.in0")
+        b.gives(qr, f"{tn}.out0")
+        return f"{tn}.in1"
+
+    def anchor_left() -> str:
+        zc = b.node(f"Z(1 -> 2, {b.dim(q)})", key)
+        b.take(q, f"{zc}.in0")
+        b.gives(q, f"{zc}.out0")
+        return f"{zc}.out1"
+
+    if g.left_first:
+        left = anchor_left()
+        for h in g.between:
+            _gate(b, h)
+        right = anchor_right()
+    else:
+        right = anchor_right()
+        for h in g.between:
+            _gate(b, h)
+        left = anchor_left()
     name = f"P{len(b.pair_lines)}"
-    port = f"{zc}.out1"
+    if isinstance(body, ir.PairPhase):
+        e = sp.simplify(b.ctx.value(sp.sympify(body.rule)))
+        if ends[0] == "left":
+            e = e.subs(
+                {sp.Symbol("x"): sp.Symbol("y"), sp.Symbol("y"): sp.Symbol("x")}, simultaneous=True
+            )
+        zp = b.node(f"Zp(1 -> 1, {b.dim(q)}) phase{{x, y: {_expr(e)}}}", None)
+        b.wires.append(f"{left} -- {zp}.in0")
+        b.wires.append(f"{zp}.out0 -- {right}")
+        b.pair_lines += [
+            f"pairs {name} of {box.name} index {g.pair_index}: {zp}",
+            f"left {name}: {left}",
+            f"right {name}: {right}",
+        ]
+        return
+    dt = b.dim(q)
+    lp, rp = left, right
+    if body.c == "right":
+        lp, rp = rp, lp
+    hops = 3 if body.s == -1 else 1
+    port = left
     fs = []
     for _ in range(hops):
         f = b.node(f"F({dt})", None)
         b.wires.append(f"{port} -- {f}.in0")
         port = f"{f}.out0"
         fs.append(f)
-    b.wires.append(f"{port} -- {tn}.in1")
+    b.wires.append(f"{port} -- {right}")
     b.pair_lines += [
         f"pairs {name} of {box.name} index {g.pair_index}: " + ", ".join(fs),
-        f"left {name}: {left}",
-        f"right {name}: {right}",
+        f"left {name}: {lp}",
+        f"right {name}: {rp}",
         f"copy scalar {name}: {_expr(b.dval(q) ** sp.Rational(1, 2))}",
     ]
 
