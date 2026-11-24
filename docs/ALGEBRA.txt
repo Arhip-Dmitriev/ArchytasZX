@@ -277,6 +277,16 @@ moduli included; otherwise only where the expression is m-periodic in v. A delta
 [s R + L == 0 mod M], R = ModResidue(x, m) free of summed indices, s = +-1, L free of
 ModResidue atoms, whose frequency ranges bound in (-M, M) with R in [0, m), replaces R by
 -s L in the other factors of its term.
+A ModResidue(x, m) with x integer-linear over bits and in [0, 2m) (or [-m, m)) whose wrapping
+corners (or non-wrapping corners) form one face of the bit cube reads as x - m w, w the bit
+product of that face (1 minus it for non-wrapping corners; negated for [-m, m)).
+A delta [p A + B == 0 mod p q] at a prime power p q, B the terms of coefficient prime to p
+(each coefficient and the constant taken to its least absolute residue mod p), whose frequency
+ranges do not bound in (-p q, p q), splits at its low digit: over bits at p q = 4 into
+[B == 0 mod 2] [A + B (B - 1)/2 == 0 mod 2] (the carry as a bit polynomial); otherwise into
+sum_c [B - p c == 0 mod p q] [A + c == 0 mod q] over the carries c from ceil(min B / p) to
+floor(max B / p), when each B - p c is bounded in (-p q, p q). The high delta splits again on
+the next pass.
 At a concrete modulus m the echelon form takes every substituted row and pivot value with an
 integer coefficient c of |c| >= m to sign(c) (|c| mod m), so coefficients stay below m
 instead of growing with each Gauss-Jordan step.

@@ -901,12 +901,50 @@ def _collapse_residues(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp
         least, greatest = found
         if least.is_nonnegative is True and sp.expand(m - 1 - greatest).is_nonnegative is True:
             return cast(sp.Expr, x)
-        return node
+        wrap = _wrap(x, m, ranges)
+        return node if wrap is None else cast(sp.Expr, sp.expand(x - m * wrap))
 
     expr = expr.replace(lambda n: isinstance(n, ModResidue), bounded)
     expr = expr.replace(lambda n: isinstance(n, sp.exp) and n.has(ModResidue), phase)
     return cast(
         sp.Expr, expr.replace(lambda n: isinstance(n, ModDelta) and n.has(ModResidue), delta)
+    )
+
+
+def _wrap(x: sp.Expr, m: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
+    """``w`` with ``x mod m == x - m*w``, for an integer ``m`` and ``x`` integer-linear over bits
+    of ``ranges`` in ``[0, 2m)`` or ``[-m, m)`` whose wrapping corners form one face of the cube
+    (the bits ``S`` whose flip from the extreme corner unwraps it, fixed there): ``w`` the bit
+    product of ``S`` at that corner, negated for ``[-m, m)``; else None."""
+    form = _linear_over(x, ranges) if m.is_Integer else None
+    if not form or any(sp.expand(ranges[v] - 2) != 0 or c == 0 for v, c in form.items()):
+        return None
+    found = _bounds(x, ranges)
+    if found is None or not (found[0].is_Integer and found[1].is_Integer):
+        return None
+    least, greatest, modulus = int(found[0]), int(found[1]), int(m)
+    if 0 <= least and modulus <= greatest < 2 * modulus:
+        top, edge, sign = True, greatest - modulus, 1
+    elif -modulus <= least < 0 and greatest < modulus:
+        top, edge, sign = False, -1 - least, -1
+    else:
+        return None
+    face = _face(form, edge, top)
+    if face is not None:
+        return cast(sp.Expr, sign * face)
+    other = (modulus - 1 - least) if top else (greatest - 0)
+    face = _face(form, other, not top)
+    return None if face is None else cast(sp.Expr, sign * (1 - face))
+
+
+def _face(form: dict[sp.Symbol, int], edge: int, top: bool) -> sp.Expr | None:
+    """The bit product of the face of corners within ``edge`` of the greatest (``top``) or least
+    corner of ``sum c*v`` over bits, when those corners form one face; else None."""
+    face = [v for v, c in form.items() if abs(c) > edge]
+    if sum(abs(c) for v, c in form.items() if v not in face) > edge:
+        return None
+    return cast(
+        sp.Expr, sp.Mul(*(v if (c > 0) == top else 1 - v for v, c in form.items() if v in face))
     )
 
 
@@ -1503,7 +1541,59 @@ def _radix_split_concrete(
         return cast(
             sp.Expr, ModDelta(sp.expand(digit), t) * ModDelta(sp.expand(carry), modulus // t)
         )
-    return None
+    return _carry_split(pieces, modulus, ranges)
+
+
+def _carry_split(
+    pieces: tuple[sp.Expr, ...], modulus: int, ranges: Mapping[sp.Symbol, sp.Expr]
+) -> sp.Expr | None:
+    """``[p*A + B == 0 mod p*q]`` (``p*q`` a power of the prime ``p``, ``B`` the terms of
+    coefficient prime to ``p`` and the constant mod ``p``) whose frequency ``ranges`` do not
+    bound in ``(-p*q, p*q)``: over bits at ``p = q = 2`` as ``[B == 0 mod 2] * [A + B(B-1)/2 ==
+    0 mod 2]``; else as ``Sum_c [B == p*c mod p*q] * [A + c == 0 mod q]`` over the carries
+    ``c`` of ``B``, each ``B - p*c`` bounded in ``(-p*q, p*q)``; else None."""
+    whole = _bounds(cast(sp.Expr, sp.Add(*pieces)), ranges)
+    if (
+        whole is None
+        or not (whole[0].is_Integer and whole[1].is_Integer)
+        or (whole[0] > -modulus and whole[1] < modulus)
+    ):
+        return None
+    primes = sp.factorint(modulus)
+    if len(primes) != 1:
+        return None
+    p = min(primes)
+    q = modulus // p
+    carry: sp.Expr = sp.Integer(0)
+    digit: sp.Expr = sp.Integer(0)
+    for piece in pieces:
+        coefficient, rest = piece.as_coeff_Mul()
+        if not coefficient.is_Integer:
+            return None
+        low = int(coefficient) % p
+        if low > p // 2:
+            low -= p
+        digit += low * rest
+        carry += (int(coefficient) - low) // p * rest
+    if digit == 0 or carry == 0:
+        return None
+    bounds = _bounds(digit, ranges)
+    if bounds is None or not (bounds[0].is_Integer and bounds[1].is_Integer):
+        return None
+    least, greatest = int(bounds[0]), int(bounds[1])
+    symbols = digit.free_symbols
+    if p == 2 and q == 2 and all(sp.expand(ranges.get(s, 0) - 2) == 0 for s in symbols):
+        half = sp.expand(digit * (digit - 1) / 2)
+        half = half.replace(
+            lambda node: node.is_Pow and node.base in symbols, lambda node: node.base
+        )
+        return cast(sp.Expr, ModDelta(digit, 2) * ModDelta(sp.expand(carry + half), 2))
+    out: sp.Expr = sp.Integer(0)
+    for c in range(-((-least) // p), greatest // p + 1):
+        if not (least - p * c > -modulus and greatest - p * c < modulus):
+            return None
+        out += ModDelta(sp.expand(digit - p * c), modulus) * ModDelta(sp.expand(carry + c), q)
+    return out
 
 
 _RADIX: dict[tuple[object, ...], sp.Expr] = {}
