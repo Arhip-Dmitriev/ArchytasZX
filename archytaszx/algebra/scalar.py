@@ -1541,18 +1541,21 @@ def _radix_split_concrete(
         return cast(
             sp.Expr, ModDelta(sp.expand(digit), t) * ModDelta(sp.expand(carry), modulus // t)
         )
-    return _carry_split(pieces, modulus, ranges)
+    return None
 
 
-def _carry_split(
-    pieces: tuple[sp.Expr, ...], modulus: int, ranges: Mapping[sp.Symbol, sp.Expr]
-) -> sp.Expr | None:
+def _carry_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
     """``[p*A + B == 0 mod p*q]`` (``p*q`` a power of the prime ``p``, ``B`` the terms of
     coefficient prime to ``p`` and the constant mod ``p``) whose frequency ``ranges`` do not
     bound in ``(-p*q, p*q)``: over bits at ``p = q = 2`` as ``[B == 0 mod 2] * [A + B(B-1)/2 ==
     0 mod 2]``; else as ``Sum_c [B == p*c mod p*q] * [A + c == 0 mod q]`` over the carries
     ``c`` of ``B``, each ``B - p*c`` bounded in ``(-p*q, p*q)``; else None."""
-    whole = _bounds(cast(sp.Expr, sp.Add(*pieces)), ranges)
+    frequency, m = delta.args
+    if not m.is_Integer or int(m) < 4:
+        return None
+    modulus = int(m)
+    pieces = sp.Add.make_args(_expand(frequency))
+    whole = _carry_bounds(cast(sp.Expr, sp.Add(*pieces)), ranges)
     if (
         whole is None
         or not (whole[0].is_Integer and whole[1].is_Integer)
@@ -1577,17 +1580,15 @@ def _carry_split(
         carry += (int(coefficient) - low) // p * rest
     if digit == 0 or carry == 0:
         return None
-    bounds = _bounds(digit, ranges)
+    bounds = _carry_bounds(digit, ranges)
     if bounds is None or not (bounds[0].is_Integer and bounds[1].is_Integer):
         return None
     least, greatest = int(bounds[0]), int(bounds[1])
     symbols = digit.free_symbols
-    if p == 2 and q == 2 and all(sp.expand(ranges.get(s, 0) - 2) == 0 for s in symbols):
-        half = sp.expand(digit * (digit - 1) / 2)
-        half = half.replace(
-            lambda node: node.is_Pow and node.base in symbols, lambda node: node.base
-        )
-        return cast(sp.Expr, ModDelta(digit, 2) * ModDelta(sp.expand(carry + half), 2))
+    if p == 2 and all(sp.expand(ranges.get(s, 0) - 2) == 0 for s in symbols):
+        half = _bit_half(digit, q)
+        if half is not None:
+            return cast(sp.Expr, ModDelta(digit, 2) * ModDelta(sp.expand(carry + half), q))
     out: sp.Expr = sp.Integer(0)
     for c in range(-((-least) // p), greatest // p + 1):
         if not (least - p * c > -modulus and greatest - p * c < modulus):
@@ -1596,29 +1597,105 @@ def _carry_split(
     return out
 
 
+def _carry_bounds(
+    expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, sp.Expr] | None:
+    """:func:`_bounds`, or for an integer polynomial over bits of ``ranges`` the sums of its
+    negative and of its positive coefficients plus its constant."""
+    found = _bounds(expr, ranges)
+    if found is not None:
+        return found
+    symbols = sorted(expr.free_symbols, key=lambda s: str(s.name))
+    if not symbols or any(sp.expand(ranges.get(s, 0) - 2) != 0 for s in symbols):
+        return None
+    terms = poly_terms(expr, tuple(symbols))
+    if terms is None or not all(c.is_Integer for _m, c in terms):
+        return None
+    least = greatest = 0
+    for monomial, c in terms:
+        if not any(monomial):
+            least, greatest = least + int(c), greatest + int(c)
+        elif c > 0:
+            greatest += int(c)
+        else:
+            least += int(c)
+    return sp.Integer(least), sp.Integer(greatest)
+
+
+def _bit_power_free(expr: sp.Expr) -> sp.Expr:
+    """``expr`` expanded with every power of a symbol read as the symbol."""
+    return cast(
+        sp.Expr,
+        sp.expand(expr).replace(
+            lambda node: node.is_Pow and node.base.is_Symbol and node.exp.is_Integer,
+            lambda node: node.base,
+        ),
+    )
+
+
+def _bit_half(digit: sp.Expr, q: int) -> sp.Expr | None:
+    """A bit polynomial equal to ``digit / 2`` mod ``q`` wherever ``digit`` is even: at ``q = 2``
+    ``digit (digit - 1) / 2``; else ``(R + par(R)) / 2`` for ``digit = x + R``, ``x`` the
+    greatest-named bit read only in its own term and ``par(R) = (1 - (-1)^R) / 2`` over bits; else
+    None."""
+    if q == 2:
+        return _bit_power_free(digit * (digit - 1) / 2)
+    terms = sp.Add.make_args(digit)
+    singles = [
+        t
+        for t in terms
+        if t.is_Symbol and not any(t in o.free_symbols for o in terms if o is not t)
+    ]
+    if not singles:
+        return None
+    x = max(singles, key=lambda s: str(s.name))
+    rest = sp.expand(digit - x)
+    sign: sp.Expr = sp.Integer(1)
+    for term in sp.Add.make_args(rest):
+        coefficient, monomial = term.as_coeff_Mul()
+        if not coefficient.is_Integer:
+            return None
+        if int(coefficient) % 2:
+            sign = sign * (-1 if monomial == 1 else 1 - 2 * monomial)
+    parity = _bit_power_free((1 - sign) / 2)
+    return _bit_power_free((rest + parity) / 2)
+
+
 _RADIX: dict[tuple[object, ...], sp.Expr] = {}
 """Results of :func:`_split_radix_deltas` on one ModDelta, keyed by the delta and the ranges of
 its symbols."""
 
 
-def _split_radix_deltas(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
-    """:func:`_radix_split` on every ModDelta, bound indices sized by their limits; memoised in
-    :data:`_RADIX`."""
+_CARRIES: ContextVar[bool] = ContextVar("split_carries", default=False)
+
+
+def _split_radix_deltas(
+    expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr], top: bool = True
+) -> sp.Expr:
+    """:func:`_radix_split` on every ModDelta, bound indices sized by their limits, then
+    :func:`_carry_split` on each outside every sum; memoised in :data:`_RADIX`."""
     if isinstance(expr, sp.Sum):
         inner = dict(ranges)
         for var, _lower, upper in expr.limits:
             inner[var] = sp.expand(upper + 1)
-        return cast(sp.Expr, sp.Sum(_split_radix_deltas(expr.function, inner), *expr.limits))
+        return cast(sp.Expr, sp.Sum(_split_radix_deltas(expr.function, inner, False), *expr.limits))
     if isinstance(expr, ModDelta):
-        key = (expr, frozenset((s, r) for s, r in ranges.items() if s in expr.free_symbols))
+        key = (
+            expr,
+            frozenset((s, r) for s, r in ranges.items() if s in expr.free_symbols),
+            top and _CARRIES.get(),
+        )
         if key not in _RADIX:
             if len(_RADIX) >= _MEMO_CAP:
                 _RADIX.clear()
-            _RADIX[key] = _radix_split(expr, ranges) or expr
+            found = _radix_split(expr, ranges)
+            if found is None and key[2]:
+                found = _carry_split(expr, ranges)
+            _RADIX[key] = found or expr
         return _RADIX[key]
     if not expr.args or not expr.has(ModDelta):
         return expr
-    return cast(sp.Expr, expr.func(*(_split_radix_deltas(arg, ranges) for arg in expr.args)))
+    return cast(sp.Expr, expr.func(*(_split_radix_deltas(arg, ranges, top) for arg in expr.args)))
 
 
 def _case_candidates(term: sp.Expr, limits: list[_Limit]) -> list[tuple[sp.Symbol, int]]:
@@ -2679,24 +2756,28 @@ class Scalar:
         max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS,
         ranges: Mapping[str, Dim] | None = None,
         enumerate_concrete: bool = True,
+        split_carries: bool = False,
     ) -> Scalar:
         """Close every index sum the identities reach and put the remaining deltas in echelon form;
         ``ranges`` sizes free indices; ``enumerate_concrete`` False leaves a stuck concrete sum
-        unexpanded; memoised in :data:`_SIMPLIFIED`."""
+        unexpanded; ``split_carries`` applies :func:`_carry_split` outside every sum; memoised
+        in :data:`_SIMPLIFIED`."""
         known = {_index_symbol(name): dim.to_sympy() for name, dim in (ranges or {}).items()}
-        key = (self._expr, max_steps, tuple(known.items()), enumerate_concrete)
+        key = (self._expr, max_steps, tuple(known.items()), enumerate_concrete, split_carries)
         hit = _SIMPLIFIED.get(key)
         if isinstance(hit, Scalar):
             return hit
         if isinstance(hit, str):
             raise ScalarBudgetError(hit)
         token = _ENUMERATE.set(enumerate_concrete)
+        carries = _CARRIES.set(split_carries)
         try:
             simplified = _simplify_expr(_rename_indices(self._expr), [max_steps], known)
         except ScalarBudgetError as exc:
             self._remember(key, str(exc))
             raise
         finally:
+            _CARRIES.reset(carries)
             _ENUMERATE.reset(token)
         result = Scalar(_rename_indices(simplified))
         self._remember(key, result)
