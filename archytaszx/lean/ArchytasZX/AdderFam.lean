@@ -3,6 +3,7 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.Closed
+import ArchytasZX.ChainInduct
 
 /-!
 # Adder families: carry-chain telescoping and the Fourier shift
@@ -19,6 +20,14 @@ takes carry-in `e (k + 1)` and gives carry-out `e k`.
 * `fourier_shift`: `F³ · diag (om d ^ (y s)) · F` is the shift by `s`.
 * `AdderIface`, `AdderIface.fam`: the family theorem by `Nat.rec` against an interface the engine
   export fills; `fam_8`, `fam_24` instantiate it.
+* `fou_three`: `F · F · F = conj F` entrywise.
+* `glueNet`, `Fits`, `glue_fits`, `glue_equal`, `netIface`, `netIface_fam`: the `AdderIface`
+  over networks with scalars, `glue` attaching one copy; `trans` and `congr` proved, `base`,
+  `peel`, `close` hypotheses; `glue n` attaches `copy n` shifted to level `n` (a `chainNet` step).
+* `glueAt`, `FitsAt`, `CopyAt`, `glueAt_fits`, `glueAt_equal`, `netIfaceAt`, `netIfaceAt_fam`:
+  the same with copy `n` joining labels of every earlier level through `cut n`.
+* `telescope_off`: `telescope` with root orders `d ^ (k + r + 1)`, end terms at `d ^ r` and
+  `d ^ (n + r)`.
 -/
 
 namespace ArchytasZX
@@ -130,5 +139,248 @@ theorem AdderIface.fam_8 {α : ℕ → Type*} (I : AdderIface α) : I.rel 8 (I.l
 
 theorem AdderIface.fam_24 {α : ℕ → Type*} (I : AdderIface α) : I.rel 24 (I.lhs 24) (I.rhs 24) :=
   I.fam 24
+
+/-! ## The Fourier box cubed -/
+
+/-- `F³ = conj F` entrywise, in matrix order, at every `o`, `i`. -/
+theorem fou_three (d o i : ℕ) (hd : 0 < d) :
+    ∑ a ∈ range d, ∑ b ∈ range d, fou d o a * fou d a b * fou d b i =
+      (starRingEnd ℂ) (fou d o i) := by
+  set a0 := (d - i % d) % d with ha0
+  have hi : i % d < d := Nat.mod_lt _ hd
+  have h0 : (a0 + i) % d = 0 := by
+    rw [Nat.add_mod, ha0, Nat.mod_mod, Nat.mod_add_mod, Nat.sub_add_cancel hi.le, Nat.mod_self]
+  have huniq : ∀ a < d, (a + i) % d = 0 → a = a0 := by
+    intro a ha h
+    have h1 : a + i ≡ a0 + i [MOD d] := by
+      show (a + i) % d = (a0 + i) % d
+      rw [h, h0]
+    have h2 := Nat.ModEq.add_right_cancel' i h1
+    unfold Nat.ModEq at h2
+    rwa [Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt (Nat.mod_lt _ hd)] at h2
+  simp only [mul_assoc, ← mul_sum, fou_sq d hd _ i, mul_ite, mul_one, mul_zero]
+  rw [Finset.sum_eq_single a0 (fun a ha hne =>
+      ite_eq_right_iff.2 fun h => absurd (huniq a (Finset.mem_range.1 ha) h) hne)
+      (fun h => absurd (Finset.mem_range.2 (Nat.mod_lt _ hd)) h), ite_eq_left_iff.2
+      fun h => absurd h0 h]
+  have hr : (starRingEnd ℂ) (rt d) = rt d := Complex.conj_ofReal _
+  have hone : om d ^ (o * a0) * om d ^ (o * i) = 1 := by
+    rw [← pow_add, ← mul_add, om_pow_mod d hd, Nat.mul_mod, h0, mul_zero, Nat.zero_mod, pow_zero]
+  simp only [fou, map_div₀, map_pow, conj_om]
+  change om d ^ (o * a0) / rt d = ((om d)⁻¹) ^ (o * i) / (starRingEnd ℂ) (rt d)
+  rw [hr, inv_pow, eq_inv_of_mul_eq_one_left hone]
+
+/-! ## A network instance -/
+
+/-- `N` with one more copy attached at level `k`: `copy` shifted by `k W`, plugged through the
+labels `cut` shifted by `k W`, which become summed. -/
+def glueNet (W : ℕ) (cut : List ℕ) (copy : Net) (k : ℕ) (N : Net) : Net :=
+  let C := copy.mapL (· + k * W)
+  let cs := cut.map (· + k * W)
+  ⟨C.nodes ++ N.nodes, C.int ++ cs ++ N.int, N.bnd.filter (· ∉ cs) ++ C.bnd.filter (· ∉ cs)⟩
+
+theorem chainNet_succ (W : ℕ) (cut : List ℕ) (base : Net) (copy : ℕ → Net) (k : ℕ) :
+    chainNet W cut base copy (k + 1) = glueNet W cut (copy k) k (chainNet W cut base copy k) :=
+  rfl
+
+/-- Every label of `N` below `k W + W`, no summed one a cut label shifted by `k W`. -/
+def Fits (W : ℕ) (cut : List ℕ) (k : ℕ) (N : Net) : Prop :=
+  (∀ x ∈ labelsOf N.nodes ++ N.int ++ N.bnd, x < k * W + W) ∧
+    ∀ x ∈ N.int, ∀ c ∈ cut, x ≠ c + k * W
+
+theorem glue_fits (W : ℕ) (cut : List ℕ) (cp N : Net) (k : ℕ) (hcut : ∀ c ∈ cut, c < W)
+    (hc : copyOK W cut cp = true) (hN : Fits W cut k N) :
+    Fits W cut (k + 1) (glueNet W cut cp k N) := by
+  simp only [copyOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hc
+  obtain ⟨hcl, hci⟩ := hc
+  obtain ⟨ih1, ih2⟩ := hN
+  have hsucc : (k + 1) * W = k * W + W := by rw [Nat.succ_mul]
+  refine ⟨fun x hx => ?_, fun x hx c hcm e => ?_⟩
+  · rw [hsucc]
+    have hx' : x ∈ labelsOf (cp.mapL (· + k * W)).nodes ++ (cp.mapL (· + k * W)).int ++
+        (cp.mapL (· + k * W)).bnd ∨ x ∈ cut.map (· + k * W) ∨
+        x ∈ labelsOf N.nodes ++ N.int ++ N.bnd := by
+      simp only [glueNet, labelsOf, List.flatMap_append, List.mem_append, List.mem_filter] at hx ⊢
+      tauto
+    rcases hx' with h | h | h
+    · obtain ⟨y, hy, rfl⟩ := mem_labels_mapL (· + k * W) cp x h
+      rcases hcl y hy with h' | ⟨_, h'⟩
+      · have := hcut y h'; omega
+      · omega
+    · obtain ⟨c', hc', rfl⟩ := List.mem_map.1 h
+      have := hcut c' hc'; omega
+    · have := ih1 x h; omega
+  · rw [hsucc] at e
+    have hcW := hcut c hcm
+    simp only [glueNet, List.mem_append] at hx
+    rcases hx with (hx | hx) | hx
+    · obtain ⟨y, hy, rfl⟩ := List.mem_map.1 (show x ∈ cp.int.map (· + k * W) from hx)
+      obtain ⟨_, hy2⟩ := hci y hy
+      exact hy2 (List.mem_map.2 ⟨c, hcm, by omega⟩)
+    · obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hx
+      have := hcut c' hc'; omega
+    · have := ih1 x (mem_all_of_int hx); omega
+
+/-- Attaching the same copy to both sides keeps an equation. -/
+theorem glue_equal (E : Env) (W : ℕ) (cut : List ℕ) (cp : Net) (k : ℕ) {s t : ℂ} {A B : Net}
+    (hc : copyOK W cut cp = true) (hA : Fits W cut k A) (hB : Fits W cut k B)
+    (h : Equal E s A t B) : Equal E s (glueNet W cut cp k A) t (glueNet W cut cp k B) := by
+  have hc' := hc
+  simp only [copyOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hc'
+  have A1 := plug E (cp.mapL (· + k * W)).nodes A.nodes B.nodes
+    ((cp.mapL (· + k * W)).int ++ cut.map (· + k * W)) A.int B.int
+    (A.bnd.filter (· ∉ cut.map (· + k * W)) ++
+      (cp.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W)))
+    A.bnd _ _ (Equal.toLocal E _ _ h)
+    (copy_off W k cut A cp hA.1 hA.2 hc'.1) (copy_off W k cut B cp hB.1 hB.2 hc'.1)
+    (face_left _ _ _ _)
+  exact A1.reorder E (B' := glueNet W cut cp k B) (List.Perm.refl _) (List.Perm.refl _)
+    ((h.1.filter _).append (List.Perm.refl _))
+
+/-- The `AdderIface` over networks with scalars: `α n = ℂ × Net`, `rel n` is `Fits` on both
+sides and `Equal E`, `glue n` attaches `copy n` at level `n`. -/
+def netIface (E : Env) (W : ℕ) (cut : List ℕ) (copy : ℕ → Net) (lhs rhs : ℕ → ℂ × Net)
+    (hcut : ∀ c ∈ cut, c < W) (hcopy : ∀ n, copyOK W cut (copy n) = true)
+    (fL : ∀ n, Fits W cut n (lhs n).2) (fR : ∀ n, Fits W cut n (rhs n).2)
+    (base : Equal E (lhs 0).1 (lhs 0).2 (rhs 0).1 (rhs 0).2)
+    (peel : ∀ n, Equal E (lhs (n + 1)).1 (lhs (n + 1)).2 (lhs n).1
+      (glueNet W cut (copy n) n (lhs n).2))
+    (close : ∀ n, Equal E (rhs n).1 (glueNet W cut (copy n) n (rhs n).2) (rhs (n + 1)).1
+      (rhs (n + 1)).2) :
+    AdderIface (fun _ => ℂ × Net) where
+  lhs := lhs
+  rhs := rhs
+  rel n a b := Fits W cut n a.2 ∧ Fits W cut n b.2 ∧ Equal E a.1 a.2 b.1 b.2
+  trans _ _ _ _ h h' := ⟨h.1, h'.2.1, h.2.2.trans h'.2.2⟩
+  glue n a := (a.1, glueNet W cut (copy n) n a.2)
+  base := ⟨fL 0, fR 0, base⟩
+  peel n := ⟨fL (n + 1), glue_fits W cut _ _ n hcut (hcopy n) (fL n), peel n⟩
+  congr n _ _ h := ⟨glue_fits W cut _ _ n hcut (hcopy n) h.1,
+    glue_fits W cut _ _ n hcut (hcopy n) h.2.1, glue_equal E W cut _ n (hcopy n) h.1 h.2.1 h.2.2⟩
+  close n := ⟨glue_fits W cut _ _ n hcut (hcopy n) (fR n), fR (n + 1), close n⟩
+
+/-- The network family theorem: `lhs n` equals `rhs n` with their scalars at every `n`. -/
+theorem netIface_fam (E : Env) (W : ℕ) (cut : List ℕ) (copy : ℕ → Net) (lhs rhs : ℕ → ℂ × Net)
+    (hcut : ∀ c ∈ cut, c < W) (hcopy : ∀ n, copyOK W cut (copy n) = true)
+    (fL : ∀ n, Fits W cut n (lhs n).2) (fR : ∀ n, Fits W cut n (rhs n).2)
+    (base : Equal E (lhs 0).1 (lhs 0).2 (rhs 0).1 (rhs 0).2)
+    (peel : ∀ n, Equal E (lhs (n + 1)).1 (lhs (n + 1)).2 (lhs n).1
+      (glueNet W cut (copy n) n (lhs n).2))
+    (close : ∀ n, Equal E (rhs n).1 (glueNet W cut (copy n) n (rhs n).2) (rhs (n + 1)).1
+      (rhs (n + 1)).2) (n : ℕ) :
+    Equal E (lhs n).1 (lhs n).2 (rhs n).1 (rhs n).2 :=
+  ((netIface E W cut copy lhs rhs hcut hcopy fL fR base peel close).fam n).2.2
+
+/-- `Fits` of a chain family at every `k`. -/
+theorem chainNet_fits (W : ℕ) (cut : List ℕ) (base : Net) (copy : ℕ → Net)
+    (hb : baseOK W cut base = true) (hc : ∀ i, copyOK W cut (copy i) = true) (k : ℕ) :
+    Fits W cut k (chainNet W cut base copy k) :=
+  chain_bounds W cut base copy hb hc k
+
+/-! ## A network instance with fan-out copies -/
+
+/-- `N` with `cp` attached through the labels `cut`, which become summed. -/
+def glueAt (cut : List ℕ) (cp N : Net) : Net :=
+  ⟨cp.nodes ++ N.nodes, cp.int ++ cut ++ N.int, N.bnd.filter (· ∉ cut) ++ cp.bnd.filter (· ∉ cut)⟩
+
+/-- Every label of `N` below `B n`, no summed one in `cut m` for `m ≥ n`. -/
+def FitsAt (B : ℕ → ℕ) (cut : ℕ → List ℕ) (n : ℕ) (N : Net) : Prop :=
+  (∀ x ∈ labelsOf N.nodes ++ N.int ++ N.bnd, x < B n) ∧ ∀ m, n ≤ m → ∀ x ∈ N.int, x ∉ cut m
+
+/-- Copy `n` reads its cut labels (below `B n`) and owns labels in `[B n, B (n + 1))`; later cuts
+avoid its summed labels and its cut. -/
+structure CopyAt (B : ℕ → ℕ) (cut : ℕ → List ℕ) (cp : ℕ → Net) : Prop where
+  mono : ∀ n, B n ≤ B (n + 1)
+  cutLt : ∀ n, ∀ x ∈ cut n, x < B n
+  own : ∀ n, ∀ x ∈ labelsOf (cp n).nodes ++ (cp n).int ++ (cp n).bnd,
+    x ∈ cut n ∨ (B n ≤ x ∧ x < B (n + 1))
+  intOff : ∀ n m, n < m → ∀ x ∈ (cp n).int, x ∉ cut m
+  cutOff : ∀ n m, n < m → ∀ x ∈ cut n, x ∉ cut m
+
+theorem glueAt_fits {B : ℕ → ℕ} {cut : ℕ → List ℕ} {cp : ℕ → Net} (hC : CopyAt B cut cp)
+    (n : ℕ) {N : Net} (hN : FitsAt B cut n N) :
+    FitsAt B cut (n + 1) (glueAt (cut n) (cp n) N) := by
+  have hm := hC.mono n
+  refine ⟨fun x hx => ?_, fun m hm' x hx => ?_⟩
+  · have hx' : x ∈ labelsOf (cp n).nodes ++ (cp n).int ++ (cp n).bnd ∨ x ∈ cut n ∨
+        x ∈ labelsOf N.nodes ++ N.int ++ N.bnd := by
+      simp only [glueAt, labelsOf, List.flatMap_append, List.mem_append, List.mem_filter] at hx ⊢
+      tauto
+    rcases hx' with h | h | h
+    · rcases hC.own n x h with h' | ⟨_, h'⟩
+      · have := hC.cutLt n x h'; omega
+      · exact h'
+    · have := hC.cutLt n x h; omega
+    · have := hN.1 x h; omega
+  · simp only [glueAt, List.mem_append] at hx
+    rcases hx with (hx | hx) | hx
+    · exact hC.intOff n m (by omega) x hx
+    · exact hC.cutOff n m (by omega) x hx
+    · exact hN.2 m (by omega) x hx
+
+/-- Attaching copy `n` to both sides keeps an equation. -/
+theorem glueAt_equal (E : Env) {B : ℕ → ℕ} {cut : ℕ → List ℕ} {cp : ℕ → Net}
+    (hC : CopyAt B cut cp) (n : ℕ) {s t : ℂ} {A A' : Net} (hA : FitsAt B cut n A)
+    (hA' : FitsAt B cut n A') (h : Equal E s A t A') :
+    Equal E s (glueAt (cut n) (cp n) A) t (glueAt (cut n) (cp n) A') := by
+  have off : ∀ {N : Net}, FitsAt B cut n N → ∀ x ∈ labelsOf (cp n).nodes, x ∉ N.int :=
+    fun hN x hx hxi => by
+      rcases hC.own n x (mem_all_of_nodes hx) with h' | ⟨h', _⟩
+      · exact hN.2 n le_rfl x hxi h'
+      · have := hN.1 x (mem_all_of_int hxi); omega
+  have A1 := plug E (cp n).nodes A.nodes A'.nodes ((cp n).int ++ cut n) A.int A'.int
+    (A.bnd.filter (· ∉ cut n) ++ (cp n).bnd.filter (· ∉ cut n)) A.bnd _ _
+    (Equal.toLocal E _ _ h) (off hA) (off hA') (face_left _ _ _ _)
+  exact A1.reorder E (B' := glueAt (cut n) (cp n) A') (List.Perm.refl _) (List.Perm.refl _)
+    ((h.1.filter _).append (List.Perm.refl _))
+
+/-- The `AdderIface` over networks with scalars whose copy `n` may join every earlier level:
+`rel n` is `FitsAt` on both sides and `Equal E`, `glue n` is `glueAt (cut n) (cp n)`. -/
+def netIfaceAt (E : Env) (B : ℕ → ℕ) (cut : ℕ → List ℕ) (cp : ℕ → Net) (lhs rhs : ℕ → ℂ × Net)
+    (hC : CopyAt B cut cp) (fL : ∀ n, FitsAt B cut n (lhs n).2)
+    (fR : ∀ n, FitsAt B cut n (rhs n).2)
+    (base : Equal E (lhs 0).1 (lhs 0).2 (rhs 0).1 (rhs 0).2)
+    (peel : ∀ n, Equal E (lhs (n + 1)).1 (lhs (n + 1)).2 (lhs n).1
+      (glueAt (cut n) (cp n) (lhs n).2))
+    (close : ∀ n, Equal E (rhs n).1 (glueAt (cut n) (cp n) (rhs n).2) (rhs (n + 1)).1
+      (rhs (n + 1)).2) :
+    AdderIface (fun _ => ℂ × Net) where
+  lhs := lhs
+  rhs := rhs
+  rel n a b := FitsAt B cut n a.2 ∧ FitsAt B cut n b.2 ∧ Equal E a.1 a.2 b.1 b.2
+  trans _ _ _ _ h h' := ⟨h.1, h'.2.1, h.2.2.trans h'.2.2⟩
+  glue n a := (a.1, glueAt (cut n) (cp n) a.2)
+  base := ⟨fL 0, fR 0, base⟩
+  peel n := ⟨fL (n + 1), glueAt_fits hC n (fL n), peel n⟩
+  congr n _ _ h := ⟨glueAt_fits hC n h.1, glueAt_fits hC n h.2.1,
+    glueAt_equal E hC n h.1 h.2.1 h.2.2⟩
+  close n := ⟨glueAt_fits hC n (fR n), fR (n + 1), close n⟩
+
+/-- The fan-out network family theorem. -/
+theorem netIfaceAt_fam (E : Env) (B : ℕ → ℕ) (cut : ℕ → List ℕ) (cp : ℕ → Net)
+    (lhs rhs : ℕ → ℂ × Net) (hC : CopyAt B cut cp) (fL : ∀ n, FitsAt B cut n (lhs n).2)
+    (fR : ∀ n, FitsAt B cut n (rhs n).2)
+    (base : Equal E (lhs 0).1 (lhs 0).2 (rhs 0).1 (rhs 0).2)
+    (peel : ∀ n, Equal E (lhs (n + 1)).1 (lhs (n + 1)).2 (lhs n).1
+      (glueAt (cut n) (cp n) (lhs n).2))
+    (close : ∀ n, Equal E (rhs n).1 (glueAt (cut n) (cp n) (rhs n).2) (rhs (n + 1)).1
+      (rhs (n + 1)).2) (n : ℕ) :
+    Equal E (lhs n).1 (lhs n).2 (rhs n).1 (rhs n).2 :=
+  ((netIfaceAt E B cut cp lhs rhs hC fL fR base peel close).fam n).2.2
+
+/-- `telescope` with every root order raised by `d ^ r`: the end terms read `d ^ r` and
+`d ^ (n + r)`. -/
+theorem telescope_off (d n y r : ℕ) (hd : 0 < d) (x x' e : ℕ → ℕ)
+    (hc : ∀ k < n, x k + e (k + 1) = x' k + d * e k) :
+    (∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x k)) * om (d ^ (n + r)) ^ (y * e n) =
+      om (d ^ r) ^ (y * e 0) * ∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x' k) := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    have h := hc n (Nat.lt_succ_self n)
+    rw [show n + 1 + r = n + r + 1 by omega, prod_range_succ, prod_range_succ, mul_assoc,
+      ← pow_add, ← mul_add, h, mul_add, pow_add, om_tower_mul d (n + r) y _ hd]
+    linear_combination om (d ^ (n + r + 1)) ^ (y * x' n) *
+      ih fun k hk => hc k (Nat.lt_succ_of_lt hk)
 
 end ArchytasZX

@@ -205,7 +205,8 @@ between two scaled networks under one environment: the same tensor, scalars incl
                over ℕ, S = Σ x_j, Q = Σ x_j^2), pair_fou (Π_{j<k} F(x_k, x_j) =
                (√D)⁻¹^(K (K - 1) / 2) ω_{2D}^(S^2 - Q) for every D > 0), eval_pairNet_sum
   AdderFam     carry-chain lemmas of the every-n adder families (section 4.2): om_tower,
-               telescope, chain_value, fourier_shift, AdderIface.fam
+               telescope, telescope_off, chain_value, fourier_shift, fou_three, AdderIface.fam,
+               the network instances netIface, netIfaceAt
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
                MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
                cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed
@@ -442,9 +443,53 @@ F³ · phase · F shift by s (F³ = F⁻¹ has entry conj F). AdderIface α: lhs
 transitive relation rel n, glue n : α n -> α (n + 1), and the obligations base (n = 0), peel
 (lhs (n + 1) against glue n (lhs n), the copy-0 cut), congr (glue respects rel) and close
 (glue n (rhs n) against rhs (n + 1): telescope, then fourier_shift on copy 0); AdderIface.fam
-gives rel n (lhs n) (rhs n) for every n by recursion on n, fam_8 and fam_24 its instances. The
-engine export fills an AdderIface (pair-phase generator and leg-split rung: not yet in the
-engine).
+gives rel n (lhs n) (rhs n) for every n by recursion on n, fam_8 and fam_24 its instances.
+fou_three: Σ_a Σ_b F(o, a) F(a, b) F(b, i) = conj F(o, i) at every o, i (F · F · F = conj F in
+matrix order; Weights.fou_cube is the transposed form for o, i < d); the export writes F^3
+literally and reads it as conj F by fou_three. telescope_off: telescope with root orders
+d^(k + r + 1), end terms om (d^r)^(y e 0) and om (d^(n + r))^(y e n).
+Network instances of AdderIface (α n = ℂ × Net, a pair (scalar, network); trans and congr
+proved, base, peel and close hypotheses):
+  netIface E W cut copy lhs rhs: glue n = glueNet W cut (copy n) n, copy n shifted by n W and
+    plugged through cut shifted by n W (chainNet_succ: chainNet (k + 1) = glueNet k (chainNet
+    k)); rel n is Fits W cut n on both networks (labels below n W + W, no summed label a cut
+    label shifted by n W) and Equal E with the scalars. Side condition: copyOK W cut (copy n),
+    decidable per copy; chainNet_fits gives Fits for chainNet families.
+  netIfaceAt E B cut cp lhs rhs: glue n = glueAt (cut n) (cp n), no shift; copy n may join
+    labels of every earlier level (the fan-out pair legs of the peeled copy). rel n is FitsAt B
+    cut n (labels below B n, no summed label in cut m for m >= n) and Equal E. Side condition
+    CopyAt B cut cp: B monotone, cut n below B n, copy n's labels in cut n or [B n, B (n + 1)),
+    later cuts off copy n's summed labels and off cut n.
+  netIface_fam, netIfaceAt_fam: Equal E (lhs n).1 (lhs n).2 (rhs n).1 (rhs n).2 at every n from
+    base, peel (lhs (n + 1) against glue n (lhs n)) and close (glue n (rhs n) against
+    rhs (n + 1)).
+What the engine export emits for draper_adder / fourier_constant_adder (F34; pair-phase
+generator and leg-split rung not yet in the engine):
+  1. Env E: dimv with d, the carry dimensions (3 for fca, 2 for draper) and the pair-gadget
+     dimensions d^(m - j); phase rows as formulas in the level index (root orders d^(k + 1)),
+     not tables, so one E serves every n.
+  2. Levels: level l of a network of n copies holds MSB-first copy n - 1 - l, so the copy
+     glued at step n is the MSB (copy 0 of n + 1 copies) and the residual keeps its levels
+     (phases read m - j and n - j only, unchanged by (n, j) -> (n + 1, j + 1)). Labels as
+     closed formulas in the level: B n and cut n for netIfaceAt (cut n = the residual
+     boundary legs the peeled copy joins: carry-out of the residual MSB and the split zr1/zr2
+     pair legs of every residual copy), or W and cut for netIface when copy n reaches level
+     n - 1 only. The CopyAt / Fits side conditions are proved once for symbolic n by omega
+     over these formulas, the base FitsAt by decide.
+  3. lhs n = (boxed scalar at n, boxed network at n), rhs n = (chain scalar, carry-chain
+     network at n), cp n = the peeled copy-0 network (F, zm_0 phase 2y/d^(n+1) for fca, the
+     fan-out gadgets w_{d^(k+2)}^(±y x_k) on the residual chain, F^3), each a function of n.
+  4. base: Equal at n = 0 (|c> / discard scalars), a fixed network theorem.
+  5. peel n: the leg-split cut (Z unfusion of zr1_k, zr2_k, k >= 1), a rewrite proof over
+     symbolic n.
+  6. close n: glue n (rhs n) against rhs (n + 1) by, in order, telescope_off with r = 1 on the
+     fan-out phases of y = y_0 over the residual chain (end terms om (d^1)^(y e 0), copy 0 read
+     at root d, and om (d^(n + 1))^(y e n): for fca e n = 2 cancels zm_0's 2y/d^(n+1), for
+     draper e n = 0), then fourier_shift on copy 0 with s = e 0 (fca) or e 0 + a_0 (draper),
+     its F^3 read by fou_three, giving copy 0 of rhs (n + 1); carry_lt_two and chain_digit
+     give the carry-out split {0, 1} and the chain hypothesis hc.
+  7. The theorem: netIfaceAt_fam (or netIface_fam) applied to 1-6; fam_8 / fam_24 by
+     instantiating n.
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.
