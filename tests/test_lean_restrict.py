@@ -57,3 +57,18 @@ def test_a_shift_corollary_keeps_the_nat_binder_type() -> None:
     clauses = parse_restriction("n >= 2").clauses
     out = shift_corollary(_SHIFTED, clauses)
     assert "theorem main_restricted (n : Nat) (h_n_ge : 2 ≤ n) :\n    (d0 n) = d1 := by" in out
+
+
+_GUARDED = """namespace ArchytasZX.Opaque
+
+theorem main : ∀ (n : Nat), 1 ≤ n → (d0 n) = (d2 n) :=
+  fun n h_n => (fam1 n h_n)
+
+end ArchytasZX.Opaque
+"""
+
+
+def test_a_guard_hypothesis_is_discharged_at_a_value() -> None:
+    out = corollary(_GUARDED, parse_restriction("n = 5").clauses)
+    assert "theorem main_at :\n    (d0 (5 : Nat)) = (d2 (5 : Nat)) :=" in out
+    assert "main (5 : Nat) (by norm_num)" in out

@@ -1077,8 +1077,11 @@ over the same diagrams: the final theorem's binders and statement (main_diagrams
 export has one, else main) are copied with, per clause, n = v written for n and its binder
 dropped, n >= c a hypothesis (h_n_ge : c ≤ n) after the binder of n, n = a*m + c written as
 (a * m + c) with m bound in its place, and d = v written for d; a hypothesis binder left
-without variables (0 < 5) is discharged by norm_num. The corollary is proved by applying the
-final theorem:
+without variables (0 < 5, or 1 ≤ (5 : Nat)) is discharged by norm_num; a leading guard
+1 ≤ n → of the statement is read as the binder (h_n : 1 ≤ n). A family proof that holds for
+n >= c only (its domain clause s = n - c) is exported as its guarded family theorem
+(∀ (n : Nat), c ≤ n → ...) with the corollary at the restriction's clauses. The corollary is
+proved by applying the final theorem:
 
     theorem main_restricted (d : ℕ) (n : ℕ) (h_n_ge : 2 ≤ n) (h_d : 0 < d) :
         DEqual ((F d).env (ksOf [n])) ... (D0.expandK (ksOf [n])) ... :=

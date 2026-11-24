@@ -654,7 +654,12 @@ these functions construct a Theorem:
                                      one subst per substituting clause but n = v on a box
                                      multiplicity, which stays in the domain over the family
                                      sides (stated "at n = v", no box unrolled); or a proof of
-                                     the restricted pair, checked and read by restricted
+                                     the restricted pair, checked and read by restricted;
+                                     a family proof that holds only for n >= c (its clause
+                                     s = n - c from an induction at n = s + c) is accepted when
+                                     every value of the restriction lies in that range, the
+                                     clause kept in the domain; subst at n = v takes such a
+                                     premise when v lies in its range
     instantiated(theorem) -> (Diagram, Diagram)
                                      the sides with every substituting clause of the domain
                                      applied to the family pair (origin)

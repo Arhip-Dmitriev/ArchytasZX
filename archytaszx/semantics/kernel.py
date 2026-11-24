@@ -302,10 +302,18 @@ def _domain(*theorems: Theorem) -> tuple[Clause, ...]:
     return tuple(out)
 
 
-def _refuse_on(where: str, theorems: Sequence[Theorem], symbols: frozenset[str]) -> None:
-    """Raise when a restricting clause of one of ``theorems`` names one of ``symbols``."""
+def _refuse_on(
+    where: str,
+    theorems: Sequence[Theorem],
+    symbols: frozenset[str],
+    by: Restriction | None = None,
+) -> None:
+    """Raise when a restricting clause of one of ``theorems`` names one of ``symbols`` and is
+    not :func:`_discharged` by ``by``."""
     for t in theorems:
         for c in restricting(t):
+            if by is not None and _discharged(c, by):
+                continue
             if _clause_symbols(c) & symbols:
                 raise KernelError(f"{where}: a premise holds only under {c.text() or c.symbol}")
 
@@ -1010,7 +1018,8 @@ def subst(
     from ``t``'s by :func:`~archytaszx.semantics.restrict.apply_clause` and compared id for id
     with ``lhs`` and ``rhs`` when stated. A multiplicity shift ``n = s - c`` (``c > 0``) holds
     for ``s >= c``: the clause is kept with that ``fresh_domain`` and substituted into
-    phases and leg dimensions too."""
+    phases and leg dimensions too. A premise clause whose fresh range holds every value of
+    ``clause`` does not block it."""
     from dataclasses import replace
 
     from archytaszx.semantics.restrict import MULTIPLICITY, Domain, _all_symbols, apply_clause
@@ -1019,7 +1028,7 @@ def subst(
         raise KernelError(f"subst: {clause.text()} substitutes nothing")
     if clause.fresh and clause.fresh in _all_symbols(t.lhs, t.rhs):
         raise KernelError(f"subst: {clause.fresh} is not fresh for the theorem")
-    _refuse_on("subst", (t,), frozenset({clause.symbol}))
+    _refuse_on("subst", (t,), frozenset({clause.symbol}), Restriction((clause,)))
     if clause.kind == MULTIPLICITY and clause.fresh and clause.fresh_domain is None:
         if clause.a < 1 or (clause.c < 0 and clause.a != 1):
             raise KernelError(f"subst: {clause.text()} leaves the naturals")
@@ -1240,6 +1249,31 @@ def finite_symbolic(
     return Symbolic(proof.left, proof.right, source, proof.restriction.clauses)
 
 
+def _discharged(clause: Clause, restriction: Restriction) -> bool:
+    """Whether every value ``restriction`` allows for ``clause``'s free symbol lies in the
+    clause's ``fresh_domain``: an ``eq`` value inside it, or a ``ge`` floor at or above its
+    lower end on an unbounded integer domain."""
+    from archytaszx.semantics.restrict import EQ, GE
+
+    dom = clause.fresh_domain
+    if dom is None or not clause.fresh:
+        return False
+    for r in restriction.clauses:
+        if r.symbol != clause.fresh:
+            continue
+        if r.form == EQ:
+            return dom.contains(r.c)
+        if r.form == GE and r.domain is None:
+            return (
+                dom.hi is None
+                and dom.q == 1
+                and dom.step is None
+                and not dom.excluded
+                and dom.contains(r.c)
+            )
+    return False
+
+
 @_trace.traced("proof.kernel_check")
 def check(artefact: object) -> Theorem:
     """The theorem a certificate, proof certificate, induction proof or restricted proof
@@ -1252,7 +1286,8 @@ def check(artefact: object) -> Theorem:
             return restricted(
                 inner, artefact.left, artefact.right, artefact.restriction, artefact.floors_used
             )
-        if restricting(inner):
+        held = restricting(inner)
+        if any(not _discharged(c, artefact.restriction) for c in held):
             raise KernelError("a family proof holds only under a restriction")
         out = inner
         for clause in artefact.restriction.clauses:
@@ -1264,7 +1299,7 @@ def check(artefact: object) -> Theorem:
             out.rhs,
             out.inference,
             out.assumptions,
-            artefact.restriction.clauses,
+            (*held, *artefact.restriction.clauses),
             (inner.lhs, inner.rhs),
         )
     if isinstance(artefact, Certificate):
@@ -2512,11 +2547,37 @@ def _lean_restricted(
                 "lemmas and steps that hold only from them"
             )
         return header(lean(bare, name, describe, semantic=semantic, guards=guards), note)
+    origin = theorem.origin
+    family_base = theorem
+    while family_base.inference.kind == "subst" and not (
+        origin is not None and family_base.lhs is origin[0] and family_base.rhs is origin[1]
+    ):
+        family_base = family_base.inference.premises[0]
+    ranged = tuple(c for c in theorem.domain if _guard_shift(c))
+    own = tuple(c for c in theorem.domain if c not in ranged)
+    unpaired = Theorem(
+        _TOKEN,
+        family_base.lhs,
+        family_base.rhs,
+        family_base.inference,
+        family_base.assumptions,
+        ranged,
+    )
+    on_origin = origin is not None and family_base.lhs is origin[0] and family_base.rhs is origin[1]
+    if on_origin and ranged and own and _guards(unpaired):
+        source = header(
+            lean(unpaired, name, describe, semantic=semantic),
+            f"restricted to {', '.join(c.text() for c in own)}: the family theorem, then "
+            f"{_RESTRICTED}",
+        )
+        try:
+            return corollary(source, own, name, _var)
+        except RestrictUnsupported as exc:
+            raise KernelError(f"no corollary: {exc}") from exc
     base = theorem
     while base.inference.kind == "subst":
         base = base.inference.premises[0]
     plain = Theorem(_TOKEN, base.lhs, base.rhs, base.inference, base.assumptions, floors=False)
-    origin = theorem.origin
     text = ", ".join(c.text() for c in theorem.domain)
     family = origin is not None and base.lhs is origin[0] and base.rhs is origin[1]
     try:
@@ -2600,6 +2661,19 @@ def _wide_rule(diagram: Diagram) -> bool:
         if pv.dim.to_int() > WIDE_RULE:
             return True
     return False
+
+
+def _guard_shift(c: Clause) -> bool:
+    """Whether ``c`` is a multiplicity shift ``s = n + c`` (``c < 0``) with a ``fresh_domain``."""
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT
+
+    return (
+        c.kind == MULTIPLICITY
+        and c.form == SHIFT
+        and c.a == 1
+        and c.c < 0
+        and c.fresh_domain is not None
+    )
 
 
 def _guards(theorem: Theorem) -> dict[str, int] | None:

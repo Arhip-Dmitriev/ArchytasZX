@@ -118,6 +118,9 @@ def _final(source: str, name: str) -> tuple[str, list[_Binder], str]:
             raise RestrictUnsupported("a ∀ statement without a comma")
         binders += more
         body = after[1:].strip()
+    while (guard := re.match(r"(\d+) ≤ ([A-Za-z_][\w']*) → ", body)) is not None:
+        binders.append(_Binder("(", (f"h_{guard[2]}",), f"{guard[1]} ≤ {guard[2]}"))
+        body = body[guard.end() :]
     return candidate, binders, body
 
 
@@ -194,7 +197,8 @@ def corollary(
         kind = b.type
         for v, value in values.items():
             kind = _sub(kind, v, value)
-        closed = b.open == "(" and kind != b.type and not re.search(r"[A-Za-z_]", kind)
+        bare = re.sub(r"\(\s*-?\d+\s*:\s*(?:ℕ|Nat)\s*\)", "0", kind)
+        closed = b.open == "(" and kind != b.type and not re.search(r"[A-Za-z_]", bare)
         kept: list[str] = []
         for n in b.names:
             if closed:

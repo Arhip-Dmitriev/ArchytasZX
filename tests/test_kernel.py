@@ -415,3 +415,18 @@ def test_lean_checks_a_box_floor(tmp_path: object) -> None:
     for semantic in (False, True):
         ok, output = check(_floored_source(semantic), f"{tmp_path}/floored{semantic}.lean")
         assert ok, output
+
+
+def test_a_shift_range_discharges_only_values_inside_it() -> None:
+    from fractions import Fraction
+
+    from archytaszx.semantics.kernel import _discharged
+    from archytaszx.semantics.restrict import Clause, Domain, parse_restriction
+
+    shift = Clause(
+        "s", "multiplicity", "shift", 1, -1, "n", fresh_domain=Domain(lo=Fraction(1), q=1)
+    )
+    assert _discharged(shift, parse_restriction("n = 5"))
+    assert _discharged(shift, parse_restriction("n >= 3"))
+    assert not _discharged(shift, parse_restriction("n = 0"))
+    assert not _discharged(shift, parse_restriction("m = 5"))
