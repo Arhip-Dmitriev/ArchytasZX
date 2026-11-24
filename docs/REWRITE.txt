@@ -391,6 +391,10 @@ the one cache object the strategy, saturation and search functions accept.
     template, or a resolved view other than the diagram, takes the filtered full scan.
     surface_code_family/encoding n = 15 d = 2: normal_form 24.6 -> 19.6 s CPU, normal forms
     identical.
+  - fingerprint takes node incidence from graph.incident_wires and recomputes it only for the
+    node ids the step touched; the global_key is unchanged. surface_code_family/encoding
+    n = 15 d = 2, normal_form under cProfile: fingerprint 6.4 -> 2.6 s; normal_form
+    17.1 -> 13.5 s CPU.
   - ValueMemo(compute, key): a generic content-keyed memo; numpy results are stored as
     private copies and returned read-only.
   - CacheStats: hits, misses, evictions, invalidations, hit rate.

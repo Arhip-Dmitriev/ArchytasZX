@@ -329,6 +329,12 @@ is true when there is no hard failure.
 
 Issues are reported in a deterministic order.
 
+The per-wire, port-usage and dimension-constraint passes are updated from the previous call
+over the changed region: the wires added and removed since (by object) and the nodes whose
+object differs. graph.incident_wires(diagram) gives per node id its wires in Wire.sort_key
+order, updated the same way; Wire.sort_key values are memoised per wire (graph.WIRE_KEYS).
+surface_code_family/encoding n = 15 d = 2, normal_form under cProfile: validate 8.6 -> 2.2 s.
+
 
 6. SCALABLE NOTATION: archytaszx.diagram.scalable
 -------------------------------------------------

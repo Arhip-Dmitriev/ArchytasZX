@@ -238,6 +238,24 @@ class Wire:
         return (a_key, b_key) if a_key <= b_key else (b_key, a_key)
 
 
+WireKey = tuple[tuple[int, str, int], tuple[int, str, int]]
+
+
+class _WireKeys(dict[Wire, WireKey]):
+    """:meth:`Wire.sort_key` per wire, computed on a miss."""
+
+    def __missing__(self, wire: Wire) -> WireKey:
+        key = self[wire] = wire.sort_key()
+        return key
+
+
+WIRE_KEYS = _WireKeys()
+""":meth:`Wire.sort_key` of every wire seen, by wire."""
+
+_WIRE_KEYS_LIMIT = 1 << 18
+"""The most entries :data:`WIRE_KEYS` holds before it is emptied."""
+
+
 @dataclass(frozen=True, slots=True)
 class Node:
     """One diagram node: a generator type, ordered input/output ports, and a phase slot.
@@ -352,7 +370,9 @@ class Diagram:
         """Every wire in :meth:`Wire.sort_key` order, kept until the wire set next changes."""
         order = getattr(self, "_wires_order", None)
         if order is None:
-            order = self._wires_order = tuple(sorted(self._wires, key=Wire.sort_key))
+            if len(WIRE_KEYS) > _WIRE_KEYS_LIMIT:
+                WIRE_KEYS.clear()
+            order = self._wires_order = tuple(sorted(self._wires, key=WIRE_KEYS.__getitem__))
         return order
 
     def __getstate__(self) -> tuple[None, dict[str, object]]:
@@ -861,3 +881,75 @@ def _box_scalar_substituted(box: BangBox, mapping: Mapping[str, ScalarSubstitute
 
     typed = cast(Mapping[ScalarSymbolKey, ScalarSubstituteValue], used)
     return replace(box, copy_scalar=scalar.substitute(typed))
+
+
+IncidentIndex = dict[NodeId, tuple[Wire, ...]]
+
+
+@dataclass(slots=True)
+class _Incident:
+    """One :func:`incident_wires` index with the index it was updated from."""
+
+    order: tuple[Wire, ...]
+    by_id: dict[int, Wire]
+    index: IncidentIndex
+    before: IncidentIndex | None
+    """The index this one was updated from, None for a full build."""
+    touched: frozenset[NodeId]
+    """The node ids whose entry may differ from :attr:`before`."""
+
+
+_INCIDENT: list[_Incident] = []
+"""The last :func:`incident_wires` call."""
+
+
+def incident_wires(diagram: Diagram) -> Mapping[NodeId, tuple[Wire, ...]]:
+    """Per node id a wire end names, its wires in :meth:`Wire.sort_key` order; updated from the
+    previous call's index over the wires added and removed since."""
+    return incident_state(diagram).index
+
+
+def incident_state(diagram: Diagram) -> _Incident:
+    """The :func:`incident_wires` record of ``diagram``."""
+    order = diagram.sorted_wires()
+    last = _INCIDENT[0] if _INCIDENT else None
+    if last is not None and last.order is order:
+        return last
+    by_id = dict(zip(map(id, order), order, strict=True))
+    added: list[Wire] = []
+    removed: set[int] = set()
+    if last is not None:
+        old = last.by_id
+        added = [by_id[i] for i in by_id.keys() - old.keys()]
+        removed = set(old.keys() - by_id.keys())
+    if last is None or 4 * (len(added) + len(removed)) > len(order):
+        lists: dict[NodeId, list[Wire]] = {}
+        for wire in order:
+            na, nb = wire.a.node_id, wire.b.node_id
+            lists.setdefault(na, []).append(wire)
+            if nb != na:
+                lists.setdefault(nb, []).append(wire)
+        state = _Incident(
+            order, by_id, {n: tuple(ws) for n, ws in lists.items()}, None, frozenset()
+        )
+    else:
+        index = dict(last.index)
+        fresh: dict[NodeId, list[Wire]] = {}
+        for i in removed:
+            fresh.setdefault(old[i].a.node_id, [])
+            fresh.setdefault(old[i].b.node_id, [])
+        for wire in added:
+            fresh.setdefault(wire.a.node_id, []).append(wire)
+            if wire.b.node_id != wire.a.node_id:
+                fresh.setdefault(wire.b.node_id, []).append(wire)
+        for nid, new in fresh.items():
+            ws = [w for w in index.get(nid, ()) if id(w) not in removed]
+            ws.extend(new)
+            if ws:
+                ws.sort(key=WIRE_KEYS.__getitem__)
+                index[nid] = tuple(ws)
+            else:
+                index.pop(nid, None)
+        state = _Incident(order, by_id, index, last.index, frozenset(fresh))
+    _INCIDENT[:] = [state]
+    return state

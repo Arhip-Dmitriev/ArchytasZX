@@ -76,7 +76,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -93,6 +93,7 @@ from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import BangBox, Mult, aligned_members, outside_crossings, zip_wires
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
 from archytaszx.diagram.graph import (
+    WIRE_KEYS,
     BangBoxId,
     Diagram,
     Direction,
@@ -101,6 +102,8 @@ from archytaszx.diagram.graph import (
     Port,
     PortRef,
     Wire,
+    incident_state,
+    incident_wires,
 )
 
 
@@ -238,13 +241,81 @@ def _port_of(nodes: Mapping[NodeId, Node], ref: PortRef) -> Port | None:
     return legs[ref.index] if ref.index < len(legs) else None
 
 
-def _wire_ports(diagram: Diagram) -> list[tuple[Wire, Port | None, Port | None]]:
+WirePorts = tuple[Wire, Port | None, Port | None]
+
+
+@dataclass(slots=True)
+class _Wired:
+    """One :func:`_wire_ports` result with what it was updated from."""
+
+    order: tuple[Wire, ...]
+    snap: dict[NodeId, Node]
+    by_id: dict[int, Wire]
+    res: dict[int, WirePorts]
+    odd: dict[int, WirePorts]
+    """The entries with an absent port or two ports of differing dims, by wire object id."""
+    wired: list[WirePorts]
+    before: dict[NodeId, Node] | None
+    """The node snapshot this one was updated from, None for a full build."""
+    changed: frozenset[NodeId]
+    """The node ids whose node differs from :attr:`before`."""
+
+    def odd_sorted(self) -> list[WirePorts]:
+        """:attr:`odd` in ``Wire.sort_key`` order."""
+        return sorted(self.odd.values(), key=lambda e: WIRE_KEYS[e[0]])
+
+
+_WIRED: list[_Wired] = []
+"""The last :func:`_wire_ports` call."""
+
+
+def _is_odd(entry: WirePorts) -> bool:
+    """Whether a port is absent or the two ports' dims differ."""
+    _w, a, b = entry
+    return a is None or b is None or (a.dim is not b.dim and a.dim != b.dim)
+
+
+def _wire_ports(diagram: Diagram) -> list[WirePorts]:
     """Each wire in ``Wire.sort_key`` order with the ports its two ends name, None for an
-    absent one."""
+    absent one; updated from the previous call over the changed nodes and wires."""
+    return _wired_state(diagram).wired
+
+
+def _wired_state(diagram: Diagram) -> _Wired:
+    """The :func:`_wire_ports` record of ``diagram``."""
     nodes = diagram.nodes
-    return [
-        (wire, _port_of(nodes, wire.a), _port_of(nodes, wire.b)) for wire in diagram.sorted_wires()
-    ]
+    order = diagram.sorted_wires()
+    last = _WIRED[0] if _WIRED else None
+    snap = dict(nodes)
+    if last is not None and last.order is order and last.snap == snap:
+        return last
+    by_id = dict(zip(map(id, order), order, strict=True))
+    if last is None:
+        res = {id(w): (w, _port_of(nodes, w.a), _port_of(nodes, w.b)) for w in order}
+        odd = {i: e for i, e in res.items() if _is_odd(e)}
+        state = _Wired(order, snap, by_id, res, odd, [], None, frozenset())
+    else:
+        res, odd = dict(last.res), dict(last.odd)
+        for i in last.by_id.keys() - by_id.keys():
+            del res[i]
+            odd.pop(i, None)
+        todo = {by_id[i] for i in by_id.keys() - last.by_id.keys()}
+        changed = {nid for nid, node in snap.items() if last.snap.get(nid) is not node}
+        changed |= last.snap.keys() - snap.keys()
+        if changed:
+            index = incident_wires(diagram)
+            for nid in changed:
+                todo.update(index.get(nid, ()))
+        for w in todo:
+            e = res[id(w)] = (w, _port_of(nodes, w.a), _port_of(nodes, w.b))
+            if _is_odd(e):
+                odd[id(w)] = e
+            else:
+                odd.pop(id(w), None)
+        state = _Wired(order, snap, by_id, res, odd, [], last.snap, frozenset(changed))
+    state.wired = list(map(state.res.__getitem__, map(id, order)))
+    _WIRED[:] = [state]
+    return state
 
 
 def _check_wire_dimensions(
@@ -256,6 +327,9 @@ def _check_wire_dimensions(
     # hash folds in Direction's member-name hash, so iterating it directly would append
     # issues in a PYTHONHASHSEED-dependent order, breaking the "first in validate order"
     # selection archytaszx.rewrite.engine relies on.
+    held = _WIRED[0] if _WIRED else None
+    if held is not None and held.wired is wired:
+        wired = held.odd_sorted()
     for wire, port_a, port_b in wired:
         if port_a is None or port_b is None:
             _resolve(diagram, wire.a, issues)
@@ -324,14 +398,10 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     # Sorted for the same reason as _check_wire_dimensions: an unsorted pass would make the
     # insertion order into wired_counts below process-dependent, and with it the order
     # PORT_WIRED_TWICE issues are appended in.
-    wired_refs: list[PortRef] = []
-    for wire in diagram.sorted_wires():
-        wired_refs.append(wire.a)
-        wired_refs.append(wire.b)
-    wired_set = set(wired_refs)
-    twice: list[tuple[PortRef, int]] = []
-    if len(wired_set) != len(wired_refs):
-        twice = [(ref, count) for ref, count in Counter(wired_refs).items() if count > 1]
+    inc = incident_state(diagram)
+    slot_state = _slot_state(inc)
+    slots_of = slot_state.slots
+    twice = [item for dup in slot_state.dup.values() for item in dup]
     for ref, count in sorted(twice, key=lambda item: item[0].sort_key()):
         if count > 1:
             issues.append(
@@ -354,7 +424,7 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
                     port_ref=ref,
                 )
             )
-        if ref in wired_set:
+        if _slot(ref) in slots_of.get(ref.node_id, _NO_SLOTS):
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.PORT_WIRED_AND_BOUNDARY,
@@ -400,32 +470,175 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
         tree = diagram.bang_boxes.get(box.feed) if box.feed is not None else None
         if tree is not None and box.feed_port is not None:
             fed_ports |= {box.feed_port, *tree.tree}
-    used: dict[NodeId, set[int]] = {}
-    for refs in (wired_set, boundary_set, fed_ports):
+    extra: dict[NodeId, set[int]] = {}
+    for refs in (boundary_set, fed_ports):
         for ref in refs:
-            used.setdefault(ref.node_id, set()).add(
-                2 * ref.index + (ref.direction is Direction.OUTPUT)
-            )
-    no_legs: set[int] = set()
-    for node_id, node in diagram.nodes.items():
-        if node_id in broken_node_ids:
+            extra.setdefault(ref.node_id, set()).add(_slot(ref))
+    held = _wired_state(diagram)
+    last = _UNUSED_STATE[0] if _UNUSED_STATE else None
+    nodes = diagram.nodes
+    redo: set[NodeId] | None = None
+    if (
+        last is not None
+        and (last.index is inc.index or last.index is inc.before)
+        and (last.snap is held.snap or last.snap is held.before)
+    ):
+        redo = set(extra) | last.extra | broken_node_ids | last.broken
+        if last.index is not inc.index:
+            redo |= inc.touched
+        if last.snap is not held.snap:
+            redo |= held.changed
+    if redo is None or last is None:
+        unused: dict[NodeId, tuple[ValidationIssue, ...]] = {}
+        redo_ids: Iterable[NodeId] = nodes
+    else:
+        unused = dict(last.unused)
+        redo_ids = redo
+    for node_id in redo_ids:
+        node = nodes.get(node_id)
+        if node is None or node_id in broken_node_ids:
+            unused.pop(node_id, None)
             continue
-        own = used.get(node_id, no_legs)
-        for direction, output, legs in (
-            (Direction.INPUT, 0, node.inputs),
-            (Direction.OUTPUT, 1, node.outputs),
-        ):
-            for index in range(len(legs)):
-                if 2 * index + output in own:
-                    continue
-                ref = PortRef(node_id, direction, index)
-                issues.append(
-                    ValidationIssue(
-                        kind=IssueKind.PORT_UNUSED,
-                        message=(f"{ref} is neither wired nor present on the boundary"),
-                        port_ref=ref,
-                    )
+        own = slots_of.get(node_id, _NO_SLOTS)
+        more = extra.get(node_id)
+        if more is not None:
+            own = own | more
+        found = _unused_ports(node_id, node, own)
+        if found:
+            unused[node_id] = found
+        else:
+            unused.pop(node_id, None)
+    _UNUSED_STATE[:] = [
+        _UnusedState(inc.index, held.snap, frozenset(extra), frozenset(broken_node_ids), unused)
+    ]
+    if unused:
+        for node_id in nodes:
+            issues.extend(unused.get(node_id, ()))
+
+
+@dataclass(slots=True)
+class _SlotState:
+    """Per node id of one incident index: its wired slots, and its ports wired twice."""
+
+    index: Mapping[NodeId, tuple[Wire, ...]]
+    slots: dict[NodeId, frozenset[int]]
+    dup: dict[NodeId, tuple[tuple[PortRef, int], ...]]
+    """The node ids with a port wired more than once."""
+
+
+_SLOT_STATE: list[_SlotState] = []
+"""The last :func:`_slot_state` result."""
+
+
+def _slot_state(inc: Any) -> _SlotState:
+    """The :class:`_SlotState` of the incident record ``inc``; updated from the previous one
+    over the touched node ids."""
+    last = _SLOT_STATE[0] if _SLOT_STATE else None
+    if last is not None and last.index is inc.index:
+        return last
+    if last is not None and last.index is inc.before:
+        slots, dup = dict(last.slots), dict(last.dup)
+        todo: Iterable[NodeId] = inc.touched
+    else:
+        slots, dup = {}, {}
+        todo = inc.index
+    for nid in todo:
+        wires = inc.index.get(nid)
+        if wires is None:
+            slots.pop(nid, None)
+            dup.pop(nid, None)
+            continue
+        slots[nid], own = _wired_slots(nid, wires)
+        if own:
+            dup[nid] = own
+        else:
+            dup.pop(nid, None)
+    state = _SlotState(inc.index, slots, dup)
+    _SLOT_STATE[:] = [state]
+    return state
+
+
+@dataclass(slots=True)
+class _UnusedState:
+    """The ``PORT_UNUSED`` issues of one call, with what they were computed from."""
+
+    index: Mapping[NodeId, tuple[Wire, ...]]
+    snap: dict[NodeId, Node]
+    extra: frozenset[NodeId]
+    broken: frozenset[NodeId]
+    unused: dict[NodeId, tuple[ValidationIssue, ...]]
+    """The node ids with an unused port."""
+
+
+_UNUSED_STATE: list[_UnusedState] = []
+"""The last ``PORT_UNUSED`` pass of :func:`_check_port_usage`."""
+
+
+_NO_SLOTS: frozenset[int] = frozenset()
+
+
+def _slot(ref: PortRef) -> int:
+    """``2 * index``, plus one for an output port."""
+    return 2 * ref.index + (ref.direction is Direction.OUTPUT)
+
+
+_SLOTS: dict[
+    tuple[NodeId, int], tuple[tuple[Wire, ...], frozenset[int], tuple[tuple[PortRef, int], ...]]
+] = {}
+"""Per (node id, object id of its incident-wire tuple): the tuple, the node's wired slots and
+its ports wired more than once with their counts."""
+
+_UNUSED: dict[tuple[int, NodeId, frozenset[int]], tuple[Node, tuple[ValidationIssue, ...]]] = {}
+"""Per (node object id, node id, used slots): the node and its ``PORT_UNUSED`` issues."""
+
+
+def _wired_slots(
+    nid: NodeId, wires: tuple[Wire, ...]
+) -> tuple[frozenset[int], tuple[tuple[PortRef, int], ...]]:
+    """The slots of node ``nid`` its ``wires`` use, and its refs wired more than once."""
+    key = (nid, id(wires))
+    held = _SLOTS.get(key)
+    if held is not None and held[0] is wires:
+        return held[1], held[2]
+    refs = [end for wire in wires for end in (wire.a, wire.b) if end.node_id == nid]
+    dup: tuple[tuple[PortRef, int], ...] = ()
+    if len(set(refs)) != len(refs):
+        dup = tuple((ref, count) for ref, count in Counter(refs).items() if count > 1)
+    slots = frozenset(map(_slot, refs))
+    if len(_SLOTS) >= _CACHE_LIMIT:
+        _SLOTS.clear()
+    _SLOTS[key] = (wires, slots, dup)
+    return slots, dup
+
+
+def _unused_ports(
+    node_id: NodeId, node: Node, own: frozenset[int] | set[int]
+) -> tuple[ValidationIssue, ...]:
+    """``PORT_UNUSED`` issues of the legs of ``node`` outside the slots ``own``."""
+    key = (id(node), node_id, frozenset(own))
+    held = _UNUSED.get(key)
+    if held is not None and held[0] is node:
+        return held[1]
+    found: list[ValidationIssue] = []
+    for direction, output, legs in (
+        (Direction.INPUT, 0, node.inputs),
+        (Direction.OUTPUT, 1, node.outputs),
+    ):
+        for index in range(len(legs)):
+            if 2 * index + output in own:
+                continue
+            ref = PortRef(node_id, direction, index)
+            found.append(
+                ValidationIssue(
+                    kind=IssueKind.PORT_UNUSED,
+                    message=(f"{ref} is neither wired nor present on the boundary"),
+                    port_ref=ref,
                 )
+            )
+    if len(_UNUSED) >= _CACHE_LIMIT:
+        _UNUSED.clear()
+    _UNUSED[key] = (node, tuple(found))
+    return tuple(found)
 
 
 def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
@@ -928,6 +1141,16 @@ def _gather_dimension_constraints(
     policy and phase equalities) and, in that order, those whose two sides differ."""
     count = 0
     differing: list[tuple[Dim, Dim]] = []
+    held = _WIRED[0] if _WIRED else None
+    if held is not None and held.wired is wired:
+        count = len(wired)
+        for _wire, port_a, port_b in held.odd_sorted():
+            if port_a is None or port_b is None:
+                count -= 1
+            else:
+                differing.append((port_a.dim, port_b.dim))
+        nodes_count, nodes_differing = _node_part(held)
+        return count + nodes_count, differing + nodes_differing
     for _wire, port_a, port_b in wired:
         if port_a is None or port_b is None:
             continue
@@ -940,6 +1163,54 @@ def _gather_dimension_constraints(
         count += own
         differing.extend(own_differing)
     return count, differing
+
+
+@dataclass(slots=True)
+class _NodePart:
+    """The node constraints of one node snapshot: their count and the differing ones by id."""
+
+    snap: dict[NodeId, Node]
+    count: int
+    differing: dict[NodeId, tuple[tuple[Dim, Dim], ...]]
+    """The nodes with a differing constraint."""
+    counts: dict[NodeId, int]
+
+
+_NODE_PART: list[_NodePart] = []
+"""The last :func:`_node_part` result."""
+
+
+def _node_part(held: _Wired) -> tuple[int, list[tuple[Dim, Dim]]]:
+    """The node constraints of ``held``'s snapshot in node id order: their count and the
+    differing ones; updated from the previous snapshot over the changed nodes."""
+    last = _NODE_PART[0] if _NODE_PART else None
+    snap = held.snap
+    if last is not None and last.snap is snap:
+        part = last
+    elif last is not None and held.before is not None and last.snap is held.before:
+        counts, diff, count = dict(last.counts), dict(last.differing), last.count
+        for nid in held.changed:
+            count -= counts.pop(nid, 0)
+            diff.pop(nid, None)
+            node = snap.get(nid)
+            if node is not None:
+                own, own_differing = _node_constraint_split(node)
+                counts[nid] = own
+                count += own
+                if own_differing:
+                    diff[nid] = own_differing
+        part = _NodePart(snap, count, diff, counts)
+    else:
+        counts, diff, count = {}, {}, 0
+        for nid, node in snap.items():
+            own, own_differing = _node_constraint_split(node)
+            counts[nid] = own
+            count += own
+            if own_differing:
+                diff[nid] = own_differing
+        part = _NodePart(snap, count, diff, counts)
+    _NODE_PART[:] = [part]
+    return part.count, [pair for nid in sorted(part.differing) for pair in part.differing[nid]]
 
 
 def _check_dimension_consistency(

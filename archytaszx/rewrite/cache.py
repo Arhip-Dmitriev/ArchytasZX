@@ -39,7 +39,16 @@ import numpy as np
 
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.compare import canonical_key
-from archytaszx.diagram.graph import BangBoxId, Diagram, Node, NodeId, PortRef
+from archytaszx.diagram.graph import (
+    WIRE_KEYS,
+    BangBoxId,
+    Diagram,
+    Node,
+    NodeId,
+    PortRef,
+    Wire,
+    incident_state,
+)
 from archytaszx.rewrite.rule import Match, Pattern
 
 
@@ -114,16 +123,26 @@ def _membership(diagram: Diagram) -> dict[NodeId, list[tuple[str, ...]]]:
     return membership
 
 
-def _incidence(diagram: Diagram) -> dict[NodeId, list[tuple[str, int, int, str, int]]]:
-    """Per node, its wire ends as ``(own direction, own index, other node, other direction,
-    other index)``, in ``Wire.sort_key`` order."""
-    incidence: dict[NodeId, list[tuple[str, int, int, str, int]]] = {
-        nid: [] for nid in diagram.nodes
-    }
-    for wire in diagram.sorted_wires():
+Incidence = tuple[tuple[str, int, int, str, int], ...]
+
+_ENDS: dict[tuple[NodeId, int], tuple[tuple[Wire, ...], Incidence]] = {}
+"""Per (node id, object id of its incident-wire tuple): the tuple and the node's wire ends."""
+
+_ENDS_LIMIT = 1 << 17
+"""The most entries :data:`_ENDS` holds before it is emptied."""
+
+
+def _ends(nid: NodeId, wires: tuple[Wire, ...]) -> Incidence:
+    """The wire ends of node ``nid`` over its sorted incident ``wires``."""
+    key = (nid, id(wires))
+    held = _ENDS.get(key)
+    if held is not None and held[0] is wires:
+        return held[1]
+    out = []
+    for wire in wires:
         for near, far in ((wire.a, wire.b), (wire.b, wire.a)):
-            if near.node_id in incidence:
-                incidence[near.node_id].append(
+            if near.node_id == nid:
+                out.append(
                     (
                         near.direction.value,
                         near.index,
@@ -132,7 +151,44 @@ def _incidence(diagram: Diagram) -> dict[NodeId, list[tuple[str, int, int, str, 
                         far.index,
                     )
                 )
-    return incidence
+    if len(_ENDS) >= _ENDS_LIMIT:
+        _ENDS.clear()
+    ends = tuple(out)
+    _ENDS[key] = (wires, ends)
+    return ends
+
+
+_NO_WIRES: tuple[Wire, ...] = ()
+
+
+def _incidence(diagram: Diagram) -> dict[NodeId, Incidence]:
+    """Per node, its wire ends as ``(own direction, own index, other node, other direction,
+    other index)``, in ``Wire.sort_key`` order."""
+    state = incident_state(diagram)
+    get = state.index.get
+    nodes = diagram.nodes
+    last = _INCIDENCE[0] if _INCIDENCE else None
+    if last is None or (last[0] is not state.index and last[0] is not state.before):
+        out = {nid: _ends(nid, get(nid, _NO_WIRES)) for nid in nodes}
+    else:
+        out = dict(last[2])
+        old_ids = last[1]
+        todo = set(nodes.keys() - old_ids)
+        if last[0] is not state.index:
+            todo.update(state.touched)
+        for nid in old_ids - nodes.keys():
+            del out[nid]
+        for nid in todo:
+            if nid in nodes:
+                out[nid] = _ends(nid, get(nid, _NO_WIRES))
+    _INCIDENCE[:] = [(state.index, frozenset(nodes), out)]
+    return dict(out)
+
+
+_INCIDENCE: list[
+    tuple[Mapping[NodeId, tuple[Wire, ...]], frozenset[NodeId], dict[NodeId, Incidence]]
+] = []
+"""The last :func:`_incidence` call: the incident index, the node ids, the result."""
 
 
 def _node_payload(
@@ -301,7 +357,7 @@ def fingerprint(diagram: Diagram) -> DiagramFingerprint:
         boundary_key,
         boxes_key,
         tuple((int(nid), entries[nid]) for nid in sorted(entries)),
-        tuple(wire.sort_key() for wire in diagram.sorted_wires()),
+        tuple(map(WIRE_KEYS.__getitem__, diagram.sorted_wires())),
     )
     return DiagramFingerprint(
         nodes=MappingProxyType(entries),
