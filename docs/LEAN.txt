@@ -1100,7 +1100,11 @@ a node of it holds a phase rule over a concrete dimension above kernel.WIDE_RULE
 bound up to which the parser expands a rule; the network exporters read a rule as its table of
 values): the family export and its corollary are then written as they are (incrementer/main
 d = 2, n = 42: the instantiated right side holds a rule over dimension 2^42, the export ran out
-of the 3481 MiB cap after 300 s; now 0.2 s, 25730 bytes, as at n = 16). The instantiated
+of the 3481 MiB cap after 300 s; now 0.2 s, 25730 bytes, as at n = 16), or both sides hold
+more than kernel.CONCRETE_NODES = 2^13 nodes together (the network proof grows as the square
+of the node count, about N^2 / 2 bytes; cluster_state/main d = 877: n = 800 (6400 nodes) gives
+21 MB in 153 s, n = 2000 ran out of the cap; n = 2000 and n = 97980 now write the family
+export, 33774 bytes, in 0.3 s and 16 s). The instantiated
 pair's proof (kernel._semantic_pair) tries the normaliser of symbolic sums, the qubit and the
 odd-prime path-sum network proofs in turn, a ValueError of one counting as unsupported; it is
 not tried when both sides are qubit path sums without amplitude atoms and the reduction of

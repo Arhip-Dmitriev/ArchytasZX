@@ -2608,9 +2608,15 @@ _OPAQUE_AXIOM = re.compile(r"^axiom ", re.MULTILINE)
 """A top-level axiom declaration in an opaque export."""
 
 
+CONCRETE_NODES = 1 << 13
+"""The most nodes of both instantiated sides for which :func:`_concrete_export` writes the
+network proof; its size grows as the square of the node count (about N^2 / 2 bytes)."""
+
+
 def _concrete_export(theorem: Theorem, text: str) -> str | None:
     """The network proof of a restricted theorem's :func:`instantiated` sides when they have
-    no free multiplicity and no bang box, with the restriction in its header; else None."""
+    no free multiplicity and no bang box and at most :data:`CONCRETE_NODES` nodes, with the
+    restriction in its header; else None."""
     from archytaszx.semantics.lean_restrict import header
 
     lhs, rhs = theorem.lhs, theorem.rhs
@@ -2620,6 +2626,8 @@ def _concrete_export(theorem: Theorem, text: str) -> str | None:
         except _INDUCTION_ERRORS:
             return None
     if free_mult_symbols(lhs) | free_mult_symbols(rhs) or lhs.bang_boxes or rhs.bang_boxes:
+        return None
+    if len(lhs.nodes) + len(rhs.nodes) > CONCRETE_NODES:
         return None
     if _wide_rule(lhs) or _wide_rule(rhs) or _stuck_path_sums(lhs, rhs):
         return None
