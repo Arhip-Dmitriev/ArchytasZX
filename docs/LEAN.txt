@@ -1442,6 +1442,23 @@ whose parent is held, atoms on a weighted X spider and on legless weighted Z and
 F node beside atoms, a weighted X state into a Z effect (pin), a weighted X state on an open
 leg and two fused weighted X spiders (averageH).
 
+ArchytasZX/PathSumMixed.lean (namespace MSem) holds the Z_3 side of the mixed path sums of
+pathsum_mixed (dimensions 2, 3, 6; no exporter uses it yet). sum_six writes a sum over a label of
+dimension 6 as the sum over its digit pair (s, f) of 2 s + f; ind k s is [s = k] in F_2, with
+ind_zero (I_0 = 1 - I_1 - I_2 over the integers), ind_one_two (I_1 I_2 = 0) and ind_affine
+(I_k(a z + b) = I_{(k - b)/a}(z)); elim3 is [Elim3] (Sum_s zeta_3^(s L) H = 3 [L = 0] H) and
+count3 is [Count3] (the sum over s of a function of (I_1 s, I_2 s) is the sum over u, v in F_2
+with 0^(u v)). An entry (u, z, a, b, k) sets the F_2 variable u to ind k (a z + b); liftA sets
+an F_2 assignment's entry variables from a Z_3 assignment, pinE reads an entry through
+z = a' z' + b' (liftA_pinE). mval M c A q t es tau rho is a mixed path sum: the Z_3 part t
+(QSem.Data, summed over its path) times valA of the qubit part q at liftA es. Steps on it, each
+the QSem step with the entries carried: mval_elim (elimS), mval_hhCons (hhConsS), mval_hhPivot
+(hhPivotS, the pivoted variable's entries read through its value), mval_pin (pinS, the entries
+read through pinE y x 1 0), mval_norm (normS), each with factor 3 where QSem's has p; and
+mval_count3 ([Count3] on a head variable outside the Z_3 phase and constraints read only by
+(u1, s, 1, 0, 1) and (u2, s, 1, 0, 2): u1, u2 become held F_2 variables with the zero atom
+0^(u1 u2), valA_zero_atom).
+
 5. REFUTATIONS
 --------------
 
