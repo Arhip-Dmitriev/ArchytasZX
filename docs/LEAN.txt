@@ -1540,9 +1540,12 @@ A sparse phase vector with one key takes its k ≠ key hypothesis by have, not o
 qft_zero_state! n=27 d=96 still exceeds 600 s: its 23 sym_run theorems (64 delta steps each,
 each step walking and substituting the whole binding list of up to 1458 entries in dapplyU)
 take more than 600 s together; definitions 59-144 s.
-cluster_state_2d! (2,8) exceeds 6 GB in main at eval_res's hleaf for the first net (one
-decide +kernel over all its leafR leaves at d = 8); every other side condition and theorem of
-the export checks in under 600 MB.
+The leaf condition of eval_res and eval_resG is proved one leaf per theorem: Q{tag} is the
+leaf check (leafR, or leafG over L{tag}.zip G{tag}), H{tag}k its all over the leaves from k on,
+H{tag}n by decide +kernel on the empty rest and each H{tag}k from its one leaf (decide +kernel
+over take 1) and H{tag}(k+1) by zipAll_drop (lean_refute.leaf_decls). cluster_state_2d! (2,8):
+over 6 GB in main (one decide +kernel over all 28 leafR leaves at d = 8) -> accepted in 149 s,
+2.5 GB anon; a copy with one leaf entry changed is rejected.
 
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 

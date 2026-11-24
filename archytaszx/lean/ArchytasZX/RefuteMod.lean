@@ -1651,6 +1651,17 @@ theorem eval_resG (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     tmv p w (sumLT S.dim N.int (prodW S M P C N.nodes) σ) = (rfold p final σ : ZMod p) :=
   eval_resGW S M P C p w hp hw hM0 N σ leaves gs hlen hleaf steps final hperm hchain hscope hdis hσ
 
+/-- The `all` of a zipped pair of lists from `k` on, from its entry at `k` and its rest. -/
+theorem zipAll_drop {α β : Type*} (g : α × β → Bool) (ns : List α) (ls : List β) (k : ℕ)
+    (h1 : (((ns.drop k).zip (ls.drop k)).take 1).all g = true)
+    (h2 : ((ns.drop (k + 1)).zip (ls.drop (k + 1))).all g = true) :
+    ((ns.drop k).zip (ls.drop k)).all g = true := by
+  rw [show ns.drop (k + 1) = (ns.drop k).drop 1 by simp [List.drop_drop],
+    show ls.drop (k + 1) = (ls.drop k).drop 1 by simp [List.drop_drop]] at h2
+  generalize ns.drop k = A at *
+  generalize ls.drop k = B at *
+  rcases A with _ | ⟨a, as⟩ <;> rcases B with _ | ⟨b, bs⟩ <;> simp_all
+
 /-! ## Refutation -/
 
 /-- The formal sum of an integer vector. -/

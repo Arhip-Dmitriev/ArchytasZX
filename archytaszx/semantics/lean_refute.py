@@ -1795,6 +1795,30 @@ class _Refuter:
         out.append(f"theorem CH{tag} : chainR {p} {dim} L{tag} ST{tag} FN{tag} = true := {tag}C0")
         return out
 
+    def leaf_decls(self, tag: str, env: str, n: int, tables: bool) -> list[str]:
+        """`Q{tag}` the leaf check of `eval_res` (`eval_resG` when `tables`), `H{tag}{k}` its
+        `all` over the leaves from `k` on, one `decide +kernel` leaf per theorem through
+        `zipAll_drop`."""
+        M, p, w = self.M, self.p, self.w
+        if tables:
+            ty, chk, ls = "Node × RFac × LeafH", "leafG", f"(L{tag}.zip G{tag})"
+            arg = "q.1 q.2.1 q.2.2"
+        else:
+            ty, chk, ls, arg = "Node × RFac", "leafR", f"L{tag}", "q.1 q.2"
+        q = f"fun q => {chk} {env}.shape {M} Pt Ct {p} {w} {tag}.bnd σ0 {arg}"
+        out = [f"/-- The leaf check of {tag}. -/\nnoncomputable def Q{tag} : {ty} → Bool := {q}"]
+
+        def head(k: int) -> str:
+            return f"(({tag}.nodes.drop {k}).zip ({ls}.drop {k})).all Q{tag} = true"
+
+        out.append(f"theorem H{tag}{n} : {head(n)} := by decide +kernel")
+        for k in range(n - 1, -1, -1):
+            out.append(
+                f"theorem H{tag}{k} : {head(k)} :=\n  zipAll_drop _ _ _ {k} (by decide +kernel) "
+                f"H{tag}{k + 1}"
+            )
+        return out
+
     def source_res(
         self,
         name: str,
@@ -1922,15 +1946,18 @@ class _Refuter:
                         f"/-- How {tag}'s leaves are checked. -/\n"
                         f"def G{tag} : List LeafH := [{items}]"
                     )
+                    decls += self.leaf_decls(tag, env, len(plan[0]), True)
                     body.append(
                         f"  have r{i} := {wide(M, 'eval_resG')} {env}.shape {M} Pt Ct {p} {w} "
-                        f"(by norm_num) hw1 (by norm_num) {bound(M)}{tag} σ0 L{tag} G{tag} {K} {K} "
+                        f"(by norm_num) hw1 (by norm_num) {bound(M)}{tag} σ0 L{tag} G{tag} {K} "
+                        f"H{tag}0 "
                         f"ST{tag} FN{tag} {K} CH{tag} {K} {K} {K}"
                     )
                 else:
+                    decls += self.leaf_decls(tag, env, len(plan[0]), False)
                     body.append(
                         f"  have r{i} := {wide(M, 'eval_res')} {env}.shape {M} Pt Ct {p} {w} "
-                        f"(by norm_num) hw1 (by norm_num) {bound(M)}{tag} σ0 L{tag} {K} {K} "
+                        f"(by norm_num) hw1 (by norm_num) {bound(M)}{tag} σ0 L{tag} {K} H{tag}0 "
                         f"ST{tag} FN{tag} {K} CH{tag} {K} {K} {K}"
                     )
             else:
