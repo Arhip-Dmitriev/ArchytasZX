@@ -271,8 +271,12 @@ when m < M. The atom reads as its argument where only the residue matters: in om
 whose coefficient times m is an integer, in deltas [a x + r == 0 mod M] with M | a m, and when
 ranges bound the argument in [0, m). A free index v of range m that a delta of the term pins
 to the same residue (c v + L with -c L == x mod m) replaces ModResidue(x, m). An echelon pivot
-v == value mod m with v of range m and value bounded in [0, m) is substituted everywhere,
-deltas of other moduli included; otherwise only where the expression is m-periodic in v.
+v == value mod m with v of range m and value bounded in [0, m), or with v - value bounded
+in (-m, m) (the delta then reads [v == value]), is substituted everywhere, deltas of other
+moduli included; otherwise only where the expression is m-periodic in v. A delta
+[s R + L == 0 mod M], R = ModResidue(x, m) free of summed indices, s = +-1, L free of
+ModResidue atoms, whose frequency ranges bound in (-M, M) with R in [0, m), replaces R by
+-s L in the other factors of its term.
 At a concrete modulus m the echelon form takes every substituted row and pivot value with an
 integer coefficient c of |c| >= m to sign(c) (|c| mod m), so coefficients stay below m
 instead of growing with each Gauss-Jordan step.

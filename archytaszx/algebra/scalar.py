@@ -2094,10 +2094,20 @@ def _drop_implied(term: sp.Expr) -> sp.Expr:
 def _exact_pivot(
     var: sp.Symbol, value: sp.Expr, modulus: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]
 ) -> bool:
-    """Whether ``var == value mod modulus`` forces ``var == value``: ``var`` ranges over
-    ``modulus`` and ``ranges`` bound ``value`` in ``[0, modulus)``."""
+    """Whether ``var == value mod modulus`` forces ``var == value``: ``ranges`` bound
+    ``var - value`` in ``(-modulus, modulus)``, or ``var`` ranges over ``modulus`` and ``ranges``
+    bound ``value`` in ``[0, modulus)``."""
     size = ranges.get(var)
-    if size is None or sp.expand(size - modulus) != 0:
+    if size is None:
+        return False
+    span = _bounds(sp.expand(var - value), ranges)
+    if (
+        span is not None
+        and sp.expand(modulus + span[0]).is_positive is True
+        and sp.expand(modulus - span[1]).is_positive is True
+    ):
+        return True
+    if sp.expand(size - modulus) != 0:
         return False
     found = _bounds(value, ranges)
     return (
@@ -2223,6 +2233,47 @@ def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None 
     return cast(sp.Expr, rest * sp.Mul(*emitted))
 
 
+def _residue_pivots(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """``term`` with each free ``x mod m`` replaced by a residue-free ``v`` in the other factors
+    where a delta factor ``[x mod m - v == 0 mod M]`` holds exactly: ``ranges``, with each
+    ``x mod m`` in ``[0, m)``, bound ``x mod m - v`` in ``(-M, M)``."""
+    if not ranges or not _has_outside_flat(term, ModResidue):
+        return term
+    bound = _bound_symbols(term)
+    factors = list(sp.Mul.make_args(term))
+    for position, factor in enumerate(factors):
+        delta = _delta_base(factor)
+        if delta is None or not delta.has(ModResidue):
+            continue
+        frequency, modulus = delta.args
+        atoms = sorted(frequency.atoms(ModResidue), key=sp.default_sort_key)
+        if any(not a.args[1].is_Integer or a.free_symbols & bound for a in atoms):
+            continue
+        frozen = {a: sp.Dummy(integer=True) for a in atoms}
+        local = {**ranges, **{s: a.args[1] for a, s in frozen.items()}}
+        flat = sp.expand(frequency.xreplace(frozen))
+        span = _bounds(flat, local) if flat.free_symbols <= set(local) else None
+        if span is None or not (
+            sp.expand(modulus + span[0]).is_positive is True
+            and sp.expand(modulus - span[1]).is_positive is True
+        ):
+            continue
+        for atom in atoms:
+            coefficient = flat.coeff(frozen[atom], 1)
+            if coefficient not in (1, -1):
+                continue
+            value = sp.expand(-coefficient * (flat - coefficient * frozen[atom]))
+            value = value.xreplace({s: a for a, s in frozen.items()})
+            if value.has(ModResidue):
+                continue
+            others = [
+                f.xreplace({atom: value}) if i != position else f for i, f in enumerate(factors)
+            ]
+            if others != factors:
+                return _residue_pivots(cast(sp.Expr, sp.Mul(*others)), ranges)
+    return term
+
+
 def _canonical_top(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
     """:func:`_pin_residues` and :func:`_canonical_deltas` over every top-level term of ``expr``."""
     collapsed = (
@@ -2231,7 +2282,9 @@ def _canonical_top(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
         else expr
     )
     terms = sp.Add.make_args(_expand(collapsed))
-    pinned = (_collapse_residues(_pin_residues(t, ranges), ranges) for t in terms)
+    pinned = (
+        _residue_pivots(_collapse_residues(_pin_residues(t, ranges), ranges), ranges) for t in terms
+    )
     return _expand(cast(sp.Expr, sp.Add(*(_canonical_deltas(t, ranges) for t in pinned))))
 
 
