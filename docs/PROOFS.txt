@@ -94,9 +94,12 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             tensors are EQUAL. Otherwise SYMBOLIC_WITNESS: an entry at a sample
                             assignment and an index tuple where the two differ is UNEQUAL.
                             When the comparison leaves a nonzero entry difference (also under
-                            identical replicated factors), the witness search also tries each
+                            identical replicated factors, also one still carrying an index
+                            sum or divisibility atom), the witness search also tries each
                             sample with every dimension symbol raised to one above the
-                            difference's largest integer root (root_points), and the oracle
+                            difference's largest integer root, then to the next value that
+                            does not divide every nonzero constant term of the ModDelta
+                            arguments modulo that symbol (root_points), and the oracle
                             evaluates those points too; an oracle mismatch there without a
                             witness is UNEQUAL as ORACLE_COUNTEREXAMPLE.
   5b. PATH_SUM              When both diagrams translate to path sums (every dimension a

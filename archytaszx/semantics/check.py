@@ -750,6 +750,7 @@ def compare_symbolic(
             f"indeterminate: the difference {difference} still carries an unevaluated "
             "index sum or divisibility atom, so no conclusion is drawn",
             float("inf"),
+            difference=difference,
         )
     return ComparisonResult(
         mode, False, f"entries differ by {difference}", float("inf"), difference=difference

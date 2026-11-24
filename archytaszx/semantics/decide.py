@@ -1174,21 +1174,40 @@ def _integer_roots(expr: sp.Expr, symbol: sp.Symbol) -> list[int]:
     return roots
 
 
+def _congruence_constants(expr: sp.Expr, symbol: sp.Symbol) -> list[int]:
+    """The nonzero integer constant terms of the arguments of the ``ModDelta`` atoms of ``expr``
+    with modulus ``symbol``."""
+    from archytaszx.algebra.scalar import ModDelta
+
+    out: list[int] = []
+    for atom in expr.atoms(ModDelta):
+        arg, modulus = atom.args
+        if modulus != symbol:
+            continue
+        constant = sp.expand(arg).as_coeff_Add()[0]
+        if constant.is_Integer and constant != 0:
+            out.append(int(constant))
+    return out
+
+
 def root_points(
     difference: Scalar,
     candidates: Sequence[Mapping[str, CheckAssignmentValue]],
     dimensions: frozenset[str],
 ) -> tuple[Mapping[str, CheckAssignmentValue], ...]:
     """Each candidate with every dimension symbol of ``difference`` raised to the smallest value
-    above the integer roots of ``difference`` in it, when the candidate's value is not above."""
+    above the integer roots of ``difference`` in it, when the candidate's value is not above,
+    then to the next value not dividing every constant of the congruence atoms modulo it."""
     expr = difference.to_sympy()
     raised: dict[str, int] = {}
+    constants: dict[str, list[int]] = {}
     for symbol in sorted(expr.free_symbols, key=lambda x: str(x.name)):
         name = str(symbol.name)
         if name in dimensions:
             roots = _integer_roots(expr, symbol)
             if roots:
                 raised[name] = max(roots) + 1
+            constants[name] = _congruence_constants(expr, symbol)
     out: list[dict[str, CheckAssignmentValue]] = []
     for candidate in candidates:
         point = dict(candidate)
@@ -1196,6 +1215,12 @@ def root_points(
             value = point.get(name)
             if isinstance(value, int) and value < low:
                 point[name] = low
+        for name, cs in constants.items():
+            value = point.get(name)
+            if isinstance(value, int) and value >= 1 and cs:
+                while all(c % value == 0 for c in cs):
+                    value += 1
+                point[name] = value
         if point != dict(candidate) and point not in out and point not in candidates:
             out.append(point)
     return tuple(MappingProxyType(point) for point in out)
