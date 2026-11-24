@@ -1501,6 +1501,13 @@ node residues when M and its phase, coefficient and dimension tables are equal
 (share_node_res). qft_zero_state! (10,57): decide 105.8 -> 35.2 s, Lean export byte-identical;
 (17,158): 220 s either way (sym_plan 11 s, recheck_residue 7 s; the rest parsing and Dirac
 rendering).
+Parsing and rendering (F45-b): shell._logical_lines joins indented lines as a list (was a string
+rebuilt per line); _phase_vector_parts_of parses each distinct entry text once per vector;
+PhaseVector.free_symbols and PhaseVector.sympy_symbols (decide._symbol_table) are cached per
+vector; Phase.__repr__ (PhaseVector.digest, the rewrite fingerprint) is memoised per turns;
+the Dirac renderer memoises atom text per value. qft_zero_state! (17,158): decide 215 -> 72 s,
+export 23.5 -> 3.9 s; decide output and Lean export byte-identical there and on
+qft_zero_state! (5,4), (10,57), cluster_state_2d! (2,8), incrementer! (4,2), qft! (2,5).
 Elimination order and constant factors (F46): lean_refute.res_eliminate eliminates next the
 label whose new table has the fewest nonzero entries (trial sums, uncounted, recomputed for
 the labels of each new scope); it was the label with the smallest new scope. A new factor

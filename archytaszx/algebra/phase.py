@@ -43,6 +43,7 @@ and must not be anticipated by this module or by :mod:`archytaszx.algebra.scalar
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Mapping
 from fractions import Fraction
@@ -121,6 +122,12 @@ def _normalize_turns(expr: sp.Expr) -> sp.Expr:
     if not constant.is_Rational or constant == 0:
         return expr
     return cast(sp.Expr, (constant - sp.floor(constant)) + rest)
+
+
+@functools.lru_cache(maxsize=1 << 16)
+def _phase_repr(turns: sp.Expr) -> str:
+    """``Phase(turns=...)`` of a turns-expression, memoised."""
+    return f"Phase(turns={turns})"
 
 
 class Phase:
@@ -312,7 +319,7 @@ class Phase:
         return hash(self._turns)
 
     def __repr__(self) -> str:
-        return f"Phase(turns={self._turns})"
+        return _phase_repr(self._turns)
 
     def __str__(self) -> str:
         return f"{self._turns} turns"
@@ -345,10 +352,12 @@ class PhaseVector:
         "_digest",
         "_dim",
         "_entries",
+        "_free",
         "_hash",
         "_lazy_rule",
         "_lazy_weight",
         "_rule",
+        "_syms",
         "_view",
         "_weight_rule",
         "_weight_view",
@@ -365,6 +374,8 @@ class PhaseVector:
     _weight_view: dict[int, Scalar] | None
     _hash: int | None
     _digest: str | None
+    _free: frozenset[str] | None
+    _syms: frozenset[sp.Symbol] | None
 
     def __init__(
         self,
@@ -425,6 +436,8 @@ class PhaseVector:
         self._weight_view = None
         self._hash = None
         self._digest = None
+        self._free = None
+        self._syms = None
 
     def _expanded(self) -> dict[int, Phase]:
         """The nonzero phases at every index of a concrete dimension, rule included (cached)."""
@@ -593,7 +606,27 @@ class PhaseVector:
 
     @property
     def free_symbols(self) -> frozenset[str]:
-        """All free symbols in the dimension, any stored phase or weight, or either rule."""
+        """All free symbols in the dimension, any stored phase or weight, or either rule
+        (cached)."""
+        if self._free is None:
+            self._free = self._free_symbols()
+        return self._free
+
+    def sympy_symbols(self) -> frozenset[sp.Symbol]:
+        """The sympy symbols of the dimension, of ``entries()`` and of ``rule`` at index 1
+        (cached)."""
+        if self._syms is None:
+            exprs = [self._dim.to_sympy()]
+            exprs.extend(p.to_sympy_turns() for p in self.entries().values())
+            if self.rule is not None:
+                exprs.append(self.rule.to_sympy_turns().xreplace({INDEX: 1}))
+            found: set[sp.Symbol] = set()
+            for expr in set(exprs):
+                found |= expr.free_symbols
+            self._syms = frozenset(found)
+        return self._syms
+
+    def _free_symbols(self) -> frozenset[str]:
         symbols = set(self._dim.free_symbols)
         for phase in self._entries.values():
             symbols |= phase.free_symbols

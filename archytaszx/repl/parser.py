@@ -1002,6 +1002,7 @@ def _phase_vector_parts_of(
     """``i: expr, ..., k: rule`` as index -> Phase and the rule in :data:`INDEX`."""
     entries: dict[int, Phase] = {}
     rule: Phase | None = None
+    parsed: dict[str, Phase] = {}
     for item in _split_top(text):
         index, colon, expr = item.partition(":")
         if not colon:
@@ -1016,8 +1017,12 @@ def _phase_vector_parts_of(
         i = _int_token(index, "phase index")
         if i in entries:
             raise ParseGrammarError(f"phase index {i} appears twice")
-        plain = _plain_phase(expr)
-        entries[i] = plain if plain is not None else _phase_of(_parse_expr(expr, "phase"), table)
+        phase = parsed.get(expr)
+        if phase is None:
+            plain = _plain_phase(expr)
+            phase = plain if plain is not None else _phase_of(_parse_expr(expr, "phase"), table)
+            parsed[expr] = phase
+        entries[i] = phase
     return entries, rule
 
 

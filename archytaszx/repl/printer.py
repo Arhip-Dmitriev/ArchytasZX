@@ -687,14 +687,20 @@ class _Renderer:
     def __init__(self, env: Mapping[str, int], glyphs: _Glyphs) -> None:
         self.env = env
         self.g = glyphs
+        self._atoms: dict[object, str] = {}
 
     def expr(self, value: object) -> str:
         return _plain(_subs(value, self.env))
 
     def atom(self, value: object) -> str:
-        expr = _subs(value, self.env)
-        text = _plain(expr)
-        return text if expr.is_Atom and not text.startswith("-") else f"({text})"
+        """Memoised per value."""
+        hit = self._atoms.get(value)
+        if hit is None:
+            expr = _subs(value, self.env)
+            text = _plain(expr)
+            hit = text if expr.is_Atom and not text.startswith("-") else f"({text})"
+            self._atoms[value] = hit
+        return hit
 
     def dim(self, dim: Dim) -> str:
         return self.atom(dim.to_sympy())

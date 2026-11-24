@@ -163,7 +163,9 @@ storage is what allows a phase vector at a symbolic dimension to exist.
     v.stored_rule -> Phase | None               the rule as stored
     v.get(index) -> Phase                       zero when absent or at index 0
     v.at(index) -> sympy.Expr                   the turns at a possibly symbolic index
-    v.is_zero, v.is_concrete, v.free_symbols
+    v.is_zero, v.is_concrete, v.free_symbols   free_symbols cached
+    v.sympy_symbols() -> frozenset[sympy.Symbol] the symbols of the dimension, entries() and the
+                                                rule at index 1 (cached)
     v.substitute(mapping) -> PhaseVector
     v + w                                       entrywise sum; the dimensions must agree
 

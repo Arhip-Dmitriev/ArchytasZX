@@ -72,7 +72,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
 from archytaszx.algebra.pathsum import PathSumError
-from archytaszx.algebra.phase import INDEX, PhaseError
+from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import (
     BangBoxError,
@@ -350,6 +350,7 @@ def _free_symbols(diagram: Diagram) -> tuple[frozenset[str], frozenset[str], fro
 def _symbol_table(*diagrams: Diagram) -> dict[str, frozenset[sp.Symbol]]:
     """Every free sympy symbol of ``diagrams``, grouped by name."""
     exprs: list[sp.Expr] = []
+    symbols: set[sp.Symbol] = set()
     for diagram in diagrams:
         exprs.append(diagram.scalar.to_sympy())
         for box in diagram.bang_boxes.values():
@@ -359,14 +360,12 @@ def _symbol_table(*diagrams: Diagram) -> dict[str, frozenset[sp.Symbol]]:
         for node in diagram.nodes.values():
             exprs.extend(port.dim.to_sympy() for port in (*node.outputs, *node.inputs))
             if node.phase is not None:
-                exprs.append(node.phase.dim.to_sympy())
-                exprs.extend(phase.to_sympy_turns() for phase in node.phase.entries().values())
-                if node.phase.rule is not None:
-                    exprs.append(node.phase.rule.to_sympy_turns().xreplace({INDEX: 1}))
+                symbols |= node.phase.sympy_symbols()
+    for expr in set(exprs):
+        symbols |= expr.free_symbols
     table: dict[str, set[sp.Symbol]] = {}
-    for expr in exprs:
-        for symbol in expr.free_symbols:
-            table.setdefault(str(symbol.name), set()).add(symbol)
+    for symbol in symbols:
+        table.setdefault(str(symbol.name), set()).add(symbol)
     return {name: frozenset(symbols) for name, symbols in table.items()}
 
 

@@ -353,7 +353,7 @@ def _logical_lines(lines: Iterable[str]) -> Iterator[str]:
     """Joins each line ending in ``\\`` to the next with a single space, and each indented
     line to the command above it with a newline; comments are cut from joined lines, and blank
     or comment lines never continue."""
-    pending: str | None = None
+    pending: list[str] | None = None
     parts: list[str] = []
     for raw in lines:
         stripped = raw.rstrip("\r\n").rstrip()
@@ -362,21 +362,23 @@ def _logical_lines(lines: Iterable[str]) -> Iterator[str]:
             yield stripped.strip()
             continue
         if not parts and pending is not None and stripped[:1] in (" ", "\t"):
-            pending = pending.split("#", 1)[0].rstrip() + "\n" + code
+            if len(pending) == 1:
+                pending[0] = pending[0].split("#", 1)[0].rstrip()
+            pending.append(code)
             continue
         if stripped.endswith("\\") and (parts or not stripped.lstrip().startswith("#")):
             parts.append(stripped[:-1].strip())
             continue
         parts.append(stripped.strip())
         if pending is not None:
-            yield pending
-        pending = " ".join(part for part in parts if part)
+            yield "\n".join(pending)
+        pending = [" ".join(part for part in parts if part)]
         parts = []
     if parts:
         tail = " ".join(part for part in parts if part)
-        pending = tail if pending is None else f"{pending}\n{tail}"
+        pending = [tail] if pending is None else [*pending, tail]
     if pending is not None:
-        yield pending
+        yield "\n".join(pending)
 
 
 def _read_physical(source: TextIO, sink: TextIO, prompt: str, use_input: bool) -> str | None:
