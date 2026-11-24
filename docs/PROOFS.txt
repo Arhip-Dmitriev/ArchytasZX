@@ -545,6 +545,28 @@ through cut wires (expose_cut) and replaced by the other side's, the result comp
 other successor peeled, then unpeeled (iso, else symbolic contraction). The kernel theorem is
 the chain_window one of section 6 (window cut).
 
+Parametric induction. A phase parameter is a free symbol read only in node phases (real, not
+a dimension, multiplicity, copy index or witness value). When the plain and offset chain
+windows fail, induction.parameter_candidates solves, node by node, each hypothesis phase at
+a = v against the same node's phase in the successor (linear in a, v free of copy and phase
+indices, one value over all nodes of a side); for each value found the chain window runs
+again with both hypothesis diagrams at a = v (induction.substitute_parameter: substituted,
+expanded, powers combined). The claim inducted on is then "for every real a", so the
+hypothesis at n = k holds at a = v. Example (tests/test_param_induction.py): a chain of n
+Z(1 -> 1, d) phase{k: a 2^(j - n) k} equals Z phase{k: a (1 - 2^(-n)) k}; at n = k + 1 the
+low k copies read a/2, so the hypothesis is taken at a = a/2. decide retries the step at an
+empty witness when the sampled witness fixes a phase parameter (the base pair is decided with
+it formal). Kernel: kernel.induction(..., parameter=(a, v)) re-checks a and v
+(kernel._parameter_checked) and builds the hypothesis diagrams at a = v; inference kind
+induction_param or induction_offset_param.
+
+Constant generalisation (decide._generalized_induction). When the outermost induction rung
+fails and the pair has no phase parameter, induction.generalized_constant takes the one
+coefficient magnitude c (not 0 or 1) of the additive phase terms reading the index and puts a
+fresh real a for c in every phase term +-c t; the lifted pair goes through the induction rung,
+and its theorem is taken at a = c by kernel.phase_instance (inference kind phase_instance), then
+joined to the original sides by iso. Neither kind has a Lean export yet.
+
 4.5 Periodic chains: decide._decide_periodic
 
 When each side reads the index only in its scalar and in the multiplicity of at most one

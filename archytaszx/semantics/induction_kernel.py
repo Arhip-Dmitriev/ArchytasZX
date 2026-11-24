@@ -64,9 +64,11 @@ from archytaszx.semantics.induction import (
     find_cut_region,
     first_peelers,
     lemma_decision,
+    parameter_candidates,
     replace_cut_region,
     replace_region,
     rest_cut,
+    substitute_parameter,
     unfed,
 )
 from archytaszx.semantics.prove import (
@@ -282,7 +284,9 @@ def _windowed(
     cut), a tree's unfed residual (tree) or a closed region (region), the step from the
     replaced diagram to the other peeled successor by :func:`_step_theorem`; each side's
     successor tried as the exposed one, then, for a box that peels its first copy and reads an
-    index, both again with an index offset (:func:`~archytaszx.semantics.kernel.induction`)."""
+    index, both again with an index offset, then with each phase parameter of
+    :func:`~archytaszx.semantics.induction.parameter_candidates` at its value in the hypotheses
+    (:func:`~archytaszx.semantics.kernel.induction`)."""
     index, k = result.index, result.obligation.step_symbol
     reasons: list[str] = []
     offsets: list[sp.Symbol | None] = [None]
@@ -291,9 +295,14 @@ def _windowed(
         offsets.append(
             offset_symbol(start, goal, obligation.left_at_successor, obligation.right_at_successor)
         )
-    for sym, side in [(o, s) for o in offsets for s in (InductionSide.START, InductionSide.GOAL)]:
+    combos: list[tuple[sp.Symbol | None, tuple[str, sp.Expr] | None]] = [(o, None) for o in offsets]
+    combos += [(None, p) for p in parameter_candidates(result.obligation)]
+    sides = (InductionSide.START, InductionSide.GOAL)
+    for sym, param, side in [(o, p, s) for o, p in combos for s in sides]:
         own, other = (start, goal) if side is InductionSide.START else (goal, start)
         label = side.value if sym is None else f"{side.value}, offset {sym}"
+        if param is not None:
+            label = f"{label}, {param[0]} = {param[1]}"
         try:
             own_s, other_s = own, other
             if sym is not None:
@@ -312,6 +321,9 @@ def _windowed(
         if sym is not None:
             own_k = induction_offset(own_k, k, sym + 1)
             other_k = induction_offset(other_k, k, sym + 1)
+        if param is not None:
+            own_k = substitute_parameter(own_k, *param)
+            other_k = substitute_parameter(other_k, *param)
         try:
             tree_id = None
             cut = None
@@ -375,6 +387,7 @@ def _windowed(
                         step,
                         cut=cut,
                         offset=None if sym is None else str(sym),
+                        parameter=param,
                     )
                 if tree_id is None:
                     raise
@@ -397,6 +410,7 @@ def _windowed(
                 cut=cut,
                 tree=tree_id,
                 offset=None if sym is None else str(sym),
+                parameter=param,
             )
         except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
             reasons.append(f"{label}: {exc}")

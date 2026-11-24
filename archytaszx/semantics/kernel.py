@@ -85,7 +85,7 @@ from archytaszx.algebra import numfield
 from archytaszx.algebra.algebraic import NotAlgebraicError
 from archytaszx.algebra.phase import PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.bangbox import free_mult_symbols
+from archytaszx.diagram.bangbox import free_mult_symbols, index_symbols
 from archytaszx.diagram.compare import isomorphic, isomorphism
 from archytaszx.diagram.generators import MIXED_ONLY
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId
@@ -136,7 +136,8 @@ _TOKEN = object()
 @dataclass(frozen=True, eq=False)
 class Inference:
     """The rule that built a theorem: ``kind`` is refl, rule, iso, algebraic, contraction,
-    congr, symm, trans, induction, induction_offset, subst or shift."""
+    congr, symm, trans, induction, induction_offset, induction_param, induction_offset_param,
+    phase_instance, subst or shift."""
 
     kind: str
     premises: tuple[Theorem, ...] = ()
@@ -868,18 +869,24 @@ def induction(
     cut: CutRegion | None = None,
     tree: BangBoxId | None = None,
     offset: str | None = None,
+    parameter: tuple[str, sp.Expr] | None = None,
 ) -> Theorem:
     """``start = goal`` for every value of ``index`` (see the module docstring); with ``cut``
     the region meets the rest at cut wires (a chain), with ``tree`` (a tree box id) it is the
     exposed diagram without the box that tree feeds. With ``offset`` (a fresh symbol ``s``)
     the claim inducted on is both sides with the box carrying ``index`` reading its copy index
     as ``copy index + s``, for every ``s``: at 0 both sides must not depend on ``s``, the
-    successors read ``+ s`` and the hypothesis diagrams ``+ s + 1``."""
+    successors read ``+ s`` and the hypothesis diagrams ``+ s + 1``. With ``parameter``
+    ``(a, v)`` (``a`` a real symbol read only in node phases) the claim is for every real ``a``
+    and the hypothesis diagrams read ``a = v``."""
     live = free_mult_symbols(start) | free_mult_symbols(goal)
     if index not in live or step_symbol in live:
         raise KernelError(f"{index!r} is not a free multiplicity or {step_symbol!r} is not fresh")
     k = step_symbol
     bound = frozenset(s for s in (index, k, offset) if s)
+    moved = _parameter_move(start, goal, bound, parameter)
+    if parameter is not None:
+        bound |= {parameter[0]}
     _refuse_on("induction", (base, expose, step), bound)
     try:
         if not (_same(base.lhs, induction_base(start, index))):
@@ -902,6 +909,8 @@ def induction(
         other_k = induction_hypothesis(other, index, k)
         if shift is not None:
             hypothesis, other_k = shift(hypothesis, k, 1), shift(other_k, k, 1)
+        if moved is not None:
+            hypothesis, other_k = moved(hypothesis), moved(other_k)
         if cut is not None:
             if cut.region != region or not region <= frozenset(exposed.nodes):
                 raise KernelError("the cut region is not the hypothesis region")
@@ -943,6 +952,9 @@ def induction(
     if offset is not None:
         data["offset"] = offset
         kind = "induction_offset"
+    if parameter is not None:
+        data["parameter"] = parameter
+        kind = f"{kind}_param"
     assumptions = _merge(base.assumptions, expose.assumptions, step.assumptions)
     inference = Inference(kind, (base, expose, step), data=data)
     return Theorem(_TOKEN, start, goal, inference, assumptions, _domain(base, expose, step))
@@ -981,6 +993,65 @@ def periodic(start: Diagram, goal: Diagram, index: str, bases: Sequence[Theorem]
     data: dict[str, object] = {"index": index, "step": step, "ratio": ratios[0]}
     assumptions = _merge(*(b.assumptions for b in bases))
     return Theorem(_TOKEN, start, goal, Inference("periodic", tuple(bases), data=data), assumptions)
+
+
+def _parameter_checked(start: Diagram, goal: Diagram, name: str, value: object) -> sp.Expr:
+    """``value`` once ``name`` is read only in node phases of ``start`` and ``goal`` (in one at
+    least) and ``value`` is real and free of copy indices and phase indices."""
+    from archytaszx.algebra.phase import INDEX, INDEX2
+    from archytaszx.semantics.induction import _all_free_symbols, _phase_symbols
+
+    expr = sp.sympify(value)
+    if name not in (_phase_symbols(start) | _phase_symbols(goal)):
+        raise KernelError(f"{name!r} is not a phase parameter of the claim")
+    for d in (start, goal):
+        if name not in _phase_symbols(d) and name in _all_free_symbols(d):
+            raise KernelError(f"{name!r} is read outside node phases")
+    copies = index_symbols(start) | index_symbols(goal)
+    names = {str(s) for s in expr.free_symbols}
+    if names & copies or expr.free_symbols & {INDEX, INDEX2} or not expr.is_real:
+        raise KernelError(f"{expr} is not a real value free of the copy and phase indices")
+    return cast(sp.Expr, expr)
+
+
+def _parameter_move(
+    start: Diagram,
+    goal: Diagram,
+    bound: frozenset[str],
+    parameter: tuple[str, sp.Expr] | None,
+) -> Callable[[Diagram], Diagram] | None:
+    """None without ``parameter``; else, once ``(a, v)`` passes :func:`_parameter_checked` and
+    neither ``a`` nor ``v`` reads ``bound``, a function taking a diagram to it at ``a = v``."""
+    from archytaszx.semantics.induction import substitute_parameter
+
+    if parameter is None:
+        return None
+    name = parameter[0]
+    value = _parameter_checked(start, goal, name, parameter[1])
+    if name in bound or {str(s) for s in value.free_symbols} & bound:
+        raise KernelError(f"the parameter {name!r} or its value reads the induction symbols")
+
+    def moved(d: Diagram) -> Diagram:
+        return substitute_parameter(d, name, value)
+
+    return moved
+
+
+@_trace.traced("kernel.phase_instance")
+def phase_instance(t: Theorem, symbol: str, value: object) -> Theorem:
+    """``t`` with the phase parameter ``symbol`` (no clause on it) replaced by the real
+    ``value`` in both sides (:func:`_parameter_checked`)."""
+    from archytaszx.semantics.induction import substitute_parameter
+
+    expr = _parameter_checked(t.lhs, t.rhs, symbol, value)
+    _refuse_on("phase_instance", (t,), frozenset({symbol}))
+    try:
+        lhs, rhs = (substitute_parameter(d, symbol, expr, normalize=False) for d in (t.lhs, t.rhs))
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"phase_instance raised {type(exc).__name__}: {exc}") from exc
+    data: dict[str, object] = {"symbol": symbol, "value": expr}
+    inference = Inference("phase_instance", (t,), detail=f"{symbol} = {expr}", data=data)
+    return Theorem(_TOKEN, lhs, rhs, inference, t.assumptions, _domain(t))
 
 
 def _offset_shift(

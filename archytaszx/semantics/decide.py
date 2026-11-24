@@ -2593,9 +2593,60 @@ def _decide_by_induction(
     outer = not _INDUCING.get()
     token = _INDUCING.set(True)
     try:
-        return _induction_rung(left, right, shift=outer, **options)
+        settled = _induction_rung(left, right, shift=outer, **options)
+        if outer and isinstance(settled, str):
+            lifted = _generalized_induction(left, right, **options)
+            if lifted is not None:
+                return lifted
+        return settled
     finally:
         _INDUCING.reset(token)
+
+
+def _generalized_induction(
+    left: Diagram, right: Diagram, **options: Any
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | None:
+    """An EQUAL of :func:`_induction_rung` on the pair with one phase constant ``c`` read by
+    the index made a real symbol ``a``
+    (:func:`~archytaszx.semantics.induction.generalized_constant`), its kernel theorem taken
+    at ``a = c`` (:func:`~archytaszx.semantics.kernel.phase_instance`); else None."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import _phase_symbols, generalized_constant
+
+    mults = free_mult_symbols(left) | free_mult_symbols(right)
+    if (_phase_symbols(left) | _phase_symbols(right)) - mults:
+        return None
+    for index in sorted(mults):
+        found = generalized_constant(left, right, index)
+        if found is None:
+            continue
+        lifted_l, lifted_r, name, c = found
+        with _trace.span("decide.induction.generalized", name):
+            settled = _induction_rung(
+                lifted_l, lifted_r, shift=False, **{**options, "evaluated": [], "samples": None}
+            )
+        if isinstance(settled, str) or settled[0] is not EqualityVerdict.EQUAL:
+            continue
+        verdict, method, reason, evidence = settled
+        theorem = evidence.get("induction_proof")
+        built = ""
+        if theorem is not None:
+            try:
+                moved = kernel.phase_instance(cast("kernel.Theorem", theorem), name, c)
+                theorem = kernel.trans(
+                    kernel.iso(left, moved.lhs),
+                    kernel.trans(moved, kernel.iso(moved.rhs, right)),
+                )
+            except kernel.KernelError as exc:
+                theorem = None
+                built = f"; no kernel proof at {name} = {c}: {exc}"
+        return (
+            verdict,
+            method,
+            f"for every real {name} in place of {c}: {reason}; taken at {name} = {c}{built}",
+            {**evidence, "induction_proof": theorem},
+        )
+    return None
 
 
 _INDUCING: contextvars.ContextVar[bool] = contextvars.ContextVar("decide_inducing", default=False)
@@ -2757,7 +2808,12 @@ def _induction_rung(
 
     witness = _base_witness(left, right, index, base, evaluated, tolerance, max_elements)
     reasons: list[str] = []
-    for reversed_ in (False, True):
+    from archytaszx.semantics.induction import _phase_symbols
+
+    attempts = [(False, witness), (True, witness)]
+    if witness and set(witness) & (_phase_symbols(left) | _phase_symbols(right)):
+        attempts += [(False, {}), (True, {})]
+    for reversed_, held in attempts:
         first, second = (right, left) if reversed_ else (left, right)
         try:
             with _trace.span("decide.induction.step", "reversed" if reversed_ else "forward"):
@@ -2766,12 +2822,12 @@ def _induction_rung(
                     second,
                     index=index,
                     base=base,
-                    witness=witness,
+                    witness=held,
                     ladder=_STEP_LADDER,
                     rules=rules,
                     tolerance=tolerance,
                     max_elements=max_elements,
-                    base_proved=not witness,
+                    base_proved=not held,
                 )
         except _INDUCTION_ERRORS as exc:
             reasons.append(f"step case declined: {type(exc).__name__}: {exc}")

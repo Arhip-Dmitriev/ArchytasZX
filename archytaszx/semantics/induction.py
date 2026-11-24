@@ -2163,6 +2163,18 @@ def discharge_chain_window(
                 f"every {symbol}: {inner}",
             )
         why = f"{why}; offset {symbol}: {inner}"
+    for name, value in parameter_candidates(obligation):
+        moved = parameter_obligation(obligation, name, value)
+        if moved is None:
+            continue
+        settled, inner = _chain_window(moved, max_steps)
+        if settled:
+            return TierOutcome(
+                StepDischarge.CHAIN_WINDOW,
+                True,
+                f"claim for every {name}, hypotheses at {name} = {value}: {inner}",
+            )
+        why = f"{why}; {name} = {value}: {inner}"
     return TierOutcome(StepDischarge.CHAIN_WINDOW, False, why)
 
 
@@ -2193,6 +2205,217 @@ def offset_obligation(obligation: InductionObligation) -> tuple[InductionObligat
     except (BangBoxError, InductionError):
         return None
     return shifted, str(sym)
+
+
+def _phase_symbols(diagram: Diagram) -> frozenset[str]:
+    """The free symbols of ``diagram`` read only in node phases."""
+    phases: set[str] = set()
+    for node in diagram.nodes.values():
+        if node.phase is not None:
+            phases |= node.phase.free_symbols
+    others = set(diagram.scalar.free_symbols) | free_mult_symbols(diagram)
+    for node in diagram.nodes.values():
+        for port in (*node.outputs, *node.inputs):
+            others |= port.dim.free_symbols
+    for box in diagram.bang_boxes.values():
+        if box.copy_scalar is not None:
+            others |= box.copy_scalar.free_symbols
+    return frozenset(phases - others - index_symbols(diagram))
+
+
+def _mapped_phase(phase: PhaseVector, name: str, value: sp.Expr) -> PhaseVector:
+    """``phase`` with ``name`` replaced by ``value``, each turns expression expanded and its
+    powers combined."""
+    return _phase_map(
+        phase.substitute({name: value}), lambda e: sp.powsimp(sp.expand(e), force=True)
+    )
+
+
+def _phase_map(moved: PhaseVector, f: Callable[[sp.Expr], sp.Expr]) -> PhaseVector:
+    """``moved`` with ``f`` applied to each turns expression of its entries, rule or pair."""
+    from archytaszx.algebra.phase import PairPhase, Phase
+
+    def norm(p: Phase) -> Phase:
+        return Phase(f(p.to_sympy_turns()))
+
+    if isinstance(moved, PairPhase):
+        return PairPhase(moved.dim, moved.dim2, norm(moved.pair))
+    entries = {i: norm(p) for i, p in moved._entries.items()}
+    rule = None if moved._rule is None else norm(moved._rule)
+    if not moved.is_weighted:
+        return PhaseVector(moved.dim, entries, rule)
+    return PhaseVector(
+        moved.dim, entries, rule, weights=moved._weights, weight_rule=moved._weight_rule
+    )
+
+
+def parameter_symbol(name: str) -> sp.Symbol:
+    """The sympy symbol of the phase parameter ``name``."""
+    return sp.Symbol(name, real=True)
+
+
+def substitute_parameter(
+    diagram: Diagram, name: str, value: sp.Expr, *, normalize: bool = True
+) -> Diagram:
+    """``diagram`` with the phase parameter ``name`` replaced by ``value`` in every node phase,
+    expanded and powers combined when ``normalize``."""
+    if name not in _phase_symbols(diagram) and name in _all_free_symbols(diagram):
+        raise InductionDomainError(f"{name!r} is read outside node phases")
+    working = diagram.copy()
+    for node_id, node in sorted(diagram.nodes.items()):
+        if node.phase is not None and name in node.phase.free_symbols:
+            phase = (
+                _mapped_phase(node.phase, name, value)
+                if normalize
+                else node.phase.substitute({name: value})
+            )
+            working.set_phase(node_id, phase)
+    return working
+
+
+def generalized_constant(
+    left: Diagram, right: Diagram, index: str
+) -> tuple[Diagram, Diagram, str, sp.Expr] | None:
+    """``left`` and ``right`` with a fresh real symbol ``a`` for ``c`` in every additive phase
+    term ``+-c t``, ``c`` the one coefficient magnitude (not 0 or 1) of the terms reading
+    ``index``; with ``a`` and ``c``; None when there is no such ``c``."""
+    from archytaszx.algebra.phase import PairPhase
+
+    def exprs(d: Diagram) -> Iterator[sp.Expr]:
+        for node in d.nodes.values():
+            p = node.phase
+            if p is None:
+                continue
+            if isinstance(p, PairPhase):
+                yield p.pair.to_sympy_turns()
+                continue
+            yield from (q.to_sympy_turns() for q in p._entries.values())
+            if p._rule is not None:
+                yield p._rule.to_sympy_turns()
+
+    magnitudes: set[sp.Expr] = set()
+    for d in (left, right):
+        for e in exprs(d):
+            for term in sp.Add.make_args(e):
+                if index in {str(s) for s in term.free_symbols}:
+                    magnitudes.add(abs(term.as_coeff_Mul()[0]))
+    if len(magnitudes) != 1:
+        return None
+    c = next(iter(magnitudes))
+    if not c.is_Rational or c in (0, 1):
+        return None
+    name = _fresh_symbol_name("a", _all_free_symbols(left) | _all_free_symbols(right) | {index})
+    a = parameter_symbol(name)
+
+    def lift(e: sp.Expr) -> sp.Expr:
+        out = []
+        for term in sp.Add.make_args(e):
+            coeff, rest = term.as_coeff_Mul()
+            out.append(sp.sign(coeff) * a * rest if abs(coeff) == c else term)
+        return sp.Add(*out)
+
+    def lifted(d: Diagram) -> Diagram:
+        working = d.copy()
+        for node_id, node in sorted(d.nodes.items()):
+            if node.phase is not None:
+                working.set_phase(node_id, _phase_map(node.phase, lift))
+        return working
+
+    return lifted(left), lifted(right), name, c
+
+
+def parameter_value(
+    successor: Diagram, hypothesis: Diagram, name: str, avoid: frozenset[str]
+) -> sp.Expr | None:
+    """The value ``v`` with every phase of ``hypothesis`` at ``name = v`` equal to the phase of
+    the same node in ``successor``, one solution free of ``avoid`` and of the phase indices,
+    linear in each phase; None when there is none or it is ``name`` itself."""
+    from archytaszx.algebra.phase import INDEX, INDEX2, PairPhase
+
+    a = parameter_symbol(name)
+    fresh = sp.Symbol("_param_value", real=True)
+    found: sp.Expr | None = None
+    for node_id, node in sorted(hypothesis.nodes.items()):
+        if node.phase is None or name not in node.phase.free_symbols:
+            continue
+        other = successor.nodes.get(node_id)
+        if other is None or other.phase is None or type(other.phase) is not type(node.phase):
+            return None
+        pairs: list[tuple[sp.Expr, sp.Expr]] = []
+        if isinstance(node.phase, PairPhase):
+            assert isinstance(other.phase, PairPhase)
+            pairs.append((node.phase.pair.to_sympy_turns(), other.phase.pair.to_sympy_turns()))
+        else:
+            if node.phase.is_weighted or other.phase.is_weighted:
+                return None
+            if set(node.phase._entries) != set(other.phase._entries):
+                return None
+            for i, p in node.phase._entries.items():
+                pairs.append((p.to_sympy_turns(), other.phase._entries[i].to_sympy_turns()))
+            mine, theirs = node.phase._rule, other.phase._rule
+            if (mine is None) != (theirs is None):
+                return None
+            if mine is not None and theirs is not None:
+                pairs.append((mine.to_sympy_turns(), theirs.to_sympy_turns()))
+        for own, target in pairs:
+            if a not in own.free_symbols:
+                if sp.expand(own - target) != 0:
+                    return None
+                continue
+            moved = sp.expand(own.xreplace({a: fresh}))
+            slope = sp.expand(moved.diff(fresh))
+            if slope == 0 or fresh in slope.free_symbols:
+                return None
+            solved = sp.powsimp(
+                sp.expand(sp.simplify((target - moved.xreplace({fresh: 0})) / slope)), force=True
+            )
+            names = {str(s) for s in solved.free_symbols}
+            if names & avoid or solved.free_symbols & {INDEX, INDEX2}:
+                return None
+            if found is None:
+                found = solved
+            elif sp.simplify(found - solved) != 0:
+                return None
+    if found is None or sp.simplify(found - a) == 0 or not found.is_real:
+        return None
+    return found
+
+
+def parameter_candidates(obligation: InductionObligation) -> list[tuple[str, sp.Expr]]:
+    """Each phase parameter of ``obligation`` (read only in node phases, not supplied by the
+    witness) with the value the successors' boxes give it in the hypothesis diagrams
+    (:func:`parameter_value` on either side)."""
+    k = obligation.step_symbol
+    names = _phase_symbols(obligation.left_at_k) | _phase_symbols(obligation.right_at_k)
+    names -= set(obligation.witness) | {obligation.index, k}
+    out: list[tuple[str, sp.Expr]] = []
+    for name in sorted(names):
+        avoid = index_symbols(obligation.left_at_successor) | index_symbols(
+            obligation.right_at_successor
+        )
+        for successor, hypothesis in (
+            (obligation.left_at_successor, obligation.left_at_k),
+            (obligation.right_at_successor, obligation.right_at_k),
+        ):
+            value = parameter_value(successor, hypothesis, name, frozenset(avoid))
+            if value is not None and (name, value) not in out:
+                out.append((name, value))
+    return out
+
+
+def parameter_obligation(
+    obligation: InductionObligation, name: str, value: sp.Expr
+) -> InductionObligation | None:
+    """``obligation`` with both hypothesis diagrams at ``name = value`` (the claim held for
+    every real ``name``); None when a diagram does not take the value."""
+    try:
+        return replace(
+            obligation,
+            left_at_k=substitute_parameter(obligation.left_at_k, name, value),
+            right_at_k=substitute_parameter(obligation.right_at_k, name, value),
+        )
+    except (BangBoxError, InductionError):
+        return None
 
 
 def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool, str]:
