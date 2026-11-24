@@ -808,5 +808,81 @@ theorem valA_subst (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (z : ℕ
       exact (ex_peq (by omega) (pn_substP ρ M z hM B q.s.phase)).symm
     · rfl
 
+
+/-! ## The end of the Z_3 replay -/
+
+/-- The F_2 constant of an entry with coefficient 0. -/
+def cB (e : Ent) : F2 := if (e.2.2.2.1 : ZMod 3) = (e.2.2.2.2 : ZMod 3) then [[]] else []
+
+/-- `q` with each entry variable replaced by its constant. -/
+def substEs (M : ℕ) : List Ent → AData → AData
+  | [], q => q
+  | e :: es, q => substEs M es (substA M e.1 (cB e) q)
+
+theorem cB_nil (e : Ent) : ∀ m ∈ cB e, m = [] := by
+  unfold cB
+  split_ifs <;> simp
+
+theorem entVal_const (ρ : ℕ → ZMod 3) (e : Ent) (ha : e.2.2.1 % 3 = 0) (τ : ℕ → ZMod 2) :
+    entVal ρ e = fz τ (cB e) := by
+  have h0 : (e.2.2.1 : ZMod 3) = 0 := by
+    rw [← ZMod.natCast_mod, ha]
+    rfl
+  unfold entVal cB ind
+  rw [h0, zero_mul, zero_add]
+  split_ifs <;> simp [fz, mz]
+
+theorem mem_substF_const (z : ℕ) (B : F2) (hB : ∀ m ∈ B, m = []) (Q : F2) (v : ℕ)
+    (h : v ∈ (substF z B Q).flatMap id) : v ∈ Q.flatMap id := by
+  unfold substF at h
+  simp only [List.mem_flatMap, id] at h ⊢
+  obtain ⟨m', ⟨m, hm, hm'⟩, hv⟩ := h
+  refine ⟨m, hm, ?_⟩
+  split_ifs at hm' with hz
+  · obtain ⟨u, hu, rfl⟩ := List.mem_map.1 hm'
+    rw [hB u hu, List.append_nil] at hv
+    exact (List.mem_filter.1 hv).1
+  · rw [List.mem_singleton] at hm'
+    exact hm' ▸ hv
+
+theorem avars_substA_const (M z : ℕ) (B : F2) (hB : ∀ m ∈ B, m = []) (q : AData) (v : ℕ)
+    (h : v ∈ avars (substA M z B q).atoms) : v ∈ avars q.atoms := by
+  unfold avars substA at h
+  unfold avars
+  simp only [List.flatMap_map, List.mem_flatMap] at h ⊢
+  obtain ⟨a, ha, hv⟩ := h
+  exact ⟨a, ha, by simpa [List.mem_flatMap] using
+    mem_substF_const z B hB a.2 v (by simpa [List.mem_flatMap] using hv)⟩
+
+/-- A qubit sum read at constant entries is the sum with the entry variables replaced. -/
+theorem valA_substEs (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (ρ : ℕ → ZMod 3) :
+    ∀ (es : List Ent) (q : AData) (τ : ℕ → ZMod 2), (∀ e ∈ es, e.2.2.1 % 3 = 0) →
+      (∀ e ∈ es, e.1 ∉ q.held ++ q.s.path) → (∀ y ∈ q.s.path, y ∉ avars q.atoms) →
+      valA M c A q (liftA es ρ τ) = valA M c A (substEs M es q) τ
+  | [], _, _, _, _, _ => rfl
+  | e :: es, q, τ, ha, hz, hp => by
+    have hp' : ∀ y ∈ q.s.path, y ∉ avars (substA M e.1 (cB e) q).atoms := fun y hy hv =>
+      hp y hy (avars_substA_const M e.1 (cB e) (cB_nil e) q y hv)
+    have hB : ∀ m ∈ cB e, ∀ v ∈ m, v ∉ q.held ++ q.s.path := fun m hm v hv => by
+      rw [cB_nil e m hm] at hv
+      exact absurd hv List.not_mem_nil
+    rw [liftA, entVal_const ρ e (ha e List.mem_cons_self) (liftA es ρ τ),
+      valA_subst M hM c A e.1 (cB e) q (hz e List.mem_cons_self) hB hp hp']
+    exact valA_substEs M hM c A ρ es (substA M e.1 (cB e) q) τ
+      (fun e' he' => ha e' (List.mem_cons_of_mem _ he'))
+      (fun e' he' => hz e' (List.mem_cons_of_mem _ he')) hp'
+
+/-- A mixed path sum with no Z_3 path left and constant entries: its Z_3 weight times the
+substituted qubit sum. -/
+theorem mval_fin (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (q : AData) (t : QSem.Data)
+    (es : List Ent) (τ : ℕ → ZMod 2) (ρ : ℕ → ZMod 3) (hpath : t.path = [])
+    (ha : ∀ e ∈ es, e.2.2.1 % 3 = 0) (hz : ∀ e ∈ es, e.1 ∉ q.held ++ q.s.path)
+    (hp : ∀ y ∈ q.s.path, y ∉ avars q.atoms) :
+    mval M c A q t es τ ρ = wt3 t ρ * valA M c A (substEs M es q) τ := by
+  unfold mval
+  rw [hpath]
+  show wt3 t ρ * _ = _
+  rw [valA_substEs M hM c A ρ es q τ ha hz hp]
+
 end MSem
 end ArchytasZX

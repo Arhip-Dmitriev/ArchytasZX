@@ -1477,7 +1477,9 @@ f + 2 [s = 1] + 4 [s = 2] being the node's table at 2 s + f, entries (u1, l0, 1,
 (u2, l0, 1, 0, 2) in es). Replay steps: mval_perm (the Z_3 path permuted), liftA_dup (two
 entries with one reading take one value) and valA_subst (a free qubit variable z set to fz of B
 is substA, z replaced by B in the phase, constraints and atoms; B = [] or [[]] for a constant
-entry, [[u]] for a duplicate).
+entry, [[u]] for a duplicate). mval_fin ends the Z_3 replay: with t.path = [] and every entry
+of coefficient a % 3 = 0, mval is wt3 t ρ times valA of substEs es q, each entry variable
+replaced by its constant cB e ([[]] when b = k mod 3, else []).
 
 5. REFUTATIONS
 --------------
