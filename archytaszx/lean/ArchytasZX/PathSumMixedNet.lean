@@ -884,6 +884,26 @@ theorem mval_fin (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (q : AData
   show wt3 t ρ * _ = _
   rw [valA_substEs M hM c A ρ es q τ ha hz hp]
 
+/-- The Z_3 weight with zero phase and zero constraints. -/
+theorem wt3_one (t : QSem.Data) (ρ : ℕ → ZMod 3)
+    (hc : (t.cons ++ t.rows).all (· == []) = true) (hp : t.phase = []) : wt3 t ρ = 1 := by
+  unfold wt3
+  rw [if_pos, hp]
+  · simp [QSem.qv, QSem.ψ_zero]
+  · intro r hr
+    have := List.all_eq_true.1 hc r hr
+    simp only [beq_iff_eq] at this
+    subst this
+    simp [QSem.qv]
+
+/-- A mixed path sum whose Z_3 part is gone: its qubit value. -/
+theorem mval_end (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (q : AData) (t : QSem.Data)
+    (τ : ℕ → ZMod 2) (ρ : ℕ → ZMod 3) (hpath : t.path = [])
+    (hc : (t.cons ++ t.rows).all (· == []) = true) (hph : t.phase = [])
+    (hp : ∀ y ∈ q.s.path, y ∉ avars q.atoms) :
+    mval M c A q t [] τ ρ = valA M c A q τ := by
+  rw [mval_fin M hM c A q t [] τ ρ hpath (by simp) (by simp) hp, wt3_one t ρ hc hph, one_mul]
+  rfl
 
 /-! ## Duplicate and normalised entries -/
 
@@ -965,6 +985,86 @@ theorem mval_entN (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (q : AData) (t : QSem.Da
     mval M c A q t es τ ρ = mval M c A q t (es.map entN) τ ρ := by
   unfold mval
   simp only [liftA_entN]
+
+/-! ## Disjoint fragments in one pass -/
+
+/-- Whether no `P`-variable of an item is a `V`-variable of another, checked with the masks `A` of
+the earlier items' `V`-variables and `B` of their `P`-variables. -/
+def disjG {α : Type} (P V : α → List ℕ) : List α → ℕ → ℕ → Bool
+  | [], _, _ => true
+  | f :: fs, A, B =>
+    maskOf (P f) 0 &&& A == 0 && maskOf (V f) 0 &&& B == 0 &&
+      disjG P V fs (A ||| maskOf (V f) 0) (B ||| maskOf (P f) 0)
+
+theorem disjG_sound {α : Type} (P V : α → List ℕ) : ∀ (fs : List α) (A B : ℕ),
+    disjG P V fs A B = true →
+    (∀ f ∈ fs, ∀ y ∈ P f, A.testBit y = false) ∧
+      (∀ f ∈ fs, ∀ y ∈ V f, B.testBit y = false) ∧
+      fs.Pairwise fun a b => (∀ y ∈ P a, y ∉ V b) ∧ (∀ y ∈ P b, y ∉ V a)
+  | [], _, _, _ => ⟨by simp, by simp, List.Pairwise.nil⟩
+  | f :: fs, A, B, h => by
+    simp only [disjG, Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨⟨hA, hB⟩, h⟩ := h
+    obtain ⟨iA, iB, ip⟩ := disjG_sound P V fs _ _ h
+    have gA : ∀ g ∈ fs, ∀ y ∈ P g, A.testBit y = false ∧ y ∉ V f := by
+      intro g hg y hy
+      have := iA g hg y hy
+      simp only [Nat.testBit_lor, testBit_maskOf, Nat.zero_testBit, Bool.false_or,
+        Bool.or_eq_false_iff, decide_eq_false_iff_not] at this
+      exact this
+    have gB : ∀ g ∈ fs, ∀ y ∈ V g, B.testBit y = false ∧ y ∉ P f := by
+      intro g hg y hy
+      have := iB g hg y hy
+      simp only [Nat.testBit_lor, testBit_maskOf, Nat.zero_testBit, Bool.false_or,
+        Bool.or_eq_false_iff, decide_eq_false_iff_not] at this
+      exact this
+    refine ⟨?_, ?_, List.pairwise_cons.2 ⟨fun g hg => ⟨?_, ?_⟩, ip⟩⟩
+    · intro g hg y hy
+      rcases List.mem_cons.1 hg with rfl | hg
+      · exact land_zero_bit _ _ y hA (by simp [testBit_maskOf, hy])
+      · exact (gA g hg y hy).1
+    · intro g hg y hy
+      rcases List.mem_cons.1 hg with rfl | hg
+      · exact land_zero_bit _ _ y hB (by simp [testBit_maskOf, hy])
+      · exact (gB g hg y hy).1
+    · exact fun y hy hv => (gB g hg y hv).2 hy
+    · exact fun y hy => (gA g hg y hy).2
+
+/-- `disj3` of `NetPSM` from one pass. -/
+theorem disj3_of (fs : List QSem.QFrag)
+    (h : disjG (·.path) (fun b => b.path ++ QSem.pvars b.phase ++ QSem.cvars b.cons) fs 0 0 =
+      true) : fs.Pairwise fun a b => QSem.QDisj a b ∧ QSem.QDisj b a :=
+  ((disjG_sound _ _ fs 0 0 h).2.2).imp fun hab =>
+    ⟨fun y hy => by
+      have := hab.1 y hy
+      simp only [List.mem_append, not_or] at this
+      tauto,
+     fun y hy => by
+      have := hab.2 y hy
+      simp only [List.mem_append, not_or] at this
+      tauto⟩
+
+/-- `disj2` of `NetPSM` from one pass. -/
+theorem disj2_of (fs : List (Frag × Atoms))
+    (h : disjG (·.1.path) (fun b => fragVars b.1 ++ avars b.2) fs 0 0 = true) :
+    fs.Pairwise fun a b => DisjA a b ∧ DisjA b a :=
+  ((disjG_sound _ _ fs 0 0 h).2.2).imp fun hab =>
+    ⟨⟨fun y hy => by
+        have := hab.1 y hy
+        simp only [fragVars, List.mem_append, not_or] at this
+        tauto,
+      fun y hy => by
+        have := hab.1 y hy
+        simp only [fragVars, List.mem_append, not_or] at this
+        tauto⟩,
+     ⟨fun y hy => by
+        have := hab.2 y hy
+        simp only [fragVars, List.mem_append, not_or] at this
+        tauto,
+      fun y hy => by
+        have := hab.2 y hy
+        simp only [fragVars, List.mem_append, not_or] at this
+        tauto⟩⟩
 
 end MSem
 end ArchytasZX

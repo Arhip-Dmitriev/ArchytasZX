@@ -2680,6 +2680,9 @@ class _MixSide:
     ents: list[tuple[int, int, int, int, int]]
     inv2: int
     inv3: int
+    path3: list[int] = field(default_factory=list)
+    phase3: ModPoly = field(default_factory=lambda: ModPoly(3))
+    cons3: list[ModPoly] = field(default_factory=list)
 
 
 def _mixed_modulus(diagram: Diagram) -> int:
@@ -2752,6 +2755,9 @@ def _mixed_net_side(
     fresh = label0 + MIX_FRESH
     ent = label0 + MIX_ENT
     inv2 = inv3 = 0
+    path3 = [lab for lab in summed if dims[lab] in (3, 6)]
+    phase3 = ModPoly(3)
+    cons3: list[ModPoly] = []
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
         name = node.generator_type.name
@@ -2770,6 +2776,7 @@ def _mixed_net_side(
             if (dims[whole], dims[a], dims[b]) != (6, 3, 2):
                 raise PathSumUnsupported(f"node {nid!r} is not a (3, 2) {name} on 6")
             kind, lemma = (".B", "val_binder") if binder else (".S", "val_splitter")
+            cons3.append(_qvar(3, whole) + _qvar(3, a).scale(-1))
             nodes.append(f"⟨{kind}, {os_}, {is_}, 3, 2⟩")
             frags3.append(f"bFrag3 {whole} {a}")
             frags2.append(f"bFrag2 {whole} {b}")
@@ -2791,6 +2798,7 @@ def _mixed_net_side(
             l0, u1, u2 = ls[0], ent, ent + 1
             ent += 2
             ents += [(u1, l0, 1, 0, 1), (u2, l0, 1, 0, 2)]
+            cons3 += [_qvar(3, l0) + _qvar(3, lab).scale(-1) for lab in ls]
             poly, ts8 = _table_poly([l0, u1, u2], t8, m)
             ts = ts8[:6]
             ph = 0
@@ -2815,13 +2823,24 @@ def _mixed_net_side(
                     raise PathSumUnsupported(f"node {nid!r} is an F on a self-loop")
                 nodes.append(f"⟨.F, {os_}, {is_}, 3, 0⟩")
                 frags3.append(f"QSem.fFragQ 3 {o} {i}")
+                phase3 = phase3 + _qvar(3, o) * _qvar(3, i)
                 inner = f"fun σ' _ => QSem.f_frag_q (p := 3) E σ' _ rfl rfl {o} {i} rfl rfl"
                 inv3 += 1
             else:
                 var = ls[0] if kind == ".Z" else fresh
                 if kind == ".X":
                     fresh += 1
-                poly3 = _qpoly(_qudit_table(nid, node, [var], 3))
+                table3 = _qudit_table(nid, node, [var], 3)
+                poly3 = _qpoly(table3)
+                phase3 = phase3 + table3
+                if kind == ".Z":
+                    cons3 += [_qvar(3, var) + _qvar(3, lab).scale(-1) for lab in ls]
+                else:
+                    path3.append(var)
+                    for o in os_:
+                        phase3 = phase3 + _qvar(3, var) * _qvar(3, o)
+                    for i in is_:
+                        phase3 = phase3 + (_qvar(3, var) * _qvar(3, i)).scale(-1)
                 ts = []
                 for t in _turns_table(nid, node, 3):
                     v = (t % 1) * 3
@@ -2893,7 +2912,21 @@ def _mixed_net_side(
             f"node_q2 {q2} _ _ [] (fun σ' hσ' => fvalA_of {m} A _ _ _ (by decide) "
             f"(atoms_nil A {m} _ _ ({inner}))) ql{tag} {vs} {DK} {DK} {DK} σ hσ _"
         )
-    return _MixSide(nodes, frags3, frags2, proofs, dims, summed, len(bnd), ents, inv2, inv3)
+    return _MixSide(
+        nodes,
+        frags3,
+        frags2,
+        proofs,
+        dims,
+        summed,
+        len(bnd),
+        ents,
+        inv2,
+        inv3,
+        path3,
+        phase3,
+        [c for c in cons3 if c.terms],
+    )
 
 
 def _mix_lines(tag: str, side: _MixSide, m: int) -> list[str]:
@@ -2902,11 +2935,52 @@ def _mix_lines(tag: str, side: _MixSide, m: int) -> list[str]:
     ms = [(lab, k, lab, lab) for lab, k in sorted(side.dims.items())]
     mi = [(lab, side.dims[lab], lab, lab) for lab in side.summed]
     own = [(lab, (lab, 0)) for lab in qlabs]
-    quads = ", ".join(
-        f"(({n}, {f3}), {f2}, [])"
-        for n, f3, f2 in zip(side.nodes, side.frags3, side.frags2, strict=True)
+    ty = "(Node × QSem.QFrag) × Frag × Atoms"
+    stmt = (
+        f"ArchytasZX.val E σ p.1.1 = QSem.fval 3 p.1.2 (mtrits ms{tag} σ) * "
+        f"fvalA {m} A p.2.1 p.2.2 (liftA es{tag} (mtrits ms{tag} σ) (mbits ms{tag} σ))"
     )
-    cases = " | ".join("rfl" for _ in side.nodes)
+    nds: list[str] = []
+    names: list[str] = []
+    for i, (n, f3, f2, pr) in enumerate(
+        zip(side.nodes, side.frags3, side.frags2, side.proofs, strict=True)
+    ):
+        q = f"p{tag}{i}"
+        names.append(q)
+        nds += [
+            f"noncomputable def {q} : {ty} := (({n}, {f3}), {f2}, [])",
+            "",
+            f"theorem nd{tag}{i} (σ : ℕ → ℕ) (hσ : MIn ms{tag} σ) :",
+            f"    {stmt.replace('p.', f'{q}.')} :=",
+            f"  {pr}",
+            "",
+        ]
+    chunks = [names[k : k + NODE_CHUNK] for k in range(0, len(names), NODE_CHUNK)]
+    for j, ch in enumerate(chunks):
+        first = names.index(ch[0])
+        nds += [
+            f"noncomputable def ps{tag}c{j} : List ({ty}) := [{', '.join(ch)}]",
+            "",
+            f"theorem ch{tag}{j} : ∀ p ∈ ps{tag}c{j}, ∀ σ, MIn ms{tag} σ → {stmt} := by",
+            "  intro p hp",
+            f"  simp only [ps{tag}c{j}, List.mem_cons, List.not_mem_nil, or_false] at hp",
+            f"  rcases hp with {' | '.join('rfl' for _ in ch)}",
+            f"  exacts [{', '.join(f'nd{tag}{first + k}' for k in range(len(ch)))}]",
+            "",
+        ]
+    parts = [f"ps{tag}c{j}" for j in range(len(chunks))]
+    joined = parts[-1]
+    for part in reversed(parts[:-1]):
+        joined = f"{part} ++ ({joined})"
+    node = ["  node := by", "    intro p hp"]
+    if len(parts) > 1:
+        node += [
+            f"    simp only [ps{tag}, List.mem_append] at hp",
+            f"    rcases hp with {' | '.join('h' for _ in parts)}",
+            f"    exacts [{', '.join(f'ch{tag}{j} p h' for j in range(len(parts)))}]",
+        ]
+    else:
+        node += [f"    exact ch{tag}0 p hp"]
     return [
         f"def ms{tag} : List MLab := {ms}",
         f"def mi{tag} : List MLab := {mi}",
@@ -2932,25 +3006,198 @@ def _mix_lines(tag: str, side: _MixSide, m: int) -> list[str]:
             f"{list(range(side.boundary))}⟩"
         ),
         "",
-        f"noncomputable def ps{tag} : List ((Node × QSem.QFrag) × Frag × Atoms) := [{quads}]",
+        *nds,
+        f"noncomputable def ps{tag} : List ({ty}) := {joined}",
         "",
         f"theorem net{tag} : NetPSM E N{tag} {m} A ms{tag} mi{tag} es{tag} ps{tag} where",
         f"  ok := ms{tag}OK",
         "  nodes := rfl",
-        "  node := by",
-        "    intro p hp σ hσ",
-        f"    simp only [ps{tag}, List.mem_cons, List.not_mem_nil, or_false] at hp",
-        f"    rcases hp with {cases}",
-        *(f"    · exact {pr}" for pr in side.proofs),
-        "  disj3 := by decide +kernel",
-        "  disj2 := by decide +kernel",
+        *node,
+        "  disj3 := disj3_of _ (by decide +kernel)",
+        "  disj2 := disj2_of _ (by decide +kernel)",
         "  dims := by decide +kernel",
         "  sub := by decide +kernel",
         "  int := rfl",
         "  bnd := by decide +kernel",
-        "  cover := by decide +kernel",
+        f"  cover := cover_of N{tag} (by decide +kernel)",
         "",
     ]
+
+
+@dataclass
+class _Z3Run:
+    """The Z_3 replay of a mixed side: definitions, the theorem lines, the final qubit data's
+    name and the power of 3 it gains."""
+
+    defs: list[str]
+    thm: list[str]
+    q: str
+    fac: int
+
+
+def _z3_lines(tag: str, side: _MixSide, m: int) -> _Z3Run:
+    """The Z_3 replay of a mixed side as ``theorem z3{tag}``: eqQ pins by mval_pin, [HH] pivots
+    by mval_hhPivot, duplicate entries by mval_dup, one [Count3] per entry pair, then mval_end;
+    each intermediate state a definition."""
+    path = list(side.path3)
+    phase = side.phase3.copy()
+    cons = [c.copy() for c in side.cons3]
+    ents = list(side.ents)
+    common = f"{m} c A"
+    defs: list[str] = []
+    cur = {"t": f"t{tag}0", "e": f"es{tag}", "q": f"q{tag}0"}
+    steps: list[tuple[str, dict[str, str], str]] = []
+    count = [0]
+    fac = 0
+
+    def new(kind: str, ty: str, body: str) -> None:
+        count[0] += 1
+        name = f"{kind}{tag}{count[0]}"
+        defs.append(f"noncomputable def {name} : {ty} := {body}")
+        cur[kind] = name
+
+    def step(lemma: str, f3: str = "") -> None:
+        steps.append((lemma, dict(cur), f3))
+
+    def perm(order: list[int]) -> None:
+        t0 = cur["t"]
+        step(f"mval_perm {common} {cur['q']} {t0} {cur['e']} τ ρ {order} (by decide +kernel)")
+        new("t", "QSem.Data", f"⟨{order}, {t0}.phase, {t0}.cons, {t0}.rows⟩")
+
+    changed = True
+    while changed:
+        changed = False
+        for c in cons:
+            vs = sorted(c.variables())
+            if len(vs) != 2:
+                continue
+            x = next((u for u in vs if u in path), None)
+            if x is None:
+                continue
+            y = next(u for u in vs if u != x)
+            if path[0] != x:
+                path = [x, *(u for u in path if u != x)]
+                perm(path)
+            t0, e0 = cur["t"], cur["e"]
+            rest = path[1:]
+            step(
+                f"mval_pin {common} {cur['q']} {t0} {e0} {y} (by decide +kernel) τ ρ {x} {rest} "
+                "(by decide +kernel) (by decide)"
+            )
+            new("t", "QSem.Data", f"QSem.pinS 3 {y} {t0}")
+            new("e", "List Ent", f"{e0}.map (pinE {x} {y} 1 0)")
+            path = rest
+            cons.remove(c)
+            cons = [q for q in (q.substitute(x, _qvar(3, y)) for q in cons) if q.terms]
+            phase = phase.substitute(x, _qvar(3, y))
+            ents = [(u, y if z == x else z, a, b, k) for u, z, a, b, k in ents]
+            changed = True
+            break
+    if cons:
+        raise PathSumUnsupported("a Z_3 constraint of the mixed side is not a pin")
+    step(f"mval_norm {common} {cur['q']} {cur['t']} {cur['e']} τ ρ")
+    new("t", "QSem.Data", f"QSem.normS 3 {cur['t']}")
+    entvars = {z for _u, z, *_ in ents}
+    progress = True
+    while progress:
+        progress = False
+        for y in path:
+            if y in entvars or phase.degree_in(y) != 1:
+                continue
+            lin = phase.coefficient(y, 1)
+            if () in lin.terms or any(len(mo) > 1 or mo[0][1] > 1 for mo in lin.terms):
+                continue
+            z = next((x for x in sorted(lin.variables()) if x not in entvars and x in path), None)
+            if z is None:
+                continue
+            path = [y, z, *(u for u in path if u not in (y, z))]
+            perm(path)
+            t0, e0 = cur["t"], cur["e"]
+            rest = path[2:]
+            step(
+                f"mval_hhPivot {common} {cur['q']} {t0} {e0} {e0} {y} {z} {rest} "
+                "(by decide +kernel) (by decide +kernel) (by decide +kernel) τ "
+                f"(fun ρ => liftA_rho _ _ τ {e0} fun e he => Function.update_of_ne "
+                f"((by decide +kernel : ∀ e ∈ {e0}, e.2.1 ≠ {z}) e he) _ _) ρ",
+                "3 * ",
+            )
+            fac += 1
+            cz = lin.terms[((z, 1),)]
+            rem = lin.copy()
+            rem.terms.pop(((z, 1),))
+            phase = phase.without(y).substitute(z, rem.scale(-pow(cz, -1, 3)))
+            new("t", "QSem.Data", f"QSem.hhPivotS 3 {t0}")
+            path = rest
+            progress = True
+            break
+    first: dict[tuple[int, int, int, int], tuple[int, int, int, int, int]] = {}
+    for e in ents:
+        key = e[1:]
+        if key not in first:
+            first[key] = e
+            continue
+        e1 = first[key]
+        q0, e0 = cur["q"], cur["e"]
+        step(
+            f"mval_dup {m} (by norm_num) c A {q0} {cur['t']} {e0} {e1} {e} (by decide +kernel) "
+            "(by decide +kernel) (by decide +kernel) rfl (by decide) (by decide +kernel) "
+            "(by decide +kernel) (by decide +kernel) (by decide +kernel) τ ρ"
+        )
+        new("q", "AData", f"substA {m} {e[0]} [[{e1[0]}]] {q0}")
+        new("e", "List Ent", f"{e0}.erase {e}")
+    left = list(first.values())
+    for s in sorted({z for _u, z, *_ in left}):
+        pair = sorted((e for e in left if e[1] == s), key=lambda e: e[4])
+        if [e[2:] for e in pair] != [(1, 0, 1), (1, 0, 2)] or s not in path:
+            raise PathSumUnsupported("a Z_3 variable of the mixed side is not one entry pair")
+        path = [s, *(u for u in path if u != s)]
+        perm(path)
+        others = [e for e in left if e[1] != s]
+        q0, t0 = cur["q"], cur["t"]
+        rest = path[1:]
+        u1, u2 = pair[0][0], pair[1][0]
+        step(
+            f"mval_count3 {common} {q0} {t0} {others} {u1} {u2} {s} 0 {rest} "
+            "(by decide +kernel) (by decide) (by decide +kernel) (by decide +kernel) "
+            "(by decide +kernel) rfl (by decide) (by decide +kernel) (by decide +kernel) τ ρ"
+        )
+        new("q", "AData", f"⟨{q0}.s, {u1} :: {u2} :: {q0}.held, (0, [[{u1}, {u2}]]) :: {q0}.atoms⟩")
+        new("t", "QSem.Data", f"⟨{rest}, {t0}.phase, {t0}.cons, {t0}.rows⟩")
+        new("e", "List Ent", f"{others}")
+        left = others
+        path = rest
+    if path or phase.terms:
+        raise PathSumUnsupported("the Z_3 part of the mixed side does not reduce to a constant")
+    thm = [
+        f"theorem z3{tag} (c : ℂ) (τ : ℕ → ZMod 2) (ρ : ℕ → ZMod 3) :",
+        f"    mval {common} q{tag}0 t{tag}0 es{tag} τ ρ =",
+        f"      3 ^ {fac} * valA {common} {cur['q']} τ := by",
+    ]
+    for i, (lemma, before, f3) in enumerate(steps):
+        after = steps[i + 1][1] if i + 1 < len(steps) else cur
+        lhs = f"mval {common} {before['q']} {before['t']} {before['e']} τ ρ"
+        rhs = f"{f3}mval {common} {after['q']} {after['t']} {after['e']} τ ρ"
+        thm.append(f"  rw [show {lhs} = {rhs} from {lemma}]")
+    thm += [
+        f"  rw [show {cur['e']} = [] from rfl,",
+        f"    mval_end {m} (by norm_num) c A {cur['q']} {cur['t']} τ ρ (by decide +kernel)",
+        "      (by decide +kernel) (by decide +kernel) (by decide +kernel)]",
+        "  ring",
+        "",
+    ]
+    join2 = f"(joinAll (ps{tag}.map (·.2.1)))"
+    join3 = f"(QSem.qjoinAll (ps{tag}.map (·.1.2)))"
+    head = [
+        (
+            f"noncomputable def q{tag}0 : AData := ⟨⟨[], {join2}.phase, {join2}.cons, []⟩, "
+            f"bvars mi{tag} ++ {join2}.path, (ps{tag}.map (·.2.2)).flatten⟩"
+        ),
+        (
+            f"noncomputable def t{tag}0 : QSem.Data := ⟨tvars mi{tag} ++ {join3}.path, "
+            f"{join3}.phase, {join3}.cons, []⟩"
+        ),
+    ]
+    return _Z3Run([*head, *defs, ""], thm, cur["q"], fac)
 
 
 __all__ = [

@@ -1492,8 +1492,16 @@ label0 + MIX_ENT; its table over (l0, u1, u2) takes t(6) = t(2) + t(4) - t(0) an
 t(3) + t(5) - t(1), so P has no u1 u2 term. Qubit nodes are node_q2 over z_frag_dig,
 x_frag_dig, f_frag_dig (k = 1), nodes on 3 node_q3 over z_frag_q, x_frag_q, f_frag_q (each with
 its own phase vector over 3), binders and splitters node_b, Z on 6 node_z6. The environment has
-Δ k = k. six_state_qkd/main d=2 left (146 nodes) checks in 92 s at 1.2 GB; e91/main
-d=2 left (260 nodes) takes over 600 s.
+Δ k = k. Each node is its own definition p<tag>i with its own theorem nd<tag>i, joined in
+chunks of NODE_CHUNK; disj3 and disj2 come from one pass each (disjG: bit masks of the earlier
+items' variables and path variables; disj3_of, disj2_of), cover from cover_of.
+_z3_lines writes the Z_3 replay theorem z3<tag>: mval of the side's start data equals
+3 ^ f * valA of the final qubit data, through mval_perm, mval_pin (Z_3 pins), mval_norm,
+mval_hhPivot ([HH] pivots), mval_dup (duplicate entries), mval_count3 (one per entry pair,
+zero atom coefficient index 0) and mval_end (mval_fin with no entries and wt3_one: zero phase
+and zero constraints give weight 1); each intermediate state is a definition. Left side NetPSM
+plus z3 (f = 3): six_state_qkd/main d=2 (146 nodes) 84 s at 1.2 GB; e91/main d=2 (260 nodes)
+163 s at 2.8 GB.
 
 5. REFUTATIONS
 --------------
