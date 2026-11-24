@@ -37,7 +37,7 @@ runs Lean on it. In the shell:
 In a script file, a relative path resolves against the script's directory.
 
 The library has two roots (lakefile.toml, roots): ArchytasZX, importing every file, and
-ArchytasZX.Light, importing the 86 modules outside the dependency cone of ArchytasZX.Cyclo and
+ArchytasZX.Light, importing the 87 modules outside the dependency cone of ArchytasZX.Cyclo and
 ArchytasZX.NumField (it leaves out Cyclo, NumField, Ball, Refute, RefuteMod, RefuteSym, Contract,
 Paper, GaussSign, CopyPin, CopyBridge, SymFourier, SymRange, SymCarry, SymFold and every PathSum*
 module). lake build and lake build ArchytasZX build both. An export that starts with
@@ -204,6 +204,8 @@ between two scaled networks under one environment: the same tensor, scalars incl
   PairSum      the pair product over the bundled sum: two_pairS (2 Σ_{j<k} x_j x_k + Q = S^2
                over ℕ, S = Σ x_j, Q = Σ x_j^2), pair_fou (Π_{j<k} F(x_k, x_j) =
                (√D)⁻¹^(K (K - 1) / 2) ω_{2D}^(S^2 - Q) for every D > 0), eval_pairNet_sum
+  AdderFam     carry-chain lemmas of the every-n adder families (section 4.2): om_tower,
+               telescope, chain_value, fourier_shift, AdderIface.fam
   Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
                MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
                cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed
@@ -424,6 +426,25 @@ tries it for a family decision whose pair has a pair box, before copy-index phas
 point claims are lean_restrict's corollary of main (complete_graph_state d = 490: 16071 bytes at
 n = 10^3, 16110 at n = 10^6, decide 0.5 s, Lean 5-6 s at n = 10 (d = 3), 10^3 and 10^6; a
 changed node rejected).
+AdderFam.lean: the lemmas of the every-n proofs of draper_adder and fourier_constant_adder in
+the boxed form C⁻¹ P C (F34), copies MSB first (copy k reads root order d^(k + 1)), boundary
+interleaved copy-major (a0 b0 a1 b1 ...). A carry chain of n copies is x k + e (k + 1) =
+x' k + d e k for k < n (copy k: digit x k, carry-in e (k + 1), digit out x' k, carry-out e k).
+om_tower: om (d^(m + 1))^d = om (d^m); om_tower_mul: om (d^(k + 1))^(y d c) = om (d^k)^(y c).
+digit_carry: x + c = (x + c) % d + d ((x + c) / d); carry_lt_two: the carry is 0 or 1 for x < d,
+c <= d; chain_digit: e k = (x k + e (k + 1)) / d with x' k = (x k + e (k + 1)) % d is a carry
+chain. telescope (by induction on n): over a carry chain, Π_{k<n} om (d^(k + 1))^(y x k) times
+om (d^n)^(y e n) equals om (d^0)^(y e 0) times Π_{k<n} om (d^(k + 1))^(y x' k): per copy
+y (x - x')/d^(k + 1) = y e k/d^k - y e (k + 1)/d^(k + 1), the links cancel, the two end terms
+remain. chain_value: digVal d x n + e n = e 0 d^n + digVal d x' n (digVal the base-d value, MSB
+first). fourier_shift: Σ_{y<d} conj F(o, y) ω_d^(y s) F(y, i) = [(s + i) % d = o % d], the
+F³ · phase · F shift by s (F³ = F⁻¹ has entry conj F). AdderIface α: lhs n, rhs n : α n, a
+transitive relation rel n, glue n : α n -> α (n + 1), and the obligations base (n = 0), peel
+(lhs (n + 1) against glue n (lhs n), the copy-0 cut), congr (glue respects rel) and close
+(glue n (rhs n) against rhs (n + 1): telescope, then fourier_shift on copy 0); AdderIface.fam
+gives rel n (lhs n) (rhs n) for every n by recursion on n, fam_8 and fam_24 its instances. The
+engine export fills an AdderIface (pair-phase generator and leg-split rung: not yet in the
+engine).
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
 at k relabelled by an injective f k shared by both sides), by strong induction.
