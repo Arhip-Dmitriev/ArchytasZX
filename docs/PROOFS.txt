@@ -582,6 +582,36 @@ integer shift; with the shift a real a the low part F, Z phase{k: a k/t}, F^3 an
 side B, F, Z phase{k: a k/(s t)}, F^3, S are equal for every a, while X(1 -> 1) phase{k: -a
 k/(s t)} differs from F Z F^3 at a non-integer a (at s = t = 2, a = 1/2).
 
+Shift by two (lemmas.COOLEY_TUKEY_2, in lemmas.LIBRARY): the same form with the shift by two
+over s t on the left, and on the right the top spider of phase 2 k/(s t), the low register
+shifted by two over t, the pair phases unchanged. Its prover (lemmas._prove_two_shift) proves
+it at any (s, t): the left side is two blocks B(s, t), shift by one, S(s, t) in series by
+symbolic contraction, COOLEY_TUKEY is rewritten on each block, and the result is the right
+side by symbolic contraction (the inner F^3 F cancels, the two inner pair phases cancel).
+Lemma.proves_instances makes lemmas.instance call that prover at every value.
+
+Radix chain lemmas (in lemmas.LIBRARY, d formal, for every p; lemmas.rewrite finds them at the
+symbolic multiplicity of each chain box with a leg of dimension d^e, lemmas._radix_values):
+  row_bind    a pair phase x y/d^(p + 1) between a d wire and the d^p register bound from p
+              digits by a B(d^j, d) chain = a pair phase x y/d^(j + 2) on each digit j before
+              the chain (the row in a box aligned with the chain).
+  row_split   the same with -x y/d^(p + 1) on a register split by an S(d^j, d) chain, the row
+              -x y/d^(j + 2) after the chain.
+  top_bind    a top digit bound by B(1, d), then p digits by a B(d^(j + 1), d) chain = the p
+              digits bound by a B(d^j, d) chain, then the top digit by B(d, d^p).
+  top_split   the S form: S(d^(j + 1), d) chain and S(1, d) = S(d, d^p), then an S(d^j, d)
+              chain.
+row_bind and row_split are proved by decide_equal (induction, chain window); top_bind and
+top_split by lemmas.induct_by_insertion, whose exposure reads the hypothesis directly through
+cut wires when no Z spider off the copy meets it. The step contractions of top_bind and
+top_split close by the ModDelta pin over a full index range (scalar._delta_step), whose range
+test now reads coefficients that are integer expressions of known sign (scalar._bounds,
+_signed_linear_over: i2 + d i3 with i2 < d, i3 < d^k lies in [0, d^(k + 1) - 1]).
+
+Peeling the first copy of fca_boxed at a = 2 (the route these lemmas serve) is not reached:
+bangbox._peel_extended refuses a first-copy peel of a box with pair boxes, and a chain with
+links from an output to an input (the B(d^j, d) chain) peels only its last copy.
+
 4.5 Periodic chains: decide._decide_periodic
 
 When each side reads the index only in its scalar and in the multiplicity of at most one

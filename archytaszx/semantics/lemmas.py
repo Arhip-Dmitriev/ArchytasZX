@@ -60,7 +60,8 @@ class LemmaError(Exception):
 @dataclass(frozen=True, slots=True)
 class Lemma:
     """A named identity ``build(e)[0] = build(e)[1]`` for every value ``e`` of ``symbol``,
-    proved by ``prove`` (both sides formal to a kernel theorem) when given."""
+    proved by ``prove`` (both sides formal to a kernel theorem) when given; with
+    ``proves_instances``, ``prove`` also proves the sides at any value."""
 
     name: str
     symbol: str
@@ -68,6 +69,7 @@ class Lemma:
     build: Callable[[sp.Expr], tuple[Diagram, Diagram]]
     prove: Callable[[Diagram, Diagram, str], object] | None = None
     values: Callable[[Diagram], list[sp.Expr]] | None = None
+    proves_instances: bool = False
 
 
 def _out(node: NodeId, index: int = 0) -> PortRef:
@@ -319,11 +321,12 @@ def _radix_dims(value: sp.Expr) -> tuple[Dim, Dim]:
     return Dim.symbol("d"), Dim.from_sympy(value)
 
 
-def _cooley_tukey_sides(value: sp.Expr) -> tuple[Diagram, Diagram]:
-    """Left: (top, low) of dims ``(s, t)`` bound by B(s, t), shifted by one over ``s*t``, split
-    by S(s, t). Right: F on top, a Z spider of phase ``k/(s t)`` with two pair legs, F^3; low
-    through a Z spider, shifted by one over ``t``, through a Z spider; pair phases ``x y/(s t)``
-    from the top spider to the low input spider and ``-x y/(s t)`` to the low output spider."""
+def _cooley_tukey_sides(value: sp.Expr, amount: int = 1) -> tuple[Diagram, Diagram]:
+    """Left: (top, low) of dims ``(s, t)`` bound by B(s, t), shifted by ``amount`` over ``s*t``,
+    split by S(s, t). Right: F on top, a Z spider of phase ``amount k/(s t)`` with two pair
+    legs, F^3; low through a Z spider, shifted by ``amount`` over ``t``, through a Z spider; pair
+    phases ``x y/(s t)`` from the top spider to the low input spider and ``-x y/(s t)`` to the
+    low output spider."""
     from archytaszx.algebra.phase import INDEX2, PairPhase
     from archytaszx.diagram.generators import PAIR_PHASE
 
@@ -333,7 +336,7 @@ def _cooley_tukey_sides(value: sp.Expr) -> tuple[Diagram, Diagram]:
 
     left = Diagram()
     b = left.add_node(DIM_BINDER, [top, low], [reg])
-    x = _shift(left, reg, 1)
+    x = _shift(left, reg, amount)
     s = left.add_node(DIM_SPLITTER, [reg], [top, low])
     left.add_wire(_out(b), _in(x))
     left.add_wire(_out(x), _in(s))
@@ -343,11 +346,14 @@ def _cooley_tukey_sides(value: sp.Expr) -> tuple[Diagram, Diagram]:
     right = Diagram()
     f = right.add_node(FOURIER_BOX, [top], [top])
     m = right.add_node(
-        Z_SPIDER, [top], [top, top, top], phase=PhaseVector(top, rule=Phase(INDEX / whole))
+        Z_SPIDER,
+        [top],
+        [top, top, top],
+        phase=PhaseVector(top, rule=Phase(amount * INDEX / whole)),
     )
     f1, f2, f3 = (right.add_node(FOURIER_BOX, [top], [top]) for _ in range(3))
     zi = right.add_node(Z_SPIDER, [low, low], [low])
-    lx = _shift(right, low, 1)
+    lx = _shift(right, low, amount)
     zo = right.add_node(Z_SPIDER, [low, low], [low])
     p0, p1 = (
         right.add_node(
@@ -405,6 +411,241 @@ COOLEY_TUKEY = Lemma(
     values=_cooley_tukey_values,
 )
 
+
+def _two_shifts(top: Dim, low: Dim) -> Diagram:
+    """B(s, t), the shift by one over ``s*t``, S(s, t), twice in series."""
+    reg = Dim.from_sympy(top.to_sympy() * low.to_sympy())
+    out = Diagram()
+    ends: list[tuple[NodeId, NodeId]] = []
+    for _ in range(2):
+        b = out.add_node(DIM_BINDER, [top, low], [reg])
+        x = _shift(out, reg, 1)
+        s = out.add_node(DIM_SPLITTER, [reg], [top, low])
+        out.add_wire(_out(b), _in(x))
+        out.add_wire(_out(x), _in(s))
+        ends.append((b, s))
+    (b1, s1), (b2, s2) = ends
+    out.add_wire(_out(s1, 0), _in(b2, 0))
+    out.add_wire(_out(s1, 1), _in(b2, 1))
+    out.set_boundary_inputs([_in(b1, 0), _in(b1, 1)])
+    out.set_boundary_outputs([_out(s2, 0), _out(s2, 1)])
+    return out
+
+
+def _prove_two_shift(left: Diagram, right: Diagram, _symbol: str) -> object:
+    """``left = right`` for :data:`COOLEY_TUKEY_2` at the binder dims of ``left``: ``left`` =
+    two shift-by-one blocks (symbolic contraction), :data:`COOLEY_TUKEY` rewritten on each,
+    the result = ``right`` by symbolic contraction."""
+    from archytaszx.semantics import kernel
+
+    binder = next(n for n in left.nodes.values() if n.generator_type is DIM_BINDER)
+    middle = _two_shifts(binder.inputs[0].dim, binder.inputs[1].dim)
+    theorem = kernel.contraction(left, middle)
+    for _ in range(2):
+        step = cast("kernel.Theorem | None", rewrite(theorem.rhs, COOLEY_TUKEY))
+        if step is None:
+            raise LemmaError("cooley_tukey does not apply to a shift-by-one block")
+        theorem = kernel.trans(theorem, step)
+    return kernel.trans(theorem, kernel.contraction(theorem.rhs, right))
+
+
+COOLEY_TUKEY_2 = Lemma(
+    name="cooley_tukey_2",
+    symbol="t",
+    statement=(
+        "the shift by two over s*t, with the top s register and the low t register bound by "
+        "B(s, t), is the low register shifted by two over t, its input and output values read "
+        "into pair phases x y/(s t) and -x y/(s t) against the Fourier side of the top register, "
+        "which carries phase 2 k/(s t)"
+    ),
+    build=lambda value: _cooley_tukey_sides(value, 2),
+    prove=_prove_two_shift,
+    values=_cooley_tukey_values,
+    proves_instances=True,
+)
+
+
+def _radix_values(diagram: Diagram) -> list[sp.Expr]:
+    """The symbolic multiplicities ``m`` of the chain boxes of ``diagram`` holding a leg of
+    dimension ``d^e`` (``d`` the dimension symbol), in box order."""
+    base = Dim.symbol("d").to_sympy()
+    found: list[sp.Expr] = []
+    for _box_id, box in sorted(diagram.bang_boxes.items()):
+        value = box.multiplicity.to_sympy()
+        if not box.links or not value.free_symbols or value in found:
+            continue
+        dims = (
+            p.dim.to_sympy()
+            for n in box.node_scope
+            for p in (*diagram.nodes[n].inputs, *diagram.nodes[n].outputs)
+        )
+        if any(e.is_Pow and e.base == base for e in dims):
+            found.append(value)
+    return found
+
+
+_ROW_BIND_LEFT = """
+dim d
+count p
+zy = Z(1 -> 2, d)
+h = Z(0 -> 1, literal 1)
+b = B(d^j, d)
+pq = Zp(in: [d], out: [d^p]) phase{x, y: x*y/d^(p+1)}
+zr = Z(2 -> 1, d^p)
+wire h.out0 -- b.in0, b.out0 -- zr.in0, zy.out1 -- pq.in0, pq.out0 -- zr.in1
+repeat p as V index j: b
+chain V: b.out0 -> b.in0
+inputs zy.in0, b.in1
+outputs zy.out0, zr.out0
+"""
+
+_ROW_BIND_RIGHT = """
+dim d
+count p
+zy = Z(1 -> 2, d)
+h = Z(0 -> 1, literal 1)
+b = B(d^j, d)
+zi = Z(2 -> 1, d)
+pa = Zp(1 -> 1, d) phase{x, y: x*y/d^(j+2)}
+wire h.out0 -- b.in0, zi.out0 -- b.in1, zy.out1 -- pa.in0, pa.out0 -- zi.in1
+repeat p as V index j: b
+repeat p as W index j: zi, pa
+align W with V
+chain V: b.out0 -> b.in0
+inputs zy.in0, zi.in0
+outputs zy.out0, b.out0
+"""
+
+ROW_BIND = Lemma(
+    name="row_bind",
+    symbol="p",
+    statement=(
+        "a pair phase x y/d^(p + 1) between a d wire and the d^p register bound from p digits "
+        "by a B(d^j, d) chain is one pair phase x y/d^(j + 2) on each digit j before the chain"
+    ),
+    build=lambda p: _dsl_sides(_ROW_BIND_LEFT, _ROW_BIND_RIGHT, p),
+    values=_radix_values,
+)
+
+_ROW_SPLIT_LEFT = """
+dim d
+count p
+zy = Z(1 -> 2, d)
+zr = Z(2 -> 1, d^p)
+s = S(d^j, d)
+e = Z(1 -> 0, literal 1)
+pq = Zp(in: [d], out: [d^p]) phase{x, y: -x*y/d^(p+1)}
+wire zr.out0 -- s.in0, s.out0 -- e.in0, zy.out1 -- pq.in0, pq.out0 -- zr.in1
+repeat p as U index j: s
+chain U: s.in0 -> s.out0
+inputs zy.in0, zr.in0
+outputs zy.out0, s.out1
+"""
+
+_ROW_SPLIT_RIGHT = """
+dim d
+count p
+zy = Z(1 -> 2, d)
+s = S(d^j, d)
+e = Z(1 -> 0, literal 1)
+zo = Z(2 -> 1, d)
+pa = Zp(1 -> 1, d) phase{x, y: -x*y/d^(j+2)}
+wire s.out1 -- zo.in0, zy.out1 -- pa.in0, pa.out0 -- zo.in1, s.out0 -- e.in0
+repeat p as U index j: s
+repeat p as W index j: zo, pa
+align W with U
+chain U: s.in0 -> s.out0
+inputs zy.in0, s.in0
+outputs zy.out0, zo.out0
+"""
+
+ROW_SPLIT = Lemma(
+    name="row_split",
+    symbol="p",
+    statement=(
+        "a pair phase -x y/d^(p + 1) between a d wire and a d^p register split into p digits by "
+        "an S(d^j, d) chain is one pair phase -x y/d^(j + 2) on each digit j after the chain"
+    ),
+    build=lambda p: _dsl_sides(_ROW_SPLIT_LEFT, _ROW_SPLIT_RIGHT, p),
+    values=_radix_values,
+)
+
+_TOP_BIND_LEFT = """
+dim d
+count p
+h = Z(0 -> 1, literal 1)
+b0 = B(literal 1, d)
+b = B(d^(j + 1), d)
+wire h.out0 -- b0.in0, b0.out0 -- b.in0
+repeat p as V index j: b
+chain V: b.out0 -> b.in0
+inputs b0.in1, b.in1
+outputs b.out0
+"""
+
+_TOP_BIND_RIGHT = """
+dim d
+count p
+h = Z(0 -> 1, literal 1)
+b = B(d^j, d)
+top = B(d, d^p)
+wire h.out0 -- b.in0, b.out0 -- top.in1
+repeat p as V index j: b
+chain V: b.out0 -> b.in0
+inputs top.in0, b.in1
+outputs top.out0
+"""
+
+TOP_BIND = Lemma(
+    name="top_bind",
+    symbol="p",
+    statement=(
+        "a top digit bound by B(1, d), then p digits by a B(d^(j + 1), d) chain, is the p digits "
+        "bound by a B(d^j, d) chain under the top digit by B(d, d^p)"
+    ),
+    build=lambda p: _dsl_sides(_TOP_BIND_LEFT, _TOP_BIND_RIGHT, p),
+    prove=lambda left, right, index: induct_by_insertion(left, right, index),
+    values=_radix_values,
+)
+
+_TOP_SPLIT_LEFT = """
+dim d
+count p
+s = S(d^(j + 1), d)
+s0 = S(literal 1, d)
+e = Z(1 -> 0, literal 1)
+wire s.out0 -- s0.in0, s0.out0 -- e.in0
+repeat p as U index j: s
+chain U: s.in0 -> s.out0
+inputs s.in0
+outputs s0.out1, s.out1
+"""
+
+_TOP_SPLIT_RIGHT = """
+dim d
+count p
+top = S(d, d^p)
+s = S(d^j, d)
+e = Z(1 -> 0, literal 1)
+wire top.out1 -- s.in0, s.out0 -- e.in0
+repeat p as U index j: s
+chain U: s.in0 -> s.out0
+inputs top.in0
+outputs top.out0, s.out1
+"""
+
+TOP_SPLIT = Lemma(
+    name="top_split",
+    symbol="p",
+    statement=(
+        "a d^(p + 1) register split into p digits by an S(d^(j + 1), d) chain and the top digit "
+        "by S(1, d) is the top digit split off by S(d, d^p), the rest by an S(d^j, d) chain"
+    ),
+    build=lambda p: _dsl_sides(_TOP_SPLIT_LEFT, _TOP_SPLIT_RIGHT, p),
+    prove=lambda left, right, index: induct_by_insertion(left, right, index),
+    values=_radix_values,
+)
+
 LIBRARY: tuple[Lemma, ...] = (
     CARRY_SHIFT,
     AND_REGISTER,
@@ -412,6 +653,11 @@ LIBRARY: tuple[Lemma, ...] = (
     AND_SPLIT,
     ZERO_REGISTER,
     COOLEY_TUKEY,
+    COOLEY_TUKEY_2,
+    ROW_BIND,
+    ROW_SPLIT,
+    TOP_BIND,
+    TOP_SPLIT,
 )
 
 _SPLIT_BIND_LEFT = """
@@ -554,6 +800,8 @@ def instance(entry: Lemma, value: sp.Expr) -> object:
     shifted = _substituted(entry, theorem, sp.sympify(value), left, right)
     if shifted is not None:
         return shifted
+    if entry.proves_instances and entry.prove is not None:
+        return entry.prove(left, right, entry.symbol)
     try:
         return kernel.contraction(left, right)
     except kernel.KernelError as exc:
@@ -985,7 +1233,14 @@ def expose_by_insertion(
             and peeled.nodes[v].generator_type is Z_SPIDER
             and any(leg.node_id == v and far.node_id in copy for leg, far in partner.items())
         ]
-        if not spiders or len(spiders) > _MAX_INSERTED:
+        if not spiders:
+            from archytaszx.semantics.induction import find_cut_region
+
+            direct = find_cut_region(peeled, frozenset(peeled.nodes) - copy, hypothesis)
+            if direct is not None:
+                return kernel.refl(peeled), direct, copy
+            continue
+        if len(spiders) > _MAX_INSERTED:
             continue
         choices = [_insertion_options(peeled, v, copy) for v in spiders]
         for combo in product(*choices):

@@ -1390,9 +1390,11 @@ def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr
     None; an integer ``expr`` free of those indices is its own bounds."""
     if not expr.free_symbols & set(ranges) and expr.is_integer is True:
         return sp.expand(expr), sp.expand(expr)
-    form = _linear_form(expr)
+    form: Mapping[sp.Symbol, sp.Expr] | None = _linear_form(expr)
     if form is None:
         form = _linear_over(expr, ranges)
+    if form is None:
+        form = _signed_linear_over(expr, ranges)
     if form is None:
         return None
     least = greatest = sp.expand(expr - sum((c * v for v, c in form.items()), sp.Integer(0)))
@@ -1400,11 +1402,37 @@ def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr
         size = ranges.get(var)
         if size is None:
             return None
-        if coefficient > 0:
+        if sp.sympify(coefficient).is_nonnegative is True:
             greatest += coefficient * (size - 1)
         else:
             least += coefficient * (size - 1)
     return sp.expand(least), sp.expand(greatest)
+
+
+def _signed_linear_over(
+    expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]
+) -> dict[sp.Symbol, sp.Expr] | None:
+    """The coefficient of each index of ``ranges`` in ``expr``, each an integer expression free
+    of them and of known sign (nonnegative or nonpositive), the rest an integer free of them;
+    else None."""
+    indices = sorted(expr.free_symbols & set(ranges), key=lambda symbol: str(symbol.name))
+    if not indices:
+        return None
+    form: dict[sp.Symbol, sp.Expr] = {}
+    rest = sp.expand(expr)
+    for var in indices:
+        coefficient = sp.expand(rest).coeff(var, 1)
+        if (
+            coefficient.free_symbols & set(ranges)
+            or coefficient.is_integer is not True
+            or (coefficient.is_nonnegative is not True and coefficient.is_nonpositive is not True)
+        ):
+            return None
+        form[var] = coefficient
+        rest = sp.expand(rest - coefficient * var)
+    if rest.free_symbols & set(ranges) or rest.is_integer is not True:
+        return None
+    return form
 
 
 def _linear_over(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> dict[sp.Symbol, int] | None:

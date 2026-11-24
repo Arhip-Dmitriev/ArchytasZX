@@ -47,6 +47,29 @@ def test_rewrite_finds_the_binder() -> None:
     kernel.iso(theorem.rhs, right)
 
 
+def test_shift_by_two_proved_and_instances() -> None:
+    d = Dim.symbol("d").to_sympy()
+    n = Mult.symbol("n").to_sympy()
+    for value in (None, sp.Tuple(2, 2**n), sp.Tuple(d, d**n)):
+        theorem = cast(
+            kernel.Theorem,
+            lemmas.proved(lemmas.COOLEY_TUKEY_2)
+            if value is None
+            else lemmas.instance(lemmas.COOLEY_TUKEY_2, value),
+        )
+        left, right = lemmas.sides(lemmas.COOLEY_TUKEY_2, value)
+        assert kernel._same(theorem.lhs, left) and kernel._same(theorem.rhs, right)
+
+
+def test_shift_by_two_rewrite_finds_the_binder() -> None:
+    d = Dim.symbol("d").to_sympy()
+    n = Mult.symbol("n").to_sympy()
+    left, right = lemmas.sides(lemmas.COOLEY_TUKEY_2, sp.Tuple(d, d**n))
+    theorem = cast(kernel.Theorem, lemmas.rewrite(left, lemmas.COOLEY_TUKEY_2))
+    kernel.iso(theorem.rhs, right)
+    assert lemmas.rewrite(left, lemmas.COOLEY_TUKEY) is None
+
+
 if __name__ == "__main__":
     for name, test in sorted(globals().items()):
         if name.startswith("test_"):
