@@ -36,6 +36,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.phase import INDEX
 from archytaszx.diagram.graph import Diagram
+from archytaszx.semantics.digit_poly import DigitPoly
 from archytaszx.semantics.lean_net import (
     TABLE_CHUNK,
     LNet,
@@ -439,6 +440,7 @@ class _Refuter:
         opaque: bool = False,
     ) -> None:
         self.out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
+        self.out.poly_phases = True
         self.hint: tuple[int, ...] | None = None
         self.point = {str(k): sp.nsimplify(v) for k, v in point.items()}
         for d in (left, right):
@@ -943,7 +945,12 @@ class _Refuter:
         at most `MAX_SPARSE` cases and it has no rule."""
         specs = self.out.phase_specs
         entries, rule = specs[ph] if ph < len(specs) else ({}, None)
-        if rule is not None or self.out.family or ph in self.out.phase_tables:
+        if (
+            rule is not None
+            or self.out.family
+            or ph in self.out.phase_tables
+            or ph in self.out.phase_polys
+        ):
             return None
         if len(entries) > MAX_SPARSE:
             return None
@@ -955,6 +962,7 @@ class _Refuter:
         self.ckeys: list[tuple[int, int]] = []
         self.zs: list[int] = []
         self.tabs: dict[int, tuple[list[int], int]] = {}
+        self.polys: dict[int, DigitPoly] = {}
         self.sparse: dict[int, dict[int, sp.Rational]] = {}
         seen: set[tuple[int, int]] = set()
         dens: list[sp.Rational] = []
@@ -974,6 +982,11 @@ class _Refuter:
                         self.sparse[n.ph] = sv
                         needs.update(int(t.q) for t in sv.values())
                         continue
+                dp = self.out.phase_polys.get(n.ph)
+                if dp is not None and not self.out.family and not _weighted(n.kind):
+                    self.polys[n.ph] = dp
+                    needs.add(dp.den)
+                    continue
                 if d > MAX_TERMS:
                     self.wide_node = True
                     raise NetUnsupported(f"a node of dimension {d}, above {MAX_TERMS}")
@@ -1034,6 +1047,9 @@ class _Refuter:
         return self.at_point(models.get(k, sp.Integer(1)))
 
     def P(self, ph: int, k: int) -> tuple[int, tuple[int, ...]]:
+        dp = getattr(self, "polys", {}).get(ph)
+        if dp is not None:
+            return (dp.value(k) * (self.M // dp.den)) % self.M, ()
         tab = getattr(self, "tabs", {}).get(ph)
         if tab is not None:
             nums, den = tab
@@ -1601,7 +1617,7 @@ class _Refuter:
 
     def share_node_res(self, other: _Refuter) -> None:
         """Takes ``other``'s :meth:`node_res` values when both evaluate every node alike."""
-        names = ("M", "ptab", "tabs", "sparse", "ctab", "qtab", "dimv_tab", "ks")
+        names = ("M", "ptab", "tabs", "polys", "sparse", "ctab", "qtab", "dimv_tab", "ks")
         if all(getattr(self, k, None) == getattr(other, k, None) for k in names):
             self.__dict__["_node_res"] = other.__dict__.setdefault("_node_res", {})
 
@@ -1857,11 +1873,15 @@ class _Refuter:
         qt = ", ".join(f"({ph}, {q})" for ph, q in sorted(self.qtab.items()))
         sig = ", ".join(f"({x}, {v})" for x, v in sorted(sigma.items()))
         unfold = "Fam.env, F, Φ" if out.family else "E, Φ"
-        fs = [*self.zs, *self.tabs, *self.sparse]
+        fs = [*self.zs, *self.tabs, *self.polys, *self.sparse]
         fsl = _ints_nat(fs)
         cases = "".join(f"  | {ph}, _ => (0, [])\n" for ph in self.zs) + "".join(
             f"  | {ph}, k => ((({self.table_get(nums)} * {M // den}) % {M}).toNat, []" + ")\n"
             for ph, (nums, den) in self.tabs.items()
+        )
+        cases += "".join(
+            f"  | {ph}, k => ((({dp.lean()} * {M // dp.den}) % {M}).toNat, [])\n"
+            for ph, dp in self.polys.items()
         )
         cases += "".join(self.sparse_cases(ph) for ph in self.sparse)
         cases += "".join(
@@ -1907,6 +1927,12 @@ class _Refuter:
                     f"\n    · simp only [{unfold}, Pt, List.map_nil, mono_nil]"
                     f"\n      exact (ex_tab {M} {den} {M // den} (by norm_num) (by norm_num) _ "
                     f"({den} : ℝ) (by norm_num)).trans (mul_one _).symm"
+                )
+            for dp in self.polys.values():
+                fproof += (
+                    f"\n    · simp only [{unfold}, Pt, List.map_nil, mono_nil]"
+                    f"\n      exact (ex_tab {M} {dp.den} {M // dp.den} (by norm_num) "
+                    f"(by norm_num) _ ({dp.den} : ℝ) (by norm_num)).trans (mul_one _).symm"
                 )
             for ph in self.sparse:
                 fproof += self.sparse_proof(ph, unfold)
@@ -2111,7 +2137,7 @@ class _Refuter:
         def go(xs: Sequence[int], cs: list[tuple[tuple[int, ...], Any]]) -> bool:
             nonlocal steps
             dl = self.labdim(l)
-            steps += len(cs) * (1 if xs else 1 + dl + dl * (dl - 1) // 2)
+            steps += len(cs) * (1 if xs else 1 + 2 * dl)
             if steps > DESC_MAX:
                 return False
             if not xs or any(c[1] == (0,) for c in cs):

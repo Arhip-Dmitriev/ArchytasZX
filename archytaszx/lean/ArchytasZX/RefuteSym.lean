@@ -1132,6 +1132,103 @@ theorem leafS_ofT (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C
     rw [toBT_look]; rfl
   simpa only [leafT, leafS, e] using h
 
+/-- `f j` at the subtables of `T` from value `j` on, `n` of them, read in order. -/
+def walkJ (f : ℕ → RT → Bool) : ℕ → ℕ → RT → Bool
+  | 0, _, _ => true
+  | n + 1, j, T => f j (T.child 0) && walkJ f n (j + 1) T.rest
+
+theorem walkJ_get (f : ℕ → RT → Bool) : ∀ (n j v : ℕ) (T : RT), walkJ f n j T = true →
+    v < n → f (j + v) (T.child v) = true := by
+  intro n
+  induction n with
+  | zero => intro j v T _ hv; omega
+  | succ n ih =>
+    intro j v T h hv
+    simp only [walkJ, Bool.and_eq_true] at h
+    cases v with
+    | zero => simpa using h.1
+    | succ v =>
+      have := ih (j + 1) v T.rest h.2 (by omega)
+      rwa [RT.child_rest, show j + 1 + v = j + (v + 1) by omega] at this
+
+/-- Every entry of the table `T` over the labels `ls` equals `val`, the labels set on `τ`, the
+table read in order. -/
+def walkT (D : ℕ → ℕ) (val : (ℕ → ℕ) → ℕ) : List ℕ → (ℕ → ℕ) → RT → Bool
+  | [], τ, T => RT.get τ [] T == val τ
+  | x :: xs, τ, T => walkJ (fun j T' => walkT D val xs (Function.update τ x j) T') (D x) 0 T
+
+theorem walkT_get (D : ℕ → ℕ) (val : (ℕ → ℕ) → ℕ) : ∀ (ls : List ℕ) (τ σ : ℕ → ℕ) (T : RT),
+    walkT D val ls τ T = true → (∀ x ∈ ls, σ x < D x) →
+    RT.get (fun y => if y ∈ ls then σ y else τ y) ls T =
+      val (fun y => if y ∈ ls then σ y else τ y) := by
+  intro ls
+  induction ls with
+  | nil => intro τ σ T h _; simpa [walkT] using h
+  | cons x xs ih =>
+    intro τ σ T h hσ
+    have hx := walkJ_get _ (D x) 0 (σ x) T h (hσ x List.mem_cons_self)
+    rw [Nat.zero_add] at hx
+    have e := ih (Function.update τ x (σ x)) σ (T.child (σ x)) hx
+      (fun y hy => hσ y (List.mem_cons_of_mem _ hy))
+    have hf : (fun y => if y ∈ xs then σ y else Function.update τ x (σ x) y) =
+        (fun y => if y ∈ x :: xs then σ y else τ y) := by
+      funext y
+      by_cases h1 : y ∈ xs
+      · simp [h1]
+      · by_cases h2 : y = x
+        · subst h2; simp [h1]
+        · simp [h1, h2]
+    rw [hf] at e
+    simp only [RT.get]
+    rw [show (if x ∈ x :: xs then σ x else τ x) = σ x by simp]
+    exact e
+
+theorem assigns_out (D : ℕ → ℕ) : ∀ (ls : List ℕ) (τ : ℕ → ℕ), τ ∈ assigns D ls →
+    ∀ y, y ∉ ls → τ y = 0 := by
+  intro ls
+  induction ls with
+  | nil => intro τ h y _; simp [assigns] at h; subst h; rfl
+  | cons l ls ih =>
+    intro τ h y hy
+    simp only [assigns, List.mem_flatMap, List.mem_map, List.mem_range] at h
+    obtain ⟨τ1, h1, j, _, rfl⟩ := h
+    have hl : y ≠ l := fun e => hy (e ▸ List.mem_cons_self)
+    rw [Function.update_of_ne hl]
+    exact ih τ1 h1 y fun h' => hy (List.mem_cons_of_mem _ h')
+
+/-- `leafT` with the factor's table over its own scope `sc` read in order by `walkT`. -/
+def leafW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (U : List ℕ) (σ : ℕ → ℕ) (t : BT) (g : List Node) (sc : List ℕ) (F : RFac) : Bool :=
+  F.scope == sc &&
+  g.all (fun n => (nlegs n).all fun x => (((t.look x).getD (.v x)).norm U σ).vars.all
+    (sc.contains ·)) &&
+    walkT S.dim (fun τ => (g.map fun n =>
+        tmN p w M (valQ S M P C (fun x => (((t.look x).getD (.v x)).norm U σ).eval τ) n)).foldr
+        (fun a b => a * b % p) 1) sc (fun _ => 0) F.table
+
+theorem leafT_ofW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (U : List ℕ) (σ : ℕ → ℕ) (t : BT) (g : List Node) (sc : List ℕ) (F : RFac)
+    (h : leafW S M P C p w U σ t g sc F = true) : leafT S M P C p w U σ t g sc F = true := by
+  simp only [leafW, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨hs, hg⟩, hw⟩ := h
+  simp only [leafT, Bool.and_eq_true, hg, and_true, List.all_eq_true, beq_iff_eq]
+  refine ⟨fun x hx => by simpa [hs] using hx, fun τ hτ => ?_⟩
+  have e := walkT_get S.dim _ sc (fun _ => 0) τ F.table hw (assigns_lt S.dim sc τ hτ)
+  have hf : (fun y => if y ∈ sc then τ y else (fun _ => 0) y) = τ := by
+    funext y
+    by_cases hy : y ∈ sc
+    · simp [hy]
+    · simp [hy, assigns_out S.dim sc τ hτ y hy]
+  rw [hf] at e
+  simp only [RFac.at, hs]
+  exact e
+
+theorem leafS_ofW (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (U : List ℕ) (σ : ℕ → ℕ) (bs : List (ℕ × LX)) (t : BT) (ht : toBT bs = t) (g : List Node)
+    (sc : List ℕ) (F : RFac) (h : leafW S M P C p w U σ t g sc F = true) :
+    leafS S M P C p w U σ bs g sc F = true :=
+  leafS_ofT S M P C p w U σ bs t ht g sc F (leafT_ofW S M P C p w U σ t g sc F h)
+
 /-- A constraint's residue factor, checked at every assignment of the labels `sc`, its labels
 in `U` read from `σ`. -/
 def leafQ (p : ℕ) (D : ℕ → ℕ) (U : List ℕ) (σ : ℕ → ℕ) (q : ℕ × LX) (sc : List ℕ) (F : RFac) :

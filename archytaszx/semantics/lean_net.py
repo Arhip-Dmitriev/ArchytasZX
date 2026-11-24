@@ -58,6 +58,7 @@ from archytaszx.diagram.compare import isomorphism
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef, Wire
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.semantics.denote import DenoteDomainError, resolve_dim
+from archytaszx.semantics.digit_poly import DigitPoly, digit_poly
 from archytaszx.semantics.lean_scalar import (
     II,
     NC,
@@ -385,6 +386,9 @@ class _Export:
         self.phase_specs: list[tuple[dict[int, sp.Expr], sp.Expr | None]] = [({}, None)]
         self.phase_key: dict[str, int] = {"": 0}
         self.phase_tables: dict[int, tuple[list[int], int]] = {}
+        self.poly_phases = False
+        self.phase_polys: dict[int, DigitPoly] = {}
+        self.poly_of: dict[PhaseVector, DigitPoly | None] = {}
         self.table_names: dict[tuple[int, ...], str] = {}
         self.table_defs: list[str] = []
         self.weight_tab: dict[int, str] = {}
@@ -528,11 +532,24 @@ class _Export:
         name = self.table_names[key]
         return f"({name}.getD (k / {TABLE_CHUNK}) []).getD (k % {TABLE_CHUNK}) 0"
 
+    def phase_poly(self, pv: PhaseVector) -> DigitPoly | None:
+        """With ``poly_phases``, the digit polynomial of ``pv``'s table at its concrete
+        dimension; kept in ``poly_of``."""
+        if not self.poly_phases or not pv.dim.is_concrete:
+            return None
+        if pv not in self.poly_of:
+            tab = _phase_table(pv)
+            self.poly_of[pv] = None if tab is None else digit_poly(tab[0], tab[1], pv.dim.to_int())
+        return self.poly_of[pv]
+
     def phase_body(self, pv: PhaseVector) -> str:
         """The phases of ``pv`` in turns, as the body of a Lean ``fun k``: a packed table of
         numerators over one denominator when it has more than ``PHASE_TABLE_MIN`` rational
         entries and no rule, else a chain of cases."""
         tab = _phase_table(pv)
+        dp = self.phase_poly(pv)
+        if dp is not None:
+            return f"((({dp.lean()} : ℤ) : ℝ) / {dp.den})"
         if tab is not None:
             nums, den = tab
             if len(nums) > TABLE_CHUNK:
@@ -585,7 +602,10 @@ class _Export:
                 self.weight_tab[len(self.phases)] = weights
             self.phases.append(f"fun k => {body}")
             tab = _phase_table(pv)
-            if tab is not None and weights is None:
+            dp = self.phase_poly(pv)
+            if dp is not None and weights is None:
+                self.phase_polys[len(self.phases) - 1] = dp
+            elif tab is not None and weights is None:
                 self.phase_tables[len(self.phases) - 1] = tab
             self.phase_specs.append(
                 (

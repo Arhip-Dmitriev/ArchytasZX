@@ -242,6 +242,9 @@ UNEQUAL_UNCERTIFIED with the same stop and reason "uncertified: interface rechec
 pair it refutes; a DOUBLED INTERFACE verdict on the original pair. Both refuters walk the
 boundary assignments in product order one tuple at a time (lean_refute._odometer), never
 materialising a boundary axis, so a leg of dimension 30^8 costs nothing until it is read.
+A phase table that is a polynomial in the digits of its index (every entry checked,
+digit_poly) is read by the residue refuter and its recheck through the formula at single
+indices, so its node's dimension is not bounded by 200000 (LEAN.txt, 5.1).
 
 2.3 The sample grid
 

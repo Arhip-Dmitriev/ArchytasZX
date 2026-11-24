@@ -1415,6 +1415,27 @@ counterexample is replaced by the smallest sample point that still separates. Wh
 gives an exact refutation, the same points are tried by ball arithmetic (5.2). Boundary
 assignments are enumerated lazily, at most 4096 per point.
 
+Digit-polynomial phases (F51, archytaszx.semantics.digit_poly). In a refutation export
+(_Export.poly_phases, set only by _Refuter) a phase table of more than PHASE_TABLE_MIN rational
+entries on a concrete dimension D is written as a formula when its numerators N(k) over den
+equal F(x_1, ..., x_m) mod den at every k < D, x_i the mixed-radix digits of k for bases
+b_1 ... b_m (product D, most significant first, m <= 4). digit_poly fits F from Newton
+coefficients in the binomial basis on the grid of degree <= 3 per digit (at most 4^m entries),
+compares 64 spread entries, then every entry (numpy, linear in D); splits are tried fewest
+digits and lowest degree first, at most 64 monomials. Φ i = fun k => ((F(k) % den2 : ℤ) : ℝ) /
+den2, digits ((k / P : ℕ) : ℤ) and ((k % b : ℕ) : ℤ), den2 = den times the lcm of the
+monomial denominators; this equals the old table at every k < D. Pt i k is
+((F(k) % den2) * (M / den2) % M).toNat and hF is proved by ex_tab, as for a table. The node is
+no longer refused above 200000 entries (_Refuter.polys, read by P at single k). Equality
+exports, lean_sym and lean_chain keep tables. A leaf of the substitution route whose factor
+scope is its checked scope and whose child reads exceed LEAF_WALK_MIN = 2^18 (entries times
+the largest dimension less one, halved) is checked by leafS_ofW: leafW reads the table in
+order (walkJ moves to the next subtable by RT.rest; walkT_get, assigns_out). Lean checks:
+qft! n=2 d=621 19 s / 1.6 GB anon, d=1597 24 s / 0.7 GB (was killed above 6 GB before botS
+and leafW), n=6 d=454 18 s / 1.2 GB, inverse_qft! n=2 d=528 54 s / 1.5 GB; qft! n=2 d=300
+12 s and n=3 d=40 43 s through the formula (tables before); a changed Φ denominator or Pt
+multiplier fails.
+
 Residue refutations (ArchytasZX.RefuteMod, refute_res) evaluate both networks mod a prime p = 1
 mod M at an element w of order M (prim_of): eval_res contracts residue factors (RFac, one
 nested table RT per scope) by a chain of eliminations (chainR, one theorem per step). Each
@@ -1422,7 +1443,9 @@ step's elimR is proved by elimT_ok from one kernel check elimT: the scope condit
 factor holding the label l with its scope read off by the new scope then l, and the new table
 equal (RT.beq) to descR, which builds it by descending through the factors' tables label by
 label, the cursors advanced at each value (adv1, advAll; descR_get), and sums l at the
-bottom. No assignment function is built per entry. Tables are packed: a level whose entries
+bottom in one pass (botS: each cursor reading l moves to its next subtable by RT.rest,
+adv1R; botS_eq), linear in the dimension of l. No assignment function is built per entry.
+Tables are packed: a level whose entries
 are one leaf is that leaf (RT.pack, _rfac packed), and descR returns the leaf 0 for a
 subtable once a cursor is the leaf 0, so a step costs about the entries it visits that no
 zero factor covers. A step whose descent takes more than DESC_MAX = 300000 cursor steps

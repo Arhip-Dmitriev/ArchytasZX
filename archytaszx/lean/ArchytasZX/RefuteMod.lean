@@ -881,11 +881,56 @@ def RT.isZ : RT → Bool
   | .leaf 0 => true
   | _ => false
 
+/-- A level without its first subtable; a leaf is itself. -/
+def RT.rest : RT → RT
+  | .cons _ t => t
+  | T => T
+
+theorem RT.child_rest : ∀ (T : RT) (k : ℕ), (RT.rest T).child k = T.child (k + 1)
+  | .cons _ _, _ => rfl
+  | .leaf _, _ => rfl
+  | .nil, _ => rfl
+
+/-- A cursor whose next label is `x` moved to the next subtable. -/
+def adv1R (x : ℕ) (c : List ℕ × RT) : List ℕ × RT :=
+  match c.1 with
+  | y :: _ => if y = x then (c.1, c.2.rest) else c
+  | [] => c
+
+theorem adv1_adv1R (x v : ℕ) (c : List ℕ × RT) : adv1 x v (adv1R x c) = adv1 x (v + 1) c := by
+  obtain ⟨s, T⟩ := c
+  cases s with
+  | nil => rfl
+  | cons y ys =>
+    by_cases h : y = x
+    · simp [adv1R, adv1, h, RT.child_rest]
+    · simp [adv1R, adv1, h]
+
+/-- The sum mod `p` over the first `n` values of `l` of the cursors' products, the cursors
+moved one subtable per value. -/
+def botS (p l : ℕ) : ℕ → List (List ℕ × RT) → ℕ
+  | 0, _ => 0
+  | n + 1, cs => (rfoldL p (cs.map (adv1 l 0)) + botS p l n (cs.map (adv1R l))) % p
+
+theorem botS_eq (p l : ℕ) : ∀ (n : ℕ) (cs : List (List ℕ × RT)),
+    botS p l n cs = ((List.range n).map fun v => rfoldL p (cs.map (adv1 l v))).sum % p := by
+  intro n
+  induction n with
+  | zero => intro cs; simp [botS]
+  | succ n ih =>
+    intro cs
+    have hm : ∀ v, (cs.map (adv1R l)).map (adv1 l v) = cs.map (adv1 l (v + 1)) := fun v => by
+      rw [List.map_map]
+      exact List.map_congr_left fun c _ => adv1_adv1R l v c
+    rw [botS, ih, List.range_succ_eq_map, List.map_cons, List.sum_cons, List.map_map]
+    simp only [Function.comp_def, hm]
+    rw [Nat.add_mod_mod]
+
 /-- The table over the labels `xs` of the sum over `l` of the cursors' products, read by
 descending through their tables; a level whose entries are one leaf is that leaf, and a
 subtable is the leaf `0` once a cursor is. -/
 def descR (p : ℕ) (D : ℕ → ℕ) (l : ℕ) : List ℕ → List (List ℕ × RT) → RT
-  | [], cs => .leaf (((List.range (D l)).map fun v => rfoldL p (cs.map (adv1 l v))).sum % p)
+  | [], cs => .leaf (botS p l (D l) cs)
   | x :: xs, cs => if cs.any (fun c => c.2.isZ) then .leaf 0 else
       RT.pack (RT.node ((List.range (D x)).map fun v => descR p D l xs (cs.map (adv1 x v))))
 
@@ -1067,7 +1112,7 @@ theorem descR_get (p : ℕ) (D : ℕ → ℕ) (l : ℕ) (τ : ℕ → ℕ) : ∀
       ((List.range (D l)).map fun v => rfoldL p ((advAll τ xs cs).map (adv1 l v))).sum % p := by
   intro xs
   induction xs with
-  | nil => intro cs _; rfl
+  | nil => intro cs _; exact botS_eq p l (D l) cs
   | cons x xs ih =>
     intro cs h
     by_cases hz : cs.any (fun c => c.2.isZ) = true

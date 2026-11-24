@@ -35,6 +35,8 @@ Ex = tuple[Any, ...]
 MAX_SYM_STEPS = 4000
 MAX_XSTEP = 4096
 RUN_STEPS = 64
+LEAF_WALK_MIN = 1 << 18
+"""Child reads of a leaf check by `leafT` past which it reads its table in order (`leafW`)."""
 
 
 def wide(m: int, name: str) -> str:
@@ -806,9 +808,17 @@ def sym_decls(
     for gi, g in enumerate(plan.groups):
         args = f"{shape} {M} Pt Ct {p} {w} {unbnd} σ0"
         rest = f"{ns_text(g)} {nat_list(plan.scopes[gi])} {names[gi]}"
+        sc = list(plan.scopes[gi])
+        ds = [refuter.labdim(x) for x in sc]
+        walk = (
+            list(plan.final[0][gi][0]) == sc
+            and bool(sc)
+            and math.prod(ds) * (max(ds) - 1) // 2 > LEAF_WALK_MIN
+        )
         out.append(
             f"set_option maxHeartbeats 0 in\ntheorem {xt}L{gi} : leafS {args} {st_last}.bs {rest} "
-            f"= true :=\n  leafS_ofT {args} {st_last}.bs {xt}bt {xt}btE {rest} (by decide +kernel)"
+            f"= true :=\n  leafS_of{'W' if walk else 'T'} {args} {st_last}.bs {xt}bt {xt}btE "
+            f"{rest} (by decide +kernel)"
         )
         lemmas.append(f"{xt}L{gi}")
     for qi, (nq, e) in enumerate(plan.states[-1].cs):
