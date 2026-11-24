@@ -1000,12 +1000,12 @@ def test_phase_index_within_dim() -> None:
 
 
 def test_leg_bound() -> None:
-    d = dsl("a = Z(0 -> 1024, d)")
-    assert d.nodes[NodeId(0)].num_outputs == 1024
+    d = dsl("a = Z(0 -> 2048, d)")
+    assert d.nodes[NodeId(0)].num_outputs == 2048
     with pytest.raises(PR.ParseDomainError):
-        PR.parse_dsl("a = Z(0 -> 1025, d)")
+        PR.parse_dsl("a = Z(0 -> 65537, d)")
     with pytest.raises(PR.ParseDomainError):
-        PR.parse_dsl("a = X(1025 -> 0, d)")
+        PR.parse_dsl("a = X(65537 -> 0, d)")
 
 
 def test_minted_dim_avoids_every_source_identifier() -> None:
@@ -1052,11 +1052,11 @@ def test_expression_numeral_cap() -> None:
 
 def test_scalar_power_bound_scales_with_nodes() -> None:
     with pytest.raises(PR.ParseDomainError):
-        scalar_of("2^3980*sqrt(2)")
+        scalar_of("2^33000*sqrt(2)")
     with pytest.raises(PR.ParseDomainError):
         scalar_of("2^99999999", "; ".join(f"a{i} = Z(0 -> 1, d)" for i in range(100)))
     many = "; ".join(f"a{i} = Z(0 -> 1, d)" for i in range(100))
-    assert scalar_of("2^3980*sqrt(2)", many) == Scalar(sp.Integer(2) ** 3980 * sp.sqrt(2))
+    assert scalar_of("2^33000*sqrt(2)", many) == Scalar(sp.Integer(2) ** 33000 * sp.sqrt(2))
 
 
 @pytest.mark.parametrize("name", ["I", "E", "pi", "exp", "sqrt", "δ", "θ_1"])
@@ -1091,14 +1091,14 @@ DOS = [
     "a = Z(0 -> 1, d); scalar sqrt(2)^(10^17)",
     "a = Z(0 -> 1, d); scalar (a+b+c+d+e+f)^31",
     "a = Z(0 -> 1, d); scalar " + "*".join(f"(a{k}+b{k})" for k in range(14)),
-    "a = Z(0 -> 1, d); scalar 2^8000*2^8000",
-    "a = Z(0 -> 1, d); scalar (10^300)^(1/2)",
+    "a = Z(0 -> 1, d); scalar 2^40000*2^40000",
+    "a = Z(0 -> 1, d); scalar (3^3000)^(1/2)",
     "a = Z(0 -> 1, d) phase {1: (w+x+y+z)^40}",
     "a = Z(0 -> 1, (2*d)^(10^17))",
     "(2*I)^(10^17)",
     "sqrt(2)^(10^17)",
     "(a+b+c+d+e+f)^31",
-    "2^8000*2^8000",
+    "2^40000*2^40000",
 ]
 
 

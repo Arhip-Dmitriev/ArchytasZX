@@ -498,8 +498,7 @@ _CONSTANTS = {"I": sp.I, "pi": sp.pi, "π": sp.pi, "E": sp.E}
 _FUNCTIONS = frozenset({"exp", "sqrt", "cos", "sin"})
 _MAX_EXPR_DEPTH = 100
 _MAX_EXPR_DIGITS = 1000
-_INT_LIMIT = 10**_MAX_EXPR_DIGITS
-_MAX_POWER_BITS = 4096
+_MAX_POWER_BITS = 1 << 16
 _MAX_ROOT_BITS = 4096
 _MAX_TERMS = 4096
 _SCALAR_BITS_PER_NODE = 64
@@ -662,14 +661,14 @@ def _numeric_bits(expr: sp.Expr) -> int:
 
 
 def _bounded(expr: sp.Expr) -> sp.Expr:
-    """``expr``, once every rational atom is below :data:`_INT_LIMIT` times two to the
-    :data:`_EXTRA_BITS`."""
+    """``expr``, once every rational atom has at most :data:`_MAX_POWER_BITS` plus
+    :data:`_EXTRA_BITS` bits."""
     if _LIFTED.get():
         return expr
-    limit = _INT_LIMIT << _EXTRA_BITS.get()
+    limit = _MAX_POWER_BITS + _EXTRA_BITS.get()
     for atom in expr.atoms(sp.Rational):
-        if abs(atom.p) >= limit or atom.q >= limit:
-            raise ParseDomainError(f"a value is above the size bound of {_MAX_EXPR_DIGITS} digits")
+        if _bits(atom) > limit:
+            raise ParseDomainError(f"a value is above the size bound of {limit} bits")
     return expr
 
 
@@ -1807,8 +1806,8 @@ class _Dsl:
                 raise ParseGrammarError(f"{args!r} is not 'm -> n[, D]'")
             ins_text, _, outs_text = parts[0].partition("->")
             counts = (_int_token(ins_text, "input count"), _int_token(outs_text, "output count"))
-            if max(counts) > _MAX_KET_LEG_COUNT and not _LIFTED.get():
-                raise ParseDomainError(f"leg count above the bound of {_MAX_KET_LEG_COUNT}")
+            if max(counts) > _MAX_EXPANDED_LEGS and not _LIFTED.get():
+                raise ParseDomainError(f"leg count above the bound of {_MAX_EXPANDED_LEGS}")
             dim = self.dim(parts[1]) if len(parts) == 2 else self.fallback_dim()
             return (dim,) * counts[0], (dim,) * counts[1], dim
         explicit = _DSL_EXPLICIT_RE.fullmatch(args.strip())
