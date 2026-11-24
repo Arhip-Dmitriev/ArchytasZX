@@ -2249,7 +2249,9 @@ def _residue_pivots(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Ex
         atoms = sorted(frequency.atoms(ModResidue), key=sp.default_sort_key)
         if any(not a.args[1].is_Integer or a.free_symbols & bound for a in atoms):
             continue
-        frozen = {a: sp.Dummy(integer=True) for a in atoms}
+        frozen: dict[sp.Expr, sp.Expr] = {}
+        for a in atoms:
+            frozen[a] = _fresh_index(cast(sp.Expr, sp.Mul(term, *frozen.values())))
         local = {**ranges, **{s: a.args[1] for a, s in frozen.items()}}
         flat = sp.expand(frequency.xreplace(frozen))
         span = _bounds(flat, local) if flat.free_symbols <= set(local) else None
