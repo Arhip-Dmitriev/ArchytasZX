@@ -1474,7 +1474,10 @@ binder or splitter on 6: bFrag3 [k_3 = a], bFrag2 [k_2 = b], tB_six), node_z6 (a
 z6Frag3 and z6Frag2 equate each leg's digits with the anchor l0's, the F_2 phase P over
 (l0, u1, u2) checked by tableOK against a table ts8 with sixOK ts8 ts, ts8 at sixIdx (2 s + f) =
 f + 2 [s = 1] + 4 [s = 2] being the node's table at 2 s + f, entries (u1, l0, 1, 0, 1) and
-(u2, l0, 1, 0, 2) in es).
+(u2, l0, 1, 0, 2) in es). Replay steps: mval_perm (the Z_3 path permuted), liftA_dup (two
+entries with one reading take one value) and valA_subst (a free qubit variable z set to fz of B
+is substA, z replaced by B in the phase, constraints and atoms; B = [] or [[]] for a constant
+entry, [[u]] for a duplicate).
 
 5. REFUTATIONS
 --------------
