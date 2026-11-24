@@ -1743,25 +1743,31 @@ def _rescope_ancestors(
         holder = outer.parent
 
 
-def _place_pairs(
-    diagram: Diagram, parent: BangBox, template: _PairTemplate, id_maps: list[dict[NodeId, NodeId]]
-) -> None:
-    """One copy of ``template`` per pair of copies ``j < k`` of ``parent`` (``index`` := j,
-    ``pair_index`` := k), each left port of copy j and right port of copy k grown to one leg
-    per pair it meets."""
+def _grow_pair_ports(
+    diagram: Diagram, templates: list[_PairTemplate], id_maps: list[dict[NodeId, NodeId]]
+) -> dict[tuple[int, PortRef, int], list[PortRef]]:
+    """Grow every parent port of ``templates`` in each copy to one leg per pair it meets, ports
+    of one node from the highest index down; the legs per (template, port, copy)."""
     k_total = len(id_maps)
     pairs = [(j, k) for j in range(k_total) for k in range(j + 1, k_total)]
-    legs: dict[tuple[PortRef, int], list[PortRef]] = {}
-    ports = {a[1] for a in template.attached}
-    for parent_port in sorted(ports, key=lambda r: (r.node_id, r.direction.value, -r.index)):
-        side = next(a[2] for a in template.attached if a[1] == parent_port)
+    owners: dict[PortRef, list[tuple[int, str]]] = {}
+    for t, template in enumerate(templates):
+        for parent_port in dict.fromkeys(a[1] for a in template.attached):
+            side = next(a[2] for a in template.attached if a[1] == parent_port)
+            owners.setdefault(parent_port, []).append((t, side))
+    legs: dict[tuple[int, PortRef, int], list[PortRef]] = {}
+    for parent_port in sorted(owners, key=lambda r: (r.node_id, r.direction.value, -r.index)):
         for m, id_map in enumerate(id_maps):
-            count = sum(1 for j, k in pairs if (j if side == "left" else k) == m)
+            counts = [
+                (t, sum(1 for j, k in pairs if (j if side == "left" else k) == m))
+                for t, side in owners[parent_port]
+            ]
+            count = sum(c for _, c in counts)
             ref = _moved(parent_port, id_map)
             new_node = _regrow_port(diagram, ref, count)
             id_map[parent_port.node_id] = new_node
             for key, grown in list(legs.items()):
-                if key[1] == m and grown and grown[0].node_id == ref.node_id:
+                if key[2] == m and grown and grown[0].node_id == ref.node_id:
                     legs[key] = [
                         moved
                         for old in grown
@@ -1769,9 +1775,27 @@ def _place_pairs(
                             old, ref.node_id, new_node, ref.direction, ref.index, count
                         )
                     ]
-            legs[(parent_port, m)] = [
-                PortRef(new_node, ref.direction, ref.index + i) for i in range(count)
-            ]
+            start = ref.index
+            for t, c in counts:
+                legs[(t, parent_port, m)] = [
+                    PortRef(new_node, ref.direction, start + i) for i in range(c)
+                ]
+                start += c
+    return legs
+
+
+def _place_pairs(
+    diagram: Diagram,
+    parent: BangBox,
+    template: _PairTemplate,
+    id_maps: list[dict[NodeId, NodeId]],
+    legs: dict[tuple[PortRef, int], list[PortRef]],
+) -> None:
+    """One copy of ``template`` per pair of copies ``j < k`` of ``parent`` (``index`` := j,
+    ``pair_index`` := k), wired to the grown legs ``legs`` of copy j's left and copy k's
+    right ports."""
+    k_total = len(id_maps)
+    pairs = [(j, k) for j in range(k_total) for k in range(j + 1, k_total)]
     used: dict[tuple[PortRef, int], int] = {}
     box = template.box
     for j, k in pairs:
@@ -2035,8 +2059,10 @@ def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> list[dict[N
     before = set(diagram.bang_boxes)
     id_maps = _instantiate_node_scope(diagram, _plain(diagram, box), k)
     new_boxes = sorted(set(diagram.bang_boxes) - before)
-    for template in pairs:
-        _place_pairs(diagram, box, template, id_maps)
+    grown = _grow_pair_ports(diagram, pairs, id_maps)
+    for t, template in enumerate(pairs):
+        legs = {(port, m): v for (u, port, m), v in grown.items() if u == t}
+        _place_pairs(diagram, box, template, id_maps, legs)
     for (p_ref, q_ref), (head, tail) in zip(box.links, ends, strict=True):
         if box.cyclic:
             for m in range(k):

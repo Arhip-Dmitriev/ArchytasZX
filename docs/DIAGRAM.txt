@@ -46,9 +46,8 @@ Zp(0 -> 2, D), or in: [D1, ...], out: [...] for two dimensions) and the phase
 phase{x, y: EXPR}, a PairPhase (ALGEBRA.txt) in the values x of its first leg and y of its
 second, legs read outputs first, then inputs. EXPR may read the copy and pair indices of the
 boxes holding it (x*y/d^(m-j+1) in a pair box over V index j, pair index m); validate
-reports PHASE_DIMENSION_MISMATCH when the pair phase is not over the leg dimensions. Two pair
-boxes over one parent may not share a node with pair ports; one pair box holds every such
-pair node.
+reports PHASE_DIMENSION_MISMATCH when the pair phase is not over the leg dimensions. Pair
+boxes over one parent may have pair ports on one node.
 
 2.2 Types
 
@@ -204,7 +203,9 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     wired only to ports of B's scope named left or right, instantiated with B: one copy per
     pair of B's copies j < k, reading B's index as j and K as k, its wires to a left port met
     in copy j and to a right port in copy k; each such port grows one leg per pair it meets,
-    in pair order. Its own multiplicity is 1 and it is never expanded alone.
+    in pair order. Its own multiplicity is 1 and it is never expanded alone. Ports of all pair
+    boxes over B grow together, per node from the highest index down; a port two boxes meet
+    takes the first box's legs first.
   - tree (tree_parent q, tree (p_1, ..., p_b), level L, position P; REMAINING_BUGS_SPEC 19.4):
     the multiplicity k is the depth. q is wired outside the scope or a boundary slot (the
     head); p_1 .. p_b are one run of boundary slots in that order. The instance at k has

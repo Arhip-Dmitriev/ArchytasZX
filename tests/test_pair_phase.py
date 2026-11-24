@@ -55,3 +55,34 @@ def test_decide_reads_zp_at_symbolic_d() -> None:
     )
     unequal = decide_equal(left, parse_dsl(_ZP.format(expr="2*x*y/d"))).verdict
     assert unequal is not EqualityVerdict.EQUAL
+
+
+_TWO_PAIRS = """dim d
+count n
+v = Z(1 -> 5, d)
+p = Zp(2 -> 0, d) phase{x, y: x*y/d^(m-j+1)}
+q = Zp(2 -> 0, d) phase{x, y: -2*x*y/d^(m-j+1)}
+repeat n as V index j: v
+pairs P of V index m: p
+pairs Q of V index m: q
+left P: v.out1
+right P: v.out2
+left Q: v.out3
+right Q: v.out4
+wire v.out1 -- p.in0, v.out2 -- p.in1, v.out3 -- q.in0, v.out4 -- q.in1
+inputs v.in0
+outputs v.out0
+"""
+
+
+def test_two_pair_boxes_on_one_node_expand() -> None:
+    diagram = parse_dsl(_TWO_PAIRS)
+    for n, d in ((2, 2), (3, 2), (3, 3)):
+        tensor = contract(instantiate_symbol(diagram, "n", n).substitute({"d": d})).tensor
+        diag = np.diagonal(tensor.reshape(d**n, d**n))
+        for xs in itertools.product(range(d), repeat=n):
+            turns = -sum(
+                xs[j] * xs[m] / d ** (m - j + 1) for j in range(n) for m in range(j + 1, n)
+            )
+            index = int(np.ravel_multi_index(xs, (d,) * n))
+            assert np.isclose(diag[index], np.exp(2j * np.pi * turns))
