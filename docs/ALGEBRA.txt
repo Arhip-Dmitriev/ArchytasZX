@@ -289,7 +289,10 @@ bits at p = 2 (B and A integer polynomials over bits) the carry is a bit polynom
 B = x + R, x the greatest-named bit read only in its own term, par(R) = (1 - (-1)^R)/2 as a
 bit polynomial. Otherwise the split is sum_c [B - p c == 0 mod p q] [A + c == 0 mod q] over
 the carries c from ceil(min B / p) to floor(max B / p), when each B - p c is bounded in
-(-p q, p q). The high delta splits again on the next pass.
+(-p q, p q). The high delta splits again on the next pass. Under split_carries the parity
+deltas of a term over bits, one of them non-linear, are put in Gauss-Jordan form mod 2: each
+pivot is the greatest-named bit read only in its own linear term, substituted into every other
+such delta with powers of bits read as the bits.
 At a concrete modulus m the echelon form takes every substituted row and pivot value with an
 integer coefficient c of |c| >= m to sign(c) (|c| mod m), so coefficients stay below m
 instead of growing with each Gauss-Jordan step.

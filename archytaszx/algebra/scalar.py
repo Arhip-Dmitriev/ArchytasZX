@@ -2454,7 +2454,53 @@ def _canonical_top(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
     pinned = (
         _residue_pivots(_collapse_residues(_pin_residues(t, ranges), ranges), ranges) for t in terms
     )
+    if _CARRIES.get():
+        pinned = (_parity_echelon(t, ranges) for t in pinned)
     return _expand(cast(sp.Expr, sp.Add(*(_canonical_deltas(t, ranges) for t in pinned))))
+
+
+def _parity_echelon(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """``term`` with its parity deltas over bits of ``ranges``, at least one non-linear, in
+    Gauss-Jordan form: each pivot the greatest-named bit read only in its own linear term,
+    substituted (powers of bits read as the bits) into every other such delta."""
+    rows: list[sp.Expr] = []
+    others: list[sp.Expr] = []
+    for factor in sp.Mul.make_args(term):
+        if (
+            isinstance(factor, ModDelta)
+            and factor.args[1] == 2
+            and factor.free_symbols
+            and all(sp.expand(ranges.get(s, 0) - 2) == 0 for s in factor.free_symbols)
+        ):
+            rows.append(factor.args[0])
+        else:
+            others.append(factor)
+    if len(rows) < 2 or all(_linear_form(r) is not None for r in rows):
+        return term
+
+    def reduced(expr: sp.Expr, values: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+        return _trim_mod(_bit_power_free(expr.xreplace(dict(values))), sp.Integer(2))
+
+    pivots: dict[sp.Symbol, sp.Expr] = {}
+    residual: list[sp.Expr] = []
+    for row in sorted(rows, key=sp.default_sort_key):
+        row = reduced(row, pivots)
+        terms = sp.Add.make_args(row)
+        singles = [
+            t
+            for t in terms
+            if t.is_Symbol and not any(t in o.free_symbols for o in terms if o is not t)
+        ]
+        if not singles:
+            residual.append(row)
+            continue
+        x = max(singles, key=lambda s: str(s.name))
+        value = sp.expand(row - x)
+        pivots = {s: reduced(v, {x: value}) for s, v in pivots.items()}
+        pivots[x] = value
+    deltas = [ModDelta(x + v, 2) for x, v in pivots.items()]
+    deltas += [ModDelta(reduced(r, pivots), 2) for r in residual]
+    return cast(sp.Expr, sp.Mul(*others, *deltas))
 
 
 def _is_delta_power(node: sp.Expr) -> bool:
