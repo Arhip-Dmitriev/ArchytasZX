@@ -37,6 +37,7 @@ from archytaszx.algebra.pathsum import (
     PathSumUnsupported,
     PhasePoly,
     QuditPathSum,
+    _sqrt_integer,
     canon_evaluator,
     canonical,
     canonical_qudit,
@@ -236,12 +237,25 @@ def _f2_indicator(digits: list[int], table: list[int]) -> F2Poly:
     return frozenset(out)
 
 
+def _root_square(x: object) -> tuple[Fraction | None, Fraction | None]:
+    """``|x|^2`` and ``arg(x)`` in turns modulo 1 when both are rational, else None for each
+    that is not."""
+    import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+    square = sp.nsimplify(sp.expand(sp.expand_complex(x * sp.conjugate(x))))
+    turn = sp.nsimplify(sp.arg(x) / (2 * sp.pi))
+    sq = Fraction(int(square.p), int(square.q)) if square.is_Rational else None
+    tu = Fraction(int(turn.p), int(turn.q)) % 1 if turn.is_Rational else None
+    return sq, tu
+
+
 def _weights(
     node_id: NodeId, node: Node, d: int
-) -> tuple[list[Fraction], list[int], list[int], Fraction, int]:
-    """A weighted table as turns, zero indicator, sqrt-2 indicator and base magnitude (a
-    rational times sqrt(2)^power): each nonzero coefficient is a root of unity times the base
-    or sqrt(2) times it; raises otherwise."""
+) -> tuple[list[Fraction], list[int], list[tuple[Cyclo, list[int]]], Fraction, int]:
+    """A weighted table as turns, zero indicator, one (amplitude, indicator) per magnitude
+    ratio other than 1 (sqrt(2) for ratio 2, else sqrt(r) by its Gauss sums, by increasing r)
+    and base magnitude (a rational times sqrt(2)^power): each nonzero coefficient is a root of
+    unity times the base times one amplitude; raises on an irrational squared ratio."""
     assert node.phase is not None
     turns: list[Fraction] = []
     zero: list[int] = []
@@ -255,9 +269,15 @@ def _weights(
             continue
         terms = [(e, q) for e, q in c.c.items() if q]
         if len(terms) != 1:
-            raise PathSumUnsupported(
-                f"node {node_id!r} has a weight {c} that is not a root times a real"
-            )
+            square, turn = _root_square(node.phase.coefficient(v).to_sympy())
+            if square is None or turn is None:
+                raise PathSumUnsupported(
+                    f"node {node_id!r} has a weight {c} that is not a root times a real"
+                )
+            turns.append(turn)
+            zero.append(0)
+            mags.append((square, Fraction(-1), 0))
+            continue
         ((e, q),) = terms
         turns.append((Fraction(e, c.n) + (Fraction(1, 2) if q < 0 else 0)) % 1)
         zero.append(0)
@@ -266,13 +286,18 @@ def _weights(
     if not present:
         raise PathSumUnsupported(f"node {node_id!r} has every weight zero")
     base = min(present, key=lambda m: m[0])
-    root2 = []
-    for m in mags:
-        ratio = Fraction(1) if m is None else m[0] / base[0]
-        if ratio not in (1, 2):
-            raise PathSumUnsupported(f"node {node_id!r} has weights of magnitude ratio {ratio}")
-        root2.append(1 if ratio == 2 else 0)
-    return turns, zero, root2, base[1], base[2]
+    if base[1] < 0:
+        raise PathSumUnsupported(f"node {node_id!r} has a least weight of irrational magnitude")
+    ratios = [Fraction(1) if m is None else m[0] / base[0] for m in mags]
+    extra: list[tuple[Cyclo, list[int]]] = []
+    for r in sorted(set(ratios) - {1}):
+        if r == 2:
+            amp = SQRT2
+        else:
+            root, k = _sqrt_integer(r.numerator * r.denominator)
+            amp = with_sqrt2(root, k).scale(Fraction(1, r.denominator))
+        extra.append((amp, [1 if x == r else 0 for x in ratios]))
+    return turns, zero, extra, base[1], base[2]
 
 
 def port_bits(diagram: Diagram, base: int = 2) -> list[int]:
@@ -414,13 +439,12 @@ def from_diagram(
             if node.phase is None or not node.phase.is_weighted:
                 _phase_terms(phase, digits, node_id, node)
                 continue
-            turns, zero, root2, mag, mag_k = _weights(node_id, node, 1 << k)
+            turns, zero, extra, mag, mag_k = _weights(node_id, node, 1 << k)
             _interpolate(phase, digits, turns)
             c, s2 = c.scale(mag), s2 + mag_k
             if any(zero):
                 amps.append((Cyclo.rational(0), _f2_indicator(digits, zero)))
-            if any(root2):
-                amps.append((SQRT2, _f2_indicator(digits, root2)))
+            amps += [(a, _f2_indicator(digits, t)) for a, t in extra]
         elif name == X_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node)
             ys = [fresh() for _ in range(k)]
@@ -433,13 +457,12 @@ def from_diagram(
             if node.phase is None or not node.phase.is_weighted:
                 _phase_terms(phase, ys, node_id, node)
                 continue
-            turns, zero, root2, mag, mag_k = _weights(node_id, node, 1 << k)
+            turns, zero, extra, mag, mag_k = _weights(node_id, node, 1 << k)
             _interpolate(phase, ys, turns)
             c, s2 = c.scale(mag), s2 + mag_k
             if any(zero):
                 amps.append((Cyclo.rational(0), _f2_indicator(ys, zero)))
-            if any(root2):
-                amps.append((SQRT2, _f2_indicator(ys, root2)))
+            amps += [(a, _f2_indicator(ys, t)) for a, t in extra]
         elif name == FOURIER_BOX.name:
             out, inp = PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 0)
             k = bits[out]

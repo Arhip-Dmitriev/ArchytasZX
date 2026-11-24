@@ -318,3 +318,14 @@ def test_dyadic_columns_give_the_low_digit_canonical_form(monkeypatch: pytest.Mo
     assert all(step.rule != "dyadic_columns" for step in reduce(adder()).trace)
     got, base = canonical(out), canonical(want)
     assert got is not None and base is not None and got.same(base)
+
+
+def test_a_weight_of_irrational_magnitude_reads_its_square_and_turn() -> None:
+    from fractions import Fraction
+
+    import sympy as sp
+
+    from archytaszx.semantics.pathsum_diagram import _root_square
+
+    assert _root_square(sp.sqrt(3)) == (Fraction(3), Fraction(0))
+    assert _root_square(-sp.sqrt(3) * sp.I) == (Fraction(3), Fraction(3, 4))

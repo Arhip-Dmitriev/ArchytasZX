@@ -1267,10 +1267,10 @@ def _net_side(
             continue
         weighted = node.phase is not None and node.phase.is_weighted
         zero: list[int] = []
-        root2: list[int] = []
+        extra: list[Any] = []
         if weighted:
-            table, zero, root2, mag, mag_k = _weights(nid, node, 1 << k)
-            if (any(zero) or any(root2)) and amp is None:
+            table, zero, extra, mag, mag_k = _weights(nid, node, 1 << k)
+            if (any(zero) or extra) and amp is None:
                 raise PathSumUnsupported(f"node {nid!r} has weights of different magnitudes")
         else:
             table = _turns_table(nid, node, 1 << k)
@@ -1329,12 +1329,12 @@ def _net_side(
             coefs[ph] = c_text
             weights.append(w)
             lemma = "val_zw" if kind == ".Z" else "val_xw"
-            if any(zero) or any(root2):
-                from archytaszx.algebra.pathsum import SQRT2, Cyclo
+            if any(zero) or extra:
+                from archytaszx.algebra.pathsum import Cyclo
                 from archytaszx.semantics.lean_amp import atoms_text
                 from archytaszx.semantics.pathsum_diagram import _f2_indicator
 
-                inds = [(Cyclo.rational(0), zero), (SQRT2, root2)]
+                inds = [(Cyclo.rational(0), zero), *extra]
                 inds = [(c, t) for c, t in inds if any(t)]
                 node_atoms = [(amp.index(c), _f2_indicator(anchor_vars, t)) for c, t in inds]
                 tbl = [

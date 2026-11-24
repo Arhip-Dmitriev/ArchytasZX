@@ -326,9 +326,12 @@ Sum_{a+b<k} sign 2^(a+b-k) y_a l_b for each leg l and its table over y, and sqrt
 adds Sum_{a+b<k} 2^(a+b-k) x_a z_b and sqrt(2)^(-k); B and S regroup place vectors (low part,
 then high part). Identified boundary places become constraints i_a + i_b = 0.
 A weighted Z spider on 2^k is accepted when every nonzero coefficient is a root of unity times
-a base magnitude R or times R sqrt(2), R a rational times a power of sqrt(2): its phases are
-interpolated as a table, the constant gains R, and the zero indicator Z and the sqrt(2)
-indicator M (F_2 polynomials, Moebius mod 2) become amplitude atoms 0^Z and sqrt(2)^M. A
+a base magnitude R times sqrt(r), r a rational squared ratio, R a rational times a power of
+sqrt(2) (the least magnitude); a coefficient that is no root times a rational is read by its
+rational |w|^2 and rational arg(w): its phases are interpolated as a table, the constant gains
+R, and the zero indicator Z and, per ratio r other than 1, the indicator M_r (F_2 polynomials,
+Moebius mod 2) become amplitude atoms 0^Z and sqrt(r)^M_r (sqrt(2) itself for r = 2, else
+sqrt(r) as cyclotomic Gauss sums; szegedy_walk/main d = 2 with weights 1, sqrt(3), -1). A
 PathSum's amplitude atoms a^F (a cyclotomic, F an F_2 polynomial) multiply the summand by a
 when F is 1. Variables in an exponent take only [Pin], [Average] and [Average] through a half
 phase. [Pin]: a path variable y in a constraint y + B, B free of y, is set to B throughout and
