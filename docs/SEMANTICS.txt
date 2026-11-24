@@ -452,6 +452,25 @@ least term encoding taken over the orderings within each colour class (at most
 RESIDUAL_ORDERINGS = 5040 orderings, else None). Equal residual forms denote one function;
 the rung reports EQUAL on them and UNKNOWN otherwise.
 
+Mixed dimensions 2, 3, 6 (pathsum_mixed). When every leg dimension is 1, 2, 3 or 6 with
+both factors present (is_mixed), from_diagram builds a qubit PathSum through F_2 and Z_3
+digits. A leg of 6 carries the digit pair (s, f) of its value 2 s + f; every B and S on 6 must
+be B(3, 2) / S(3, 2) (3-leg first), X and F on 6 raise, boundary legs must be 2. Z_3 spiders,
+X and F on 3 build an F_3 phase as for QuditPathSum (entries multiples of 1/3); a Z on 6 adds
+to the F_2 phase Sum_k I_k(s) (t(2k) + (t(2k+1) - t(2k)) f), the indicator I_k(s) = [s = k]
+an atom variable u(s, k) for k = 1, 2 and I_0 = 1 - u(s, 1) - u(s, 2) (a monomial holding
+both atoms of one s is 0). The Z_3 digits are removed by two rules, neither enumerating s:
+  [Elim3]  s linear in the F_3 phase (s L) and in no indicator: the sum over s is 3 [L = 0];
+           L constant gives 3 or 0, else a variable x of L is solved and substituted, its
+           atoms read through the solution (I_k(a z + b) = I_{(k-b)/a}(z), I_k(b) = [b = k];
+           x must carry no atom unless the solution is a constant or one variable);
+  [Count3] s outside the F_3 phase: no atom gives the factor 3; else (u(s,1), u(s,2))
+           become two F_2 path variables with the zero amplitude atom 0^(u v), the pairs
+           (u, v) with u v = 0 being exactly the values (I_1(s), I_2(s)).
+A Z_3 digit neither rule removes raises PathSumUnsupported. The result is reduced, compared
+and certified as any qubit path sum; with a layout (Lean exports) from_diagram raises.
+e91/main and six_state_qkd/main at d = 2 decide EQUAL this way (doubled, 93 and 47 steps).
+
 Odd prime d (QuditPathSum). When every leg dimension is a power of one odd prime p
 (diagram_base), the sum is const [C(i) = 0] Sum_{y in Z_p^m} omega_p^P(i, y), P and each
 constraint a polynomial over F_p in reduced form (ModPoly: exponents below p, x^p = x). A Z

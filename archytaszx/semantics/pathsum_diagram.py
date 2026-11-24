@@ -69,6 +69,7 @@ from archytaszx.diagram.generators import (
     Z_SPIDER,
 )
 from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef
+from archytaszx.semantics.pathsum_mixed import is_mixed, mixed_sum
 
 _Item = tuple[object, ...]
 
@@ -338,6 +339,10 @@ def from_diagram(
         name = diagram.nodes[node_id].generator_type.name
         if name not in allowed:
             raise PathSumUnsupported(f"node {node_id!r} is a {name}")
+    if is_mixed(diagram):
+        if layout is not None:
+            raise PathSumUnsupported("a layout of a diagram on dimensions 2, 3 and 6")
+        return mixed_sum(diagram)
     base = diagram_base(diagram)
     uf = _Union()
     bits: dict[PortRef, int] = {}
@@ -673,8 +678,8 @@ def compare_path_sums(
     :func:`_enumerate_residual` (binary) or :func:`_enumerate_residual_qudit` (Z_p), which only
     find an UNEQUAL; raises
     :class:`PathSumUnsupported` when either diagram is outside the class."""
-    base = diagram_base(left)
-    if diagram_base(right) != base:
+    base = 2 if is_mixed(left) else diagram_base(left)
+    if (2 if is_mixed(right) else diagram_base(right)) != base:
         raise PathSumUnsupported("the two diagrams have different dimension bases")
     bits_l, bits_r = port_bits(left, base), port_bits(right, base)
     if bits_l != bits_r:
