@@ -597,3 +597,28 @@ def test_a_symbolic_binder_is_a_character_sum() -> None:
     terms = S.bs_term((1, (1,)), (1, (0, 1)), 2, 0, 1, 9)
     assert terms is not None and len(terms) == 1
     assert terms[0][1] == ((9, (1, (1, 1))),)
+
+
+def test_a_radix_adder_cancels_by_symbolic_modulus_steps() -> None:
+    from typing import cast
+
+    from archytaszx.semantics import kernel, lemmas
+
+    th = cast(kernel.Theorem, lemmas.proved(lemmas.RADIX_ADD))
+    src = S.export_symbolic(th.lhs, th.rhs, "radix_add_sym")
+    assert "symCheckD DGC" in src and "equal_symD" in src
+    assert "DgOp.pchar" in src and "DgOp.dsplit" in src
+
+
+def test_a_split_delta_needs_a_small_remainder() -> None:
+    q = S.unit_d(2)
+    big = S.dm_mul((1, (1,)), q)
+    v = S.dvar(2)
+    f = (big, (((0, v), 1), ((1,), 1), ((5,), -1)))
+    t = (S.of_q(1), (), (f,), ())
+    r = ((1, q), (5, q))
+    got = S.op_split(r, 0, 2, t)
+    assert got is not None
+    assert got[2] == ((q, (((1,), 1), ((5,), -1))), ((1, (1,)), (((0,), 1),)))
+    f2 = (big, (((0, v), 1), ((1,), 1), ((5,), 1)))
+    assert S.op_split(r, 0, 2, (S.of_q(1), (), (f2,), ())) is None

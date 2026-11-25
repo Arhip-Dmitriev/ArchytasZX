@@ -1992,6 +1992,328 @@ def _lean_rx(rc: RxCert) -> tuple[str, str]:
     return labs, f"([{terms}] : List (List RHint))"
 
 
+# dimension variables and symbolic-modulus steps (SymDig)
+
+DV0 = 3000000
+DG_ROUNDS = 64
+"""The most steps :func:`dg_cert` takes on one term before ``nf``."""
+
+DgOp = tuple[Any, ...]
+DgStep = tuple[Any, ...]
+DgCert = tuple[tuple[tuple[int, DMon], ...], tuple[DgStep, ...]]
+
+
+def dvar(i: int) -> int:
+    return DV0 + i
+
+
+def unit_d(i: int) -> DMon:
+    return (1, (0,) * i + (1,))
+
+
+def _lookup2(rg: Sequence[tuple[int, DMon]], a: int) -> DMon | None:
+    for v, m in rg:
+        if v == a:
+            return m
+    return None
+
+
+def _nth(lst: Sequence[Any], k: int) -> Any:
+    return lst[k] if 0 <= k < len(lst) else None
+
+
+def sums_ok(r: Sequence[tuple[int, DMon]], s: Sequence[tuple[int, DMon]]) -> bool:
+    vs = [x for x, _ in s]
+    return len(set(vs)) == len(vs) and all(x < DV0 for x in vs) and all(p[0] not in vs for p in r)
+
+
+def ip_drop_v(v: int, p: IPoly) -> IPoly:
+    return tuple(t for t in p if v not in t[0])
+
+
+def ip_take_v(v: int, p: IPoly) -> IPoly:
+    out = []
+    for m, c in p:
+        if v in m:
+            mm = list(m)
+            mm.remove(v)
+            out.append((tuple(mm), c))
+    return tuple(out)
+
+
+def op_pin(r: Sequence[tuple[int, DMon]], p: int, j: int, t: STm) -> STm | None:
+    """``opPin``."""
+    sp_, f = _nth(t[1], p), _nth(t[2], j)
+    if sp_ is None or f is None:
+        return None
+    x, d = sp_
+    lin = ip_lin(x, f[1])
+    if lin is None:
+        return None
+    s = ip_const(lin[0])
+    if s is None:
+        return None
+    v = pin_val(s, lin[1])
+    if len(v) != 1 or len(v[0][0]) != 1 or v[0][1] != 1:
+        return None
+    y = v[0][0][0]
+    if not (s in (1, -1) and f[0] == d and y != x and d[0] != 0):
+        return None
+    if _lookup2((*r, *t[1]), y) != d:
+        return None
+    vy = ip_v(y)
+    return (
+        t[0],
+        t[1][:p] + t[1][p + 1 :],
+        tuple(fac_sub(x, vy, g) for g in t[2]),
+        tuple(fac_sub(x, vy, g) for g in t[3]),
+    )
+
+
+def op_comb(j: int, k: int, c: int, t: STm) -> STm | None:
+    """``opComb``."""
+    f, g = _nth(t[2], j), _nth(t[2], k)
+    if f is None or g is None or j == k or f[0] != g[0]:
+        return None
+    ds = list(t[2])
+    ds[j] = (f[0], ip_add(f[1], ip_smul(c, g[1])))
+    return (t[0], t[1], tuple(ds), t[3])
+
+
+def op_merge(j: int, i: int, t: STm) -> STm | None:
+    """``opMerge``."""
+    f = _nth(t[3], j)
+    if f is None or f[0][0] == 0:
+        return None
+    ps = list(t[3])
+    ps[j] = (dm_mul(f[0], unit_d(i)), ip_mul(ip_v(dvar(i)), f[1]))
+    return (t[0], t[1], t[2], tuple(ps))
+
+
+def op_pchar(p: int, i: int, k: int, t: STm) -> STm | None:
+    """``opPchar``."""
+    sp_, g = _nth(t[1], p), _nth(t[2], k)
+    if sp_ is None or g is None:
+        return None
+    x, m = sp_
+    if m[0] == 0 or g[0] != unit_d(i) or any(fac_has(x, f) for f in t[2]):
+        return None
+    mq = dm_mul(m, unit_d(i))
+    cd = char_data(x, mq, t[3])
+    if cd is None:
+        return None
+    a, b = cd
+    if not all(dvar(i) in u[0] for u in ip_sub(a, g[1])):
+        return None
+    return (
+        cm_mul(t[0], rt_d(m, 2)),
+        t[1][:p] + t[1][p + 1 :],
+        (*t[2], (mq, a)),
+        (*(f for f in t[3] if not fac_has(x, f)), (mq, b)),
+    )
+
+
+def small_b(rg: Sequence[tuple[int, DMon]], q: DMon, p: IPoly) -> bool:
+    """``smallB``."""
+    if not p:
+        return True
+    if len(p) == 1 and len(p[0][0]) == 1:
+        return p[0][1] in (1, -1) and _lookup2(rg, p[0][0][0]) == q
+    if len(p) == 2 and len(p[0][0]) == 1 and len(p[1][0]) == 1:
+        return (
+            p[0][1] in (1, -1)
+            and p[0][1] + p[1][1] == 0
+            and _lookup2(rg, p[0][0][0]) == q
+            and _lookup2(rg, p[1][0][0]) == q
+        )
+    return False
+
+
+def op_split(r: Sequence[tuple[int, DMon]], j: int, i: int, t: STm) -> STm | None:
+    """``opSplit``."""
+    f = _nth(t[2], j)
+    if f is None or f[0][0] == 0 or not dm_dvd(unit_d(i), f[0]):
+        return None
+    b = ip_drop_v(dvar(i), f[1])
+    if not small_b((*r, *t[1]), unit_d(i), b):
+        return None
+    ds = list(t[2])
+    ds[j] = (unit_d(i), b)
+    ds.append((dm_div(f[0], unit_d(i)), ip_take_v(dvar(i), f[1])))
+    return (t[0], t[1], tuple(ds), t[3])
+
+
+def op_impl(j: int, i: int, t: STm) -> STm | None:
+    """``opImpl``."""
+    f = _nth(t[2], j)
+    if f is None or not dm_dvd(unit_d(i), f[0]):
+        return None
+    return (t[0], t[1], (*t[2], (unit_d(i), ip_drop_v(dvar(i), f[1]))), t[3])
+
+
+def dg_op(r: Sequence[tuple[int, DMon]], o: DgOp, t: STm) -> STm | None:
+    """``dgOp``."""
+    if o[0] == "pin":
+        return op_pin(r, o[1], o[2], t)
+    if o[0] == "comb":
+        return op_comb(o[1], o[2], o[3], t)
+    if o[0] == "merge":
+        return op_merge(o[1], o[2], t)
+    if o[0] == "pchar":
+        return op_pchar(o[1], o[2], o[3], t)
+    if o[0] == "dsplit":
+        return op_split(r, o[1], o[2], t)
+    return op_impl(o[1], o[2], t)
+
+
+def dg_run(
+    fl: Sequence[int], r: Sequence[tuple[int, DMon]], steps: Sequence[DgStep], e: Sequence[STm]
+) -> tuple[STm, ...] | None:
+    """``dgRun``."""
+    out = tuple(e)
+    for st in steps:
+        if st[0] == "nf":
+            out = nf_ex(fl, out)
+            continue
+        t = _nth(out, st[1])
+        if t is None or not sums_ok(r, t[1]):
+            return None
+        t2 = dg_op(r, st[2], t)
+        if t2 is None:
+            return None
+        out = (*out[: st[1]], t2, *out[st[1] + 1 :])
+    return out
+
+
+def _syms(t: STm) -> list[int]:
+    n = max((len(m[1]) for m, _ in (*t[2], *t[3])), default=0)
+    n = max([n, *(len(d[1]) for _, d in t[1])])
+    return list(range(n))
+
+
+def _dg_sum_step(r: Sequence[tuple[int, DMon]], t: STm) -> tuple[list[DgOp], STm] | None:
+    """The first of: a pin, a pin after a combination, a merge of a root of unity into a
+    larger modulus a bound variable also reads, a partial character sum."""
+    for p in range(len(t[1])):
+        for j in range(len(t[2])):
+            got = op_pin(r, p, j, t)
+            if got is not None:
+                return [("pin", p, j)], got
+    for p, (x, d) in enumerate(t[1]):
+        for j, f in enumerate(t[2]):
+            if f[0] != d or not fac_has(x, f):
+                continue
+            for k, g in enumerate(t[2]):
+                if k == j or g[0] != d or fac_has(x, g):
+                    continue
+                for c in (-1, 1):
+                    u = op_comb(j, k, c, t)
+                    got = None if u is None else op_pin(r, p, j, u)
+                    if got is not None:
+                        return [("comb", j, k, c), ("pin", p, j)], got
+    for i in _syms(t):
+        for p in range(len(t[1])):
+            for k in range(len(t[2])):
+                got = op_pchar(p, i, k, t)
+                if got is not None:
+                    return [("pchar", p, i, k)], got
+    for x, _d in t[1]:
+        mods = {f[0] for f in t[3] if fac_has(x, f)}
+        for j, f in enumerate(t[3]):
+            if not fac_has(x, f):
+                continue
+            for i in _syms(t):
+                if dm_mul(f[0], unit_d(i)) in mods:
+                    got = op_merge(j, i, t)
+                    if got is not None:
+                        return [("merge", j, i)], got
+    return None
+
+
+def _dg_split_step(r: Sequence[tuple[int, DMon]], t: STm) -> tuple[DgOp, STm] | None:
+    for j, f in enumerate(t[2]):
+        for i in _syms(t):
+            if any(dvar(i) in m for m, _ in f[1]):
+                got = op_split(r, j, i, t)
+                if got is not None:
+                    return ("dsplit", j, i), got
+    return None
+
+
+def dg_cert(fl: Sequence[int], e: Sequence[STm], r: Sequence[tuple[int, DMon]]) -> DgCert | None:
+    """``dgOK``'s certificate: on each term, pins, merges and partial character sums
+    (:func:`_dg_sum_step`), ``nf``, then on each term every delta split (``dsplit``), ``nf``,
+    every implied delta of a symbol variable (``impl``), ``nf``; None unless that leaves
+    nothing."""
+    if any(x >= DV0 for t in e for x in tm_vars(t)):
+        return None
+    steps: list[DgStep] = []
+    cur = list(e)
+    for k in range(len(cur)):
+        for _ in range(DG_ROUNDS):
+            if not sums_ok(r, cur[k][1]):
+                break
+            got = _dg_sum_step(r, cur[k])
+            if got is None:
+                break
+            steps += [("op", k, o) for o in got[0]]
+            cur[k] = got[1]
+    steps.append(("nf",))
+    cur = list(nf_ex(fl, cur))
+    for k in range(len(cur)):
+        for _ in range(DG_ROUNDS):
+            if not sums_ok(r, cur[k][1]):
+                break
+            got2 = _dg_split_step(r, cur[k])
+            if got2 is None:
+                break
+            steps.append(("op", k, got2[0]))
+            cur[k] = got2[1]
+    steps.append(("nf",))
+    cur = list(nf_ex(fl, cur))
+    for k in range(len(cur)):
+        t = cur[k]
+        if not sums_ok(r, t[1]):
+            continue
+        for j, f in enumerate(t[2]):
+            for i in _syms(t):
+                if any(dvar(i) in m for m, _ in f[1]) and dm_dvd(unit_d(i), f[0]):
+                    got3 = op_impl(j, i, cur[k])
+                    if got3 is not None:
+                        steps.append(("op", k, ("impl", j, i)))
+                        cur[k] = got3
+    steps.append(("nf",))
+    if not steps or dg_run(fl, r, steps, e) != ():
+        return None
+    return tuple(r), tuple(steps)
+
+
+def dg_ranges(
+    labs: Mapping[int, int], dt: Callable[[int], DMon], ix: Sequence[int], bnd: Sequence[int]
+) -> tuple[tuple[int, DMon], ...]:
+    """The boundary labels ``labOKD`` accepts, each with its dimension."""
+    out = []
+    for lab in bnd:
+        i = labs.get(lab, 0)
+        if i in ix and lab < DV0:
+            out.append((lab, dt(i)))
+    return tuple(out)
+
+
+def _lean_dgop(o: DgOp) -> str:
+    args = " ".join(f"({a})" if isinstance(a, int) and a < 0 else str(a) for a in o[1:])
+    return f"DgOp.{o[0]} {args}"
+
+
+def _lean_dg(dc: DgCert) -> tuple[str, str]:
+    """The labels' ranges and the steps of a step certificate, as list literals."""
+    labs = ", ".join(f"({x}, ({_lean_dm(m)} : DMon))" for x, m in dc[0])
+    steps = ", ".join(
+        "DgStep.nf" if s[0] == "nf" else f"DgStep.op {s[1]} ({_lean_dgop(s[2])})" for s in dc[1]
+    )
+    return f"[{labs}]", f"[{steps}]"
+
+
 # networks
 
 
@@ -2538,13 +2860,16 @@ def sym_check(
     fz: list[tuple[int, FZCert]] | None = None,
     rg: list[RgCert] | None = None,
     rx: list[RxCert] | None = None,
+    dg: list[DgCert] | None = None,
 ) -> bool:
     """``symCheck``; a network is ``(nodes, internal, boundary)``. With ``fz``, a sum-free
     residual whose characters vanish (:func:`fz_cert`) also passes (``symCheckF``), its
     modulus and certificate appended to ``fz``; with ``rg``, failing that, a residual
     vanishing on the labels' ranges (:func:`rg_cert`, ``symCheckR``), its certificate
     appended to ``rg``; with ``rx``, failing that, a residual cancelling under the labels'
-    ranges (:func:`rx_cert`), its labels and rounds appended to ``rx``."""
+    ranges (:func:`rx_cert`), its labels and rounds appended to ``rx``; with ``dg``, failing
+    those, a difference the steps of :func:`dg_cert` cancel (``symCheckD``), its certificate
+    appended to ``dg``."""
     if sorted(n0[2]) != sorted(n1[2]):
         return False
     if not (BS_NODES or _BS_ON) and any(n[0] in ("B", "S") for n in (*n0[0], *n1[0])):
@@ -2588,6 +2913,11 @@ def sym_check(
             got_r = rg_cert(rest, lab_ranges(labs, dt, ix, n0[2]))
             if got_r is not None:
                 rg.append(got_r)
+                return True
+        if dg is not None and tr is tr_net:
+            got_d = dg_cert(fl, ex_mul(s0, e0) + ex_mul(neg, e1), dg_ranges(labs, dt, ix, n0[2]))
+            if got_d is not None:
+                dg.append(got_d)
                 return True
     return False
 
@@ -3254,6 +3584,7 @@ class _SymExport:
         self.q: Any = None
         self.fz: list[tuple[int, FZCert]] = []
         self.rg: list[RgCert] = []
+        self.dg: list[DgCert] = []
         self.g_lemma: dict[str, str] = {}
 
     # tables as Python
@@ -3395,7 +3726,7 @@ class _SymExport:
         self.cp_rows = {}
         if not self.compact_rules():
             return False
-        self.fz, self.rg = [], []
+        self.fz, self.rg, self.dg = [], [], []
         global _BS_ON
         bs = _BS_ON
         _BS_ON = True
@@ -3430,6 +3761,7 @@ class _SymExport:
                 return True
             self.fz = []
             self.rg = []
+            self.dg = []
             self.rx = []
             args = (
                 self.fl,
@@ -3446,9 +3778,9 @@ class _SymExport:
             first = self.chained_gadgets()
             if first and self.compact_check(args):
                 return True
-            self.fz, self.rg = [], []
+            self.fz, self.rg, self.dg = [], [], []
             try:
-                if sym_check(*args, self.fz, self.rg):
+                if sym_check(*args, self.fz, self.rg, None, self.dg):
                     return True
                 failed: NetUnsupported | None = None
             except NetUnsupported as exc:
@@ -3827,8 +4159,24 @@ class _SymExport:
         if g:
             lemma = self.g_lemma.get(chk, "equal_symS")
         else:
-            lemma = "equal_symF" if self.fz else "equal_symR" if self.rg else "equal_sym"
-        fzargs = " FZN FZC" if self.fz and not g else " RGC" if self.rg and not g else ""
+            lemma = (
+                "equal_symF"
+                if self.fz
+                else "equal_symR"
+                if self.rg
+                else "equal_symD"
+                if self.dg
+                else "equal_sym"
+            )
+        fzargs = (
+            " FZN FZC"
+            if self.fz and not g
+            else " RGC"
+            if self.rg and not g
+            else " DGC"
+            if self.dg and not g
+            else ""
+        )
         return (
             f"{lemma} {envt} {self.rho} {self.hr} FL {self.call('flOK')}{fzargs} DT PT RL labs IX "
             f"{self.call('envD', ks)} {self.call('envP', ks)} rfl {n0} {n1} {a0} {a1} _ _ "
@@ -4052,6 +4400,7 @@ class _SymExport:
             f"simp [{unfold}, Δ, DT, ρ, DMon.den, npow"
             + "".join(f", hc{j}" for j in range(len(self.constraints)))
             + "]"
+            + (" <;> ring" if any(sum(1 for k in self.dtf(i)[1] if k) > 1 for i in self.ix) else "")
             if nix
             else ""
         )
@@ -5507,6 +5856,17 @@ class _SymExport:
                 "set_option maxHeartbeats 0 in\n"
                 + doc
                 + f"theorem {name} : symCheckR RGC FL DT PT RL labs IX {a} {b} {s0t} {s1t} = "
+                "true := by decide +kernel",
+            ]
+        elif self.dg and name == "chk":
+            dgr, dgs = _lean_dg(self.dg[0])
+            return [
+                f"/-- The labels' ranges. -/\ndef DGR : List (ℕ × DMon) := {dgr}",
+                f"/-- The steps that cancel the difference. -/\ndef DGS : List DgStep := {dgs}",
+                "/-- The step certificate. -/\ndef DGC : DgCert := (DGR, DGS)",
+                "set_option maxHeartbeats 0 in\n"
+                + doc
+                + f"theorem {name} : symCheckD DGC FL DT PT RL labs IX {a} {b} {s0t} {s1t} = "
                 "true := by decide +kernel",
             ]
         else:
