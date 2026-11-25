@@ -290,7 +290,7 @@ The proof instantiates \cref{thm:lean-sym-relabelphi} with $\kappa'=\kappa$ and 
 
 \section{Splitting an Outermost Box in Two}\label{sec:lean-sym-split}
 
-Module \file{LinkedSplit.lean} (imports \file{LinkedPeel.lean}) proves that splitting the copies of an outermost node box between two boxes keeps the linked digit sum. In $L$ the box $\mathit{bid}$ over the nodes $B$ has $\kappa(c_1)+\kappa(c_2)$ copies (multiplicity index $m_b$). In $L'$ it keeps $\kappa(c_1)$ copies, and a copy of $B$, the nodes $\mathrm{cp}(x)$ under a new outermost box $\mathit{bid}_2$, carries $\kappa(c_2)$ copies; copy $j+\kappa(c_1)$ of $B$ in $L$ is copy $j$ of the copy in $L'$. A port $e.1$ of a top-level Z or X spider outside $B$ that bundles over $\mathit{bid}$ (an entry $e$ of the \term{tail list} $T$) becomes two ports: $e.1$ over $\mathit{bid}$ and the appended port $e.2$ over $\mathit{bid}_2$. The box $\mathit{bid}$ has no links of its own (\lean!lin! below requires depth at least $1$), and links of boxes inside it hold once on $B$ and once on the copy.
+Module \file{LinkedSplit.lean} (imports \file{LinkedPeel.lean}) proves that splitting the copies of an outermost node box between two boxes keeps the linked digit sum. In $L$ the box $\mathit{bid}$ over the nodes $B$ has $\kappa(c_1)+\kappa(c_2)$ copies (multiplicity index $m_b$). In $L'$ it keeps $\kappa(c_1)$ copies, and a copy of $B$, the nodes $\mathrm{cp}(x)$ under a new outermost box $\mathit{bid}_2$, carries $\kappa(c_2)$ copies; copy $j+\kappa(c_1)$ of $B$ in $L$ is copy $j$ of the copy in $L'$. A port $e.1$ of a Z or X spider outside $B$ that bundles over $\mathit{bid}$ (an entry $e$ of the \term{tail list} $T$) becomes two ports: $e.1$ over $\mathit{bid}$ and the appended port $e.2$ over $\mathit{bid}_2$. The box $\mathit{bid}$ has no links of its own (\lean!lin! below requires depth at least $1$), and links of boxes inside it hold once on $B$ and once on the copy.
 
 \subsection{Definitions}
 
@@ -312,20 +312,21 @@ For a diagram $D$, $\mathrm{dlegs}_\kappa(D,x,t,o,\mathit{len})$ lists $\mathrm{
 \begin{itemize}
 \item $\mathrm{SplitL}_{B,T}(p)$ holds when $p.\mathit{node}\in B$ or $p$ is the first component of an entry of $T$.
 \item $\mathrm{cq}_{B,\mathrm{cp},T}(p)$ is $\mathrm{cpP}_{\mathrm{cp}}(p)$ when $p.\mathit{node}\in B$, else the second component of the first entry of $T$ with first component $p$, else $p$.
-\item The split map of digits: $\mathrm{split}\varphi_K(p,[])=(p,[])$ and
+\item $\mathrm{spos}_{L,B}(p)$, the position of the split coordinate in a copy tuple of $p$, is $0$ when $p.\mathit{node}\in B$ and $|\mathrm{nodeChain}_L(p.\mathit{node})|$ otherwise (the first coordinate past the node's own chain).
+\item The split map of digits, with $s=\mathrm{spos}(p)$:
 \[
-\mathrm{split}\varphi_K(p,j\mathbin{::}u)=\begin{cases}(\mathrm{cq}(p),(j-K)\mathbin{::}u)&\mathrm{SplitL}(p)\land K\le j\\(p,j\mathbin{::}u)&\text{else.}\end{cases}
+\mathrm{split}\varphi_K(p,t)=\begin{cases}\bigl(\mathrm{cq}(p),\ t[s:=t_s-K]\bigr)&\mathrm{SplitL}(p)\land s<|t|\land K\le t_s,\\(p,t)&\text{otherwise.}\end{cases}
 \]
 \item $\mathrm{extT}_T(n)$ is $n$ with one output port appended for each entry $e$ of $T$ with $e.1.\mathit{node}=n.\mathrm{id}$ and $e.1.\mathit{out}$ (dimension index $n.\mathrm{outs.getD}(e.1.\mathit{pos})\,0$), and one input port appended likewise for each such entry with $\lnot e.1.\mathit{out}$, in the order of $T$.
 \end{itemize}
 \end{definition}
 
 \begin{definition}[\lean!BoxSplitOK!]\label{def:lean-sym-boxsplitok}
-$\mathrm{BoxSplitOK}(L,L',\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2,B,\mathrm{cp},T)$ is the conjunction of the 25 fields of \cref{tab:lean-sym-boxsplitok}.
+$\mathrm{BoxSplitOK}(L,L',\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2,B,\mathrm{cp},\mathrm{cb},T)$ is the conjunction of the fields of \cref{tab:lean-sym-boxsplitok}; $\mathrm{cb}$ maps each box read by a node of $B$ to the box its copy reads.
 \end{definition}
 
 \begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.13\linewidth}X@{}}
-\caption{The fields of \lean!BoxSplitOK!. ``Moved'' abbreviates $\mathrm{SplitL}_{B,T}$; $\mathrm{cq}$ is $\mathrm{cq}_{B,\mathrm{cp},T}$.}\label{tab:lean-sym-boxsplitok}\\
+\caption{The fields of \lean!BoxSplitOK!. ``Moved'' abbreviates $\mathrm{SplitL}_{B,T}$; $\mathrm{cq}$ is $\mathrm{cq}_{B,\mathrm{cp},T}$ and $\mathrm{spos}$ is $\mathrm{spos}_{L,B}$.}\label{tab:lean-sym-boxsplitok}\\
 \toprule
 Field & Statement \\
 \midrule
@@ -334,70 +335,82 @@ Field & Statement \\
 Field & Statement \\
 \midrule
 \endhead
-\lean!cph! & every copy-indexed phase $q=(x,y,c,m)$ of $L$ is on a node of $L$, and $x\in B$ implies $y=\mathit{bid}$ and $m=c_1$ \\
-\lean!cph'! & $L'.\mathrm{cph}=L.\mathrm{cph}\mathbin{+\!\!+}[(\mathrm{cp}\,x,\mathit{bid}_2,c+1,c_1)\mid (x,y,c,m)\in L.\mathrm{cph},\ x\in B]$ \\
-\lean!cphO! & for a phase $(x,y,c,m)$ of $L$ with $x\notin B$, $\mathrm{depth}_{L'}(y,x)=\mathrm{depth}_L(y,x)$ \\
+\lean!cph! & every copy-indexed phase $q=(x,y,c,m)$ of $L$ is on a node of $L$ with $\mathrm{depth}_{L'}(y,x)=\mathrm{depth}_L(y,x)$; for $x\in B$, $\mathrm{depth}_{L'}(\mathrm{cb}\,y,\mathrm{cp}\,x)=\mathrm{depth}_L(y,x)$, and depth $0$ implies $m=c_1$ \\
+\lean!cph'! & $L'.\mathrm{cph}=L.\mathrm{cph}\mathbin{+\!\!+}[(\mathrm{cp}\,x,\mathrm{cb}\,y,c+[\mathrm{depth}_L(y,x)=0],m)\mid (x,y,c,m)\in L.\mathrm{cph},\ x\in B]$ \\
+\lean!cdim! & every copy-indexed port dimension $q=(p,y,c,m)$ of $L$ has $p$ a leg of $L$ and no first component of $T$, with the depth conditions of \lean!cph! at $p.\mathit{node}$ \\
+\lean!cdim'! & $L'.\mathrm{cdim}=L.\mathrm{cdim}\mathbin{+\!\!+}[(\mathrm{cpP}\,p,\mathrm{cb}\,y,c+[\mathrm{depth}_L(y,p.\mathit{node})=0],m)\mid (p,y,c,m)\in L.\mathrm{cdim},\ p.\mathit{node}\in B]$ \\
 \lean!nodes! & $L'.\mathrm{nodes}=L.\mathrm{nodes.map}\,\mathrm{extT}_T\mathbin{+\!\!+}(L.\mathrm{nodes.filter}(n.\mathrm{id}\in B)).\mathrm{map}\,\mathrm{cpNode}_{\mathrm{cp}}$ \\
 \lean!ids!, \lean!legsL!, \lean!legs!, \lean!bnd! & the node ids of $L'$, the legs of $L$, the legs of $L'$ and the boundary of $L'$ have no duplicates \\
 \lean!chB! & for $n\in B$ with $r=\mathrm{nodeChain}_L(n).\mathrm{tail}$: $\mathrm{nodeChain}_L(n)=m_b\mathbin{::}r$, $\mathrm{nodeChain}_{L'}(n)=c_1\mathbin{::}r$, $\mathrm{nodeChain}_{L'}(\mathrm{cp}\,n)=c_2\mathbin{::}r$, $\mathrm{depth}_L(\mathit{bid},n)=\mathrm{depth}_{L'}(\mathit{bid},n)=\mathrm{depth}_{L'}(\mathit{bid}_2,\mathrm{cp}\,n)=0$ \\
 \lean!chO! & for $n$ off $B$, $\mathrm{nodeChain}_{L'}(n)=\mathrm{nodeChain}_L(n)$ \\
-\lean!tl! & every entry $e\in T$ has $e.1$ a leg of $L$ off $B$ on a node of empty node chain, $e.2$ on the same node and side, and that node a Z or X spider \\
-\lean!legS! & a moved leg $p$ of $L$ with $r=\mathrm{legChain}_L(p).\mathrm{tail}$ has $\mathrm{legChain}_L(p)=m_b\mathbin{::}r$, $\mathrm{legChain}_{L'}(p)=c_1\mathbin{::}r$, $\mathrm{cq}(p)$ a leg of $L'$ with $\mathrm{legChain}_{L'}(\mathrm{cq}\,p)=c_2\mathbin{::}r$ and $\mathrm{portDim}_{L'}(\mathrm{cq}\,p)=\mathrm{portDim}_L(p)$ \\
+\lean!tl! & every entry $e\in T$ has $e.1$ a leg of $L$ off $B$, $e.2$ on the same node and side, and that node a Z or X spider \\
+\lean!legS! & a moved leg $p$ of $L$ has $\mathrm{spos}(p)<|\mathrm{legChain}_L(p)|$, $\mathrm{legChain}_L(p)_{\mathrm{spos}(p)}=m_b$, $\mathrm{legChain}_{L'}(p)=\mathrm{legChain}_L(p)[\mathrm{spos}(p):=c_1]$, $\mathrm{cq}(p)$ a leg of $L'$ with $\mathrm{legChain}_{L'}(\mathrm{cq}\,p)=\mathrm{legChain}_L(p)[\mathrm{spos}(p):=c_2]$ and $\mathrm{portDim}_{L'}(\mathrm{cq}\,p)=\mathrm{portDim}_L(p)$ \\
 \lean!legO! & an unmoved leg keeps its leg chain \\
 \lean!legL! & every leg of $L$ is a leg of $L'$ of the same dimension index \\
 \lean!legs'! & every leg of $L'$ is a leg of $L$ or $\mathrm{cq}(p)$ for a moved leg $p$ \\
 \lean!cqinj!, \lean!cqnew! & $\mathrm{cq}$ is one to one on moved legs and sends them off $\mathrm{legs}(L)$ \\
-\lean!wires! & every wire $w$ of $L$ joins legs of $L$, both moved or both unmoved, of equal leg chains, with $\mathrm{WireIn}(L'.\mathrm{wires},w)$ and, when moved, $\mathrm{WireIn}(L'.\mathrm{wires},(\mathrm{cq}\,w_1,\mathrm{cq}\,w_2))$ \\
+\lean!wires! & every wire $w$ of $L$ joins legs of $L$, both moved or both unmoved, of equal leg chains, with $\mathrm{WireIn}(L'.\mathrm{wires},w)$ and, when moved, $\mathrm{spos}=0$ at both ends and $\mathrm{WireIn}(L'.\mathrm{wires},(\mathrm{cq}\,w_1,\mathrm{cq}\,w_2))$ \\
 \lean!wires'! & every wire of $L'$ is a wire of $L$ (either way round) or $(\mathrm{cq}\,w_1,\mathrm{cq}\,w_2)$ (either way round) for a moved wire $w$ of $L$ \\
-\lean!lwf! & the link well-formedness of \lean!PeelOK.lwf!, stated with leg chains \\
-\lean!lin! & a link $\ell$ with $\ell.\mathrm{l1}$ moved has its four ports moved, depth at least $1$, a link of $L'$ with the same ports, depth and multiplicity, and a link of $L'$ on the ports $\mathrm{cq}(\cdot)$ with the same depth at $\mathrm{cq}(\ell.\mathrm{l1})$ and the same multiplicity \\
+\lean!lwf! & every link's four ports are legs of $L$, $\mathrm{legChain}(\ell.\mathrm{l2})=\mathrm{legChain}(\ell.\mathrm{l1})$, the link's depth $\delta$ is below that chain's length with entry $\mathrm{multOf}(\ell.\mathrm{box})$ there, and the end ports' chains are that chain without entry $\delta$ \\
+\lean!lin! & a link with $\ell.\mathrm{l1}$ moved has its four ports moved with $\mathrm{spos}=0$, depth at least $1$, a link of $L'$ with the same ports, depth and multiplicity, and a link of $L'$ on the ports $\mathrm{cq}(\cdot)$ with the same depth at $\mathrm{cq}(\ell.\mathrm{l1})$ and the same multiplicity \\
 \lean!lout! & a link with $\ell.\mathrm{l1}$ unmoved has its four ports unmoved and a link of $L'$ with the same ports, depth and multiplicity \\
 \lean!links'! & every link of $L'$ arises in one of the ways of \lean!lin!, \lean!lout! \\
+\lean!al! & every aligned wire $w$ of $L$ joins legs of $L$, both moved or both unmoved, has a permutation into the chain of $w.a$ with $\mathrm{legChain}(w.b)=\mathrm{pick}(\mathrm{legChain}(w.a),w.\mathrm{perm})$, is aligned in $L'$, and when moved has $\mathrm{spos}(w.b)<|w.\mathrm{perm}|$, the permutation sending exactly position $\mathrm{spos}(w.b)$ to $\mathrm{spos}(w.a)$, and $\langle\mathrm{cq}\,w.a,\mathrm{cq}\,w.b,w.\mathrm{perm}\rangle$ aligned in $L'$ \\
+\lean!al'! & every aligned wire of $L'$ is one of $L$ or the $\mathrm{cq}$ image of a moved one \\
 \lean!bndL!, \lean!bnd'! & every boundary port $p$ of $L$ is a leg of $L$ and a boundary port of $L'$, with $\mathrm{cq}\,p$ one when $p$ is moved; every boundary port of $L'$ is one of these \\
 \bottomrule
 \end{xltabular}
 
-\subsection{Lemmas and the main theorem}
+\subsection{Lemmas and the main theorems}
 
 \begin{proposition}[Split-map lemmas]
 \begin{enumerate}
-\item $\mathrm{split}\varphi_K(p,j\mathbin{::}u)=(p,j\mathbin{::}u)$ for $j<K$; $\mathrm{split}\varphi_K(p,(j+K)\mathbin{::}u)=(\mathrm{cq}\,p,j\mathbin{::}u)$ for moved $p$; $\mathrm{split}\varphi_K(p,t)=(p,t)$ for unmoved $p$ (\lean!split!$\varphi$\lean!_lo!, \lean!split!$\varphi$\lean!_hi!, \lean!split!$\varphi$\lean!_O!); every value is one of these (\lean!split!$\varphi$\lean!_cases!).
+\item $\mathrm{split}\varphi_K(p,t)=(p,t)$ for unmoved $p$ (\lean!splitφ_O!) and when $t_{\mathrm{spos}(p)}<K$ (\lean!splitφ_low!); for moved $p$ with $K\le t_{\mathrm{spos}(p)}$ it is $(\mathrm{cq}\,p,t[\mathrm{spos}(p):=t_{\mathrm{spos}(p)}-K])$ (\lean!splitφ_high!); \lean!splitφ_mid_lo! and \lean!splitφ_mid_hi! state the same for $t=u\mathbin{+\!\!+}j\mathbin{::}w$ with $|u|=\mathrm{spos}(p)$, \lean!splitφ_lo0! and \lean!splitφ_hi0! for $\mathrm{spos}(p)=0$; every value is one of these (\lean!splitφ_cases!).
 \item $\mathrm{cq}(p)=\mathrm{cpP}(p)$ on $B$; off $B$ an entry $e\in T$ with $e.1=p$ gives $\mathrm{cq}(p)=e.2$ (\lean!cq_B!, \lean!cq_T!).
-\item $\mathrm{pmap}$ fixes a pair with both copy heads below $K$ and a pair of unmoved legs, and sends $\mathrm{shiftS}_K(y)$ for $y$ on moved legs with nonempty copy indices to $\mathrm{portsP}_{\mathrm{cq}}(y)$ (\lean!pmap_lo!, \lean!pmap_O!, \lean!pmap_shift!).
+\item $\mathrm{pmap}$ fixes a pair whose split coordinates are below $K$ and a pair of unmoved legs, and sends $\mathrm{shiftS}_K(y)$ for $y$ on moved legs to $\mathrm{portsP}_{\mathrm{cq}}(y)$ (\lean!pmap_lo!, \lean!pmap_O!, \lean!pmap_shift!).
 \end{enumerate}
 \end{proposition}
 
-From \lean!BoxSplitOK! the module derives the node ids of $L'$ (\lean!idsEq!), unique ids of $L$ (\lean!idsL!), freshness and injectivity of $\mathrm{cp}$ on $B$ (\lean!cp_fresh!, \lean!cp_inj!), the common tail $r$ of the three chains of a moved leg (\lean!lS!), that $\mathrm{split}\varphi$ keeps node and side off $B$ (\lean!BoxSplitOK.!$\varphi$\lean!_node!), the into, onto and one-to-one conditions of \cref{thm:lean-sym-relabelphi} (\lean!into!, \lean!onto!, \lean!onto_same!, \lean!onto_cq!, \lean!inj!), and the wire facts \lean!wire_back!, \lean!wire_back_cq!, \lean!wire_ch!.
+From \lean!BoxSplitOK! the module derives \lean!idsEq!, \lean!idsL!, \lean!cp_fresh!, \lean!cp_inj!, \lean!cpP_inj!, \lean!cpP_fresh!, the chain facts \lean!lS! and \lean!lS0!, \lean!φ_node!, the into, onto, and one-to-one conditions of \cref{thm:lean-sym-relabelphi} (\lean!into!, \lean!onto!, \lean!onto_same!, \lean!onto_cq!, \lean!inj!), the wire facts \lean!wire_back!, \lean!wire_back_cq!, \lean!wire_ch!, and for aligned wires \lean!pmapA_lo!, \lean!pmapA_hi!.
 
-\begin{theorem}[\lean!BoxSplitOK.fwd!, \lean!BoxSplitOK.bwd!]
-Under $\mathrm{BoxSplitOK}$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, with $\varphi=\mathrm{split}\varphi_{\kappa(c_1)}$, every digit pair of $L$ goes by $\mathrm{pmap}_\varphi$ (possibly swapped) to a digit pair of $L'$, and every digit pair of $L'$ comes so from one of $L$.
+\begin{theorem}[\lean!BoxSplitOK.fwd!, \lean!BoxSplitOK.bwd!, \lean!BoxSplitOK.fwdA!, \lean!BoxSplitOK.bwdA!]
+Under $\mathrm{BoxSplitOK}$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, with $\varphi=\mathrm{split}\varphi_{\kappa(c_1)}$, every digit pair of $L$ (wire, link, and aligned pairs, \lean!dpairsX!) goes by $\mathrm{pmap}_\varphi$ (possibly swapped) to one of $L'$, and every digit pair of $L'$ comes so from one of $L$.
 \end{theorem}
 
-\begin{proposition}[Phase indices: \lean!phAt_eq!, \lean!phAt_cp!]
-For a node $n$ of $L$, $\mathrm{phAt}_{L'}(n,t)=\mathrm{phAt}_L(n,t)$; for $n\in B$, $\mathrm{phAt}_{L'}(\mathrm{cpNode}\,n,j\mathbin{::}u)=\mathrm{phAt}_L(n,(j+\kappa(c_1))\mathbin{::}u)$.
+\begin{proposition}[Phase indices and port dimensions]
+For a node $n$ of $L$, $\mathrm{phAt}_{L'}(n,t)=\mathrm{phAt}_L(n,t)$ (\lean!phAt_eq!); for $n\in B$, $\mathrm{phAt}_{L'}(\mathrm{cpNode}\,n,j\mathbin{::}u)=\mathrm{phAt}_L(n,(j+\kappa(c_1))\mathbin{::}u)$ (\lean!phAt_cp!). Likewise for a leg $p$ of $L$, $\mathrm{dimAt}_{L'}(p,t)=\mathrm{dimAt}_L(p,t)$ (\lean!dimAt_eq!), on $B$ $\mathrm{dimAt}_{L'}(\mathrm{cpP}\,p,j\mathbin{::}u)=\mathrm{dimAt}_L(p,(j+\kappa(c_1))\mathbin{::}u)$ (\lean!dimAt_cp!), and for a first component $p$ of $T$ both $p$ and $\mathrm{cq}\,p$ read their plain port dimensions (\lean!dimAt_T!).
 \end{proposition}
 
-The second identity holds because the copy's phase $(\mathrm{cp}\,x,\mathit{bid}_2,c+1,c_1)$ reads $j+(c+1)\kappa(c_1)=(j+\kappa(c_1))+c\,\kappa(c_1)$. \lean!phAt_congr! says $\mathrm{phAt}$ reads only the id and phase index of the node; \lean!find?_congr'! and \lean!find?_filter_of! are list lemmas.
+\lean!phAt_congr! says $\mathrm{phAt}$ reads only the id and phase index of the node; \lean!find?_congr'! and \lean!find?_filter_of! are list lemmas.
 
 \begin{proposition}[\lean!dnodeL_rename!, \lean!tail_eq!]
 If $n'$ has the kind, dimension index and leg counts of $n$, $\mathrm{phAt}_{L'}(n',t')=\mathrm{phAt}_L(n,t)$, and for every leg $(n.\mathrm{id},o,i)$ the tails agree and $\varphi$ sends $(n.\mathrm{id},o,i)$ at $t\mathbin{+\!\!+}s$ to $(n'.\mathrm{id},o,i)$ at $t'\mathbin{+\!\!+}s$, then renaming the labels of $\mathrm{dnodeL}_L(n,t)$ by $\mathrm{relab}_\varphi$ gives $\mathrm{dnodeL}_{L'}(n',t')$. A leg's tail is its leg chain past its node chain: $\mathrm{tail}(p)=\mathrm{legChain}(p).\mathrm{drop}\,|\mathrm{nodeChain}(p.\mathit{node})|$.
 \end{proposition}
 
 \begin{theorem}[\lean!BoxSplitOK.tside!, \lean!BoxSplitOK.tnode!]
-For a node $n$ of $L$ off $B$ with empty node chain, the digits of side $o$ of $n$ renamed by $\mathrm{relab}_{\mathrm{split}\varphi}$ are a permutation of the digits of side $o$ of $\mathrm{extT}_T(n)$ in $L'$. For a node $n$ with an entry of $T$, $\mathrm{val}(E,\tau,\mathrm{rename}(\mathrm{dnodeL}_L(n,[]),\mathrm{relab}_{\mathrm{split}\varphi}))=\mathrm{val}(E,\tau,\mathrm{dnodeL}_{L'}(\mathrm{extT}_T\,n,[]))$.
+For a node $n$ of $L$ off $B$, the digits of side $o$ of $n$ renamed by $\mathrm{relab}_{\mathrm{split}\varphi}$ are a permutation of the digits of side $o$ of $\mathrm{extT}_T(n)$ in $L'$, and for a node with an entry of $T$ the renamed node value equals the value of $\mathrm{extT}_T(n)$ in $L'$. The Z and X values are invariant under a permutation of the outputs and of the inputs, so a spider whose bundled port was split into two ports keeps its value; this is why \lean!tl! restricts $T$ to Z and X spiders.
 \end{theorem}
-
-The Z and X values are invariant under a permutation of the outputs and of the inputs, so a spider whose bundled port was split into two ports keeps its value; this is why \lean!tl! restricts $T$ to Z and X spiders.
 
 \begin{theorem}[\lean!BoxSplitOK.prod!]
 Under $\mathrm{BoxSplitOK}$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, if $\tau'(x)=\tau(\mathrm{relab}_{\mathrm{split}\varphi}\,x)$ on $\mathrm{dlabs}_\kappa(L)$ then $L'.\mathrm{prodL}_\kappa(E,\tau)=L.\mathrm{prodL}_\kappa(E,\tau')$.
 \end{theorem}
 
-\begin{theorem}[\lean!evalL_split!]\label{thm:lean-sym-split}
-If $\mathrm{BoxSplitOK}(L,L',\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2,B,\mathrm{cp},T)$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, then for every $E$ and $\sigma'$,
+\begin{theorem}[\lean!evalX_split!]\label{thm:lean-sym-split}
+If $\mathrm{BoxSplitOK}(L,L',\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2,B,\mathrm{cp},\mathrm{cb},T)$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, then for every $E$ and $\sigma'$,
 \[
-L'.\mathrm{evalL}(E,\kappa,\sigma')=L.\mathrm{evalL}\bigl(E,\kappa,\mathrm{bndMap}(L.\mathrm{base},L'.\mathrm{base},\mathrm{split}\varphi_{B,\mathrm{cp},T,\kappa(c_1)},\sigma')\bigr).
+L'.\mathrm{evalX}(E,\kappa,\sigma')=L.\mathrm{evalX}\bigl(E,\kappa,\mathrm{bndMap}(L.\mathrm{base},L'.\mathrm{base},\mathrm{split}\varphi_{\kappa(c_1)},\sigma')\bigr),
 \]
+by \lean!evalX_relabelφ! (\cref{sec:lean-sym-linked-ext}) with the facts above.
+\end{theorem}
+
+\subsection{Renumbering spider legs}
+
+\begin{definition}[\lean!LegPermOK!]\label{def:lean-sym-legperm}
+For a port renaming $\mathit{rn}$, \lean!rnφ rn p t = (rn p, t)!, \lean!lmap rn! renames a link's four ports, and \lean!amap rn! an aligned wire's two ends. \lean!LegPermOK A R rn! holds when: $R$ has $A$'s nodes (with distinct ids), legs without duplicates, and a duplicate-free boundary; $\mathit{rn}$ permutes $A$'s legs, keeps each leg's node and side, and moves only legs of Z and X spiders; each renamed leg has $A$'s leg chain and port dimension and each node $A$'s node chain; $R$'s wires, outputs, inputs, links, and aligned wires are $A$'s renamed (links by \lean!lmap!, with the same depths and multiplicities, aligned wires by \lean!amap!); $R.\mathrm{cph}=A.\mathrm{cph}$ with equal depths; $R.\mathrm{cdim}$ is $A.\mathrm{cdim}$ with renamed ports and equal depths; and $A$'s links, wires, aligned wires, and boundary are well formed as in \lean!lwf!, \lean!al!, \lean!bndL!.
+\end{definition}
+
+\begin{theorem}[\lean!evalX_legPerm!]\label{thm:lean-sym-legperm}
+\lean!LegPermOK A R rn! gives $R.\mathrm{evalX}(E,\kappa,\sigma')=A.\mathrm{evalX}(E,\kappa,\mathrm{bndMap}(A.\mathrm{base},R.\mathrm{base},\mathrm{rn}\varphi,\sigma'))$ for every $E$, $\kappa$, $\sigma'$, by \lean!evalX_relabelφ!: a Z or X spider's value does not depend on the order of its outputs or of its inputs.
 \end{theorem}
 
 \section{Dropping a Boxed Identity Spider}\label{sec:lean-sym-drop}
@@ -498,42 +511,43 @@ so $\mathrm{labG}_{[]}=\mathrm{dlab}$ (\lean!labG_nil!), a head ghost reads its 
 \begin{definition}[Digit sum with ghosts]
 \begin{align*}
 \mathrm{pinsG}_{gs}(E,\kappa,\nu)\iff{}&\forall (a,b)\in\mathrm{dpairs}_\kappa,\ \nu(\mathrm{labG}_{gs}\,a)=\nu(\mathrm{labG}_{gs}\,b)\\
-\land{}&\forall (q,i)\in\mathrm{bnd.zipIdx},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,q),\\ &\qquad\nu(\mathrm{labG}_{gs}(q,t))=\nu(\mathrm{slab}(i,t))\\
-\land{}&\forall (g,i,k)\in gs,\ \nu(\mathrm{slab}(i,[]))<E.\mathrm{dimv}(k),
+\land{}&\forall (q,i)\in\mathrm{bnd.zipIdx},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,q),\ \nu(\mathrm{labG}_{gs}(q,t))=\nu(\mathrm{slab}(i,t))\\
+\land{}&\forall (g,i,k)\in gs,\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,g),\ \nu(\mathrm{slab}(i,t))<E.\mathrm{dimv}(k),
 \end{align*}
-$\mathrm{integG}=[\mathrm{pinsG}]\,\mathrm{prodL}$, and $\mathrm{evalG}(L,gs,E,\kappa,\sigma)$ is $\mathrm{evalL}$ with $\mathrm{integG}$ in place of the integrand.
+$\mathrm{integG}=[\mathrm{pinsG}]\,\mathrm{prodL}$, and $\mathrm{evalG}(L,gs,E,\kappa,\sigma)$ is $\mathrm{evalL}$ with $\mathrm{integG}$ in place of the integrand. \lean!pinsGX!, \lean!integGX!, \lean!evalGX! are the same over \lean!dpairsX! and the \lean!dimAt! dimensions of \cref{sec:lean-sym-linked-ext}.
 \end{definition}
 
-\begin{theorem}[\lean!evalG_nil!]
-$L.\mathrm{evalG}([],E,\kappa,\sigma)=L.\mathrm{evalL}(E,\kappa,\sigma)$.
+\begin{theorem}[\lean!evalG_nil!, \lean!evalGX_nil!]
+$L.\mathrm{evalG}([],E,\kappa,\sigma)=L.\mathrm{evalL}(E,\kappa,\sigma)$ and $L.\mathrm{evalGX}([],E,\kappa,\sigma)=L.\mathrm{evalX}(E,\kappa,\sigma)$.
 \end{theorem}
 
 \begin{definition}[\lean!substG!, \lean!ghostDrop!]
-$\mathrm{substG}_{a,c,g}(p)=g$ if $p=a$ or $p=c$, and $p$ otherwise. $\mathrm{ghostDrop}(L,x,a,c,g)$ has the nodes of $L$ other than id $x$, the wires of $L$, the outputs, inputs and link ports mapped by $\mathrm{substG}_{a,c,g}$, the boxes and $L.\mathrm{cph}$.
+$\mathrm{substG}_{a,c,g}(p)=g$ if $p=a$ or $p=c$, and $p$ otherwise. $\mathrm{ghostDrop}(L,x,a,c,g)$ has the nodes of $L$ other than id $x$, the wires of $L$, the outputs, inputs and link ports mapped by $\mathrm{substG}_{a,c,g}$, the boxes and $L.\mathrm{cph}$. \lean!ghostDropX! keeps also \lean!cdim! and \lean!aligned! (\lean!strip_gdX!: its strip is the plain drop of the strip).
 \end{definition}
 
-\begin{definition}[\lean!GhostOK!]\label{def:lean-sym-ghostok}
-$\mathrm{GhostOK}(L,gs,x,a,c,g,i)$ has the 22 fields: \lean!ports!, \lean!wch!, \lean!cph!, \lean!ids!, \lean!last!, \lean!kind!, \lean!outs!, \lean!ins! as in \lean!DropOK!; \lean!ac! ($\{a,c\}=\{(x,\mathit{true},0),(x,\mathit{false},0)\}$ in one of the two orders); \lean!xbox! ($x$ in no box); \lean!xw! ($x$ on no wire); \lean!bnd! ($L.\mathrm{bnd}$ has no duplicates); \lean!ci! ($L.\mathrm{bnd}[i]=c$); \lean!ab! ($a\notin L.\mathrm{bnd}$); \lean!gb!, \lean!gw!, \lean!gx! ($g$ is no boundary port, on no wire, and not on $x$); \lean!cl! ($c$ is no port of any link); \lean!al! ($a$ is neither $\mathrm{l1}$ nor $\mathrm{l2}$ of any link); \lean!gl! ($g$ is no port of any link); \lean!arest! (a link with $\mathrm{e1}=a$ or $\mathrm{e2}=a$ has $\mathrm{legChain}(\mathrm{l1}).\mathrm{eraseIdx}(\mathrm{depth})=[]$, so its ends carry no copy index); \lean!gsf! (no ghost of $gs$ is $a$, $c$ or $g$).
+\begin{definition}[\lean!GhostOK!, \lean!GhostOKX!]\label{def:lean-sym-ghostok}
+$\mathrm{GhostOK}(L,gs,x,a,c,g,i)$ has the 23 fields: \lean!ports!, \lean!wch!, \lean!cph!, \lean!ids!, \lean!last!, \lean!kind!, \lean!outs!, \lean!ins! as in \lean!DropOK!; \lean!ac! ($\{a,c\}=\{(x,\mathit{true},0),(x,\mathit{false},0)\}$ in one of the two orders); \lean!xw! ($x$ on no wire); \lean!bnd! ($L.\mathrm{bnd}$ has no duplicates); \lean!ci! ($L.\mathrm{bnd}[i]=c$); \lean!ab! ($a\notin L.\mathrm{bnd}$); \lean!gb!, \lean!gw! ($g$ is no boundary port and on no wire); \lean!ga!, \lean!gc! ($g\ne a$, $g\ne c$); \lean!gch! ($g$'s node has $x$'s node chain); \lean!cl! ($c$ is no port of any link); \lean!al! ($a$ is neither $\mathrm{l1}$ nor $\mathrm{l2}$ of any link); \lean!gl! ($g$ is no port of any link); \lean!arest! (a link with $\mathrm{e1}=a$ or $\mathrm{e2}=a$ has $\mathrm{legChain}(\mathrm{l1}).\mathrm{eraseIdx}(\mathrm{depth})=\mathrm{nodeChain}(x)$); \lean!gsf! (no ghost of $gs$ is $a$, $c$ or $g$). \lean!GhostOKX! asks \lean!GhostOK! of the strip, no aligned wires, no \lean!cph! entry at $x$, and no \lean!cdim! entry on $x$'s ports.
 \end{definition}
 
-Under \lean!GhostOK! the module proves \lean!nodeChain_gd!, \lean!depth_gd!, \lean!multOf_gd!, \lean!lc!, \lean!wch'!, \lean!lc'!, \lean!walk_none!, \lean!xchain! ($x$'s chain is empty), \lean!anode!, \lean!cnode!, \lean!ac_ne!, \lean!ga!, \lean!gc!, \lean!xmem!, \lean!legs_eq!, \lean!xlegs!, \lean!node_ne!, \lean!nodes_gd!, \lean!portDim_gd!, \lean!portDim_x!; with $\mathrm{gdigs}(x)=[\mathrm{dlab}((x,\mathit{true},0),[]),\mathrm{dlab}((x,\mathit{false},0),[])]$ (no duplicates, \lean!gdigs_nodup!), $\mathrm{dlabs}(L)=\mathrm{dlabs}(L_g)\mathbin{+\!\!+}\mathrm{gdigs}(x)$ (\lean!dlabs_eq!); \lean!not_gdigs!, \lean!not_gdigs'!, \lean!slab_not_gdigs!; $L.\mathrm{prodL}=L_g.\mathrm{prodL}\cdot\mathrm{tZ}(E.\mathrm{dimv}\,x.\mathrm{dim},E.\mathrm{phase}\,x.\mathrm{ph},[\nu\,a_0,\nu\,c_0])$ (\lean!prodL_eq!); \lean!substG_of!; $\mathrm{dpairs}(L_g)=\mathrm{dpairs}(L).\mathrm{map}\,\mathrm{portsP}_{\mathrm{substG}}$ and $L_g.\mathrm{bnd}=L.\mathrm{bnd.map}\,\mathrm{substG}$ (\lean!dpairs_gd!, \lean!bnd_gd!); \lean!pair_ports! (pair ports are neither $c$ nor $g$, and $a$ only with the empty copy index); \lean!c_pin! (the pins make $c$'s digit the slot's); \lean!pins_iff!; \lean!integ_reads!; and \lean!integ_point!, which states
+Under \lean!GhostOK! the module proves \lean!lc!, \lean!wch'!, \lean!lc'!, \lean!anode!, \lean!cnode!, \lean!ac_ne!, \lean!xmem!, \lean!legs_eq!, \lean!xlegs!, \lean!node_ne!, \lean!portDim_gd!, \lean!portDim_x!, \lean!gchain! (the ghost's leg chain after the drop is $x$'s node chain); with $\mathrm{xdigs}_\kappa(x)$ the digits $\mathrm{dlab}((x,\mathit{true},0),t)$ and then $\mathrm{dlab}((x,\mathit{false},0),t)$ over the copies $t$ of $x$'s node chain (no duplicates, \lean!xdigs_nodup!), $\mathrm{dlabs}(L)=\mathrm{dlabs}(L_g)\mathbin{+\!\!+}\mathrm{xdigs}(x)$ (\lean!dlabs_eq!); \lean!not_xdigs!, \lean!not_xdigs'!, \lean!slab_not_xdigs!; $L.\mathrm{prodL}=L_g.\mathrm{prodL}\cdot\prod_t\mathrm{tZ}(E.\mathrm{dimv}\,x.\mathrm{dim},E.\mathrm{phase}\,x.\mathrm{ph},[\nu\,a_t,\nu\,c_t])$ over the copies $t$ (\lean!prodL_eq!); \lean!substG_of!; $\mathrm{dpairs}(L_g)=\mathrm{dpairs}(L).\mathrm{map}\,\mathrm{portsP}_{\mathrm{substG}}$ and $L_g.\mathrm{bnd}=L.\mathrm{bnd.map}\,\mathrm{substG}$ (\lean!dpairs_gd!, \lean!bnd_gd!); \lean!pair_ports!; \lean!c_pin! (the pins make $c$'s digit the slot's); \lean!pins_iff!; \lean!integ_reads!; and \lean!integ_point!, which states
 \[
-L.\mathrm{integG}_{gs}(\nu)=\begin{cases}L_g.\mathrm{integG}_{(g,i,x.\mathrm{dim})::gs}(\nu)&\forall l\in\mathrm{gdigs}(x),\ \nu(l)=\nu(\mathrm{slab}(i,[]))\\0&\text{otherwise,}\end{cases}
+L.\mathrm{integG}_{gs}(\nu)=\begin{cases}L_g.\mathrm{integG}_{(g,i,x.\mathrm{dim})::gs}(\nu)&\forall l\in\mathrm{xdigs}(x),\ \nu(l)=\nu(\mathrm{slab}(i,\mathrm{dtup}\,l))\\0&\text{otherwise,}\end{cases}
 \]
-for $L_g=\mathrm{ghostDrop}(L,x.\mathrm{id},a,c,g)$ when $x$'s phase is zero.
+for $L_g=\mathrm{ghostDrop}(L,x.\mathrm{id},a,c,g)$ when $x$'s phase is zero. \lean!GhostOKX! gives the same facts over \lean!integGX! (\lean!GhostOKX.prodL_eq!, \lean!GhostOKX.integ_reads!, \lean!GhostOKX.integ_point!), with \lean!GhostOKX.dimAt_x! ($x$'s ports read $x$'s dimension) and \lean!GhostOKX.dimAt_gd! (other ports keep theirs).
 
-\begin{theorem}[\lean!GhostOK.evalG_ghost!, \lean!evalG_ghostAt!]\label{thm:lean-sym-ghost}
+\begin{theorem}[\lean!GhostOK.evalG_ghost!, \lean!evalG_ghostAt!, \lean!evalGX_ghostAt!]\label{thm:lean-sym-ghost}
 If $\mathrm{GhostOK}(L,gs,x,a,c,g,i)$ and $E.\mathrm{phase}(x.\mathrm{ph},k)=0$ for all $k$, then
 \[
 L.\mathrm{evalG}(gs,E,\kappa,\sigma)=\mathrm{ghostDrop}(L,x.\mathrm{id},a,c,g).\mathrm{evalG}((g,i,x.\mathrm{dim})\mathbin{::}gs,E,\kappa,\sigma).
 \]
 With $\mathrm{ghostAt}(L,x,a,c,g)=\mathrm{ghostDrop}(\mathrm{moveLast}(L,x.\mathrm{id}),x.\mathrm{id},a,c,g)$, the condition $\mathrm{GhostOK}(\mathrm{moveLast}(L,x.\mathrm{id}),gs,x,a,c,g,i)$ gives
 \[
-L.\mathrm{evalG}(gs,E,\kappa,\sigma)=\mathrm{ghostAt}(L,x,a,c,g).\mathrm{evalG}((g,i,x.\mathrm{dim})\mathbin{::}gs,E,\kappa,\sigma).
+L.\mathrm{evalG}(gs,E,\kappa,\sigma)=\mathrm{ghostAt}(L,x,a,c,g).\mathrm{evalG}((g,i,x.\mathrm{dim})\mathbin{::}gs,E,\kappa,\sigma),
 \]
+and $\mathrm{GhostOKX}(\mathrm{moveLast}(L,x.\mathrm{id}),\ldots)$ gives the same for \lean!evalGX! and \lean!ghostAtX!.
 \end{theorem}
 
-The inner sum over $x$'s two digits pins both to slot $i$'s digit (\lean!sumOver_pinV!) when that digit is below $x$'s dimension; otherwise both sides vanish, the right side by the third conjunct of \lean!pinsG!. \lean!pinsG_wn! and \lean!evalG_withNodes! extend \lean!evalL_withNodes! to ghosts.
+The inner sum over $x$'s digits pins them, copy by copy, to slot $i$'s digits when those are below $x$'s dimension; otherwise both sides vanish, the right side by the third conjunct of \lean!pinsG!. \lean!pinsG_wn!, \lean!evalG_withNodes!, and \lean!evalGX_withNodes! extend \lean!evalL_withNodes! to ghosts.
 
 \section{Slot Layouts of Box Groups}\label{sec:lean-sym-regroup}
 
@@ -805,11 +819,13 @@ the two values exchanged under \lean|swap|. Over $K$ copies its value is $\prod_
 \begin{theorem}[Peeling a pair box]\label{thm:lean-sym-pair-peel}
 \lean|val_first| and \lean|val_last| split the pair value at $k+1$ copies: the first copy as $\mathrm{val}(\mathrm{resid}(p))\cdot\mathrm{val}(\mathrm{fixLeft}(p,l_0))$ at $k$ (for $k_{m_1}=1$), the last as $\mathrm{val}(p)\cdot\mathrm{val}(\mathrm{fixRight}(p,r_0))$ at $k$ (for $k_c=k$), under the digit correspondences of the peel. \lean|PairFirst| (pairs of box \lean|bid| of multiplicity index $m_b$ in $L$ and $c$ in $R$, all unflagged with zero offsets and single-entry chains $[m_b]$ on nodes of $B$, and $ps'$ the list $\mathrm{resid},\mathrm{fixLeft}(\mathrm{cpP}(cp,\mathit{left}))$ per pair) and \lean|PairLast| ($ps'$ the list $p,\mathrm{fixRight}(\mathrm{cpP}(cp,\mathit{right}),c)$ per pair) give \lean|PairFirst.pairF| and \lean|PairLast.pairF|. Then for $k_{m_b}=k_c+1$:
 \begin{lstlisting}[style=lean]
-theorem evalP_first (h : FirstOK L Lr R Rr bid mb c B cp) (hx : FirstX L R bid m1 B cp)
+theorem evalP_first {ps ps' : List LPair} (h : FirstOK L Lr R Rr bid mb c B cp)
+    (hx : FirstX L R bid m1 B cp)
     (hp : PairFirst L R ps ps' bid mb c m1 B cp) (E : Env) (ks : ℕ → ℕ)
     (hk : ks mb = ks c + 1) (hm : ks m1 = 1) (σ' : ℕ → List ℕ → ℕ) :
     R.evalP ps' E ks σ' = L.evalP ps E ks (bndMap L.base R.base (firstφ B cp) σ')
-theorem evalP_peel (h : PeelX L L' bid mb c B cp) (hp : PairLast L L' ps ps' bid mb c B cp)
+theorem evalP_peel {ps ps' : List LPair} (h : PeelX L L' bid mb c B cp)
+    (hp : PairLast L L' ps ps' bid mb c B cp)
     (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1) (σ' : ℕ → List ℕ → ℕ) :
     L'.evalP ps' E ks σ' = L.evalP ps E ks (bndMap L.base L'.base (peelφ B cp (ks c)) σ')
 \end{lstlisting}

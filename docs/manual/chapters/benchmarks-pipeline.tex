@@ -2213,7 +2213,7 @@ for small $m$ (\py!median_ci_ranks! returns \code{None}).
 
 \py!min_runs(c)! is the least $m$ with an interval; at $c=0.95$ it is 6 ($2\cdot2^{-6} =
 0.03125 \le 0.05$). \py!precise(values, c, p)! is true when the half-width is at most $p$ times
-the absolute sample median (when the median is 0, when the half-width is 0). \py!summary(values, c=None)! returns \code{median}, \code{q1}, \code{q3} (linear-interpolated 25th and 75th
+the absolute sample median (when the median is 0, when the half-width is 0). \py!summary(values, confidence=None)! returns \code{median}, \code{q1}, \code{q3} (linear-interpolated 25th and 75th
 percentiles), \code{min}, \code{max}, \code{n}, the raw \code{values}, and with $c$ the bounds
 \code{ci_lo}, \code{ci_hi} (\code{None} without an interval); an empty sample gives
 \texttt{\{n: 0, values: []\}}.

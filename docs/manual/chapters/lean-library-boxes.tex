@@ -1574,9 +1574,9 @@ theorem equal_expandPair (h : D.PairOK p b = true) (E : Env) (hE : ∀ x y, labD
 theorem eval_pairNet (h : D.PairOK p b = true) (E : Env) (hE : ∀ x, labDim E x = E.dimv 0)
     (K : ℕ) (cl cr : List (ℕ × ℕ)) (sL sR : ℕ) (hcl : D.pinOK p p.left cl sL = true)
     (hcr : D.pinOK p p.right cr sR = true) (σ : ℕ → ℕ) :
-    eval E (D.pairNet p K) σ =
+    ArchytasZX.eval E (D.pairNet p K) σ =
       ((List.range K).map fun j =>
-          eval E (D.tmpl p) (σ ∘ shJ K D.outs.length D.wires.length j)).prod *
+          ArchytasZX.eval E (D.tmpl p) (σ ∘ shJ K D.outs.length D.wires.length j)).prod *
       ((List.range K).map fun j => ((later K j).map fun k =>
           fou (E.dimv 0) (σ (k * D.outs.length + sR)) (σ (j * D.outs.length + sL))).prod).prod
 \end{lstlisting}

@@ -703,7 +703,7 @@ at no link port, and have boxes exactly $M$. Otherwise the splice is rejected wh
 ports share a link box, when some $N \not\subseteq M$, or when $M \neq \emptyset$ and no $N$
 equals $M$.
 
-\py!IdentityMatch(node_id, wire, surviving_ref, far_ref, shared_dim, outcomes, constraints=(), lifted_box=None)!
+\py!IdentityMatch(node_id, wire, surviving_ref, far_ref, shared_dim, side_condition_outcomes, dimension_constraints=(), lifted_box=None)!
 has support \{node, both wire endpoints, far node\}. \py!IdentityRemovalPattern! has radius $1$
 and orders by node id.
 
