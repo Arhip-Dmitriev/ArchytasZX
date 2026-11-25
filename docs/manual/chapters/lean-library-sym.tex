@@ -1,0 +1,1243 @@
+\chapter{The Lean Library: Linked Diagrams and Symbolic Normalizers}\label{ch:lean-sym}
+\chaptermark{Lean Library: Linked Diagrams, Normalizers}
+
+This chapter specifies fifteen modules of the Lean library \file{archytaszx/lean/ArchytasZX/} and the five Python modules that write Lean source against them. The Lean modules fall into two groups. The \emph{linked-diagram} group (\file{Linked.lean}, \file{LinkedPeel.lean}, \file{LinkedSplit.lean}, \file{LinkedSlide.lean}, \file{LinkedForm.lean}, \file{LinkedGhost.lean}, \file{LinkedRegroup.lean}, \file{LinkedSplice.lean}) extends the boxed diagrams of \cref{ch:lean-boxes} by chain links between copies of a \bbox{} and by copy-indexed phases, defines their digit sum, and proves that the proof kernel's peel, power split, identity slide and regroup steps keep it. The \emph{symbolic} group (\file{Sym.lean}, \file{SymNorm.lean}, \file{SymCanon.lean}, \file{SymNet.lean}, \file{SymF2.lean}, \file{SymF2Bridge.lean}, \file{SymF2Chain.lean}) defines symbolic sums over dimension symbols, a verified normalizer for them, the translation of a network into a symbolic sum, and an independent term checker for qubit networks over $\mathbb{F}_2$. Every normalizer in this chapter is a computable Lean function with a correctness theorem; a concrete instance is checked by evaluation in the Lean kernel (\lean!decide +kernel!), a proof by reflection~\cite{boutin1997reflection}. The library is written for \tool{Lean~4}{https://lean-lang.org}~\cite{demoura2021lean4} over \tool{Mathlib}{https://github.com/leanprover-community/mathlib4}~\cite{mathlib2020}.
+
+The Python side consists of \module{archytaszx.semantics.lean_linked}, \module{archytaszx.semantics.lean_regroup} and \module{archytaszx.semantics.lean_split} (exports of kernel steps over linked diagrams), \module{archytaszx.semantics.lean_sym} (exports of equalities over symbolic dimensions) and \module{archytaszx.semantics.lean_f2} (the mirror of the $\mathbb{F}_2$ checker). Each Python mirror computes what its Lean namesake computes, in the same order, so that the exporter knows before writing a file that the kernel's evaluation succeeds. The proof kernel that calls these exporters is specified in \cref{ch:kernel}; the Lean file layout, the axiom statements built from the exported theorems and the network exporter \module{archytaszx.semantics.lean_net} are specified in \cref{ch:lean-export-net,ch:lean-export}.
+
+\section{Conventions and Core Objects}\label{sec:lean-sym-core}
+
+The modules of this chapter build on the core library of \cref{ch:lean-core,ch:lean-boxes}. This section restates the core objects that the statements below read, so that each statement can be rebuilt; their full treatment is in those chapters.
+
+\paragraph{Lean notation.} $\N$, $\Z$, $\Q$, $\R$, $\C$ are Lean's \lean!ℕ!, \lean!ℤ!, \lean!ℚ!, \lean!Real!, \lean!ℂ!. Lists are written $[a_0,\dots,a_{n-1}]$, $\ell\mathbin{+\!\!+}m$ is concatenation, $x\mathbin{::}\ell$ is cons, $\ell[i]$ is the $i$-th element, $\ell.\mathrm{getD}\,i\,a$ is $\ell[i]$ or $a$ past the end, $\ell.\mathrm{eraseIdx}\,d$ removes position $d$ (no change past the end), $\ell.\mathrm{set}\,d\,v$ replaces position $d$, $\ell.\mathrm{idxOf}\,x$ is the first position of $x$ (the length when absent), $\ell.\mathrm{lookup}\,k$ is the value of the first pair with key $k$, and $\ell.\mathrm{Perm}\,m$ says that $m$ is a permutation of $\ell$. $f[x\mapsto v]$ is \lean!Function.update f x v!. $[P]$ is $1$ when $P$ holds and $0$ otherwise. Integer division $a/b$ and remainder $a\bmod b$ on $\Z$ are Lean's Euclidean ones: $a=b\,(a/b)+(a\bmod b)$ with $0\le a\bmod b<|b|$, and $a/0=0$, $a\bmod 0=a$.
+
+\paragraph{Phases and roots.} For $\theta\in\R$ and $d\in\N$,
+\[
+\mathrm{ex}(\theta)=e^{2\pi i\theta},\qquad \omega_d=\mathrm{om}(d)=e^{2\pi i/d},\qquad \mathrm{rt}(d)=\sqrt{d}\in\C,\qquad \mathrm{fou}(d,j,k)=\omega_d^{jk}/\sqrt d .
+\]
+
+\paragraph{Networks.} A generator instance (\lean!Node!) has a kind (\lean!Kind!: \lean!Z!, \lean!X!, \lean!F!, \lean!T!, \lean!Ti!, \lean!W!, \lean!B!, \lean!S!, \lean!I!, and the weighted and bundled kinds of \cref{ch:lean-core}), lists of output and input labels, a dimension index and a phase index. A network (\lean!Net!) has nodes, summed labels \lean!int! and boundary labels \lean!bnd!. An environment \lean!Env! gives \lean!dimv : ℕ → ℕ! (dimension values), \lean!phase : ℕ → ℕ → Real! (phase vectors in turns), \lean!labs! (each label's dimension index) and two further fields not read in this chapter. The value $\mathrm{val}(E,\sigma,n)$ of a node at the label assignment $\sigma$ reads $d=E.\mathrm{dimv}(n.\mathrm{dim})$, $os=\sigma(n.\mathrm{outs})$, $is=\sigma(n.\mathrm{ins})$ and $\varphi=E.\mathrm{phase}(n.\mathrm{ph})$:
+\begin{align*}
+\mathrm{Z}&: \textstyle\sum_{k<d}[\forall v\in os\mathbin{+\!\!+}is,\ v=k]\,\mathrm{ex}(\varphi(k)), &
+\mathrm{X}&: \textstyle\sum_{k<d}\mathrm{ex}(\varphi(k))\prod_{o\in os}\mathrm{fou}(d,o,k)\prod_{i\in is}\overline{\mathrm{fou}(d,i,k)},\\
+\mathrm{F}&: \mathrm{fou}(d,o,i), &
+\mathrm{T}&: [o=0\lor o=i],\qquad \mathrm{Ti}: \begin{cases}1&o=i\\-1&o=0\land i\ge1\\0&\text{else,}\end{cases}\\
+\mathrm{W}&: \begin{cases}[\forall o\in os,\ o=0]&i=0\\ [i<d\land os.\mathrm{filter}(\ne0)=[i]]&i\neq0,\end{cases} &
+\mathrm{I}&: [a=b\land a<d].
+\end{align*}
+The F, T and Ti kinds read one output $o$ and one input $i$; W reads one input $i$; I reads one output $a$ and one input $b$. With $\mathrm{labDim}(E,l)=E.\mathrm{dimv}((E.\mathrm{labs.lookup}\,l).\mathrm{getD}\,0)$, the iterated sum and the network value are
+\begin{gather*}
+\mathrm{sumOver}(D,[l_1,\dots,l_m],f,\sigma)=\sum_{j_1<D(l_1)}\cdots\sum_{j_m<D(l_m)} f(\sigma[l_1\mapsto j_1]\cdots[l_m\mapsto j_m]),\\
+\mathrm{eval}(E,N,\sigma)=\mathrm{sumOver}\Bigl(\mathrm{labDim}\,E,\ N.\mathrm{int},\ \tau\mapsto\prod_{n\in N.\mathrm{nodes}}\mathrm{val}(E,\tau,n),\ \sigma\Bigr).
+\end{gather*}
+$\mathrm{InRange}(E,ls,\sigma)$ says $\sigma(l)<\mathrm{labDim}(E,l)$ for $l\in ls$, and the network equality of the core library is
+\begin{multline*}
+\mathrm{Equal}(E,s_1,N_1,s_2,N_2)\iff N_1.\mathrm{bnd}.\mathrm{Perm}\,N_2.\mathrm{bnd}\\ \land\ \forall\sigma,\ \mathrm{InRange}(E,N_1.\mathrm{bnd},\sigma)\Rightarrow s_1\,\mathrm{eval}(E,N_1,\sigma)=s_2\,\mathrm{eval}(E,N_2,\sigma).
+\end{multline*}
+$\mathrm{labelsOf}(ns)$ lists every label of every node of $ns$, and $\mathrm{prodVal}(E,ns,\sigma)=\prod_{n\in ns}\mathrm{val}(E,\sigma,n)$.
+
+\paragraph{Boxed diagrams.} A port (\lean!Port!) is a triple $(\mathit{node},\mathit{out},\mathit{pos})$; \lean!Port.dflt! is $(0,\mathit{false},0)$. A node (\lean!DNode!) has an id, a kind, a dimension index, a phase index and the dimension index of each output and input port. A \bbox{} (\lean!DBox!) has an id, a multiplicity index \lean!mult!, an optional parent box, a node scope \lean!nodes! and a port scope \lean!ports!. A \lean!Diagram! has nodes, wires (pairs of ports), boundary outputs \lean!outs!, boundary inputs \lean!ins! and boxes; its boundary is $\mathrm{bnd}=\mathit{outs}\mathbin{+\!\!+}\mathit{ins}$, and boundary place $i$ is the \term{slot} $i$. $\mathrm{legs}(D)$ lists, node by node, the output ports $(n,\mathit{true},k)$, $k<|n.\mathrm{outs}|$, then the input ports $(n,\mathit{false},k)$. $\mathrm{portDim}(D,p)$ is the dimension index stored at port $p$ of the first node with id $p.\mathit{node}$, and $0$ when there is none or the position is out of range.
+
+The box structure is read through \lean!walk!: $\mathrm{walk}(P,f,s)$ starts at the parent $s$ (an optional box id), takes the first box $b$ with $P(b)$ and parent $s$, and continues from $b$'s id, for at most $f$ boxes. $\mathrm{nodeBoxes}(x)=\mathrm{walk}(b\mapsto x\in b.\mathrm{nodes},|\mathit{boxes}|,\mathrm{none})$ lists the node boxes holding $x$, outermost first; $\mathrm{nodeChain}(x)$ is their list of multiplicity indices. $\mathrm{portBoxes}(q)$ walks the port boxes holding $q$ from the innermost node box of $q$'s node. $\mathrm{partner}(q)$ is the other end of the first wire at $q$. The \term{tail} of a port is
+\[
+\mathrm{tail}(q)=\begin{cases}b.\mathrm{drop}\,|a| & \mathrm{partner}(q)=r\text{ and }|a|<|b|\\ [] & \mathrm{partner}(q)=r\text{ and }|a|\ge|b|\\ \text{the multiplicity indices of }\mathrm{portBoxes}(q) & \text{no partner,}\end{cases}
+\]
+with $a=\mathrm{nodeChain}(q.\mathit{node})$ and $b=\mathrm{nodeChain}(r.\mathit{node})$,
+and the \term{leg chain} is $\mathrm{legChain}(q)=\mathrm{nodeChain}(q.\mathit{node})\mathbin{+\!\!+}\mathrm{tail}(q)$.
+
+\paragraph{Copy indices and digits.} The multiplicities are a map $\kappa:\N\to\N$ (Lean \lean!ks!) from multiplicity index to copy count. For a chain $c=[m_0,\dots,m_{r-1}]$, $\mathrm{cidx}_\kappa(c)$ lists the tuples $t=[t_0,\dots,t_{r-1}]$ with $t_j<\kappa(m_j)$ in lexicographic order (first coordinate slowest); $\mathrm{rcidx}_\kappa(c)$ lists the same tuples with the last coordinate slowest. A \term{digit} (\lean!Dig!) is a pair $(p,t)$ of a port and a copy index. Digits and slot digits are coded by natural labels, with Mathlib's pairing $\langle a,b\rangle$ (\lean!Nat.pair!) and list encoding $\mathrm{enc}$ (\lean!Encodable.encode!):
+\begin{gather*}
+\mathrm{code}(p)=2\langle p.\mathit{node},\,2p.\mathit{pos}+[p.\mathit{out}]\rangle,\\
+\mathrm{dlab}(p,t)=2\langle\mathrm{code}(p),\mathrm{enc}(t)\rangle,\qquad \mathrm{slab}(i,t)=2\langle i,\mathrm{enc}(t)\rangle+1 .
+\end{gather*}
+Digit labels are even, slot labels odd. $\mathrm{dport}(l)$ and $\mathrm{dtup}(l)$ decode the port and the tuple of a label; $\mathrm{slotsD}(\sigma)(l)=\sigma(i,t)$ for $l=\mathrm{slab}(i,t)$ and $0$ for even $l$. $\mathrm{dlabs}_\kappa(D)$ lists $\mathrm{dlab}(p,t)$ for $p\in\mathrm{legs}(D)$ and $t\in\mathrm{cidx}_\kappa(\mathrm{legChain}(p))$. Copy $t$ of a node $n$ is the network node
+\begin{gather*}
+\mathrm{dnode}_\kappa(n,t)=\bigl(n.\mathrm{kind},\ \mathit{legs}(\mathit{true},|n.\mathrm{outs}|),\ \mathit{legs}(\mathit{false},|n.\mathrm{ins}|),\ n.\mathrm{dim},\ n.\mathrm{ph}\bigr),\\
+\mathit{legs}(o,\ell)=\bigl[\mathrm{dlab}((n.\mathrm{id},o,i),\,t\mathbin{+\!\!+}s)\ \big|\ i<\ell,\ s\in\mathrm{rcidx}_\kappa(\mathrm{tail}(n.\mathrm{id},o,i))\bigr].
+\end{gather*}
+A port with a nonempty tail therefore stands for several network labels, one per copy of the boxes it bundles.
+
+\paragraph{The digit sum of a boxed diagram.} With the integrand reading a digit assignment $\nu:\N\to\N$,
+\begin{align*}
+\mathrm{pinsD}_\kappa(\nu)\iff{}&\forall (p,q)\in\mathit{wires},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,p),\ \nu(\mathrm{dlab}(p,t))=\nu(\mathrm{dlab}(q,t)),\\
+\land{}&\forall i,\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}(\mathrm{bnd}[i])),\ \nu(\mathrm{dlab}(\mathrm{bnd}[i],t))=\nu(\mathrm{slab}(i,t)),
+\end{align*}
+$\mathrm{prodD}_\kappa(E,\nu)=\prod_{n}\prod_{t\in\mathrm{cidx}_\kappa(\mathrm{nodeChain}\,n.\mathrm{id})}\mathrm{val}(E,\nu,\mathrm{dnode}_\kappa(n,t))$, and
+\begin{multline*}
+\mathrm{evalD}(E,\kappa,\sigma)=\mathrm{sumOver}\bigl(l\mapsto E.\mathrm{dimv}(\mathrm{portDim}(\mathrm{dport}\,l)),\ \mathrm{dlabs}_\kappa,\\ \nu\mapsto[\mathrm{pinsD}_\kappa(\nu)]\,\mathrm{prodD}_\kappa(E,\nu),\ \mathrm{slotsD}(\sigma)\bigr),
+\end{multline*}
+where $\sigma:\N\to\text{List }\N\to\N$ gives slot $i$'s digit at copy $t$. A map of digits $\varphi:\mathrm{Port}\to\text{List }\N\to\mathrm{Dig}$ acts on labels by $\mathrm{relab}_\varphi(l)=\mathrm{dlab}(\varphi(\mathrm{dport}\,l,\mathrm{dtup}\,l))$, and
+\[
+\mathrm{bndMap}(D,D',\varphi,\sigma')(i,t)=\sigma'\bigl(D'.\mathrm{bnd.idxOf}\,q,\ u\bigr),\qquad (q,u)=\varphi(D.\mathrm{bnd.getD}\,i\,\mathrm{dflt},\ t),
+\]
+reads $D$'s slot digits from $D'$'s through $\varphi$. The core theorem \lean!evalD_relabel!$\varphi$ (\cref{ch:lean-boxes}) says that a one-to-one and onto map of digits that keeps dimensions, wires and boundary keeps \lean!evalD!; \cref{thm:lean-sym-relabelphi} below is its linked form.
+
+\section{Linked Diagrams}\label{sec:lean-sym-linked}
+
+Module \file{Linked.lean} (imports \file{Relabel.lean}) defines linked diagrams and their digit sum.
+
+\subsection{Chain links and copy-indexed phases}
+
+\begin{definition}[Chain link, linked diagram]\label{def:lean-sym-ldiagram}
+A \term{chain link} (\lean!DLink!, derived \lean!DecidableEq!) has fields \lean!box : ℕ! and four ports \lean!l1!, \lean!l2!, \lean!e1!, \lean!e2!. A \term{linked diagram} (\lean!LDiagram!, derived \lean!DecidableEq!) has fields \lean!base : Diagram!, \lean!links : List DLink! (default $[]$) and \lean!cph : List (ℕ × ℕ × ℕ × ℕ)! (default $[]$), the \term{copy-indexed phases} $(x,y,c,m)$: node $x$, box $y$, coefficient $c$, multiplicity index $m$.
+\end{definition}
+
+A link $\ell$ of the box $\ell.\mathrm{box}$ joins copy $j$'s port $\ell.\mathrm{l1}$ to copy $j+1$'s port $\ell.\mathrm{l2}$; the last copy's $\ell.\mathrm{l1}$ meets the outside port $\ell.\mathrm{e1}$, the first copy's $\ell.\mathrm{l2}$ meets $\ell.\mathrm{e2}$, and at zero copies $\ell.\mathrm{e1}$ meets $\ell.\mathrm{e2}$ (\cref{fig:lean-sym-link}). The template wires at link ports are not wires of \lean!base!. The link's copy coordinate is the place of the box among the node boxes of $\ell.\mathrm{l1}$'s node; every other coordinate is carried along unchanged, so a link of an outer box on ports of inner boxes runs copy to copy in the inner boxes, and an end port whose chain is the link port's chain without that coordinate meets it copy to copy.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+\node[zs] (c0) at (0,1) {$0$};
+\node[zs] (c1) at (0,2.4) {$1$};
+\node[zs] (c2) at (0,3.8) {$2$};
+\node[xs] (e2) at (0,0) {$e_2$};
+\node[xs] (e1) at (0,5) {$e_1$};
+\draw[wire] (e2) -- node[right,dimlabel]{$(e_2,u)\sim(l_2,0{:}u)$} (c0);
+\draw[wire] (c0) -- node[right,dimlabel]{$(l_1,0{:}u)\sim(l_2,1{:}u)$} (c1);
+\draw[wire] (c1) -- node[right,dimlabel]{$(l_1,1{:}u)\sim(l_2,2{:}u)$} (c2);
+\draw[wire] (c2) -- node[right,dimlabel]{$(l_1,2{:}u)\sim(e_1,u)$} (e1);
+\node[bang,fit=(c0)(c2)] {};
+\node[banglabel] at ($(c2)+(-0.55,0.55)$) {$k=3$};
+\end{tikzpicture}
+\caption{The digit pairs of a chain link at $k=3$ copies, copy coordinate $d=0$: copy $j$'s port $l_1$ meets copy $j+1$'s port $l_2$; the ends $e_2$ and $e_1$ meet the first and the last copy. $u$ is the rest of the copy index.}\label{fig:lean-sym-link}
+\end{figure}
+
+\begin{definition}[Depth, multiplicity, link digit pairs]\label{def:lean-sym-lp}
+For a linked diagram $L$:
+\begin{itemize}
+\item $\mathrm{depth}_L(y,x)=(\mathrm{nodeBoxes}(x)).\mathrm{findIdx}(b\mapsto b.\mathrm{id}=y)$, the place of box $y$ among the node boxes of node $x$, outermost $0$ (the length of the list when $y$ does not hold $x$);
+\item $\mathrm{multOf}_L(y)$ is the multiplicity index of the first box with id $y$, $0$ when there is none;
+\item for a copy coordinate $d$, a copy count $k$ and a chain $c$, the \term{link digit pairs} $\mathrm{lp}_\kappa(d,k,c,\ell)$ are, in this order,
+\[
+\bigl[\,P(t)\mathbin{+\!\!+}Q(t)\ \big|\ t\in\mathrm{cidx}_\kappa(c)\,\bigr]\mathbin{+\!\!+}\begin{cases}\bigl[((\ell.\mathrm{e2},u),(\ell.\mathrm{e1},u))\ \big|\ u\in\mathrm{cidx}_\kappa(c.\mathrm{eraseIdx}\,d)\bigr]&k=0\\ []&k>0,\end{cases}
+\]
+\begin{gather*}
+P(t)=\begin{cases}[((\ell.\mathrm{l1},t),(\ell.\mathrm{l2},t.\mathrm{set}\,d\,(t_d+1)))]& t_d+1<k\\ [((\ell.\mathrm{l1},t),(\ell.\mathrm{e1},t.\mathrm{eraseIdx}\,d))]&\text{else,}\end{cases}\\
+Q(t)=\begin{cases}[((\ell.\mathrm{e2},t.\mathrm{eraseIdx}\,d),(\ell.\mathrm{l2},t))]&t_d=0\\ []&\text{else,}\end{cases}
+\end{gather*}
+with $t_d=t.\mathrm{getD}\,d\,0$;
+\item $\mathrm{linkPairs}_\kappa(\ell)=\mathrm{lp}_\kappa\bigl(\mathrm{depth}_L(\ell.\mathrm{box},\ell.\mathrm{l1}.\mathit{node}),\ \kappa(\mathrm{multOf}_L\,\ell.\mathrm{box}),\ \mathrm{legChain}(\ell.\mathrm{l1}),\ \ell\bigr)$;
+\item $\mathrm{dpairs}_\kappa(L)$ lists, wire by wire, $((w_1,t),(w_2,t))$ for $t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,w_1)$, then every link's $\mathrm{linkPairs}$.
+\end{itemize}
+\end{definition}
+
+\begin{definition}[Linked digit sum]\label{def:lean-sym-evalL}
+\begin{align*}
+\mathrm{pinsL}_\kappa(\nu)&\iff\bigl(\forall (a,b)\in\mathrm{dpairs}_\kappa,\ \nu(\mathrm{dlab}\,a)=\nu(\mathrm{dlab}\,b)\bigr)\\
+&\qquad\land\bigl(\forall (q,i)\in\mathrm{bnd.zipIdx},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,q),\ \nu(\mathrm{dlab}(q,t))=\nu(\mathrm{slab}(i,t))\bigr),\\
+\mathrm{phAt}_\kappa(n,t)&=\begin{cases}\bigl\langle n.\mathrm{ph},\ t.\mathrm{getD}(\mathrm{depth}_L(y,n.\mathrm{id}))\,0+c\,\kappa(m)\bigr\rangle&(x,y,c,m)\text{ the first entry of }\mathit{cph}\\&\quad\text{with }x=n.\mathrm{id}\\ n.\mathrm{ph}&\text{no such entry,}\end{cases}\\
+\mathrm{dnodeL}_\kappa(n,t)&=\mathrm{dnode}_\kappa(n,t)\text{ with phase index }\mathrm{phAt}_\kappa(n,t),\\
+\mathrm{prodL}_\kappa(E,\nu)&=\prod_{n\in\mathit{nodes}}\ \prod_{t\in\mathrm{cidx}_\kappa(\mathrm{nodeChain}\,n.\mathrm{id})}\mathrm{val}(E,\nu,\mathrm{dnodeL}_\kappa(n,t)),\\
+\mathrm{evalL}(E,\kappa,\sigma)&=\mathrm{sumOver}\bigl(l\mapsto E.\mathrm{dimv}(\mathrm{portDim}(\mathrm{dport}\,l)),\ \mathrm{dlabs}_\kappa,\\
+&\qquad\qquad \nu\mapsto[\mathrm{pinsL}_\kappa(\nu)]\,\mathrm{prodL}_\kappa(E,\nu),\ \mathrm{slotsD}(\sigma)\bigr).
+\end{align*}
+\end{definition}
+
+A copy-indexed phase $(x,y,c,m)$ gives node $x$ at copy $t$ the phase index $\langle x.\mathrm{ph},\,t_y+c\,\kappa(m)\rangle$, where $t_y$ is $x$'s copy index in box $y$; the environment interprets the paired index. The power split (\cref{sec:lean-sym-split}) uses $c$ to shift the copy index of a moved copy back to the copy index it had before the split.
+
+\begin{theorem}[\lean!dnodeL_plain!, \lean!evalL_plain!]\label{thm:lean-sym-plain}
+If $L.\mathrm{cph}=[]$ then $\mathrm{dnodeL}_\kappa(n,t)=\mathrm{dnode}_\kappa(n,t)$. If moreover $L.\mathrm{links}=[]$ then $L.\mathrm{evalL}(E,\kappa,\sigma)=L.\mathrm{base}.\mathrm{evalD}(E,\kappa,\sigma)$.
+\end{theorem}
+
+\subsection{Relabelling}
+
+\begin{theorem}[\lean!evalL_relabel!]\label{thm:lean-sym-relabel}
+Let $L,L'$ be linked diagrams, $\kappa,\kappa'$ multiplicities, $\sigma,\sigma'$ slot digits and $\rho:\N\to\N$. Suppose $\mathrm{dlabs}_\kappa(L)$ and $\mathrm{dlabs}_{\kappa'}(L')$ have no duplicates; $x\in\mathrm{dlabs}_{\kappa'}(L')$ iff $x=\rho(y)$ for some $y\in\mathrm{dlabs}_\kappa(L)$; $\rho$ is one to one on $\mathrm{dlabs}_\kappa(L)$; $\rho$ keeps the dimension value of every digit label; and for all $\tau,\tau'$ with $\tau'(x)=\tau(\rho x)$ on $\mathrm{dlabs}_\kappa(L)$, $\tau(\mathrm{slab}(i,t))=\sigma'(i,t)$ and $\tau'(\mathrm{slab}(i,t))=\sigma(i,t)$ for all $i,t$, both $L'.\mathrm{pinsL}_{\kappa'}(\tau)\iff L.\mathrm{pinsL}_\kappa(\tau')$ and $L'.\mathrm{prodL}_{\kappa'}(E,\tau)=L.\mathrm{prodL}_\kappa(E,\tau')$. Then $L'.\mathrm{evalL}(E,\kappa',\sigma')=L.\mathrm{evalL}(E,\kappa,\sigma)$.
+\end{theorem}
+
+The proof permutes $\mathrm{dlabs}_{\kappa'}(L')$ into $\rho(\mathrm{dlabs}_\kappa(L))$ (\lean!sumOver_perm!) and transports the sum along $\rho$ (\lean!sumOver_map_on!); slot labels are odd and digit labels even, so the start assignments agree off the summed labels.
+
+\begin{definition}[\lean!pmap!, \lean!pswap!]
+For a map of digits $\varphi$ and a digit pair $x=((p,t),(q,u))$: $\mathrm{pmap}_\varphi(x)=(\varphi(p,t),\varphi(q,u))$ and $\mathrm{pswap}(x)=((q,u),(p,t))$.
+\end{definition}
+
+\begin{theorem}[\lean!evalL_relabel!$\varphi$]\label{thm:lean-sym-relabelphi}
+Let $\varphi:\mathrm{Port}\to\text{List }\N\to\mathrm{Dig}$ and suppose:
+\begin{enumerate}[label=(\roman*)]
+\item $\mathrm{dlabs}_\kappa(L)$ and $\mathrm{dlabs}_{\kappa'}(L')$ have no duplicates, and $L'.\mathrm{bnd}$ has none;
+\item (into) for $p\in\mathrm{legs}(L)$ and $t\in\mathrm{cidx}_\kappa(\mathrm{legChain}_L\,p)$, $\varphi(p,t).1\in\mathrm{legs}(L')$ and $\varphi(p,t).2\in\mathrm{cidx}_{\kappa'}(\mathrm{legChain}_{L'}(\varphi(p,t).1))$;
+\item (onto) every $(q,u)$ with $q\in\mathrm{legs}(L')$ and $u\in\mathrm{cidx}_{\kappa'}(\mathrm{legChain}_{L'}\,q)$ is $\varphi(p,t)$ for such $(p,t)$;
+\item (one to one) $\varphi(p,t)=\varphi(p',t')$ implies $p=p'$ and $t=t'$ on such pairs;
+\item (dimensions) $E.\mathrm{dimv}(\mathrm{portDim}_{L'}(\varphi(p,t).1))=E.\mathrm{dimv}(\mathrm{portDim}_L\,p)$;
+\item every digit pair of $L$ has both digits on legs of $L$ within their chains;
+\item every $x\in\mathrm{dpairs}_\kappa(L)$ has $\mathrm{pmap}_\varphi(x)$ or $\mathrm{pswap}(\mathrm{pmap}_\varphi(x))$ in $\mathrm{dpairs}_{\kappa'}(L')$, and every $y\in\mathrm{dpairs}_{\kappa'}(L')$ is one of these for some $x\in\mathrm{dpairs}_\kappa(L)$;
+\item every boundary port of $L$ is a leg; for $p\in L.\mathrm{bnd}$ and $t$ in its chain, $\varphi(p,t).1\in L'.\mathrm{bnd}$; every $(q,u)$ with $q\in L'.\mathrm{bnd}$ and $u$ in its chain is $\varphi(p,t)$ for some $p\in L.\mathrm{bnd}$ and $t$ in its chain;
+\item (products) $\tau'(x)=\tau(\mathrm{relab}_\varphi\,x)$ on $\mathrm{dlabs}_\kappa(L)$ implies $L'.\mathrm{prodL}_{\kappa'}(E,\tau)=L.\mathrm{prodL}_\kappa(E,\tau')$.
+\end{enumerate}
+Then $L'.\mathrm{evalL}(E,\kappa',\sigma')=L.\mathrm{evalL}\bigl(E,\kappa,\mathrm{bndMap}(L.\mathrm{base},L'.\mathrm{base},\varphi,\sigma')\bigr)$.
+\end{theorem}
+
+The proof applies \cref{thm:lean-sym-relabel} with $\rho=\mathrm{relab}_\varphi$. The pin condition transfers pair by pair (a swapped pair is the same equation read backwards); the boundary pins transfer through (viii) and $L'.\mathrm{bnd}$ having no duplicates, so $L'.\mathrm{bnd.idxOf}$ inverts the boundary place.
+
+\section{Peeling the Last Copy of an Outermost Box}\label{sec:lean-sym-peel}
+
+Module \file{LinkedPeel.lean} (imports \file{Linked.lean}, \file{PortBox.lean}) proves that writing the last copy of an outermost node box as separate nodes keeps the linked digit sum. The box over the nodes $B$ has $s+1$ copies in $L$ (multiplicity index $m_b$, $\kappa(m_b)=\kappa(c)+1$) and $s$ copies in $L'$ (index $c$); the last copy is the nodes $\mathrm{cp}(x)$, $x\in B$. The box's links end in the copy: in $L'$, the last template copy's $l_1$ meets the copy's $l_2$, and the copy's $l_1$ meets the old end $e_1$ by a wire; the links of boxes inside the peeled box hold once on the template and once on the copy.
+
+\subsection{Copy-index lemmas}
+
+\begin{proposition}[\lean!mem_cidx_cons!, \lean!cons_mem_cidx!, \lean!cidx_eraseIdx!, \lean!cidx_set!]
+$t\in\mathrm{cidx}_\kappa(m\mathbin{::}c)$ iff $t=j\mathbin{::}u$ with $j<\kappa(m)$ and $u\in\mathrm{cidx}_\kappa(c)$. If $t\in\mathrm{cidx}_\kappa(c)$ then $t.\mathrm{eraseIdx}\,d\in\mathrm{cidx}_\kappa(c.\mathrm{eraseIdx}\,d)$, and $t.\mathrm{set}\,d\,v\in\mathrm{cidx}_\kappa(c)$ when $v<\kappa(c.\mathrm{getD}\,d\,0)$ and $d<|c|$.
+\end{proposition}
+
+\begin{proposition}[\lean!cidx_succ!]
+If $\kappa(m_b)=\kappa(c)+1$ then $\mathrm{cidx}_\kappa(m_b\mathbin{::}r)=\mathrm{cidx}_\kappa(c\mathbin{::}r)\mathbin{+\!\!+}[\kappa(c)\mathbin{::}u\mid u\in\mathrm{cidx}_\kappa(r)]$.
+\end{proposition}
+
+\subsection{Diagrams without port boxes}
+
+\begin{proposition}[\lean!Diagram.walk_nil_of!, \lean!portBoxes_nil!, \lean!tail_nil!, \lean!legChain_eq!, \lean!dnode_notail!]\label{prop:lean-sym-notail}
+If $P(y)$ is false for every box then $\mathrm{walk}(P,f,s)=[]$. If every box has an empty port scope then $\mathrm{portBoxes}(q)=[]$; if moreover every wire's two ends lie on nodes of one node chain, then $\mathrm{tail}(q)=[]$, $\mathrm{legChain}(q)=\mathrm{nodeChain}(q.\mathit{node})$, and
+\begin{multline*}
+\mathrm{dnode}_\kappa(n,t)=\bigl(n.\mathrm{kind},\ [\mathrm{dlab}((n.\mathrm{id},\mathit{true},i),t)]_{i<|n.\mathrm{outs}|},\\ [\mathrm{dlab}((n.\mathrm{id},\mathit{false},i),t)]_{i<|n.\mathrm{ins}|},\ n.\mathrm{dim},\ n.\mathrm{ph}\bigr).
+\end{multline*}
+\end{proposition}
+
+Every theorem of this chapter about peels, splits, drops and ghosts assumes these two conditions (fields \lean!ports! and \lean!wch!), so each leg is read as one digit per copy of its node.
+
+\subsection{Link pairs}
+
+\begin{proposition}[\lean!mem_lp!]\label{prop:lean-sym-mem-lp}
+$x\in\mathrm{lp}_\kappa(d,k,c,\ell)$ iff one of: there is $t\in\mathrm{cidx}_\kappa(c)$ with $t_d+1<k$ and $x=((\ell.\mathrm{l1},t),(\ell.\mathrm{l2},t.\mathrm{set}\,d\,(t_d+1)))$; there is $t$ with $\lnot(t_d+1<k)$ and $x=((\ell.\mathrm{l1},t),(\ell.\mathrm{e1},t.\mathrm{eraseIdx}\,d))$; there is $t$ with $t_d=0$ and $x=((\ell.\mathrm{e2},t.\mathrm{eraseIdx}\,d),(\ell.\mathrm{l2},t))$; or $k=0$ and $x=((\ell.\mathrm{e2},u),(\ell.\mathrm{e1},u))$ for some $u\in\mathrm{cidx}_\kappa(c.\mathrm{eraseIdx}\,d)$.
+\end{proposition}
+
+\begin{definition}[Port maps]
+$\mathrm{cpP}_{\mathrm{cp}}(p)=(\mathrm{cp}(p.\mathit{node}),p.\mathit{out},p.\mathit{pos})$; $\mathrm{cpNode}_{\mathrm{cp}}(n)$ is $n$ with id $\mathrm{cp}(n.\mathrm{id})$; $\ell.\mathrm{mapP}\,f$ applies $f$ to the four ports of a link; $\mathrm{consS}(s,((p,t),(q,u)))=((p,s\mathbin{::}t),(q,s\mathbin{::}u))$; $\mathrm{portsP}_f(((p,t),(q,u)))=((f p,t),(f q,u))$.
+\end{definition}
+
+\begin{proposition}[Link-pair lemmas]
+The link pairs satisfy the following.
+\begin{enumerate}
+\item $\mathrm{lp}_\kappa(d,k,c,\ell.\mathrm{mapP}\,f)=\mathrm{lp}_\kappa(d,k,c,\ell).\mathrm{map}\,\mathrm{portsP}_f$ (\lean!lp_mapP!).
+\item If $\kappa(m_0)=\kappa(c_0)+1$, then $x\in\mathrm{lp}_\kappa(d+1,k,m_0\mathbin{::}r,\ell)$ holds iff $x\in\mathrm{lp}_\kappa(d+1,k,c_0\mathbin{::}r,\ell)$ holds or $x=\mathrm{consS}(\kappa(c_0),y)$ for some $y$ in $\mathrm{lp}_\kappa(d,k,r,\ell)$ (\lean!mem_lp_split!). The pairs of a link inside the outermost box split into the template's and the last copy's.
+\item Every digit of a pair of $\mathrm{lp}_\kappa(d+1,k,c_0\mathbin{::}r,\ell)$ has a copy index $j\mathbin{::}u$ with $j<\kappa(c_0)$ (\lean!lp_heads!).
+\item In a pair of $\mathrm{lp}$, the first port is $\ell.\mathrm{l1}$ or $\ell.\mathrm{e2}$ and the second is $\ell.\mathrm{l2}$ or $\ell.\mathrm{e1}$ (\lean!lp_ports!); the pairs depend only on the four ports of $\ell$ (\lean!lp_congr!).
+\end{enumerate}
+\end{proposition}
+
+\subsection{The peel condition}
+
+\begin{definition}[\lean!peel!$\varphi$, \lean!WireIn!]
+The peel's map of digits sends a leg on $B$ at the copy $s$ of the outermost box to its copy:
+\[
+\mathrm{peel}\varphi_{B,\mathrm{cp},s}(p,t)=\begin{cases}(\mathrm{cpP}_{\mathrm{cp}}(p),\ t.\mathrm{tail})&p.\mathit{node}\in B\land t.\mathrm{head?}=s\\(p,t)&\text{else.}\end{cases}
+\]
+$\mathrm{WireIn}(ws,(a,b))$ holds when $(a,b)\in ws$ or $(b,a)\in ws$ (decidable).
+\end{definition}
+
+\begin{definition}[\lean!PeelOK!]\label{def:lean-sym-peelok}
+$\mathrm{PeelOK}(L,L',\mathit{bid},m_b,c,B,\mathrm{cp})$ is the conjunction of the 21 fields of \cref{tab:lean-sym-peelok}.
+\end{definition}
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.13\linewidth}X@{}}
+\caption{The fields of \lean!PeelOK L L' bid mb c B cp!.}\label{tab:lean-sym-peelok}\\
+\toprule
+Field & Statement \\
+\midrule
+\endfirsthead
+\toprule
+Field & Statement \\
+\midrule
+\endhead
+\lean!ports!, \lean!ports'! & every box of $L$, of $L'$, has an empty port scope \\
+\lean!wch!, \lean!wch'! & every wire of $L$, of $L'$, joins two nodes of one node chain \\
+\lean!cph!, \lean!cph'! & $L.\mathrm{cph}=[]$, $L'.\mathrm{cph}=[]$ \\
+\lean!nodes! & $L'.\mathrm{nodes}=L.\mathrm{nodes}\mathbin{+\!\!+}(L.\mathrm{nodes.filter}(n.\mathrm{id}\in B)).\mathrm{map}\,\mathrm{cpNode}_{\mathrm{cp}}$ \\
+\lean!ids!, \lean!legs!, \lean!bnd! & the node ids of $L'$, the legs of $L'$, the boundary of $L'$ have no duplicates \\
+\lean!chB! & for $n\in L$ with $n.\mathrm{id}\in B$: $\mathrm{nodeChain}_L(n)=m_b\mathbin{::}\mathrm{nodeChain}_{L'}(\mathrm{cp}\,n)$ and $\mathrm{nodeChain}_{L'}(n)=c\mathbin{::}\mathrm{nodeChain}_{L'}(\mathrm{cp}\,n)$ \\
+\lean!chO! & for $n\in L$ off $B$: $\mathrm{nodeChain}_{L'}(n)=\mathrm{nodeChain}_L(n)$ \\
+\lean!wires! & every wire $w$ of $L$ has both ends legs of $L$, both ends in $B$ or both off $B$, $\mathrm{WireIn}(L'.\mathrm{wires},w)$, and, when on $B$, $\mathrm{WireIn}(L'.\mathrm{wires},(\mathrm{cpP}\,w_1,\mathrm{cpP}\,w_2))$ \\
+\lean!wires'! & every wire of $L'$ is a wire of $L$, the copy $(\mathrm{cpP}\,w_1,\mathrm{cpP}\,w_2)$ of a wire of $L$ on $B$, or $(\mathrm{cpP}\,\ell.\mathrm{l1},\ell.\mathrm{e1})$ or its reverse for a link $\ell$ of $L$ with $\ell.\mathrm{box}=\mathit{bid}$ \\
+\lean!lwf! & every link $\ell$ of $L$ has its four ports legs of $L$, $\mathrm{nodeChain}(\ell.\mathrm{l2})=\mathrm{nodeChain}(\ell.\mathrm{l1})$, $d=\mathrm{depth}_L(\ell.\mathrm{box},\ell.\mathrm{l1}.\mathit{node})<|\mathrm{nodeChain}(\ell.\mathrm{l1})|$, entry $d$ of that chain equal to $\mathrm{multOf}_L(\ell.\mathrm{box})$, and the chains of $\ell.\mathrm{e1}$, $\ell.\mathrm{e2}$ equal to $\mathrm{nodeChain}(\ell.\mathrm{l1}).\mathrm{eraseIdx}\,d$ \\
+\lean!lb! & a link $\ell$ of the peeled box ($\ell.\mathrm{box}=\mathit{bid}$) has $\ell.\mathrm{l1},\ell.\mathrm{l2}$ on $B$ and $\ell.\mathrm{e1},\ell.\mathrm{e2}$ off $B$, $\mathrm{depth}_L(\mathit{bid},\ell.\mathrm{l1})=0$, $\mathrm{multOf}_L(\mathit{bid})=m_b$, $\ell$ with $\mathrm{e1}:=\mathrm{cpP}\,\ell.\mathrm{l2}$ a link of $L'$, $\mathrm{depth}_{L'}(\mathit{bid},\ell.\mathrm{l1})=0$, $\mathrm{multOf}_{L'}(\mathit{bid})=c$, and $\mathrm{WireIn}(L'.\mathrm{wires},(\mathrm{cpP}\,\ell.\mathrm{l1},\ell.\mathrm{e1}))$ \\
+\lean!lin! & a link $\ell$ of another box with $\ell.\mathrm{l1}$ on $B$ has all four ports on $B$, depth at least $1$, a link of $L'$ with the same four ports, depth and multiplicity, and a link of $L'$ on the copied ports $\mathrm{cpP}(\cdot)$ with depth one less at $\mathrm{cp}(\ell.\mathrm{l1}.\mathit{node})$ and the same multiplicity \\
+\lean!lout! & a link of another box with $\ell.\mathrm{l1}$ off $B$ has all four ports off $B$ and a link of $L'$ with the same ports, depth and multiplicity \\
+\lean!links'! & every link of $L'$ arises in one of the three ways of \lean!lb!, \lean!lin!, \lean!lout! \\
+\lean!bndL! & every boundary port $p$ of $L$ is a leg of $L$ and a boundary port of $L'$, and $\mathrm{cpP}\,p$ is a boundary port of $L'$ when $p$ is on $B$ \\
+\lean!bnd'! & every boundary port of $L'$ is a boundary port of $L$ or the copy $\mathrm{cpP}\,p$ of one on $B$ \\
+\bottomrule
+\end{xltabular}
+
+From \lean!PeelOK! the module derives (theorems in namespace \lean!PeelOK!): the legs of $L'$ are those of $L$ followed by the copied legs (\lean!legs_eq!); the node ids and legs of $L$ have no duplicates (\lean!idsL!, \lean!legsL!); $\mathrm{cp}$ sends $B$ to fresh ids (\lean!cp_fresh!) one to one (\lean!cp_inj!); leg chains are node chains on both sides (\lean!lc!, \lean!lc'!); and \lean!chB'!, \lean!chO'! restate \lean!chB!, \lean!chO! for legs. \lean!portDim_of! reads a port's dimension index from its node when node ids have no duplicates; \lean!node_of_leg! and \lean!node_of_legs! locate the node of a leg; \lean!legs_cpNode! says the legs of a copied node are the copied legs.
+
+\begin{proposition}[\lean!peel!$\varphi$\lean!_B!, \lean!peel!$\varphi$\lean!_ne!, \lean!peel!$\varphi$\lean!_O!, \lean!pmap_fix!, \lean!pmap_out!, \lean!pmap_consS!]
+$\mathrm{peel}\varphi(p,s\mathbin{::}u)=(\mathrm{cpP}\,p,u)$ for $p$ on $B$; $\mathrm{peel}\varphi(p,j\mathbin{::}u)=(p,j\mathbin{::}u)$ for $j\ne s$; $\mathrm{peel}\varphi(p,t)=(p,t)$ for $p$ off $B$. Consequently $\mathrm{pmap}$ fixes a pair whose copy indices both start with $j\ne s$, fixes a pair off $B$, and sends $\mathrm{consS}(s,y)$ for $y$ on $B$ to $\mathrm{portsP}_{\mathrm{cpP}}(y)$.
+\end{proposition}
+
+\begin{theorem}[\lean!PeelOK.fwd!, \lean!PeelOK.bwd!]\label{thm:lean-sym-peel-pairs}
+Under $\mathrm{PeelOK}$ and $\kappa(m_b)=\kappa(c)+1$, with $\varphi=\mathrm{peel}\varphi_{B,\mathrm{cp},\kappa(c)}$: every $x\in\mathrm{dpairs}_\kappa(L)$ has $\mathrm{pmap}_\varphi(x)$ or its swap in $\mathrm{dpairs}_\kappa(L')$, and every $y\in\mathrm{dpairs}_\kappa(L')$ is $\mathrm{pmap}_\varphi(x)$ or its swap for some $x\in\mathrm{dpairs}_\kappa(L)$.
+\end{theorem}
+
+The proof is a case analysis. A wire of $L$ on $B$ at copy $\kappa(c)\mathbin{::}u$ goes to the copied wire at $u$; at any other copy it stays. A link of the peeled box: the pair from copy $j$ to copy $j+1=\kappa(c)$ goes to the $L'$ link with $\mathrm{e1}:=\mathrm{cpP}\,\ell.\mathrm{l2}$ (its last-copy pair), the pair from the last copy to $e_1$ goes to the wire $(\mathrm{cpP}\,\ell.\mathrm{l1},\ell.\mathrm{e1})$, and the pair from $e_2$ to copy $0$ stays or, when $\kappa(c)=0$, goes to the $L'$ link's zero-copy pair. A link inside the box splits by \lean!mem_lp_split! into the template's pairs (fixed) and the copy's pairs (sent to the copied link). A link outside $B$ is fixed.
+
+\begin{proposition}[\lean!prod_ite_filter!]
+$\prod_{a\in\ell}(\text{if }P(a)\text{ then }f(a)\text{ else }1)=\prod_{a\in\ell.\mathrm{filter}\,P}f(a)$.
+\end{proposition}
+
+\begin{theorem}[\lean!PeelOK.prod!]
+Under $\mathrm{PeelOK}$ and $\kappa(m_b)=\kappa(c)+1$, if $\tau'(x)=\tau(\mathrm{relab}_{\mathrm{peel}\varphi}(x))$ for $x\in\mathrm{dlabs}_\kappa(L)$, then $L'.\mathrm{prodL}_\kappa(E,\tau)=L.\mathrm{prodL}_\kappa(E,\tau')$.
+\end{theorem}
+
+The node $n\in B$ contributes over $\mathrm{cidx}(m_b\mathbin{::}r)$, which \lean!cidx_succ! splits into the template copies (node $n$ in $L'$ over $c\mathbin{::}r$) and the last copy (node $\mathrm{cp}\,n$ over $r$).
+
+\begin{theorem}[\lean!evalL_peel!]\label{thm:lean-sym-peel}
+If $\mathrm{PeelOK}(L,L',\mathit{bid},m_b,c,B,\mathrm{cp})$ and $\kappa(m_b)=\kappa(c)+1$, then for every $E$ and $\sigma'$,
+\[
+L'.\mathrm{evalL}(E,\kappa,\sigma')=L.\mathrm{evalL}\bigl(E,\kappa,\mathrm{bndMap}(L.\mathrm{base},L'.\mathrm{base},\mathrm{peel}\varphi_{B,\mathrm{cp},\kappa(c)},\sigma')\bigr).
+\]
+\end{theorem}
+
+The proof instantiates \cref{thm:lean-sym-relabelphi} with $\kappa'=\kappa$ and $\varphi=\mathrm{peel}\varphi$; conditions (ii)--(v) follow from \lean!chB!, \lean!chO!, \lean!nodes! and \lean!ids!, (vii) is \cref{thm:lean-sym-peel-pairs}, (viii) is \lean!bndL! and \lean!bnd'!, and (ix) is \lean!PeelOK.prod!.
+
+\section{Splitting an Outermost Box in Two}\label{sec:lean-sym-split}
+
+Module \file{LinkedSplit.lean} (imports \file{LinkedPeel.lean}) proves that splitting the copies of an outermost node box between two boxes keeps the linked digit sum. In $L$ the box $\mathit{bid}$ over the nodes $B$ has $\kappa(c_1)+\kappa(c_2)$ copies (multiplicity index $m_b$). In $L'$ it keeps $\kappa(c_1)$ copies, and a copy of $B$, the nodes $\mathrm{cp}(x)$ under a new outermost box $\mathit{bid}_2$, carries $\kappa(c_2)$ copies; copy $j+\kappa(c_1)$ of $B$ in $L$ is copy $j$ of the copy in $L'$. A port $e.1$ of a top-level Z or X spider outside $B$ that bundles over $\mathit{bid}$ (an entry $e$ of the \term{tail list} $T$) becomes two ports: $e.1$ over $\mathit{bid}$ and the appended port $e.2$ over $\mathit{bid}_2$. The box $\mathit{bid}$ has no links of its own (\lean!lin! below requires depth at least $1$), and links of boxes inside it hold once on $B$ and once on the copy.
+
+\subsection{Definitions}
+
+\begin{definition}[Shifted copies]
+$\mathrm{addH}_K([])=[]$ and $\mathrm{addH}_K(j\mathbin{::}u)=(j+K)\mathbin{::}u$; $\mathrm{shiftS}_K$ applies $\mathrm{addH}_K$ to the copy indices of both digits of a pair.
+\end{definition}
+
+\begin{proposition}[\lean!cidx_add!, \lean!mem_lp_split2!]
+If $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, then $\mathrm{cidx}_\kappa(m_b\mathbin{::}r)=\mathrm{cidx}_\kappa(c_1\mathbin{::}r)\mathbin{+\!\!+}\mathrm{cidx}_\kappa(c_2\mathbin{::}r).\mathrm{map}\,\mathrm{addH}_{\kappa(c_1)}$, and $x\in\mathrm{lp}_\kappa(d+1,k,m_b\mathbin{::}r,\ell)$ iff $x\in\mathrm{lp}_\kappa(d+1,k,c_1\mathbin{::}r,\ell)$ or $x=\mathrm{shiftS}_{\kappa(c_1)}(y)$ for some $y\in\mathrm{lp}_\kappa(d+1,k,c_2\mathbin{::}r,\ell)$.
+\end{proposition}
+
+\begin{definition}[Leg digits]
+For a diagram $D$, $\mathrm{dlegs}_\kappa(D,x,t,o,\mathit{len})$ lists $\mathrm{dlab}((x,o,i),t\mathbin{+\!\!+}s)$ for $i<\mathit{len}$ and $s\in\mathrm{rcidx}_\kappa(\mathrm{tail}(x,o,i))$; $\mathrm{legLen}(n,o)$ is $|n.\mathrm{outs}|$ for $o=\mathit{true}$ and $|n.\mathrm{ins}|$ otherwise. By definition (\lean!dnode_outs!, \lean!dnode_ins!) the output labels of $\mathrm{dnode}_\kappa(n,t)$ are $\mathrm{dlegs}(n.\mathrm{id},t,\mathit{true},|n.\mathrm{outs}|)$ and the input labels are $\mathrm{dlegs}(n.\mathrm{id},t,\mathit{false},|n.\mathrm{ins}|)$.
+\end{definition}
+
+\lean!mem_dlegs! characterizes membership, \lean!rcidx_nodup! and \lean!dlegs_nodup! state the absence of duplicates, \lean!dlegs_rename! says that a map of digits sending each $(x,o,i)$ at $t\mathbin{+\!\!+}s$ to $(x',o,i)$ at $t'\mathbin{+\!\!+}s$, with equal tails, maps $\mathrm{dlegs}(x,t,\ldots)$ onto $\mathrm{dlegs}(x',t',\ldots)$, and \lean!mem_legs_iff! says $(n.\mathrm{id},o,i)\in\mathrm{legs}(D)$ iff $i<\mathrm{legLen}(n,o)$ for a node $n$ of $D$ with unique ids.
+
+\begin{definition}[Moved legs and the split map]\label{def:lean-sym-split-map}
+\begin{itemize}
+\item $\mathrm{SplitL}_{B,T}(p)$ holds when $p.\mathit{node}\in B$ or $p$ is the first component of an entry of $T$.
+\item $\mathrm{cq}_{B,\mathrm{cp},T}(p)$ is $\mathrm{cpP}_{\mathrm{cp}}(p)$ when $p.\mathit{node}\in B$, else the second component of the first entry of $T$ with first component $p$, else $p$.
+\item The split map of digits: $\mathrm{split}\varphi_K(p,[])=(p,[])$ and
+\[
+\mathrm{split}\varphi_K(p,j\mathbin{::}u)=\begin{cases}(\mathrm{cq}(p),(j-K)\mathbin{::}u)&\mathrm{SplitL}(p)\land K\le j\\(p,j\mathbin{::}u)&\text{else.}\end{cases}
+\]
+\item $\mathrm{extT}_T(n)$ is $n$ with one output port appended for each entry $e$ of $T$ with $e.1.\mathit{node}=n.\mathrm{id}$ and $e.1.\mathit{out}$ (dimension index $n.\mathrm{outs.getD}(e.1.\mathit{pos})\,0$), and one input port appended likewise for each such entry with $\lnot e.1.\mathit{out}$, in the order of $T$.
+\end{itemize}
+\end{definition}
+
+\begin{definition}[\lean!BoxSplitOK!]\label{def:lean-sym-boxsplitok}
+$\mathrm{BoxSplitOK}(L,L',\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2,B,\mathrm{cp},T)$ is the conjunction of the 25 fields of \cref{tab:lean-sym-boxsplitok}.
+\end{definition}
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.13\linewidth}X@{}}
+\caption{The fields of \lean!BoxSplitOK!. ``Moved'' abbreviates $\mathrm{SplitL}_{B,T}$; $\mathrm{cq}$ is $\mathrm{cq}_{B,\mathrm{cp},T}$.}\label{tab:lean-sym-boxsplitok}\\
+\toprule
+Field & Statement \\
+\midrule
+\endfirsthead
+\toprule
+Field & Statement \\
+\midrule
+\endhead
+\lean!cph! & every copy-indexed phase $q=(x,y,c,m)$ of $L$ is on a node of $L$, and $x\in B$ implies $y=\mathit{bid}$ and $m=c_1$ \\
+\lean!cph'! & $L'.\mathrm{cph}=L.\mathrm{cph}\mathbin{+\!\!+}[(\mathrm{cp}\,x,\mathit{bid}_2,c+1,c_1)\mid (x,y,c,m)\in L.\mathrm{cph},\ x\in B]$ \\
+\lean!cphO! & for a phase $(x,y,c,m)$ of $L$ with $x\notin B$, $\mathrm{depth}_{L'}(y,x)=\mathrm{depth}_L(y,x)$ \\
+\lean!nodes! & $L'.\mathrm{nodes}=L.\mathrm{nodes.map}\,\mathrm{extT}_T\mathbin{+\!\!+}(L.\mathrm{nodes.filter}(n.\mathrm{id}\in B)).\mathrm{map}\,\mathrm{cpNode}_{\mathrm{cp}}$ \\
+\lean!ids!, \lean!legsL!, \lean!legs!, \lean!bnd! & the node ids of $L'$, the legs of $L$, the legs of $L'$ and the boundary of $L'$ have no duplicates \\
+\lean!chB! & for $n\in B$ with $r=\mathrm{nodeChain}_L(n).\mathrm{tail}$: $\mathrm{nodeChain}_L(n)=m_b\mathbin{::}r$, $\mathrm{nodeChain}_{L'}(n)=c_1\mathbin{::}r$, $\mathrm{nodeChain}_{L'}(\mathrm{cp}\,n)=c_2\mathbin{::}r$, $\mathrm{depth}_L(\mathit{bid},n)=\mathrm{depth}_{L'}(\mathit{bid},n)=\mathrm{depth}_{L'}(\mathit{bid}_2,\mathrm{cp}\,n)=0$ \\
+\lean!chO! & for $n$ off $B$, $\mathrm{nodeChain}_{L'}(n)=\mathrm{nodeChain}_L(n)$ \\
+\lean!tl! & every entry $e\in T$ has $e.1$ a leg of $L$ off $B$ on a node of empty node chain, $e.2$ on the same node and side, and that node a Z or X spider \\
+\lean!legS! & a moved leg $p$ of $L$ with $r=\mathrm{legChain}_L(p).\mathrm{tail}$ has $\mathrm{legChain}_L(p)=m_b\mathbin{::}r$, $\mathrm{legChain}_{L'}(p)=c_1\mathbin{::}r$, $\mathrm{cq}(p)$ a leg of $L'$ with $\mathrm{legChain}_{L'}(\mathrm{cq}\,p)=c_2\mathbin{::}r$ and $\mathrm{portDim}_{L'}(\mathrm{cq}\,p)=\mathrm{portDim}_L(p)$ \\
+\lean!legO! & an unmoved leg keeps its leg chain \\
+\lean!legL! & every leg of $L$ is a leg of $L'$ of the same dimension index \\
+\lean!legs'! & every leg of $L'$ is a leg of $L$ or $\mathrm{cq}(p)$ for a moved leg $p$ \\
+\lean!cqinj!, \lean!cqnew! & $\mathrm{cq}$ is one to one on moved legs and sends them off $\mathrm{legs}(L)$ \\
+\lean!wires! & every wire $w$ of $L$ joins legs of $L$, both moved or both unmoved, of equal leg chains, with $\mathrm{WireIn}(L'.\mathrm{wires},w)$ and, when moved, $\mathrm{WireIn}(L'.\mathrm{wires},(\mathrm{cq}\,w_1,\mathrm{cq}\,w_2))$ \\
+\lean!wires'! & every wire of $L'$ is a wire of $L$ (either way round) or $(\mathrm{cq}\,w_1,\mathrm{cq}\,w_2)$ (either way round) for a moved wire $w$ of $L$ \\
+\lean!lwf! & the link well-formedness of \lean!PeelOK.lwf!, stated with leg chains \\
+\lean!lin! & a link $\ell$ with $\ell.\mathrm{l1}$ moved has its four ports moved, depth at least $1$, a link of $L'$ with the same ports, depth and multiplicity, and a link of $L'$ on the ports $\mathrm{cq}(\cdot)$ with the same depth at $\mathrm{cq}(\ell.\mathrm{l1})$ and the same multiplicity \\
+\lean!lout! & a link with $\ell.\mathrm{l1}$ unmoved has its four ports unmoved and a link of $L'$ with the same ports, depth and multiplicity \\
+\lean!links'! & every link of $L'$ arises in one of the ways of \lean!lin!, \lean!lout! \\
+\lean!bndL!, \lean!bnd'! & every boundary port $p$ of $L$ is a leg of $L$ and a boundary port of $L'$, with $\mathrm{cq}\,p$ one when $p$ is moved; every boundary port of $L'$ is one of these \\
+\bottomrule
+\end{xltabular}
+
+\subsection{Lemmas and the main theorem}
+
+\begin{proposition}[Split-map lemmas]
+\begin{enumerate}
+\item $\mathrm{split}\varphi_K(p,j\mathbin{::}u)=(p,j\mathbin{::}u)$ for $j<K$; $\mathrm{split}\varphi_K(p,(j+K)\mathbin{::}u)=(\mathrm{cq}\,p,j\mathbin{::}u)$ for moved $p$; $\mathrm{split}\varphi_K(p,t)=(p,t)$ for unmoved $p$ (\lean!split!$\varphi$\lean!_lo!, \lean!split!$\varphi$\lean!_hi!, \lean!split!$\varphi$\lean!_O!); every value is one of these (\lean!split!$\varphi$\lean!_cases!).
+\item $\mathrm{cq}(p)=\mathrm{cpP}(p)$ on $B$; off $B$ an entry $e\in T$ with $e.1=p$ gives $\mathrm{cq}(p)=e.2$ (\lean!cq_B!, \lean!cq_T!).
+\item $\mathrm{pmap}$ fixes a pair with both copy heads below $K$ and a pair of unmoved legs, and sends $\mathrm{shiftS}_K(y)$ for $y$ on moved legs with nonempty copy indices to $\mathrm{portsP}_{\mathrm{cq}}(y)$ (\lean!pmap_lo!, \lean!pmap_O!, \lean!pmap_shift!).
+\end{enumerate}
+\end{proposition}
+
+From \lean!BoxSplitOK! the module derives the node ids of $L'$ (\lean!idsEq!), unique ids of $L$ (\lean!idsL!), freshness and injectivity of $\mathrm{cp}$ on $B$ (\lean!cp_fresh!, \lean!cp_inj!), the common tail $r$ of the three chains of a moved leg (\lean!lS!), that $\mathrm{split}\varphi$ keeps node and side off $B$ (\lean!BoxSplitOK.!$\varphi$\lean!_node!), the into, onto and one-to-one conditions of \cref{thm:lean-sym-relabelphi} (\lean!into!, \lean!onto!, \lean!onto_same!, \lean!onto_cq!, \lean!inj!), and the wire facts \lean!wire_back!, \lean!wire_back_cq!, \lean!wire_ch!.
+
+\begin{theorem}[\lean!BoxSplitOK.fwd!, \lean!BoxSplitOK.bwd!]
+Under $\mathrm{BoxSplitOK}$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, with $\varphi=\mathrm{split}\varphi_{\kappa(c_1)}$, every digit pair of $L$ goes by $\mathrm{pmap}_\varphi$ (possibly swapped) to a digit pair of $L'$, and every digit pair of $L'$ comes so from one of $L$.
+\end{theorem}
+
+\begin{proposition}[Phase indices: \lean!phAt_eq!, \lean!phAt_cp!]
+For a node $n$ of $L$, $\mathrm{phAt}_{L'}(n,t)=\mathrm{phAt}_L(n,t)$; for $n\in B$, $\mathrm{phAt}_{L'}(\mathrm{cpNode}\,n,j\mathbin{::}u)=\mathrm{phAt}_L(n,(j+\kappa(c_1))\mathbin{::}u)$.
+\end{proposition}
+
+The second identity holds because the copy's phase $(\mathrm{cp}\,x,\mathit{bid}_2,c+1,c_1)$ reads $j+(c+1)\kappa(c_1)=(j+\kappa(c_1))+c\,\kappa(c_1)$. \lean!phAt_congr! says $\mathrm{phAt}$ reads only the id and phase index of the node; \lean!find?_congr'! and \lean!find?_filter_of! are list lemmas.
+
+\begin{proposition}[\lean!dnodeL_rename!, \lean!tail_eq!]
+If $n'$ has the kind, dimension index and leg counts of $n$, $\mathrm{phAt}_{L'}(n',t')=\mathrm{phAt}_L(n,t)$, and for every leg $(n.\mathrm{id},o,i)$ the tails agree and $\varphi$ sends $(n.\mathrm{id},o,i)$ at $t\mathbin{+\!\!+}s$ to $(n'.\mathrm{id},o,i)$ at $t'\mathbin{+\!\!+}s$, then renaming the labels of $\mathrm{dnodeL}_L(n,t)$ by $\mathrm{relab}_\varphi$ gives $\mathrm{dnodeL}_{L'}(n',t')$. A leg's tail is its leg chain past its node chain: $\mathrm{tail}(p)=\mathrm{legChain}(p).\mathrm{drop}\,|\mathrm{nodeChain}(p.\mathit{node})|$.
+\end{proposition}
+
+\begin{theorem}[\lean!BoxSplitOK.tside!, \lean!BoxSplitOK.tnode!]
+For a node $n$ of $L$ off $B$ with empty node chain, the digits of side $o$ of $n$ renamed by $\mathrm{relab}_{\mathrm{split}\varphi}$ are a permutation of the digits of side $o$ of $\mathrm{extT}_T(n)$ in $L'$. For a node $n$ with an entry of $T$, $\mathrm{val}(E,\tau,\mathrm{rename}(\mathrm{dnodeL}_L(n,[]),\mathrm{relab}_{\mathrm{split}\varphi}))=\mathrm{val}(E,\tau,\mathrm{dnodeL}_{L'}(\mathrm{extT}_T\,n,[]))$.
+\end{theorem}
+
+The Z and X values are invariant under a permutation of the outputs and of the inputs, so a spider whose bundled port was split into two ports keeps its value; this is why \lean!tl! restricts $T$ to Z and X spiders.
+
+\begin{theorem}[\lean!BoxSplitOK.prod!]
+Under $\mathrm{BoxSplitOK}$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, if $\tau'(x)=\tau(\mathrm{relab}_{\mathrm{split}\varphi}\,x)$ on $\mathrm{dlabs}_\kappa(L)$ then $L'.\mathrm{prodL}_\kappa(E,\tau)=L.\mathrm{prodL}_\kappa(E,\tau')$.
+\end{theorem}
+
+\begin{theorem}[\lean!evalL_split!]\label{thm:lean-sym-split}
+If $\mathrm{BoxSplitOK}(L,L',\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2,B,\mathrm{cp},T)$ and $\kappa(m_b)=\kappa(c_1)+\kappa(c_2)$, then for every $E$ and $\sigma'$,
+\[
+L'.\mathrm{evalL}(E,\kappa,\sigma')=L.\mathrm{evalL}\bigl(E,\kappa,\mathrm{bndMap}(L.\mathrm{base},L'.\mathrm{base},\mathrm{split}\varphi_{B,\mathrm{cp},T,\kappa(c_1)},\sigma')\bigr).
+\]
+\end{theorem}
+
+\section{Dropping a Boxed Identity Spider}\label{sec:lean-sym-drop}
+
+Module \file{LinkedSlide.lean} (imports \file{LinkedPeel.lean}) proves that removing a Z spider with one input and one output and zero phase keeps the linked digit sum. The node $x$ has its leg $u$ wired by the wire $w$ to the leg $P$ of another node; its other leg $v$ lies anywhere: on a wire, at a link end or at a boundary place.
+
+\begin{definition}[\lean!substP!, \lean!dropId!, \lean!restP!]
+$\mathrm{substP}_{v,P}(p)=P$ if $p=v$ and $p$ otherwise. $\mathrm{dropId}(L,x,w,v,P)$ has the nodes of $L$ other than id $x$, the wires $(L.\mathrm{wires.erase}\,w)$ with both ends mapped by $\mathrm{substP}_{v,P}$, the outputs and inputs mapped by $\mathrm{substP}_{v,P}$, the boxes of $L$, the links of $L$ with their ports mapped by $\mathrm{substP}_{v,P}$, and $L.\mathrm{cph}$. $\mathrm{restP}_\kappa(L,w)$ lists the digit pairs of the wires other than $w$, then those of the links.
+\end{definition}
+
+\begin{definition}[\lean!DropOK!]\label{def:lean-sym-dropok}
+$\mathrm{DropOK}(L,x,w,u,v,P)$ has the 18 fields: \lean!ports! (no port boxes); \lean!wch! (wires within one node chain); \lean!cph! ($L.\mathrm{cph}=[]$); \lean!ids! (unique node ids); \lean!last! ($L.\mathrm{nodes}=L.\mathrm{nodes.filter}(n.\mathrm{id}\neq x.\mathrm{id})\mathbin{+\!\!+}[x]$); \lean!kind! ($x$ is Z); \lean!outs!, \lean!ins! ($x.\mathrm{outs}=x.\mathrm{ins}=[x.\mathrm{dim}]$); \lean!uv! ($\{u,v\}$ is $\{(x,\mathit{true},0),(x,\mathit{false},0)\}$ in one of the two orders); \lean!hw! ($w\in L.\mathrm{wires}$); \lean!wuP! ($w=(u,P)$ or $w=(P,u)$); \lean!hP! ($P.\mathit{node}\neq x.\mathrm{id}$); \lean!hPl! ($P$ is a leg of $L$); \lean!pdim! ($\mathrm{portDim}(P)=x.\mathrm{dim}$); \lean!uw! ($u$ is on no wire of $L.\mathrm{wires.erase}\,w$); \lean!ub! ($u\notin L.\mathrm{bnd}$); \lean!ul! ($u$ is none of the four ports of any link); \lean!vl! ($v$ is neither $\mathrm{l1}$ nor $\mathrm{l2}$ of any link).
+\end{definition}
+
+The module proves the structural lemmas \lean!nodes_drop!, \lean!wires_drop!, \lean!links_drop!, \lean!nodeBoxes_drop!, \lean!nodeChain_drop!, \lean!depth_drop!, \lean!multOf_drop! (the drop keeps boxes, chains and depths) and, under \lean!DropOK!, \lean!unode!, \lean!vnode!, \lean!uv_ne!, \lean!Pu!, \lean!Pv!, \lean!xmem!, \lean!chP! ($P$'s node has $x$'s chain), \lean!chain_subst!, \lean!lc!, \lean!wch'!, \lean!lc'!, \lean!xlegs! ($x$'s legs are $(x,\mathit{true},0)$ and $(x,\mathit{false},0)$), \lean!legs_eq! (the legs of $L$ are those of the drop followed by $x$'s), \lean!node_ne!, \lean!Pmem!, \lean!portDim_drop!, \lean!portDim_x!, \lean!lw1!. The general lemmas \lean!find?_filter_of!, \lean!val_congr! and \lean!walk_boxes_congr! (a walk reads only the boxes) are used throughout the linked modules, and
+\begin{equation}\label{eq:lean-sym-tZ-pair}
+\mathrm{tZ}(d,\varphi,[a,b])=[a=b\land a<d]\;\mathrm{ex}(\varphi(a))\qquad(\text{\lean!tZ_id_pair!}).
+\end{equation}
+
+\begin{definition}[Digits of the dropped node]
+$\mathrm{xdigs}_\kappa(L,x)$ lists $\mathrm{dlab}((x,\mathit{true},0),t)$ for $t\in\mathrm{cidx}_\kappa(\mathrm{nodeChain}\,x)$, then $\mathrm{dlab}((x,\mathit{false},0),t)$ for the same $t$. The integrand is $\mathrm{integ}_\kappa(L,E,\nu)=[\mathrm{pinsL}_\kappa(\nu)]\,\mathrm{prodL}_\kappa(E,\nu)$.
+\end{definition}
+
+\begin{proposition}[Drop lemmas]
+Under $\mathrm{DropOK}(L,x,w,u,v,P)$, writing $L_d=\mathrm{dropId}(L,x.\mathrm{id},w,v,P)$:
+\begin{enumerate}
+\item $\mathrm{dlabs}_\kappa(L)=\mathrm{dlabs}_\kappa(L_d)\mathbin{+\!\!+}\mathrm{xdigs}_\kappa(L,x)$ (\lean!dlabs_eq!); the list $\mathrm{xdigs}$ has no duplicates and contains no slot label and no digit of a leg other than $u,v$ (\lean!xdigs_nodup!, \lean!slab_not_xdigs!, \lean!not_xdigs!, \lean!mem_xdigs!).
+\item $y\in\mathrm{dpairs}_\kappa(L)$ iff $y$ is a pair of $w$ or $y\in\mathrm{restP}_\kappa(L,w)$ (\lean!mem_dpairs!); the pairs of $L_d$ are the pairs of $\mathrm{restP}_\kappa(L,w)$ with their ports mapped by $\mathrm{substP}$ (\lean!dpairs_drop!); the boundary of $L_d$ is $L.\mathrm{bnd}$ mapped by $\mathrm{substP}$ (\lean!bnd_drop!).
+\item The pairs of $\mathrm{restP}$ avoid $u$, and the pairs of $L_d$ avoid $u$ and $v$ (\lean!rest_avoid!, \lean!subst_ne!, \lean!pairs_avoid!).
+\item (\lean!prodL_eq!) With $d=E.\mathrm{dimv}(x.\mathrm{dim})$, $\varphi=E.\mathrm{phase}(x.\mathrm{ph})$, $o_t=\nu(\mathrm{dlab}((x,\mathit{true},0),t))$ and $i_t=\nu(\mathrm{dlab}((x,\mathit{false},0),t))$,
+\[
+L.\mathrm{prodL}_\kappa(E,\nu)=L_d.\mathrm{prodL}_\kappa(E,\nu)\cdot\prod_{t\in\mathrm{cidx}_\kappa(\mathrm{nodeChain}\,x)}\mathrm{tZ}(d,\varphi,[o_t,i_t]).
+\]
+\item $L_d$'s integrand reads no digit of $x$ (\lean!integ_reads!).
+\item If $\nu(\mathrm{dlab}(\mathrm{substP}\,a,t))=\nu(\mathrm{dlab}(a,t))$ for all $a,t$ and $\nu(\mathrm{dlab}(u,t))=\nu(\mathrm{dlab}(P,t))$ on $x$'s copies, then $L.\mathrm{pinsL}_\kappa(\nu)\iff L_d.\mathrm{pinsL}_\kappa(\nu)$ (\lean!pins_iff!).
+\item If $E.\mathrm{phase}(x.\mathrm{ph},k)=0$ for all $k$, $\tau$ agrees with $\mathrm{slotsD}(\sigma)$ off $\mathrm{dlabs}(L_d)$, $\nu$ agrees with $\tau$ off $\mathrm{xdigs}$ and $\nu$ is below $x$'s dimension on $\mathrm{xdigs}$, then $L.\mathrm{integ}(\nu)$ equals $L_d.\mathrm{integ}(\nu)$ when every $l\in\mathrm{xdigs}$ has $\nu(l)=\tau(\mathrm{dlab}(P,\mathrm{dtup}\,l))$, and $0$ otherwise (\lean!integ_point!).
+\end{enumerate}
+\end{proposition}
+
+\begin{theorem}[\lean!DropOK.evalL_drop!]\label{thm:lean-sym-drop}
+If $\mathrm{DropOK}(L,x,w,u,v,P)$ and $E.\mathrm{phase}(x.\mathrm{ph},k)=0$ for all $k$, then $L.\mathrm{evalL}(E,\kappa,\sigma)=\mathrm{dropId}(L,x.\mathrm{id},w,v,P).\mathrm{evalL}(E,\kappa,\sigma)$.
+\end{theorem}
+
+The proof splits the sum over $\mathrm{dlabs}(L)$ into the outer sum over the digits of $L_d$ and the inner sum over $\mathrm{xdigs}$ (\lean!sumOver_append!). By \lean!integ_point! the inner integrand is the indicator that every digit of $x$ equals $P$'s digit at the same copy, times $L_d$'s integrand; \lean!sumOver_pinV! collapses the inner sum to that single point. By \eqref{eq:lean-sym-tZ-pair} with zero phase the identity spider contributes $[a=b\land a<d]$, and \lean!pdim! makes $P$'s digit range equal to $x$'s.
+
+\section{Node Order, Drops in Place and Slot Data}\label{sec:lean-sym-form}
+
+Module \file{LinkedForm.lean} (imports \file{LinkedSlide.lean}, \file{LinkedRegroup.lean}).
+
+\begin{definition}[\lean!withNodes!, \lean!moveLast!, \lean!dropAt!]
+$\mathrm{withNodes}(L,ns)$ is $L$ with the node list $ns$, and
+\begin{gather*}
+\mathrm{moveLast}(L,x)=\mathrm{withNodes}\bigl(L,\ L.\mathrm{nodes.filter}(n.\mathrm{id}\neq x)\mathbin{+\!\!+}L.\mathrm{nodes.filter}(n.\mathrm{id}=x)\bigr),\\
+\mathrm{dropAt}(L,x,w,v,P)=\mathrm{dropId}(\mathrm{moveLast}(L,x.\mathrm{id}),x.\mathrm{id},w,v,P).
+\end{gather*}
+\end{definition}
+
+\begin{theorem}[\lean!evalL_withNodes!]
+If $ns$ is a permutation of $L.\mathrm{nodes}$ and the node ids of $L$ have no duplicates, then $\mathrm{withNodes}(L,ns).\mathrm{evalL}(E,\kappa,\sigma)=L.\mathrm{evalL}(E,\kappa,\sigma)$.
+\end{theorem}
+
+The node order enters neither boxes, chains, depths, pins nor node copies (\lean!nodeBoxes_wn!, \lean!portBoxes_wn!, \lean!nodeChain_wn!, \lean!tail_wn!, \lean!legChain_wn!, \lean!depth_wn!, \lean!pinsL_wn!, \lean!dnodeL_wn!); \lean!portDim_withNodes! keeps port dimensions under a permutation with unique ids; the digit labels and the product are permuted.
+
+\begin{theorem}[\lean!evalL_dropAt!]
+The node list of $\mathrm{moveLast}(L,x)$ is a permutation of $L$'s (\lean!moveLast_perm!).
+If the condition $\mathrm{DropOK}(\mathrm{moveLast}(L,x.\mathrm{id}),\allowbreak x,w,u,v,P)$ holds and $E.\mathrm{phase}(x.\mathrm{ph},k)=0$ for all $k$, then
+\[
+L.\mathrm{evalL}(E,\kappa,\sigma)=\mathrm{dropAt}(L,x,w,v,P).\mathrm{evalL}(E,\kappa,\sigma).
+\]
+\end{theorem}
+
+\begin{definition}[Slot data]\label{def:lean-sym-slotdata}
+For a box $b$ and a node list $g$, $\mathrm{slotsIn}(L,b,g)$ lists the slots $i<|L.\mathrm{bnd}|$ whose port's node lies in $g$ and in $b.\mathrm{nodes}$, increasing. The \term{box groups} $gs$ are a list of pairs (box id, list of node lists). The slot blocks of $b$ are
+\[
+\mathrm{slotParts}(L,gs,b)=\bigl[\mathrm{slotsIn}(L,b,h)\ \big|\ h\in g\mathbin{+\!\!+}[b.\mathrm{nodes.filter}(n\notin\textstyle\bigcup g)]\bigr].\mathrm{filter}(\neq[]),
+\]
+with $g=(gs.\mathrm{lookup}\,b.\mathrm{id}).\mathrm{getD}\,[]$,
+and the \term{slot data} (\lean!SlotData!, with decidable equality) is
+\[
+\mathrm{slotData}(L,gs)=\bigl(|L.\mathrm{outs}|,\ |L.\mathrm{ins}|,\ [(b.\mathrm{id},b.\mathrm{mult},b.\mathrm{parent},\mathrm{slotParts}(L,gs,b))\mid b\in L.\mathrm{boxes}]\bigr).
+\]
+\end{definition}
+
+Slot data are what the engine's boundary splice reads (\cref{sec:lean-sym-splice}); two linked diagrams with equal slot data have the same flat boundary order.
+
+\section{Link Ends on the Boundary: Ghosts}\label{sec:lean-sym-ghost}
+
+Module \file{LinkedGhost.lean} (imports \file{LinkedForm.lean}). A link end can lie on the boundary. The digit sum then pins a link end to a slot through an identity node; a \term{ghost} replaces that node by a port of no node that stands for the slot directly.
+
+\begin{definition}[Ghosts]
+A ghost list (\lean!Ghosts!) is a list of triples $(g,i,k)$: a port $g$, a slot $i$ and a dimension index $k$. The ghost reading of a digit is
+\[
+\mathrm{labG}_{gs}(p,t)=\begin{cases}\mathrm{slab}(i,t)&(gs.\mathrm{lookup}\,p)=\mathrm{some}(i,k)\\ \mathrm{dlab}(p,t)&\text{otherwise,}\end{cases}
+\]
+so $\mathrm{labG}_{[]}=\mathrm{dlab}$ (\lean!labG_nil!), a head ghost reads its slot (\lean!labG_self!), other heads are skipped (\lean!labG_ne!), and a port that is no ghost reads its digit (\lean!labG_none!).
+\end{definition}
+
+\begin{definition}[Digit sum with ghosts]
+\begin{align*}
+\mathrm{pinsG}_{gs}(E,\kappa,\nu)\iff{}&\forall (a,b)\in\mathrm{dpairs}_\kappa,\ \nu(\mathrm{labG}_{gs}\,a)=\nu(\mathrm{labG}_{gs}\,b)\\
+\land{}&\forall (q,i)\in\mathrm{bnd.zipIdx},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,q),\\ &\qquad\nu(\mathrm{labG}_{gs}(q,t))=\nu(\mathrm{slab}(i,t))\\
+\land{}&\forall (g,i,k)\in gs,\ \nu(\mathrm{slab}(i,[]))<E.\mathrm{dimv}(k),
+\end{align*}
+$\mathrm{integG}=[\mathrm{pinsG}]\,\mathrm{prodL}$, and $\mathrm{evalG}(L,gs,E,\kappa,\sigma)$ is $\mathrm{evalL}$ with $\mathrm{integG}$ in place of the integrand.
+\end{definition}
+
+\begin{theorem}[\lean!evalG_nil!]
+$L.\mathrm{evalG}([],E,\kappa,\sigma)=L.\mathrm{evalL}(E,\kappa,\sigma)$.
+\end{theorem}
+
+\begin{definition}[\lean!substG!, \lean!ghostDrop!]
+$\mathrm{substG}_{a,c,g}(p)=g$ if $p=a$ or $p=c$, and $p$ otherwise. $\mathrm{ghostDrop}(L,x,a,c,g)$ has the nodes of $L$ other than id $x$, the wires of $L$, the outputs, inputs and link ports mapped by $\mathrm{substG}_{a,c,g}$, the boxes and $L.\mathrm{cph}$.
+\end{definition}
+
+\begin{definition}[\lean!GhostOK!]\label{def:lean-sym-ghostok}
+$\mathrm{GhostOK}(L,gs,x,a,c,g,i)$ has the 22 fields: \lean!ports!, \lean!wch!, \lean!cph!, \lean!ids!, \lean!last!, \lean!kind!, \lean!outs!, \lean!ins! as in \lean!DropOK!; \lean!ac! ($\{a,c\}=\{(x,\mathit{true},0),(x,\mathit{false},0)\}$ in one of the two orders); \lean!xbox! ($x$ in no box); \lean!xw! ($x$ on no wire); \lean!bnd! ($L.\mathrm{bnd}$ has no duplicates); \lean!ci! ($L.\mathrm{bnd}[i]=c$); \lean!ab! ($a\notin L.\mathrm{bnd}$); \lean!gb!, \lean!gw!, \lean!gx! ($g$ is no boundary port, on no wire, and not on $x$); \lean!cl! ($c$ is no port of any link); \lean!al! ($a$ is neither $\mathrm{l1}$ nor $\mathrm{l2}$ of any link); \lean!gl! ($g$ is no port of any link); \lean!arest! (a link with $\mathrm{e1}=a$ or $\mathrm{e2}=a$ has $\mathrm{legChain}(\mathrm{l1}).\mathrm{eraseIdx}(\mathrm{depth})=[]$, so its ends carry no copy index); \lean!gsf! (no ghost of $gs$ is $a$, $c$ or $g$).
+\end{definition}
+
+Under \lean!GhostOK! the module proves \lean!nodeChain_gd!, \lean!depth_gd!, \lean!multOf_gd!, \lean!lc!, \lean!wch'!, \lean!lc'!, \lean!walk_none!, \lean!xchain! ($x$'s chain is empty), \lean!anode!, \lean!cnode!, \lean!ac_ne!, \lean!ga!, \lean!gc!, \lean!xmem!, \lean!legs_eq!, \lean!xlegs!, \lean!node_ne!, \lean!nodes_gd!, \lean!portDim_gd!, \lean!portDim_x!; with $\mathrm{gdigs}(x)=[\mathrm{dlab}((x,\mathit{true},0),[]),\mathrm{dlab}((x,\mathit{false},0),[])]$ (no duplicates, \lean!gdigs_nodup!), $\mathrm{dlabs}(L)=\mathrm{dlabs}(L_g)\mathbin{+\!\!+}\mathrm{gdigs}(x)$ (\lean!dlabs_eq!); \lean!not_gdigs!, \lean!not_gdigs'!, \lean!slab_not_gdigs!; $L.\mathrm{prodL}=L_g.\mathrm{prodL}\cdot\mathrm{tZ}(E.\mathrm{dimv}\,x.\mathrm{dim},E.\mathrm{phase}\,x.\mathrm{ph},[\nu\,a_0,\nu\,c_0])$ (\lean!prodL_eq!); \lean!substG_of!; $\mathrm{dpairs}(L_g)=\mathrm{dpairs}(L).\mathrm{map}\,\mathrm{portsP}_{\mathrm{substG}}$ and $L_g.\mathrm{bnd}=L.\mathrm{bnd.map}\,\mathrm{substG}$ (\lean!dpairs_gd!, \lean!bnd_gd!); \lean!pair_ports! (pair ports are neither $c$ nor $g$, and $a$ only with the empty copy index); \lean!c_pin! (the pins make $c$'s digit the slot's); \lean!pins_iff!; \lean!integ_reads!; and \lean!integ_point!, which states
+\[
+L.\mathrm{integG}_{gs}(\nu)=\begin{cases}L_g.\mathrm{integG}_{(g,i,x.\mathrm{dim})::gs}(\nu)&\forall l\in\mathrm{gdigs}(x),\ \nu(l)=\nu(\mathrm{slab}(i,[]))\\0&\text{otherwise,}\end{cases}
+\]
+for $L_g=\mathrm{ghostDrop}(L,x.\mathrm{id},a,c,g)$ when $x$'s phase is zero.
+
+\begin{theorem}[\lean!GhostOK.evalG_ghost!, \lean!evalG_ghostAt!]\label{thm:lean-sym-ghost}
+If $\mathrm{GhostOK}(L,gs,x,a,c,g,i)$ and $E.\mathrm{phase}(x.\mathrm{ph},k)=0$ for all $k$, then
+\[
+L.\mathrm{evalG}(gs,E,\kappa,\sigma)=\mathrm{ghostDrop}(L,x.\mathrm{id},a,c,g).\mathrm{evalG}((g,i,x.\mathrm{dim})\mathbin{::}gs,E,\kappa,\sigma).
+\]
+With $\mathrm{ghostAt}(L,x,a,c,g)=\mathrm{ghostDrop}(\mathrm{moveLast}(L,x.\mathrm{id}),x.\mathrm{id},a,c,g)$, the condition $\mathrm{GhostOK}(\mathrm{moveLast}(L,x.\mathrm{id}),gs,x,a,c,g,i)$ gives
+\[
+L.\mathrm{evalG}(gs,E,\kappa,\sigma)=\mathrm{ghostAt}(L,x,a,c,g).\mathrm{evalG}((g,i,x.\mathrm{dim})\mathbin{::}gs,E,\kappa,\sigma).
+\]
+\end{theorem}
+
+The inner sum over $x$'s two digits pins both to slot $i$'s digit (\lean!sumOver_pinV!) when that digit is below $x$'s dimension; otherwise both sides vanish, the right side by the third conjunct of \lean!pinsG!. \lean!pinsG_wn! and \lean!evalG_withNodes! extend \lean!evalL_withNodes! to ghosts.
+
+\section{Slot Layouts of Box Groups}\label{sec:lean-sym-regroup}
+
+Module \file{LinkedRegroup.lean} (imports \file{Linked.lean}) proves that two layouts of the instantiated slots that cover the same slots read the same digit sum up to a permutation of the flat positions. The proof kernel's regroup step (\cref{ch:kernel}) changes only the box groups, hence only the order of the flat boundary.
+
+\begin{definition}[Slot blocks and layouts]
+A \term{slot block} (\lean!Blk!) is a pair $(c,is)$ of a chain of multiplicity indices and a list of slots. The layout of a block list $G$ lists the instantiated slots block by block, each block copy-major:
+\[
+\mathrm{layout}_\kappa(G)=\bigl[(i,t)\ \big|\ (c,is)\in G,\ t\in\mathrm{cidx}_\kappa(c),\ i\in is\bigr].
+\]
+A flat assignment $x:\N\to\N$ is read through a layout by $\mathrm{readAt}(\mathit{lay},x)(i,t)=x(\mathit{lay}.\mathrm{idxOf}(i,t))$. The position map from $\mathit{lay}$ to $\mathit{lay}'$ is $\mathrm{lperm}(\mathit{lay},\mathit{lay}')(p)=\mathit{lay}'.\mathrm{idxOf}(\mathit{lay}[p])$ for $p<|\mathit{lay}|$ and $p$ otherwise.
+\end{definition}
+
+\begin{definition}[\lean!Covers!]
+$\mathrm{Covers}(L,G)$ holds when every slot $i$ of every block $(c,is)\in G$ has $\mathrm{legChain}(L.\mathrm{bnd}[i])=c$ (in particular $i<|L.\mathrm{bnd}|$), every slot $i<|L.\mathrm{bnd}|$ lies in some block, and the concatenated slot lists have no duplicates. The predicate is decidable.
+\end{definition}
+
+\begin{theorem}[Layout lemmas]
+\begin{enumerate}
+\item $(i,t)\in\mathrm{layout}_\kappa(G)$ iff some $(c,is)\in G$ has $t\in\mathrm{cidx}_\kappa(c)$ and $i\in is$ (\lean!mem_layout!).
+\item If $\mathrm{Covers}(L,G)$, then $(i,t)\in\mathrm{layout}_\kappa(G)$ iff $L.\mathrm{bnd}[i]=p$ for some $p$ with $t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,p)$ (\lean!mem_layout_covers!), and the layout has no duplicates (\lean!layout_nodup!).
+\item If $\mathit{lay}'$ is a permutation of $\mathit{lay}$, then $\mathrm{readAt}(\mathit{lay}',x)=\mathrm{readAt}(\mathit{lay},x\circ\mathrm{lperm}(\mathit{lay},\mathit{lay}'))$ (\lean!readAt_perm!); if both have no duplicates, $\mathrm{lperm}(\mathit{lay},\mathit{lay}')$ is a bijection of $\N$ (\lean!lperm_bijective!).
+\end{enumerate}
+\end{theorem}
+
+\begin{theorem}[\lean!regroup_layout!]\label{thm:lean-sym-regroup}
+If $\mathrm{Covers}(L,G)$ and $\mathrm{Covers}(L,G')$, then for all $E$, $\kappa$ and $x$, with $\Lambda=\mathrm{layout}_\kappa(G)$ and $\Lambda'=\mathrm{layout}_\kappa(G')$: $\Lambda'$ is a permutation of $\Lambda$, $\mathrm{lperm}(\Lambda,\Lambda')$ is a bijection, and
+\[
+L.\mathrm{evalL}(E,\kappa,\mathrm{readAt}(\Lambda',x))=L.\mathrm{evalL}\bigl(E,\kappa,\mathrm{readAt}(\Lambda,x\circ\mathrm{lperm}(\Lambda,\Lambda'))\bigr).
+\]
+\end{theorem}
+
+\section{The Flat Boundary of an Instantiated Linked Diagram}\label{sec:lean-sym-splice}
+
+Module \file{LinkedSplice.lean} (imports \file{LinkedGhost.lean}) states the order in which the engine lists the instantiated slots of a boxed diagram and proves that peels and slides keep the digit sum read through that order. The engine instantiates a box by splicing, for each slot block, the block's boundary ports into one run at the place of its first port, copy-major, on the outputs and on the inputs apart, outermost box first (\py!bangbox._splice_box!, \py!_splice_one_block!; \cref{ch:diagrams}). The resulting order depends only on the slot data.
+
+\subsection{Anchors, keys and flat positions}
+
+\begin{definition}[Anchors]\label{def:lean-sym-anchors}
+Let $\mathit{sd}=(n_o,n_i,bs)$ be slot data, each $b\in bs$ a quadruple (\lean!BoxD!) $(\mathit{id},m,\mathit{parent},\mathit{blocks})$. For a slot $i$ and a block $P$, the anchor $\mathrm{anchorOf}(n_o,i,P)$ is the least element of $i$ and of the slots of $P$ on $i$'s side (outputs are the slots below $n_o$). The walk $\mathrm{walkS}(n_o,i,bs,f,p)$ is $([i],[])$ at $f=0$ or when no box has parent $p$ and a block containing $i$; otherwise, for the first such box $b$ and its first block $P$ containing $i$, it is
+\[
+\bigl(\mathrm{anchorOf}(n_o,i,P)\mathbin{::}A,\ b.m\mathbin{::}C\bigr),\qquad (A,C)=\mathrm{walkS}(n_o,i,bs,f-1,\mathrm{some}\,b.\mathit{id}).
+\]
+The anchors and chain of slot $i$ are $\mathrm{anch}(\mathit{sd},i)$ and $\mathrm{chainS}(\mathit{sd},i)$, the two components of $\mathrm{walkS}(n_o,i,bs,|bs|,\mathrm{none})$; always $|\mathrm{anch}|=|\mathrm{chainS}|+1$ (\lean!walkS_length!, \lean!anch_length!) and $\mathrm{anch}\neq[]$ (\lean!anch_ne_nil!).
+\end{definition}
+
+\begin{definition}[Keys and flat positions]\label{def:lean-sym-fpos}
+$\mathrm{ileave}(a\mathbin{::}A,j\mathbin{::}u)=a\mathbin{::}j\mathbin{::}\mathrm{ileave}(A,u)$ and $\mathrm{ileave}(A,u)=A$ when either list is empty. The key of slot $i$'s digit at copy $t$ is $\mathrm{key}(\mathit{sd},i,t)=\mathrm{ileave}(\mathrm{anch}(\mathit{sd},i),t)$: for a slot inside boxes $b_0\supset\cdots\supset b_{r-1}$ with anchors $a_0,\dots,a_{r-1}$, the key is $[a_0,t_0,a_1,t_1,\dots,a_{r-1},t_{r-1},i]$. The instantiated slots are
+\[
+\mathrm{slots}_\kappa(\mathit{sd})=\bigl[(i,t)\ \big|\ i<n_o+n_i,\ t\in\mathrm{cidx}_\kappa(\mathrm{chainS}(\mathit{sd},i))\bigr],
+\]
+which have no duplicates (\lean!slots_nodup!, \lean!mem_slots!). The \term{flat position} of $(i,t)$ is the number of instantiated slots of lexicographically smaller key,
+\[
+\mathrm{fpos}_\kappa(\mathit{sd},i,t)=\bigl|\{(i',t')\in\mathrm{slots}_\kappa(\mathit{sd}) : \mathrm{key}(\mathit{sd},i',t')<_{\mathrm{lex}}\mathrm{key}(\mathit{sd},i,t)\}\bigr|,
+\]
+and $\mathrm{flatAt}_\kappa(\mathit{sd},y)(i,t)=y(\mathrm{fpos}_\kappa(\mathit{sd},i,t))$ reads every slot digit from the flat assignment $y$.
+\end{definition}
+
+\begin{example}
+A box of multiplicity $\mu$ holds the output slots $1$ and $2$ in one block; slot $0$ is unboxed, $n_o=3$. The anchors are $[0]$ for slot $0$ and $[1,1]$, $[1,2]$ for slots $1$ and $2$. The keys are $[0]$, $[1,t,1]$ and $[1,t,2]$, so the flat order is slot $0$, then $(1,0),(2,0),(1,1),(2,1),\dots$: the block's run at the place of its first port, copy-major.
+\end{example}
+
+\subsection{Lexicographic order and agreement}
+
+\begin{proposition}[Lexicographic lemmas]
+$a\mathbin{::}l<_{\mathrm{lex}}b\mathbin{::}m$ iff $a<b$, or $a=b$ and $l<_{\mathrm{lex}}m$ (\lean!lex_cc!); no list is below $[]$ (\lean!not_lex_nil!); $[]$ is below every nonempty list (\lean!lex_nil_cons!); for $a\neq b$ the comparison is $a<b$ (\lean!lex_ne_heads!). \lean!length_of_cidx!, \lean!cons_of_len!, \lean!ileave_cc!, \lean!ileave_nil!, \lean!ileave_head! are the list facts the proofs use.
+\end{proposition}
+
+\begin{definition}[\lean!agree!]
+$\mathrm{agree}(a\mathbin{::}A,a'\mathbin{::}A',b\mathbin{::}B,b'\mathbin{::}B')$ holds when $[a<a']=[b<b']$, $[a=a']=[b=b']$, and $a=a'$ implies $\mathrm{agree}(A,A',B,B')$; it holds when any list is empty.
+\end{definition}
+
+\begin{theorem}[\lean!agree_lex!]
+If $\mathrm{agree}(A,A',B,B')$, $|A|=|t|+1$, $|A'|=|t'|+1$, $|B|=|A|$ and $|B'|=|A'|$, then $\mathrm{ileave}(A,t)<_{\mathrm{lex}}\mathrm{ileave}(A',t')$ iff $\mathrm{ileave}(B,t)<_{\mathrm{lex}}\mathrm{ileave}(B',t')$.
+\end{theorem}
+
+\subsection{The digit sum reads only the boundary slot digits}
+
+\begin{theorem}[\lean!evalL_congr!]
+If $\sigma(i,t)=\sigma'(i,t)$ for every $i<|L.\mathrm{bnd}|$ and $t\in\mathrm{cidx}_\kappa(\mathrm{legChain}(L.\mathrm{bnd}[i]))$, then $L.\mathrm{evalL}(E,\kappa,\sigma)=L.\mathrm{evalL}(E,\kappa,\sigma')$.
+\end{theorem}
+
+The proof uses \lean!sumOver_extP! (a sum whose integrand reads a set $S$ of labels depends on the start assignment only on $S$ off the summed labels), \lean!dlab_even! and \lean!dnodeL_even! (node labels are even), so the integrand reads slot labels only in the boundary pins.
+
+\subsection{Peels keep the flat positions}
+
+\begin{definition}[Boundary images]
+$\mathrm{bndAt}(L,i)=L.\mathrm{bnd.getD}\,i\,\mathrm{dflt}$; $\mathrm{inB}(L,B,i)$ says that $\mathrm{bndAt}(L,i)$ lies on a node of $B$; $\mathrm{mI}(L,L',i)=L'.\mathrm{bnd.idxOf}(\mathrm{bndAt}(L,i))$; $\mathrm{cI}(L,L',\mathrm{cp},i)=L'.\mathrm{bnd.idxOf}(\mathrm{cpP}(\mathrm{bndAt}(L,i)))$; and $\mathrm{imgs}(L,L',B,\mathrm{cp})$ lists $\mathrm{mI}(i)$ for every $i<|L.\mathrm{bnd}|$, then $\mathrm{cI}(i)$ for every such $i$ with $\mathrm{inB}(i)$. Writing $h(A)$ for the head of $A$ ($0$ for $[]$),
+\begin{align*}
+\mathrm{copyVs}(A,A',E,F,\beta)&=\begin{cases}\beta\land h(F)<h(E)&h(A)=h(A')\\ [h(A)<h(A')]=[h(E)<h(F)]\ \land\ h(E)\neq h(F)&\text{else,}\end{cases}\\
+\mathrm{copyCopy}(A,A',E,E')&=\begin{cases}\mathrm{agree}(A.\mathrm{tail},A'.\mathrm{tail},E,E')&h(A)=h(A')\\ [h(A)<h(A')]=[h(E)<h(E')]\ \land\ h(E)\neq h(E')&\text{else.}\end{cases}
+\end{align*}
+\end{definition}
+
+\begin{definition}[\lean!PeelFlat!]\label{def:lean-sym-peelflat}
+$\mathrm{PeelFlat}(L,L',B,\mathrm{cp},m_b,c,\mathit{sd},\mathit{sd}')$ has the 10 fields: \lean!n!, \lean!n'! ($n_o+n_i$ of $\mathit{sd}$, $\mathit{sd}'$ equals the boundary length of $L$, $L'$); \lean!ch! ($\mathrm{chainS}(\mathit{sd},i)=\mathrm{legChain}_L(\mathrm{bndAt}(L,i))$); \lean!out! (a slot off $B$ has $\mathrm{mI}(i)$ in range and $\mathrm{chainS}(\mathit{sd}',\mathrm{mI}\,i)=\mathrm{chainS}(\mathit{sd},i)$); \lean!inn! (a slot on $B$ has $\mathrm{mI}(i)$ and $\mathrm{cI}(i)$ in range, $\mathrm{chainS}(\mathit{sd},i)=m_b\mathbin{::}\mathrm{chainS}(\mathit{sd}',\mathrm{cI}\,i)$ and $\mathrm{chainS}(\mathit{sd}',\mathrm{mI}\,i)=c\mathbin{::}\mathrm{chainS}(\mathit{sd}',\mathrm{cI}\,i)$); \lean!nodup! and \lean!onto! ($\mathrm{imgs}$ has no duplicates and contains every slot of $L'$); \lean!keyM! ($\mathrm{agree}(\mathrm{anch}(\mathit{sd},i),\mathrm{anch}(\mathit{sd},i'),\mathrm{anch}(\mathit{sd}',\mathrm{mI}\,i),\mathrm{anch}(\mathit{sd}',\mathrm{mI}\,i'))$ for all slots $i,i'$); \lean!keyC! ($\mathrm{copyVs}(\mathrm{anch}(\mathit{sd},i),\mathrm{anch}(\mathit{sd},i'),\mathrm{anch}(\mathit{sd}',\mathrm{cI}\,i),\mathrm{anch}(\mathit{sd}',\mathrm{mI}\,i'),\mathrm{inB}\,i')$ for $i$ on $B$); \lean!keyCC! ($\mathrm{copyCopy}(\mathrm{anch}(\mathit{sd},i),\mathrm{anch}(\mathit{sd},i'),\mathrm{anch}(\mathit{sd}',\mathrm{cI}\,i),\mathrm{anch}(\mathit{sd}',\mathrm{cI}\,i'))$ for $i,i'$ on $B$).
+\end{definition}
+
+\begin{definition}[\lean!psi!]
+A slot digit's place and copy index in $L'$:
+\[
+\psi_s(i,t)=\begin{cases}(\mathrm{cI}(i),\ t.\mathrm{tail})&\mathrm{inB}(i)\land t.\mathrm{head?}=s\\(\mathrm{mI}(i),\ t)&\text{else.}\end{cases}
+\]
+\lean!bndMap_psi! says $\mathrm{bndMap}(L,L',\mathrm{peel}\varphi_{B,\mathrm{cp},s},\sigma')(i,t)=\sigma'(\psi_s(i,t))$.
+\end{definition}
+
+\begin{theorem}[Peel order lemmas]
+Under $\mathrm{PeelFlat}$ with $s=\kappa(c)$ and $\kappa(m_b)=\kappa(c)+1$ where the lemma needs it: $\psi_s$ maps $\mathrm{slots}_\kappa(\mathit{sd})$ into $\mathrm{slots}_\kappa(\mathit{sd}')$ (\lean!psi_mem!), one to one (\lean!psi_inj!, from \lean!mI_inj!, \lean!cI_inj!, \lean!mI_ne_cI!) and onto (\lean!psi_onto!), so $\mathrm{slots}(\mathit{sd}')$ is a permutation of $\psi_s(\mathrm{slots}(\mathit{sd}))$ (\lean!perm!). A kept slot digit keeps its copy index with anchors one longer than it (\lean!kept!); a copied slot digit has $t=\kappa(c)\mathbin{::}u$ (\lean!copied!). Keys compare alike in $L$ and $L'$ for a copied against a kept digit (\lean!copy_kept!), two kept digits (\lean!kept_kept!) and two copied digits (\lean!copy_copy!); together (\lean!ord!), $\mathrm{key}(\mathit{sd}',\psi_s v)<_{\mathrm{lex}}\mathrm{key}(\mathit{sd}',\psi_s x)$ iff $\mathrm{key}(\mathit{sd},v)<_{\mathrm{lex}}\mathrm{key}(\mathit{sd},x)$, and therefore (\lean!fpos_psi!) $\mathrm{fpos}(\mathit{sd}',\psi_s v)=\mathrm{fpos}(\mathit{sd},v)$.
+\end{theorem}
+
+\begin{theorem}[\lean!evalL_peel_flat!]\label{thm:lean-sym-peel-flat}
+If $\mathrm{PeelOK}(L,L',\mathit{bid},m_b,c,B,\mathrm{cp})$, $\mathrm{PeelFlat}(L,L',B,\mathrm{cp},m_b,c,\mathit{sd},\mathit{sd}')$ and $\kappa(m_b)=\kappa(c)+1$, then for every $E$ and flat assignment $y$,
+\[
+L'.\mathrm{evalL}(E,\kappa,\mathrm{flatAt}_\kappa(\mathit{sd}',y))=L.\mathrm{evalL}(E,\kappa,\mathrm{flatAt}_\kappa(\mathit{sd},y)).
+\]
+\end{theorem}
+
+The proof rewrites by \cref{thm:lean-sym-peel}, turns $\mathrm{bndMap}$ into $\psi_s$ by \lean!bndMap_psi!, replaces $\mathrm{fpos}(\mathit{sd}',\psi_s(i,t))$ by $\mathrm{fpos}(\mathit{sd},i,t)$ on the instantiated slots by \lean!fpos_psi!, and concludes by \lean!evalL_congr! (only those slots are read).
+
+\begin{theorem}[\lean!evalG_flatAt!]\label{thm:lean-sym-evalG-flat}
+If $L'.\mathrm{slotData}(G')=L.\mathrm{slotData}(G)$ and $L'.\mathrm{evalG}(gs',E,\kappa,\sigma)=L.\mathrm{evalG}(gs,E,\kappa,\sigma)$ for every $\sigma$, then for every $y$
+\[
+L'.\mathrm{evalG}(gs',E,\kappa,\mathrm{flatAt}(L'.\mathrm{slotData}\,G',y))=L.\mathrm{evalG}(gs,E,\kappa,\mathrm{flatAt}(L.\mathrm{slotData}\,G,y)).
+\]
+\end{theorem}
+
+\section{Python Exports of Kernel Steps over Linked Diagrams}\label{sec:lean-sym-py-linked}
+
+Three Python modules write Lean files whose \lean!main! theorem is an instance of \cref{thm:lean-sym-peel-flat,thm:lean-sym-split,thm:lean-sym-regroup,thm:lean-sym-evalG-flat}. The proof kernel calls them from \py!peel_net!, \py!slid!, \py!split! and \py!layout_net! (\module{archytaszx.semantics.kernel}, \cref{ch:kernel}); each returns \py!None! when the step is outside its form, and the kernel then falls back to its other exports. Every condition that Lean checks by \lean!decide +kernel! is first checked on a Python mirror of the Lean definition, so a returned file is expected to check.
+
+\subsection{The linked translation}
+
+\begin{signature}
+\py!lean_linked.linked(d: Diagram, tables: _Tables, idents: Mapping[Port, int] | None = None, ghost: int | None = None) -> LDiag!
+\end{signature}
+
+The Python types mirror the Lean ones: \py!Port = tuple[int, bool, int]!; \py!LNode(id, kind, dim, ph, outs, ins)!, \py!LBox(id, mult, parent, nodes)! and \py!LLink(box, l1, l2, e1, e2)! are frozen dataclasses; \py!LDiag(nodes, wires, outs, ins, boxes, links)! is a dataclass with the methods \py!walk!, \py!node_boxes!, \py!chain!, \py!depth! (the length of the box list when the box does not hold the node, as \lean!findIdx!), \py!mult_of!, \py!legs! and \py!bnd!. \py!_Tables! holds three dictionaries \py!dims!, \py!phases!, \py!mults! from text keys to indices, shared by both sides of an export; \py!_Tables.index(table, key)! returns the existing index or the next one. \py!LinkedUnsupported! is raised outside the translatable form.
+
+\py!linked! translates a diagram as follows.
+\begin{enumerate}
+\item Nodes in increasing id: the generator name must be one of Z, X, F, T, Ti, W, B, S (else \py!LinkedUnsupported("generator ...")!); each port's dimension is indexed by \py!str(dim)!; the node's dimension index is that of its first port, or of the empty string for a node without ports; the phase index is that of \py!repr(node.phase)!.
+\item Wires in \py!sort_key()! order; outputs and inputs in boundary order.
+\item For each boundary port $p$ of \py!idents! (in sorted order), a phaseless Z(1$\to$1) node of id \py!idents[p]!, dimension index that of $p$'s leg and phase index that of \py!repr(None)!, takes $p$'s boundary place as its port $(\mathit{id},p.\mathit{out},0)$ and is wired to $p$ by $(p,(\mathit{id},\lnot p.\mathit{out},0))$; a port off the boundary raises \py!LinkedUnsupported!.
+\item With \py!ghost! $=G$, every other boundary port that is a chain link port is replaced in its place $j$ by the ghost port $(G,\mathit{true},j)$, wired to it.
+\item Boxes in sorted id: each must be a plain node box (no port scope, a node scope, not cyclic, no index, no copy scalar, no pairing, no tree, no feed, no sheets), else \py!LinkedUnsupported!. Its multiplicity is indexed by \py!str(sympy.expand(multiplicity))!. Each link $(p,q)$ of the box takes as ends the partners of $p$ and $q$; each of $p$, $q$ must lie on exactly one wire not used by another link port, else \py!LinkedUnsupported("a link port without one wire of its own")!. The used wires are removed.
+\end{enumerate}
+
+\py!literal(D)! writes an \lean!LDiagram! term: nodes as \lean!⟨id, .kind, dim, ph, outs, ins⟩!, wires as pairs of \lean!⟨node, true|false, pos⟩!, boxes as \lean!⟨id, mult, none|some p, nodes, []⟩!, links as \lean!⟨box, l1, l2, e1, e2⟩!; \py!lean_split._with_cph! appends a \lean!cph! field.
+
+\subsection{Peel export}
+
+\begin{signature}
+\py!lean_linked.export_peel(before: Diagram, after: Diagram) -> str | None!
+\end{signature}
+
+\begin{algorithm}[\py!export_peel!]\label{alg:lean-sym-export-peel}
+\begin{enumerate}
+\item The peeled box is the unique outermost box of \py!before!, present in \py!after!, whose multiplicity drops by exactly $1$ (SymPy expansion of the difference); otherwise return \py!None!. $B$ is its node scope, sorted.
+\item The fresh nodes of \py!after! (ids not in \py!before!) must number $|B|$; $\mathrm{cp}$ pairs $B$ with them in sorted order.
+\item \py!_boundary_ends! gives one fresh id (from $1+$ the largest node id of both sides) to every link port on \py!before!'s boundary, in sorted box order; on \py!after! the same id goes to the same port, or to its copy's port for the first port of a link of the peeled box.
+\item Translate both sides with these identities ($L$, $R$); reorder $R$'s nodes as $L$'s followed by the copies in $L$'s order; require \py!peel_ok(L, R, ...)!, the field-by-field mirror of \lean!PeelOK! (\cref{tab:lean-sym-peelok}).
+\item With $G=1+$ the largest node id, \py!_reduce! removes the added identities: on \py!after! each identity meeting \py!drop_ok! is dropped (moved last first), and on both sides each remaining identity meeting \py!ghost_ok! is replaced by the ghost $(G,\mathit{true},i)$ of its slot $i$. The results must equal the ghost translations \py!linked(..., ghost=G)! up to node order (\py!_same_up_to_order!), and the slot data of each side (under its box groups \py!groups(d)!) must be the same before and after the reduction, and \py!nested! (every block of a box lies inside one block of its parent).
+\item Require \py!peel_flat_ok!, the mirror of \lean!PeelFlat!.
+\item Emit the Lean file (below).
+\end{enumerate}
+\end{algorithm}
+
+The emitted file declares \lean!L! and \lean!L'! (the ghost forms), \lean!zero! (the phase index of \py!repr(None)!), \lean!Lb! and \lean!Lk! (the sides with identities; equal to \lean!L!, \lean!L'! when no step is needed), the step chains \lean!chain_b! and \lean!chain_k!, the copy map \lean!cp! as a lookup table, \lean!ok : PeelOK Lb Lk bid mb c B cp! proved by 21 \lean!decide +kernel! terms, the box groups \lean!G!, \lean!G'!, the slot-data equalities \lean!sdb!, \lean!sdk!, \lean!flat : PeelFlat ...! by 10 \lean!decide +kernel! terms, and
+\begin{lstlisting}[style=lean]
+theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →
+    ∀ (ks : ℕ → ℕ), ks mb = ks c + 1 → ∀ y : ℕ → ℕ,
+      L'.evalG gsL' E ks (flatAt (L'.slotData G') ks y) =
+        L.evalG gsL E ks (flatAt (L.slotData G) ks y)
+\end{lstlisting}
+proved by rewriting with \lean!sdb!, \lean!sdk! and composing \lean!chain_k!, \lean!evalL_peel_flat ok flat! and \lean!chain_b!.
+
+\paragraph{Step chains.} \py!_chain(tag, start, end, gname, steps, gs, define=True)! writes, for step $j$, the node \lean!x<tag><j>! and either \lean!ok<tag><j> : DropOK (at.moveLast x.id) x w u v P! (18 \lean!decide +kernel! terms; the next diagram is \lean!at.dropAt x w v P!) or \lean!ok<tag><j> : GhostOK (at.moveLast x.id) held x a c g i! (22 terms; the next diagram is \lean!at.ghostAt x a c g!, and $(g,i,\mathit{dim})$ is pushed onto the held ghosts). The first ghost step is preceded by \lean!(evalG_nil at E ks σ).symm!. The file then states \lean!eq_<tag> : at = end! by \lean!decide +kernel! (when there are steps), the ghost list \lean!gname! and
+\lean!chain_<tag> : ∀ E, (∀ k, E.phase zero k = 0) → ∀ ks σ, start.evalL E ks σ = end.evalG gname E ks σ!, the composition by \lean!.trans! of the step equalities \lean!evalL_dropAt! and \lean!evalG_ghostAt!.
+
+\py!drop_ok! and \py!ghost_ok! mirror \lean!DropOK! and \lean!GhostOK!; \py!drop_id! and \py!ghost_drop! mirror \lean!dropId! and \lean!ghostDrop!; \py!_drops(D, x)! lists, for $u$ the output leg and then the input leg of $x$, every wire at $u$ (not a self-loop) whose other end $P$ passes \py!drop_ok! after moving $x$ last.
+
+\subsection{Slide export}
+
+\begin{signature}
+\py!lean_linked.export_slide(before: Diagram, after: Diagram) -> str | None!
+\end{signature}
+
+\begin{algorithm}[\py!export_slide!]
+\begin{enumerate}
+\item Give each boundary link port of \py!before! and of \py!after! (\py!_link_ports_on_boundary!, boundary order) a fresh identity id; $G$ follows them.
+\item Translate both sides with the identities ($L$, $R$) and as ghost forms ($T_l$, $T_r$); the boxes of $L$ and $R$ must be equal.
+\item Reduce each side's identities to ghosts (\py!_reduce!, no drops); the results must equal the ghost forms up to node order.
+\item Search, over the nodes $x$ of $L$ that are also nodes of $R$, are Z, carry the phaseless index and are no added identity, for the first $x$ such that reducing both sides with $x$ dropped and the identities turned into ghosts gives the same diagram $C$ and the same ghosts; none found returns \py!None!.
+\item The slot data of the two ghost forms must be equal and nested.
+\item Emit \lean!L!, \lean!L'!, \lean!G!, \lean!G'!, \lean!zero!, \lean!Lb!, \lean!Lk!, \lean!C!, the chains \lean!b!, \lean!k!, \lean!sb!, \lean!sk! (the last two ending in \lean!C! with the ghosts \lean!gsC!), \lean!layout : L'.slotData G' = L.slotData G! by \lean!decide +kernel!, \lean!sums! (the four chains composed) and \lean!main! by \lean!evalG_flatAt layout E ks (sums E hE ks) y!.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Slot data in Python.} \py!groups(d)! lists $(\mathit{bid},[\text{sorted node ids of each group}])$ for every box with groups, in sorted box order. \py!slot_data(D, gs)! mirrors \lean!slotData! (the first entry of a repeated box id wins, as \lean!lookup!). \py!anchors(sd, i)! mirrors $(\mathrm{anch},\mathrm{chainS})$, and \py!_agree!, \py!_copy_vs!, \py!_copy_copy! and \py!peel_flat_ok! mirror \lean!agree!, \lean!copyVs!, \lean!copyCopy! and \lean!PeelFlat!; \py!peel_flat_ok! uses $|L'.\mathrm{bnd}|$ as the image of a port absent from $L'$'s boundary, as \lean!idxOf!.
+
+\subsection{Regroup export}
+
+\begin{signature}
+\py!lean_regroup.export_regroup(new: Diagram, old: Diagram) -> str | None!
+\end{signature}
+
+Both diagrams must translate (\py!linked! with shared tables, no identities) to the same \lean!LDiagram! and have equal scalars. \py!blocks(d, tables)! lists the slot blocks over \lean!outs ++ ins!: \py!None! when any box has a port scope, or when a boundary node lies in more than one box or in a box with a parent; an unboxed slot $i$ is the block $([],[i])$; boxed slots form one block per (box, group index) pair, the group index $-1$ for nodes in no group, keyed in the order of their first slots, the block's chain the single multiplicity index of its box. \py!covers(L, G)! mirrors \lean!Covers! with \py!_leg_chain! (the Lean \lean!legChain! without port boxes). The file declares \lean!L!, \lean!G : List Blk! (from \py!old!), \lean!G'! (from \py!new!) and \lean!main!, the statement of \cref{thm:lean-sym-regroup} for all $E$, $\kappa$, $x$, proved by \lean!regroup_layout L G G' (by decide +kernel) (by decide +kernel)!.
+
+\subsection{Power-split export}
+
+\begin{signature}
+\py!lean_split.export_split(before: Diagram, after: Diagram) -> str | None!
+\end{signature}
+
+A split of base $b$ of an outermost box of multiplicity $b\,h$ into $b$ boxes of multiplicity $h$ is written as $b-1$ splits in two. With \py!tops! the new outermost boxes of \py!after! in decreasing id and $\mathit{owners}=[\mathit{bid}]\mathbin{+\!\!+}\mathit{tops}$, step $k$ ($1\le k<b$) is an instance of \lean!BoxSplitOK! with
+\[
+(\mathit{bid},\mathit{bid}_2,m_b,c_1,c_2)=(\mathit{owners}_{k-1},\ \mathit{owners}_k,\ \mu_{b-k+1},\ \mu_1,\ \mu_{b-k}),
+\]
+where $\mu_j$ is the multiplicity index of $j\,h$: the box $\mathit{owners}_{k-1}$ keeps $h$ copies and the new box $\mathit{owners}_k$ takes the other $(b-k)h$.
+
+\begin{algorithm}[\py!export_split!]
+\begin{enumerate}
+\item Require exactly one outermost box \py!bid! of \py!before! present in \py!after! with changed multiplicity, at least one new outermost box, and equal scalars; $b=|\mathit{tops}|+1$; the old multiplicity must expand to $b$ times the new one ($h$), and every new box must have multiplicity $h$; the box index must be present on all of them or on none.
+\item Clear the box indices (\py!_indexed!; \py!LinkedUnsupported! when a port dimension reads the index) and translate both sides.
+\item The node scopes $B$ (of \py!bid!) and of each new box must have equal sizes; $\mathrm{cp}_k$ pairs $B$ with the $k$-th scope in sorted order. \py!_renamed! gives the nodes outside the scopes that the split renamed back the ids of their \py!before! counterparts, matching by kind, phase, dimension, leading port dimensions, boundary places and wiring, one unique candidate at a time; \py!None! when the matching stalls.
+\item Index $\mu_j$ for $j=1..b$; the old multiplicity must have index $\mu_b$.
+\item Copy-indexed phases: a node $x\in B$ whose phase reads the box index gets $(x,\mathit{bid},0,\mu_1)$; its copy in the $k$-th new box must carry the phase with the index replaced by the new box's index symbol plus $k\,h$, and gets the phase index of $x$. Step $k$'s list extends step $k-1$'s by $(\mathrm{cp}_k\,x,\mathit{tops}_{k-1},k,\mu_1)$.
+\item Stage diagrams: step $k<b-1$ is \py!_stage!: $R$ without the scopes and boxes of later steps (\py!_below!), the box $\mathit{tops}_{k-1}$ at index $\mu_{b-k}$, and each node keeping only a leading run of its appended ports, those wired into the scopes so far; the last stage is $R$.
+\item For each step, \py!_tails! builds $T$: each leg of a top-level node off $B_k$ wired to a leg $q$ of $B_k$, paired with the leg of the same node wired to the copy of $q$ in the next stage, sorted by the appended leg; \py!split_ok! mirrors \lean!BoxSplitOK! (25 fields).
+\item Emit the stages \lean!L!, \lean!M1!, \ldots, \lean!L'! with their \lean!cph!, per step \lean!cp<k>!, \lean!T<k>!, \lean!ok<k> : BoxSplitOK ...! (25 \lean!decide +kernel! terms), and \lean!main!: for all $E$, $\kappa$ with the hypotheses $\kappa(\mu_{b-k+1})=\kappa(\mu_1)+\kappa(\mu_{b-k})$, $L'.\mathrm{evalL}(E,\kappa,\sigma')$ equals $L.\mathrm{evalL}$ at $\sigma'$ read back through the nested \lean!bndMap!s of the $b-1$ split maps, proved by composing \lean!evalL_split ok<k>!.
+\end{enumerate}
+\end{algorithm}
+
+\section{Symbolic Sums}\label{sec:lean-sym-sym}
+
+Module \file{Sym.lean} (imports \file{Closed.lean}; namespace \lean!ArchytasZX.Sym!) defines expressions that denote complex numbers as functions of three kinds of unknowns: \term{dimension symbols} $d_0,d_1,\dots$ (positive naturals), \term{coefficient atoms} $a_0,a_1,\dots$ (nonzero complex numbers; the exporter sets $a_j=\mathrm{ex}(g_j)$ for real phase parameters $g_j$), and \term{index variables} $x_0,x_1,\dots$ (integers). A term is a coefficient times nested sums over bound index variables of a product of Kronecker deltas $[M\mid p]$ and roots of unity $\omega_D^{p}$, with $p$ an integer polynomial in index variables and $M$, $D$ monomials in dimension symbols. Character sums of this kind are the discrete Fourier analysis behind Gauss sums~\cite{berndt1998gauss}; the normalizer below evaluates them symbolically, in the spirit of path-sum reduction~\cite{amy2018pathsums}.
+
+\begin{definition}[Valuation]
+A valuation (\lean!Val!) has fields \lean!dv : ℕ → ℕ! (the values of the dimension symbols) and \lean!atom : ℕ → ℂ! (the values of the atoms). It is admissible (\lean!Val.OK!) when every $\mathrm{dv}(i)>0$ and every $\mathrm{atom}(j)\neq0$.
+\end{definition}
+
+\subsection{Dense exponent vectors}
+
+A dense exponent vector $v=[v_0,v_1,\dots]$ stands for $\prod_i f(k+i)^{v_i}$:
+\[
+\mathrm{npow}(f,k,v)=\prod_{i<|v|}f(k+i)^{v_i}\ \ (v_i\in\N),\qquad \mathrm{zpw}(f,k,v)=\prod_{i<|v|}f(k+i)^{v_i}\ \ (v_i\in\Z,\ f:\N\to\C).
+\]
+$\mathrm{nadd}$ and $\mathrm{zadd}$ add pointwise, padding the shorter vector with zeros; $\mathrm{nsub}$ subtracts pointwise with truncation, keeping $a$'s tail past $b$; $\mathrm{nle}(a,b)$ is the pointwise order with missing entries zero; $\mathrm{ntrim}$ and $\mathrm{ztrim}$ drop trailing zeros; $\mathrm{nscale}(c,v)=[c\,v_i]$ in $\Z$.
+
+\begin{proposition}[Vector lemmas]
+$\mathrm{npow}(f,k,\mathrm{nadd}(a,b))=\mathrm{npow}(f,k,a)\,\mathrm{npow}(f,k,b)$; $\mathrm{zpw}$ of $\mathrm{zadd}$ is the product when $f$ has no zero; trimming keeps both; $\mathrm{npow}>0$ for positive $f$; $\mathrm{npow}$ is monotone in $f$; $\mathrm{nle}(b,[])$ gives $\mathrm{npow}(f,k,b)=1$; $\mathrm{nle}(b,a)$ gives $\mathrm{npow}(f,k,a)=\mathrm{npow}(f,k,b)\,\mathrm{npow}(f,k,\mathrm{nsub}(a,b))$; and $\mathrm{npow}$ cast to $\C$ is $\mathrm{zpw}$ of the cast exponents (\lean!npow_nadd!, \lean!zpw_zadd!, \lean!npow_ntrim!, \lean!zpw_ztrim!, \lean!npow_pos!, \lean!npow_mono!, \lean!npow_of_nle!, \lean!npow_nsub!, \lean!npow_cast!).
+\end{proposition}
+
+\subsection{Dimension monomials}
+
+\begin{definition}[\lean!DMon!]
+A dimension monomial $(c,e)$ (fields \lean!c : ℕ!, \lean!e : List ℕ!, derived \lean!DecidableEq!) denotes $c\prod_i d_i^{e_i}$:
+\[
+\mathrm{den}_{dv}(c,e)=c\cdot\mathrm{npow}(dv,0,e).
+\]
+\begin{itemize}
+\item $\mathrm{mul}((c,e),(c',e'))=(c\,c',\ \mathrm{ntrim}(\mathrm{nadd}(e,e')))$;
+\item $\mathrm{dvd}((c,e),(c',e'))=[c\neq0\land c'\bmod c=0\land\mathrm{nle}(e,e')]$, divisibility for every valuation;
+\item $\mathrm{div}((c',e'),(c,e))=(c'/c,\ \mathrm{ntrim}(\mathrm{nsub}(e',e)))$;
+\item $\mathrm{den1}(c,e)=c$ (every symbol one); $\mathrm{isConst}(c,e)$ holds when every $e_i=0$.
+\end{itemize}
+\end{definition}
+
+\begin{proposition}[Monomial lemmas]
+$\mathrm{den}(\mathrm{mul}\,a\,b)=\mathrm{den}\,a\cdot\mathrm{den}\,b$; $\mathrm{den}>0$ for $c>0$ and positive symbols; $\mathrm{dvd}(a,b)$ gives $\mathrm{den}\,b=\mathrm{den}\,a\cdot\mathrm{den}(\mathrm{div}\,b\,a)$ and $\mathrm{den}\,a\mid\mathrm{den}\,b$; a constant monomial has the same value under every valuation (\lean!den_isConst!: the value $c$); $\mathrm{den}$ is monotone in the valuation (\lean!den_mul!, \lean!den_pos!, \lean!den_div!, \lean!dvd_den!, \lean!den_const!, \lean!den_mono!).
+\end{proposition}
+
+\subsection{Index polynomials}
+
+\begin{definition}[\lean!IMon!, \lean!IPoly!]
+An index monomial is a sorted list of variables (with repetition), denoting $\mathrm{imDen}_\nu(m)=\prod_{x\in m}\nu(x)$ for $\nu:\N\to\Z$. An index polynomial is a list of (monomial, coefficient) pairs, monomials strictly increasing in $\mathrm{lexLt}$ and coefficients nonzero, denoting $\mathrm{ipDen}_\nu(p)=\sum_{(m,c)\in p}c\cdot\mathrm{imDen}_\nu(m)$. $\mathrm{lexLt}$ is the strict lexicographic order on lists of naturals ($[]$ below every nonempty list).
+\end{definition}
+
+\begin{definition}[Polynomial operations]\label{def:lean-sym-ipoly}
+\begin{itemize}
+\item $\mathrm{imIns}(x,m)$ inserts $x$ before the first $y\ge x$; $\mathrm{imMul}(a,b)$ inserts the elements of $b$ into $a$ from the right.
+\item $\mathrm{ipIns}(m,c,p)$ adds $c\cdot m$: on $[]$ it gives $[(m,c)]$, or $[]$ for $c=0$; at a head $(m',c')$ with $m=m'$ it gives $(m,c+c')$, dropped when the sum is $0$; with $\mathrm{lexLt}(m,m')$ it inserts $(m,c)$ before (nothing for $c=0$); otherwise it recurses past the head.
+\item $\mathrm{ipAdd}(p,q)$ inserts the terms of $q$ into $p$ from the right; $\mathrm{ipSmul}(k,p)$ multiplies every coefficient by $k$ (and is $[]$ for $k=0$); $\mathrm{ipMul}(p,q)$ inserts every product $(\mathrm{imMul}(m,m'),c\,c')$ for $(m,c)\in p$, $(m',c')\in q$; $\mathrm{ipC}(c)=\mathrm{ipIns}([],c,[])$; $\mathrm{ipV}(x)=[([x],1)]$; $\mathrm{ipSub}(p,q)=\mathrm{ipAdd}(p,\mathrm{ipSmul}(-1,q))$; $\mathrm{ipPow}(r,0)=\mathrm{ipC}(1)$, $\mathrm{ipPow}(r,k+1)=\mathrm{ipMul}(r,\mathrm{ipPow}(r,k))$.
+\item $\mathrm{ipSubstF}(x,r,p)=\sum_{(m,c)\in p}\mathrm{ipMul}(\mathrm{ipSmul}(c,[(m.\mathrm{filter}(\neq x),1)]),\ \mathrm{ipPow}(r,m.\mathrm{count}\,x))$, accumulated with $\mathrm{ipAdd}$ from the right; $\mathrm{ipHas}(x,p)$ holds when some monomial contains $x$; $\mathrm{ipSubst}(x,r,p)$ is $\mathrm{ipSubstF}(x,r,p)$ when $\mathrm{ipHas}(x,p)$ and $p$ otherwise.
+\item $\mathrm{ipLin}(x,p)$: when every monomial contains $x$ at most once, $\mathrm{some}(a,b)$ with $a$ the terms containing $x$ with one $x$ erased and $b$ the terms without $x$ (both rebuilt by $\mathrm{ipIns}$); $\mathrm{none}$ otherwise.
+\item $\mathrm{ipConst}([])=\mathrm{some}\,0$, $\mathrm{ipConst}([([],c)])=\mathrm{some}\,c$, and $\mathrm{none}$ otherwise.
+\item $\mathrm{ipModC}(k,p)$ reduces every coefficient into $[0,k)$ (Euclidean remainder); $\mathrm{ipDivBy}(k,p)$ holds when every coefficient is a multiple of $k$; $\mathrm{ipSign}(p)$ negates $p$ when its first coefficient is negative.
+\end{itemize}
+\end{definition}
+
+\begin{proposition}[Polynomial semantics]\label{prop:lean-sym-ipden}
+For every $\nu:\N\to\Z$: $\mathrm{imDen}$ of $\mathrm{imIns}$ and $\mathrm{imMul}$ are products; $\mathrm{ipDen}$ of $\mathrm{ipIns}(m,c,p)$ is $c\,\mathrm{imDen}(m)+\mathrm{ipDen}(p)$; $\mathrm{ipDen}$ is additive, multiplicative, linear in $\mathrm{ipSmul}$, and gives $c$, $\nu(x)$, differences and powers for $\mathrm{ipC}$, $\mathrm{ipV}$, $\mathrm{ipSub}$, $\mathrm{ipPow}$ (\lean!ipDen_add!, \lean!ipDen_mul!, \lean!ipDen_smul!, \lean!ipDen_C!, \lean!ipDen_V!, \lean!ipDen_sub!, \lean!ipDen_pow!). Substitution is evaluation at the updated assignment:
+\[
+\mathrm{ipDen}_\nu(\mathrm{ipSubst}(x,r,p))=\mathrm{ipDen}_{\nu[x\mapsto\mathrm{ipDen}_\nu(r)]}(p)\qquad(\text{\lean!ipDen_subst!}),
+\]
+and a polynomial without $x$ ignores $x$ (\lean!ipDen_upd_of!). If $\mathrm{ipLin}(x,p)=\mathrm{some}(a,b)$ then $a$, $b$ are free of $x$ and $\mathrm{ipDen}_\nu(p)=\mathrm{ipDen}_\nu(a)\,\nu(x)+\mathrm{ipDen}_\nu(b)$ (\lean!ipLin_spec!). $\mathrm{ipConst}(p)=\mathrm{some}\,c$ gives $\mathrm{ipDen}_\nu(p)=c$ (\lean!ipConst_spec!). $k\mid\mathrm{ipDen}_\nu(p)-\mathrm{ipDen}_\nu(\mathrm{ipModC}(k,p))$ (\lean!ipDen_modC!). $\mathrm{ipDen}(\mathrm{ipSign}\,p)=\pm\mathrm{ipDen}(p)$ (\lean!ipDen_sign!). Moving $x$ from $b$ to $a$ moves the value by a multiple of $a-b$ (\lean!ipDen_upd_dvd!). \lean!imDen_upd!, \lean!ipDen_substF!, \lean!imDen_upd_of!, \lean!mem_ipIns!, \lean!ipHas_iff!, \lean!ipHas_ins!, \lean!imDen_erase!, \lean!count_erase_zero! and \lean!ipHas_add! are the supporting lemmas.
+\end{proposition}
+
+\subsection{Coefficient monomials}
+
+\begin{definition}[\lean!CMon!]\label{def:lean-sym-cmon}
+A coefficient monomial has fields $q\in\Q$, $r\in\Q$, $\mathit{sq}\in\text{List }\Z$, $\mathit{rc}\in\text{List }\N$, $\mathit{am}\in\text{List }\Z$ and $\mathit{gc}\in\text{List }(\Z\times\mathrm{DMon})$ (derived \lean!DecidableEq!), denoting
+\[
+\mathrm{den}_\rho(m)=q\cdot\mathrm{ex}(r)\cdot\prod_i\sqrt{d_i}^{\,\mathit{sq}_i}\cdot\prod_{c\in\mathit{rc}}\sqrt c\cdot\prod_j a_j^{\,\mathit{am}_j}\cdot\prod_{(a,D)\in\mathit{gc}}\gcd(|a|,\mathrm{den}(D)),
+\]
+with $d_i=\rho.\mathrm{dv}(i)$ and $a_j=\rho.\mathrm{atom}(j)$ (\lean!rtv!, \lean!gcdV!).
+\end{definition}
+
+\begin{definition}[Coefficient operations]
+\begin{itemize}
+\item $\mathrm{ofQ}(q)=(q,0,[],[],[],[])$.
+\item $\mathrm{rnorm}(q,r)$ reduces the root of unity: with $r'=r-\lfloor r\rfloor$, it is $(-q,r'-\tfrac12)$ when $r'\ge\tfrac12$ and $(q,r')$ otherwise, so the phase lies in $[0,\tfrac12)$ (\lean!rnorm_den!, using $\mathrm{ex}(\tfrac12)=-1$, \lean!ex_half!).
+\item $\mathrm{rcIns}(c,\ell)$ merges $\sqrt c$ into a sorted list of square roots: it returns $(c,\ell\setminus\{c\})$ when $c$ is present (as $\sqrt c\sqrt c=c$), and otherwise $(1,\ell\cup\{c\})$ sorted; $\mathrm{rcMul}(a,b)$ merges every element of $b$ into $a$ from the right, multiplying the rational factors.
+\item $\mathrm{gcLt}$ orders gcd atoms by $a$, then $D.c$, then $\mathrm{lexLt}$ on $D.e$; $\mathrm{gcIns}$ inserts in that order.
+\item $\mathrm{mul}(a,b)$: $(q,r)=\mathrm{rnorm}(a.q\,b.q,\ a.r+b.r)$ and $(f,\mathit{rc})=\mathrm{rcMul}(a.\mathit{rc},b.\mathit{rc})$ give $(q f,\ r,\ \mathrm{ztrim}(\mathrm{zadd}(a.\mathit{sq},b.\mathit{sq})),\ \mathit{rc},\ \mathrm{ztrim}(\mathrm{zadd}(a.\mathit{am},b.\mathit{am})),\ b.\mathit{gc}\text{ inserted into }a.\mathit{gc})$.
+\item $\mathrm{sqrtS}(c)$ is the first $r\le c$ with $r^2=c$, and $0$ when there is none.
+\item $\mathrm{rtC}(c,k)=(\sqrt c)^k$ for a constant $c\ge1$: $\mathrm{ofQ}(c^{k/2})$ for even $k$; $\mathrm{ofQ}(c^{k/2}\mathrm{sqrtS}(c))$ for odd $k$ and square $c$; $(c^{k/2},0,[],[c],[],[])$ otherwise ($k/2$ Euclidean).
+\item $\mathrm{rtD}(D,k)=(\sqrt{\mathrm{den}\,D})^k$: $\mathrm{rtC}(D.c,k)$ with $\mathit{sq}=\mathrm{ztrim}([k\,e_i])$.
+\item $\mathrm{gcdA}(a,D)$ is $\mathrm{ofQ}(\gcd(|a|,D.c))$ when $D$ is constant or $|a|=1$, and the gcd atom $(1,0,[],[],[],[(|a|,D)])$ otherwise.
+\item $\mathrm{exQ}(r)$: with $(q',r')=\mathrm{rnorm}(1,r)$, the monomial $(q',r',[],[],[],[])$.
+\item $\mathrm{atomP}(j,k)=(1,0,[],[],\mathrm{ztrim}([0,\dots,0,k]),[])$ with $k$ at position $j$.
+\end{itemize}
+\end{definition}
+
+\begin{proposition}[Coefficient semantics]
+For an admissible $\rho$: $\mathrm{den}(\mathrm{mul}\,a\,b)=\mathrm{den}\,a\cdot\mathrm{den}\,b$ (\lean!CMon.den_mul!); $\mathrm{den}(\mathrm{rtC}(c,k))=\sqrt c^{\,k}$ for $c>0$; $\mathrm{den}(\mathrm{rtD}(D,k))=\sqrt{\mathrm{den}\,D}^{\,k}$ for $D.c>0$; $\mathrm{den}(\mathrm{gcdA}(a,D))=\gcd(|a|,\mathrm{den}\,D)$; $\mathrm{den}(\mathrm{exQ}\,r)=\mathrm{ex}(r)$; $\mathrm{den}(\mathrm{atomP}(j,k))=a_j^k$; $\mathrm{den}(\mathrm{ofQ}\,q)=q$ (\lean!rtC_den!, \lean!rtD_den!, \lean!gcdA_den!, \lean!exQ_den!, \lean!atomP_den!, \lean!ofQ_den!). The lemmas \lean!rcIns_den!, \lean!rcMul_den!, \lean!gcIns_perm!, \lean!gc_prod!, \lean!rt_mul!, \lean!rt_pow!, \lean!rt_npow!, \lean!npow_one!, \lean!rt_ne'! support them.
+\end{proposition}
+
+\subsection{Terms and expressions}
+
+\begin{definition}[\lean!Fac!, \lean!STm!]\label{def:lean-sym-stm}
+A factor is a pair $(M,p)$ of a dimension monomial and an index polynomial. A term (\lean!STm!) has a coefficient $c$, a list of sums $(x,D)$ (bound variable, range), a list of deltas and a list of roots of unity, all factors. Its value at $\nu:\N\to\Z$ is
+\begin{gather*}
+\mathrm{delV}_\nu(M,p)=[\mathrm{den}(M)\mid\mathrm{ipDen}_\nu(p)],\qquad \mathrm{phV}_\nu(D,p)=\omega_{\mathrm{den}(D)}^{\,\mathrm{ipDen}_\nu(p)},\\
+\mathrm{body}_\nu(t)=\prod_{f\in t.\mathrm{dels}}\mathrm{delV}_\nu(f)\prod_{f\in t.\mathrm{phs}}\mathrm{phV}_\nu(f),\\
+t.\mathrm{den}_\rho(\nu)=\mathrm{den}_\rho(t.c)\sum_{j_1<\mathrm{den}(D_1)}\cdots\sum_{j_s<\mathrm{den}(D_s)}\mathrm{body}_{\nu[x_1\mapsto j_1]\cdots[x_s\mapsto j_s]}(t),
+\end{gather*}
+for $t.\mathrm{sums}=[(x_1,D_1),\dots,(x_s,D_s)]$ (\lean!sumsV!, the first sum outermost). An expression is a list of terms with $\mathrm{exDen}_\rho(\nu,e)=\sum_{t\in e}t.\mathrm{den}_\rho(\nu)$.
+\end{definition}
+
+The variables of a factor are those of its polynomial (\lean!facVars!); the variables a summand reads are those of its deltas and roots (\lean!tmVars!); the bound variables are $\mathrm{bvs}(t)=[x\mid(x,D)\in t.\mathrm{sums}]$. $\mathrm{RD}(S,f)$ says that $f:(\N\to\Z)\to\C$ reads $\nu$ only on $S$.
+
+\begin{proposition}[Sum lemmas]
+The body reads only $\mathrm{tmVars}$ (\lean!body_reads!), and nested sums keep that (\lean!sumsV_reads!). Nested sums are congruent, linear (constant factors, zero, finite sums, binary sums and list sums), compose over concatenated sum lists, pull out a factor that reads no bound variable (\lean!sumsV_congr!, \lean!sumsV_mul_left!, \lean!sumsV_zero!, \lean!sumsV_fsum!, \lean!sumsV_add!, \lean!sumsV_lsum!, \lean!sumsV_append!, \lean!sumsV_const_mul!), and a sum over $x$ moves innermost when $x$ is bound once:
+\[
+\mathrm{sumsV}(a\mathbin{+\!\!+}(x,D)\mathbin{::}b,f,\nu)=\mathrm{sumsV}\Bigl(a\mathbin{+\!\!+}b,\ \nu'\mapsto\sum_{j<\mathrm{den}(D)}f(\nu'[x\mapsto j]),\ \nu\Bigr)\qquad(\text{\lean!sumsV_pull!}).
+\]
+\end{proposition}
+
+\begin{definition}[Products]
+$\mathrm{STm.mul}(s,t)=(\mathrm{CMon.mul}(s.c,t.c),\ s.\mathrm{sums}\mathbin{+\!\!+}t.\mathrm{sums},\ s.\mathrm{dels}\mathbin{+\!\!+}t.\mathrm{dels},\ s.\mathrm{phs}\mathbin{+\!\!+}t.\mathrm{phs})$. $\mathrm{mulOK}(s,t)$ holds when no bound variable of $s$ is read by $t$'s factors and no bound variable of $t$ is read by $s$'s.
+\end{definition}
+
+\begin{theorem}[\lean!body_mul!, \lean!STm.den_mul!]
+$\mathrm{body}(\mathrm{mul}\,s\,t)=\mathrm{body}(s)\,\mathrm{body}(t)$, and for admissible $\rho$ with $\mathrm{mulOK}(s,t)$, $(\mathrm{mul}\,s\,t).\mathrm{den}_\rho(\nu)=s.\mathrm{den}_\rho(\nu)\cdot t.\mathrm{den}_\rho(\nu)$.
+\end{theorem}
+
+\section{The Normalizer of Symbolic Sums}\label{sec:lean-sym-norm}
+
+Module \file{SymNorm.lean} (imports \file{Sym.lean}) defines the elimination of bound variables. Each move removes one bound variable of a term: an unused one, one pinned by a delta whose modulus divides its range, one read only through roots of unity of its range (a character sum), or one read only through one delta of its range (a gcd count).
+
+\subsection{Sums over a range}
+
+\begin{theorem}[Range sums]\label{thm:lean-sym-range}
+Let $D,M\in\N$.
+\begin{enumerate}
+\item (\lean!dvd_sub_iff_eq!) For $0<M$, $b<M$ and $v\in\Z$: $M\mid b-v$ iff $b=v\bmod M$.
+\item (\lean!sum_delta_periodic!) For $0<M$, $M\mid D$, $v\in\Z$ and $g:\Z\to\C$ with $g(a)=g(b)$ whenever $M\mid a-b$:
+\[
+\sum_{j<D}[M\mid j-v]\,g(j)=\frac DM\,g(v).
+\]
+\item (\lean!sum_om_lin!) For $0<D$ and $A,B\in\Z$: $\displaystyle\sum_{j<D}\omega_D^{\,jA+B}=\omega_D^{\,B}\cdot[D\mid A]\cdot D$.
+\item (\lean!sum_dvd_lin!) For $0<D$ and $a,r\in\Z$ with $a\mid r$: $\displaystyle\sum_{j<D}[D\mid aj+r]=\gcd(|a|,D)$.
+\item (\lean!sum_const_range!) $\sum_{j<D}c=D\,c$.
+\end{enumerate}
+\end{theorem}
+
+\subsection{Bodies and splits}
+
+$\mathrm{bodyOf}_\nu(ds,ps)=\prod_{f\in ds}\mathrm{delV}_\nu(f)\prod_{f\in ps}\mathrm{phV}_\nu(f)$, so $\mathrm{body}(t)=\mathrm{bodyOf}(t.\mathrm{dels},t.\mathrm{phs})$ (\lean!body_eq!). $\mathrm{splits}(\ell)$ lists every cut $(\mathit{pre},x,\mathit{post})$ of $\ell$ at one element, in order (\lean!splits_spec!: $\ell=\mathit{pre}\mathbin{+\!\!+}x\mathbin{::}\mathit{post}$). $\mathrm{firstSome}(f,\ell)$ is the first $\mathrm{some}$ value of $f$ on $\ell$ (\lean!firstSome_spec!). For a factor, $\mathrm{facSub}(x,v,(M,p))=(M,\mathrm{ipSubst}(x,v,p))$ and $\mathrm{facHas}(x,(M,p))=\mathrm{ipHas}(x,p)$. $\mathrm{pinVal}(s,b)=\mathrm{ipSmul}(-s,b)$: for $s=\pm1$, $M\mid sx+b$ iff $M\mid x-(-sb)$ (\lean!pin_dvd!).
+
+\begin{proposition}[Factor lemmas]
+A delta's value is $0$ or $1$ (\lean!delV_cases!). If $f.1\mid M$ (as monomials) and $\mathrm{den}(M)\mid a-b$, then $f$ has equal delta and root values at $\nu[x\mapsto a]$ and $\nu[x\mapsto b]$ (\lean!fac_congr!). A body whose factors all lack $x$ ignores $x$ (\lean!bodyOf_upd!); bodies split over concatenated deltas (\lean!bodyOf_append!); substitution in every factor is evaluation at the updated assignment (\lean!bodyOf_sub!).
+\end{proposition}
+
+\subsection{Eliminating a bound variable}
+
+\begin{definition}[\lean!Elim!, \lean!ElimOK!]
+An elimination result has fields $k$ (a coefficient monomial gained), $ds$ and $ps$ (the factors left). $\mathrm{ElimOK}(\rho,x,D,ds,ps,e)$ states, for every $\nu$,
+\[
+\sum_{j<\mathrm{den}(D)}\mathrm{bodyOf}_{\nu[x\mapsto j]}(ds,ps)=\mathrm{den}_\rho(e.k)\cdot\mathrm{bodyOf}_\nu(e.ds,e.ps).
+\]
+\end{definition}
+
+\begin{definition}[The four eliminations]\label{def:lean-sym-elims}
+For a bound variable $x$ of range $D$ and the factors $ds$ (deltas), $ps$ (roots):
+\begin{enumerate}
+\item \lean!elimUnused!: if $D.c\neq0$ and no factor reads $x$, the result is $(\mathrm{rtD}(D,2),ds,ps)$, coefficient $\mathrm{den}(D)$.
+\item \lean!elimDelta1!$(x,D,\mathit{pre},f,\mathit{post},ps)$: let $f=(M,p)$ with $\mathrm{ipLin}(x,p)=\mathrm{some}(a,b)$ and $\mathrm{ipConst}(a)=\mathrm{some}\,s$, $s=\pm1$. If $D.c\neq0$, $M\mid D$, and every other factor $g$ that reads $x$ has $g.1\mid M$, the result is
+\[
+\bigl(\mathrm{rtD}(D/M,2),\ (\mathit{pre}\mathbin{+\!\!+}\mathit{post}).\mathrm{map}\,\mathrm{facSub}(x,\mathrm{pinVal}(s,b)),\ ps.\mathrm{map}\,\mathrm{facSub}(x,\mathrm{pinVal}(s,b))\bigr),
+\]
+coefficient $\mathrm{den}(D)/\mathrm{den}(M)$; \lean!elimDelta! tries every split of $ds$ in order (\lean!firstSome! over \lean!splits!).
+\item \lean!elimChar!: if $D.c\neq0$, no delta reads $x$, and $\mathrm{charData}(x,D,ps)=\mathrm{some}(A,B)$, the result is $\bigl(\mathrm{rtD}(D,2),\ ds\mathbin{+\!\!+}[(D,A)],\ ps.\mathrm{filter}(\lnot\mathrm{facHas}\,x)\mathbin{+\!\!+}[(D,B)]\bigr)$. $\mathrm{charData}$ scans the roots from the right: a root not reading $x$ is skipped; a root reading $x$ must have modulus exactly $D$ and be linear in $x$, $\omega_D^{ax+b}$, and adds $a$ to $A$ and $b$ to $B$; otherwise it fails.
+\item \lean!elimGcd1!$(x,D,\mathit{pre},f,\mathit{post},ps)$: if $f=(D,p)$ has modulus exactly $D$, $D.c\neq0$, no other factor reads $x$, $\mathrm{ipLin}(x,p)=\mathrm{some}(a,b)$, $\mathrm{ipConst}(a)=\mathrm{some}\,\alpha$ and every coefficient of $b$ is a multiple of $\alpha$, the result is $(\mathrm{gcdA}(\alpha,D),\ \mathit{pre}\mathbin{+\!\!+}\mathit{post},\ ps)$; \lean!elimGcd! tries every split of $ds$.
+\end{enumerate}
+\lean!elimVar! tries \lean!elimUnused!, \lean!elimDelta!, \lean!elimChar!, \lean!elimGcd! in this order and returns the first result.
+\end{definition}
+
+\begin{theorem}[Elimination correctness]\label{thm:lean-sym-elimok}
+For an admissible $\rho$, each of \lean!elimUnused!, \lean!elimDelta1!, \lean!elimDelta!, \lean!elimChar!, \lean!elimGcd1!, \lean!elimGcd! and \lean!elimVar! that returns $\mathrm{some}\,e$ satisfies $\mathrm{ElimOK}(\rho,x,D,ds,ps,e)$ (\lean!elimUnused_ok!, \lean!elimDelta1_ok!, \lean!elimDelta_ok!, \lean!elimChar_ok!, \lean!elimGcd1_ok!, \lean!elimGcd_ok!, \lean!elimVar_ok!). \lean!rtD_two! gives $\mathrm{den}(\mathrm{rtD}(D,2))=\mathrm{den}(D)$ and \lean!ipDivBy_spec! gives $k\mid\mathrm{ipDen}_\nu(p)$ from $\mathrm{ipDivBy}(k,p)$.
+\end{theorem}
+
+The four proofs are the four range sums of \cref{thm:lean-sym-range}. \lean!elimDelta1_ok! applies \lean!sum_delta_periodic! with modulus $\mathrm{den}(M)$: the factors reading $x$ have moduli dividing $M$, so the summand is periodic modulo $\mathrm{den}(M)$ (\lean!fac_congr!), and the pinned value is $-sb$. \lean!charData_spec! shows that the roots reading $x$ multiply to $\omega_D^{\,jA+B}$; \lean!sum_om_lin! turns the sum into the delta $[D\mid A]$ times $D$ times $\omega_D^{\,B}$. \lean!elimGcd1_ok! is \lean!sum_dvd_lin!.
+
+\begin{definition}[\lean!elimStep!, \lean!elimAll!]
+$\mathrm{elimStep}(t)$ scans the splits $(\mathit{pre},(x,D),\mathit{post})$ of $t.\mathrm{sums}$ in order, skips a variable bound again in $\mathit{pre}\mathbin{+\!\!+}\mathit{post}$, and at the first $x$ with $\mathrm{elimVar}(x,D,t.\mathrm{dels},t.\mathrm{phs})=\mathrm{some}\,e$ returns $(\mathrm{CMon.mul}(t.c,e.k),\ \mathit{pre}\mathbin{+\!\!+}\mathit{post},\ e.ds,\ e.ps)$. $\mathrm{elimAll}(n,t)$ applies $\mathrm{elimStep}$ until it fails, at most $n$ times.
+\end{definition}
+
+\begin{theorem}[\lean!elimStep_ok!, \lean!elimAll_ok!]
+For an admissible $\rho$, $\mathrm{elimStep}(t)=\mathrm{some}\,t'$ gives $t'.\mathrm{den}_\rho(\nu)=t.\mathrm{den}_\rho(\nu)$, and $\mathrm{elimAll}(n,t).\mathrm{den}_\rho(\nu)=t.\mathrm{den}_\rho(\nu)$ for every $n$.
+\end{theorem}
+
+\lean!sumsV_pull! moves the eliminated sum innermost, where \cref{thm:lean-sym-elimok} applies; \lean!sumsV_const_mul! pulls out the gained coefficient.
+
+\section{Canonical Terms and Expressions}\label{sec:lean-sym-canon}
+
+Module \file{SymCanon.lean} (imports \file{SymNorm.lean}). \lean!canonTm! substitutes each delta's pivot into the factors whose modulus divides the delta's, merges roots of unity of one order, evaluates constant factors and sorts the factors; \lean!normTm! alternates eliminations and canonicalization; \lean!nfEx! normalizes every term of an expression and merges terms of equal shape.
+
+\subsection{Pivots and divisions}
+
+\begin{definition}[Pivots]
+$\mathrm{pivTry}(p,x)=\mathrm{some}(x,s,b)$ when $\mathrm{ipLin}(x,p)=\mathrm{some}(a,b)$ and $\mathrm{ipConst}(a)=\mathrm{some}\,s$ with $s=\pm1$. $\mathrm{pivotOf}(p)$ folds over every variable occurrence of $p$ (monomial by monomial, left to right) and keeps the candidate of the greatest variable: a new candidate $x$ replaces the current one $(y,\dots)$ when $y<x$. $\mathrm{PivOK}(p,(x,s,b))$ states $s=\pm1$, $b$ free of $x$ and $\mathrm{ipDen}_\nu(p)=s\,\nu(x)+\mathrm{ipDen}_\nu(b)$; \lean!pivTry_spec! and \lean!pivotOf_spec! prove it. $\mathrm{pivSub}(M,x,v,g)$ is $\mathrm{facSub}(x,v,g)$ when $g.1\mid M$ and $g$ otherwise.
+\end{definition}
+
+\begin{definition}[Divisions]
+$\mathrm{ipDivC}(c,p)$ divides every coefficient by $c$ (Euclidean), with $c\cdot\mathrm{ipDen}(\mathrm{ipDivC}(c,p))=\mathrm{ipDen}(p)$ when $\mathrm{ipDivBy}(c,p)$ (\lean!ipDen_divC!). $\mathrm{divTry}(p,x)=\mathrm{some}(x,c,b)$ when $p=c\,x+b$ with a nonzero constant $c$; $\mathrm{divOf}(p)$ keeps the greatest such variable as $\mathrm{pivotOf}$ does, and \lean!divOf_spec! proves $\mathrm{DivOK}$ ($b$ free of $x$, $\mathrm{ipDen}(p)=c\,\nu(x)+\mathrm{ipDen}(b)$). $\mathrm{divSub}(M,x,c,b,g)$, for $g$ with $g.1\mid M$ and $\mathrm{ipLin}(x,g.2)=\mathrm{some}(a_g,b_g)$ where $c$ divides every coefficient of $a_g$, replaces $g.2$ by $\mathrm{ipSub}(b_g,\mathrm{ipMul}(\mathrm{ipDivC}(c,a_g),b))$; otherwise it keeps $g$.
+\end{definition}
+
+\begin{definition}[\lean!stepOf!, \lean!StepOK!]
+$\mathrm{stepOf}(M,p)$ is $\mathrm{pivSub}(M,x,\mathrm{pinVal}(s,b))$ when $\mathrm{pivotOf}(p)=\mathrm{some}(x,s,b)$, else $\mathrm{divSub}(M,x,c,b)$ when $\mathrm{divOf}(p)=\mathrm{some}(x,c,b)$, else $\mathrm{none}$. $\mathrm{StepOK}(dv,f,\sigma)$ states that wherever the delta $f$ holds, $\sigma$ keeps every factor's delta and root value.
+\end{definition}
+
+Where $M\mid sx+b$ holds, $x\equiv-sb$, and where $M\mid cx+b$ holds, $a_gx=(a_g/c)\,cx\equiv-(a_g/c)\,b$ modulo $\mathrm{den}(M)$; a factor whose modulus divides $M$ sees only residues modulo $\mathrm{den}(M)$ (\lean!fac_mod!, \lean!pivSub_val!). \lean!stepOf_ok! proves $\mathrm{StepOK}$, and \lean!step_body! gives $\mathrm{bodyOf}(A.\mathrm{map}\,\sigma\mathbin{+\!\!+}f\mathbin{::}B.\mathrm{map}\,\sigma,\ ps.\mathrm{map}\,\sigma)=\mathrm{bodyOf}(A\mathbin{+\!\!+}f\mathbin{::}B,ps)$.
+
+\begin{definition}[\lean!pivPass!]
+$\mathrm{pivPass}(n,A,B,ps)$ processes the deltas of $B$ in order with fuel $n$: at $n=0$ it returns $(A\mathbin{+\!\!+}B,ps)$; at $B=[]$ it returns $(A,ps)$; at $f\mathbin{::}B$ with $\mathrm{stepOf}(f)=\mathrm{some}\,\sigma$ it continues with $(A.\mathrm{map}\,\sigma\mathbin{+\!\!+}[f],\ B.\mathrm{map}\,\sigma,\ ps.\mathrm{map}\,\sigma)$, and otherwise with $(A\mathbin{+\!\!+}[f],B,ps)$. The delta $f$ itself is kept unchanged. \lean!pivPass_ok! proves that the body is kept.
+\end{definition}
+
+\subsection{Factors}
+
+\begin{definition}[Floors]
+A floor list $\mathit{fl}$ gives lower bounds $\mathrm{flv}(\mathit{fl},i)=\mathit{fl}.\mathrm{getD}\,i\,0$ of the dimension symbols; $\mathrm{FloorOK}(\mathit{fl},\rho)$ states $\mathrm{flv}(\mathit{fl},i)\le\rho.\mathrm{dv}(i)$ for all $i$.
+\end{definition}
+
+\begin{definition}[Normalized deltas]
+$\mathrm{symMod}(c,k)$ is $c\bmod k$ reduced into $(-k/2,k/2]$: $c\bmod k-k$ when $2(c\bmod k)>k$, else $c\bmod k$; $\mathrm{ipModS}(k,p)$ applies it to every coefficient, with $k\mid\mathrm{ipDen}(p)-\mathrm{ipDen}(\mathrm{ipModS}(k,p))$ (\lean!ipDen_modS!). $\mathrm{delPoly}(M,p)$ is $\mathrm{ipSign}(\mathrm{ipModS}(M.c,p))$ for constant $M$ and $\mathrm{ipSign}(p)$ otherwise (\lean!delV_mod!: the delta value is kept). With $p'=\mathrm{delPoly}(M,p)$, $\mathrm{normDel}(\mathit{fl},(M,p))$ is
+\begin{itemize}
+\item $\mathrm{some}\,\mathrm{none}$ (the delta is $1$) when $p'$ is the constant $0$, or $M$ is constant and $M.c$ divides the constant $p'$;
+\item $\mathrm{none}$ (the delta is $0$) when $p'$ is a constant $c\neq0$ and either $M$ is constant (and does not divide $c$) or $|c|<\mathrm{den}_{\mathrm{flv}\,\mathit{fl}}(M)$;
+\item $\mathrm{some}(\mathrm{some}(M,p'))$ otherwise.
+\end{itemize}
+$\mathrm{normDels}$ maps $\mathrm{normDel}$ over a list, dropping deltas equal to $1$, and is $\mathrm{none}$ as soon as one vanishes. $\mathrm{DelRes}$ and $\mathrm{DelsRes}$ state what the results say about the values; \lean!normDel_ok! and \lean!normDels_ok! prove them under $\mathrm{FloorOK}$ (a constant $c$ with $0<|c|<\mathrm{den}(M)$ at the floors is no multiple of the larger actual $\mathrm{den}(M)$).
+\end{definition}
+
+\begin{definition}[Normalized roots]
+$\mathrm{normPh}(M,p)$ is: for constant $M$ with $M.c\neq0$ and $p'=\mathrm{ipModC}(M.c,p)$, the coefficient $\mathrm{exQ}(c/M.c)$ and no factor when $p'$ is a constant $c$, and the coefficient $1$ with the factor $(M,p')$ otherwise; for $p=[]$, the coefficient $1$ and no factor; otherwise the coefficient $1$ and $(M,p)$ unchanged. \lean!om_zpow_ex! ($\omega_c^k=\mathrm{ex}(k/c)$) and \lean!normPh_ok! prove the value kept. $\mathrm{normPhs}$ maps $\mathrm{normPh}$ over a list, multiplying the coefficients from the right (\lean!normPhs_ok!). $\mathrm{phIns}(f,\ell)$ adds $f$'s exponent into the first root of $\ell$ with the same modulus monomial, or appends $f$; $\mathrm{phMerge}(ps)$ folds $\mathrm{phIns}$ from the left starting at $[]$ (\lean!phIns_ok!, \lean!phMerge_ok!).
+\end{definition}
+
+\subsection{Sorting and renaming}
+
+$\mathrm{ipLt}$ orders polynomials lexicographically by (monomial, coefficient) pairs with $\mathrm{lexLt}$ on monomials; $\mathrm{facLt}$ orders factors by $M.c$, then $\mathrm{lexLt}$ on $M.e$, then $\mathrm{ipLt}$. $\mathrm{facIns}$ inserts a factor before the first that is not below it; $\mathrm{delIns}$ does the same but drops a delta equal to one already present ($[P]^2=[P]$). Sorting by $\mathrm{facIns}$ keeps the root product and by $\mathrm{delIns}$ keeps the delta product (\lean!facIns_perm!, \lean!facSort_ok!, \lean!delIns_ok!, \lean!delSort_ok!).
+
+\begin{definition}[Renaming]
+The canonical bound variables start at $\mathrm{RBASE}=2\,000\,000$. $\mathrm{renOne}(t,x,y)$ renames the bound variable $x$ to $y$ in the sums and in every factor (by $\mathrm{facSub}(x,\mathrm{ipV}\,y)$) when $x$ is bound exactly once and $y$ is neither bound nor read; otherwise $\mathrm{none}$ (\lean!renOne_ok!). $\mathrm{renList}(t,k,[x_0,x_1,\dots])$ renames $x_0$ to $\mathrm{RBASE}+k$, $x_1$ to $\mathrm{RBASE}+k+1$, and so on, skipping each rename that fails (\lean!renList_ok!).
+\end{definition}
+
+\subsection{Canonical terms and the normal form}
+
+\begin{definition}[\lean!canonTm!]\label{def:lean-sym-canontm}
+$\mathrm{canonTm}'(\mathit{fl},t)$: let $(ds,ps)=\mathrm{pivPass}(|t.\mathrm{dels}|,[],t.\mathrm{dels},t.\mathrm{phs})$; if $\mathrm{normDels}(\mathit{fl},ds)=\mathrm{none}$ the term vanishes ($\mathrm{none}$); otherwise with $ds'$ the result and $(k,ps')=\mathrm{normPhs}(\mathrm{phMerge}\,ps)$, the term is
+\[
+\bigl(\mathrm{CMon.mul}(t.c,k),\ t.\mathrm{sums},\ ds'\text{ sorted by }\mathrm{delIns},\ ps'\text{ sorted by }\mathrm{facIns}\bigr).
+\]
+$\mathrm{canonTm}(\mathit{fl},t)=\mathrm{canonTm}'(\mathit{fl},\mathrm{renList}(t,0,\mathrm{bvs}\,t))$. $\mathrm{TmRes}(\rho,t,o)$ states $t'.\mathrm{den}_\rho=t.\mathrm{den}_\rho$ for $o=\mathrm{some}\,t'$ and $t.\mathrm{den}_\rho=0$ for $o=\mathrm{none}$.
+\end{definition}
+
+\begin{definition}[\lean!normTm!, \lean!nfEx!]
+$\mathrm{normTm}(\mathit{fl},0,t)=\mathrm{some}\,t$ and $\mathrm{normTm}(\mathit{fl},r+1,t)=\mathrm{canonTm}(\mathit{fl},\mathrm{elimAll}(|t.\mathrm{sums}|+1,t))$ followed by $\mathrm{normTm}(\mathit{fl},r,\cdot)$, $\mathrm{none}$ when a round vanishes. The shape of a term is the term with rational coefficient $q:=0$; $\mathrm{withQ}(t,q)$ sets it; $\mathrm{qAdd}(a,b)=\mathrm{mkRat}(a.\mathrm{num}\,b.\mathrm{den}+b.\mathrm{num}\,a.\mathrm{den},\ a.\mathrm{den}\,b.\mathrm{den})$ ($=a+b$, \lean!qAdd_eq!). $\mathrm{tmAdd}(t,\ell)$ adds $t$ to the first term of $\ell$ of equal shape, removing it when the sum of the rational coefficients is $0$, and appends $t$ (when $t.c.q\neq0$) if there is none. With $\mathrm{ROUNDS}=3$,
+\[
+\mathrm{nfEx}(\mathit{fl},e)=\mathrm{foldl}\bigl(\ell,t\mapsto\mathrm{tmAdd}(t,\ell)\bigr)\bigl([],\ e.\mathrm{filterMap}(\mathrm{normTm}(\mathit{fl},\mathrm{ROUNDS}))\bigr).
+\]
+\end{definition}
+
+\begin{theorem}[Normalizer correctness]\label{thm:lean-sym-nfex}
+Let $\rho$ be admissible and $\mathrm{FloorOK}(\mathit{fl},\rho)$. Then $\mathrm{TmRes}(\rho,t,\mathrm{canonTm}'(\mathit{fl},t))$, $\mathrm{TmRes}(\rho,t,\mathrm{canonTm}(\mathit{fl},t))$ and $\mathrm{TmRes}(\rho,t,\mathrm{normTm}(\mathit{fl},r,t))$ hold (\lean!canonTm'_ok!, \lean!canonTm_ok!, \lean!normTm_ok!); $\mathrm{tmAdd}$ adds values (\lean!tmAdd_ok!, from \lean!den_withQ!, \lean!den_self!, \lean!withQ_shape!); and for every $e$ and $\nu$,
+\[
+\mathrm{exDen}_\rho(\nu,\mathrm{nfEx}(\mathit{fl},e))=\mathrm{exDen}_\rho(\nu,e)\qquad(\text{\lean!nfEx_den!}),
+\]
+so $\mathrm{nfEx}(\mathit{fl},e)=[]$ implies $\mathrm{exDen}_\rho(\nu,e)=0$ (\lean!nfEx_zero!).
+\end{theorem}
+
+The normalizer is sound and not complete: an expression whose value is zero for every admissible valuation can have a nonempty normal form, for instance when a sum needs an identity outside the four eliminations, or when a delta or root reads its bound variable nonlinearly.
+
+\begin{example}[Two identity spiders]\label{ex:lean-sym-nf}
+Two Z spiders of one input and one output, dimension $d$ (monomial $D=(1,[1])$), in series: labels $0$ (output), $2$ (inner), $1$ (input), node variables $s=10^6$ and $s'=10^6+1$. The translation of \cref{sec:lean-sym-net} gives, at the second node, the term $\sum_{s'}[d\mid x_2-s'][d\mid x_1-s']$; \lean!elimDelta! pins $s'$ to $x_2$ (pivot $s=-1$, $b=x_2$), leaving $[d\mid x_1-x_2]$. At the first node the product is $\sum_{x_2}\sum_s[d\mid x_0-s][d\mid x_2-s][d\mid x_1-x_2]$ with label $2$ summed first; $x_2$ is pinned to $s$ and then $s$ to $x_0$, leaving $[d\mid x_1-x_0]$, which $\mathrm{delPoly}$ signs to $[d\mid x_0-x_1]$ (monomial $[0]$ first, coefficient $-1$ negated). A single Z(1$\to$1) normalizes to the same term, so the scaled difference of the two networks merges to $[]$.
+\end{example}
+
+\section{Networks as Symbolic Sums}\label{sec:lean-sym-net}
+
+Module \file{SymNet.lean} (imports \file{SymCanon.lean}) translates a generator's entry into an expression over its port labels and one bound variable, a network's entry into an expression over its boundary labels, and proves \lean!Equal! from the normal form of the scaled difference of two networks being empty, for every value of the dimension symbols and coefficient atoms (\lean!equal_sym!).
+
+\subsection{Tables and constants}
+
+The translation reads three tables: $\mathit{dt}:\N\to\mathrm{DMon}$ (each dimension index as a monomial), $\mathit{pt}:\N\to\text{List }(\N\times\mathrm{CMon})$ (each phase vector's stored entries $(j,A)$: the phase factor at index $j$ is $A$, and $1$ elsewhere) and $\mathit{rl}:\N\to\mathrm{DMon}\times\text{List }\Z$ (each phase vector's rule $(D,[c_0,c_1,\dots])$, the phase factor $\omega_D^{\,\sum_i c_ij^i}$). Labels lie below $\mathrm{OFF}=1\,000\,000$; node $i$ of a network uses the bound variable $\mathrm{OFF}+i$.
+
+\begin{definition}[Phase values]
+\begin{gather*}
+\mathrm{phF}_\rho(\mathit{pt},j)=1+\sum_{(j',A)\in\mathit{pt}}[j=j']\,(\mathrm{den}_\rho(A)-1),\\
+\mathrm{rEv}(x,[c_0,c_1,\dots])=c_0+x\,(c_1+x(\cdots)),\qquad
+\mathrm{rV}_\rho((D,cs),j)=\omega_{\mathrm{den}(D)}^{\,\mathrm{rEv}(j,cs)}.
+\end{gather*}
+$\mathrm{rPoly}(s,cs)$ is $\sum_ic_is^i$ as an index polynomial (Horner, \lean!ipDen_rPoly!), and $\mathrm{rF}(s,(D,cs))$ is $[]$ for $cs=[]$ and $[(D,\mathrm{rPoly}(s,cs))]$ otherwise (\lean!rF_body!: its root product at $s=j$ is $\mathrm{rV}((D,cs),j)$).
+\end{definition}
+
+\begin{definition}[Spider terms]
+$\mathrm{sumL}(ls)$ is the polynomial $\sum_{l\in ls}x_l$; $\mathrm{zLegs}(D,s,ls)=[(D,x_l-x_s)\mid l\in ls]$; with coefficient $k$,
+\[
+\mathrm{spider}(k,D,s,\mathit{pt},ds,ps)=\bigl[(k,[(s,D)],ds,ps)\bigr]\mathbin{+\!\!+}\mathrm{phTerms}(k,D,s,\mathit{pt},ds,ps),
+\]
+where $\mathrm{phTerms}$ contributes, for each stored $(j,A)$, the two terms $(k\,A,[(s,D)],(D,x_s-j)\mathbin{::}ds,ps)$ and $(-k,[(s,D)],(D,x_s-j)\mathbin{::}ds,ps)$.
+\end{definition}
+
+\begin{proposition}[Spider values]
+If every stored index of $\mathit{pt}$ is below $\mathrm{den}(D)$, then $\mathrm{exDen}(\mathrm{spider}(k,D,s,\mathit{pt},ds,ps))=\mathrm{den}(k)\sum_{j<\mathrm{den}(D)}\mathrm{phF}(\mathit{pt},j)\,\mathrm{bodyOf}_{\nu[s\mapsto j]}(ds,ps)$ (\lean!spider_denA!; \lean!phTerms_den!, \lean!sum_ite_list!, \lean!den_one!, \lean!den_zero!). With $\mathrm{ex}(\varphi(j))=\mathrm{phF}(\mathit{pt},j)$ the factor is $\mathrm{ex}(\varphi(j))$ (\lean!spider_den!); with $\mathrm{ex}(\varphi(j))=\mathrm{phF}(\mathit{pt},j)\,\mathrm{rV}(r,j)$ the rule's roots $\mathrm{rF}(s,r)$ appended to $ps$ give the same (\lean!spider_den_rule!). \lean!zLegs_body! evaluates the Z deltas at legs in range: $[\forall v,\ v=j]$.
+\end{proposition}
+
+\begin{definition}[\lean!trNode!]\label{def:lean-sym-trnode}
+With $D=\mathit{dt}(n.\mathrm{dim})$ and bound variable $s$, a node translates as in \cref{tab:lean-sym-trnode}; every other kind or arity gives $\mathrm{none}$. $\mathrm{wZeros}(D,os)=[(D,x_o)\mid o\in os]$, and $\mathrm{wS}(D,i,\mathit{acc},o\mathbin{::}os)$ is the term $(1,[],\mathit{acc}\mathbin{+\!\!+}(D,x_o-x_i)\mathbin{::}\mathrm{wZeros}(D,os),[])$ followed by $\mathrm{wS}(D,i,\mathit{acc}\mathbin{+\!\!+}[(D,x_o)],os)$ ($[]$ for no outputs): the sum over $p$ of $[o_p=i]\prod_{q\neq p}[o_q=0]$ with earlier outputs zero.
+\end{definition}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Kind & Expression \\
+\midrule
+Z & $\mathrm{spider}(1,D,s,\mathit{pt}(n.\mathrm{ph}),\mathrm{zLegs}(D,s,os\mathbin{+\!\!+}is),\mathrm{rF}(s,\mathit{rl}(n.\mathrm{ph})))$ \\
+X & $\mathrm{spider}(\mathrm{rtD}(D,-(|os|+|is|)),D,s,\mathit{pt}(n.\mathrm{ph}),[],(D,x_s(\mathrm{sumL}\,os-\mathrm{sumL}\,is))\mathbin{::}\mathrm{rF}(s,\mathit{rl}(n.\mathrm{ph})))$ \\
+F $[o],[i]$ & $[(\mathrm{rtD}(D,-1),[],[],[(D,x_ox_i)])]$ \\
+T $[o],[i]$ & $[(1,[],[(D,x_o)],[]),\ (1,[],[(D,x_o-x_i)],[]),\ (-1,[],[(D,x_o),(D,x_i)],[])]$ \\
+Ti $[o],[i]$ & $[(1,[],[(D,x_o-x_i)],[]),\ (-1,[],[(D,x_o)],[]),\ (1,[],[(D,x_o),(D,x_i)],[])]$ \\
+W $os,[i]$ & $\mathrm{wS}(D,i,[],os)\mathbin{+\!\!+}[(1-|os|,[],(D,x_i)\mathbin{::}\mathrm{wZeros}(D,os),[])]$ \\
+I $[a],[b]$ & $[(1,[],[(D,x_a-x_b)],[])]$ \\
+\bottomrule
+\end{tabularx}
+\caption{The expressions of \lean!trNode! ($os$, $is$ the output and input labels; coefficients written as rationals stand for $\mathrm{ofQ}$).}\label{tab:lean-sym-trnode}
+\end{table}
+
+T is $[o=0]+[o=i]-[o=0][i=0]$ and Ti is $[o=i]-[o=0]+[o=0][i=0]$ by inclusion and exclusion; W uses $\mathrm{tW}(d,vs,I)=\mathrm{sF}(vs,I)-(|vs|-1)[I=0]\,\mathrm{zF}(vs)$ (\lean!tW_sF!, with $\mathrm{zF}$ all ports zero and $\mathrm{sF}$ one port equal to $I$ and the others zero; \lean!wZeros_den!, \lean!wS_den!); X uses $\mathrm{fou}$ and $\sum_k\omega^{k(\sum o-\sum i)}$.
+
+\begin{definition}[\lean!NodeOK!]
+$\mathrm{NodeOK}(E,\rho,\mathit{dt},\mathit{pt},\mathit{rl},n)$: $E.\mathrm{dimv}(n.\mathrm{dim})=\mathrm{den}_\rho(\mathit{dt}\,n.\mathrm{dim})$; $0<(\mathit{dt}\,n.\mathrm{dim}).c$; $\mathrm{ex}(E.\mathrm{phase}(n.\mathrm{ph},j))=\mathrm{phF}(\mathit{pt}\,n.\mathrm{ph},j)\,\mathrm{rV}(\mathit{rl}\,n.\mathrm{ph},j)$ for all $j$; every stored index is below $\mathrm{den}(\mathit{dt}\,n.\mathrm{dim})$.
+\end{definition}
+
+\begin{theorem}[\lean!val_tr!]
+For admissible $\rho$, $\mathrm{NodeOK}$, $s$ not a label of $n$, $\mathrm{LegsAt}(E.\mathrm{dimv}\,n.\mathrm{dim},\sigma,\nu,\text{labels of }n)$ (each label below the dimension under $\sigma$, with $\nu=\sigma$ there) and $\mathrm{trNode}(\ldots,s,n)=\mathrm{some}\,e$: $\mathrm{val}(E,\sigma,n)=\mathrm{exDen}_\rho(\nu,e)$. (\lean!delV_lt!, \lean!delV_zero!, \lean!legs_cons!, \lean!dvd_iff_eq_lt! support it.)
+\end{theorem}
+
+\subsection{Networks}
+
+$\mathrm{exMul}(a,b)=[\mathrm{STm.mul}(s,t)\mid s\in a,\ t\in b]$ and $\mathrm{exMulOK}(a,b)$ requires $\mathrm{mulOK}$ for every pair; then $\mathrm{exDen}(\mathrm{exMul}\,a\,b)=\mathrm{exDen}(a)\,\mathrm{exDen}(b)$ (\lean!exDen_mul!). $\mathrm{labDM}(l)=\mathit{dt}((\mathit{labs}.\mathrm{lookup}\,l).\mathrm{getD}\,0)$, $\mathrm{labSums}(ls)=[(l,\mathrm{labDM}\,l)\mid l\in ls]$, and $\mathrm{exSums}(S,e)$ prefixes $S$ to the sums of every term (\lean!exDen_sums!; \lean!sumOver_sumsV! relates \lean!sumOver! over labels to \lean!sumsV!; \lean!exDen_cons!, \lean!exDen_append!, \lean!exDen_nil!).
+
+\begin{definition}[\lean!trNodesB!, \lean!trNet!]
+$\mathrm{trNodesB}(\mathit{pre},i,[])=[(1,[],[],[])]$; for $n\mathbin{::}ns$, with $a=\mathrm{trNode}(\mathrm{OFF}+i,n)$ and $b=\mathrm{trNodesB}(\mathit{pre}\mathbin{+\!\!+}\text{labels}(n),i+1,ns)$, it is
+\[
+\mathrm{nfEx}\bigl(\mathit{fl},\ \mathrm{exSums}(\mathrm{labSums}(\mathrm{firstAt}(\mathit{int},\mathit{pre},n)),\ \mathrm{exMul}(a,b))\bigr)
+\]
+when both exist and $\mathrm{exMulOK}(a,b)$, and $\mathrm{none}$ otherwise; $\mathrm{firstAt}(\mathit{int},\mathit{pre},n)$ lists the summed labels that $n$ reads and $\mathit{pre}$ does not, in $\mathit{int}$ order. Each summed label is thus summed at the first node reading it, and the product is normalized at every node. $\mathrm{trNet}(N)$ is $\mathrm{trNodesB}([],0,N.\mathrm{nodes})$ with the summed labels no node reads summed outermost. $\mathrm{trNodesF}$ and $\mathrm{trNetF}$ are the unnormalized variants: the plain product of the node expressions with all summed labels outermost.
+\end{definition}
+
+\begin{definition}[\lean!nodeChk!, \lean!netChk!]
+$\mathrm{nodeChk}(n)$: $(\mathit{dt}\,n.\mathrm{dim}).c\neq0$ and every stored index below $\mathrm{den}_{\mathrm{flv}\,\mathit{fl}}(\mathit{dt}\,n.\mathrm{dim})$. $\mathrm{netChk}(\mathit{IX},N)$: every node passes $\mathrm{nodeChk}$, has its dimension index in $\mathit{IX}$, and every label of it is below $\mathrm{OFF}$, a boundary or summed label, of monomial $\mathrm{labDM}(l)=\mathit{dt}(n.\mathrm{dim})$ and of index in $\mathit{IX}$; every summed label has its index in $\mathit{IX}$.
+\end{definition}
+
+\begin{theorem}[\lean!trNodesB_ok!, \lean!eval_tr!, \lean!eval_trF!]
+Under admissible $\rho$, $\mathrm{FloorOK}$, $E.\mathrm{dimv}(i)=\mathrm{den}(\mathit{dt}\,i)$ for $i\in\mathit{IX}$, the phase hypothesis of \lean!NodeOK! for every phase index, $E.\mathrm{labs}=\mathit{labs}$ and $\mathrm{netChk}=\mathit{true}$: $\mathrm{trNet}(N)=\mathrm{some}\,e$ (or $\mathrm{trNetF}(N)=\mathrm{some}\,e$) gives $\mathrm{eval}(E,N,\sigma)=\mathrm{exDen}_\rho(\sigma,e)$ for every $\sigma$ in range on $N.\mathrm{bnd}$. (\lean!firstOf_perm!, \lean!trNodesF_ok! support them.)
+\end{theorem}
+
+\begin{definition}[\lean!symCheck!]
+$\mathrm{exNeg}$ negates every rational coefficient (\lean!exDen_neg!); $\mathrm{exConst}(e)$ holds when no term has sums, deltas or roots (\lean!exDen_const!: the value is independent of $\nu$). $\mathrm{checkWith}(\mathit{tr},N_0,N_1,S_0,S_1)$ holds when $\mathit{tr}(N_0)=\mathrm{some}\,e_0$, $\mathit{tr}(N_1)=\mathrm{some}\,e_1$, $\mathrm{exMulOK}(S_0,e_0)$, $\mathrm{exMulOK}(\mathrm{exNeg}\,S_1,e_1)$ and
+\[
+\mathrm{nfEx}\bigl(\mathit{fl},\ \mathrm{exMul}(S_0,e_0)\mathbin{+\!\!+}\mathrm{exMul}(\mathrm{exNeg}\,S_1,e_1)\bigr)=[].
+\]
+$\mathrm{symCheck}$ requires $N_0.\mathrm{bnd}$ to be a permutation of $N_1.\mathrm{bnd}$, $\mathrm{netChk}$ of both, $\mathrm{exConst}(S_0)$, $\mathrm{exConst}(S_1)$, and $\mathrm{checkWith}$ with $\mathrm{trNet}$ or else with $\mathrm{trNetF}$.
+\end{definition}
+
+\begin{theorem}[\lean!equal_of_check!, \lean!equal_sym!]\label{thm:lean-sym-equal-sym}
+Let $\rho$ be admissible, $\mathrm{FloorOK}(\mathit{fl},\rho)$, $E.\mathrm{dimv}(i)=\mathrm{den}_\rho(\mathit{dt}\,i)$ for $i\in\mathit{IX}$, $\mathrm{ex}(E.\mathrm{phase}(\mathit{ph},j))=\mathrm{phF}(\mathit{pt}\,\mathit{ph},j)\,\mathrm{rV}(\mathit{rl}\,\mathit{ph},j)$ for all $\mathit{ph},j$, $E.\mathrm{labs}=\mathit{labs}$, $s_0=\mathrm{exDen}_\rho(0,S_0)$ and $s_1=\mathrm{exDen}_\rho(0,S_1)$. If $\mathrm{symCheck}(\mathit{fl},\mathit{dt},\mathit{pt},\mathit{rl},\mathit{labs},\mathit{IX},N_0,N_1,S_0,S_1)=\mathit{true}$ then $\mathrm{Equal}(E,s_0,N_0,s_1,N_1)$.
+\end{theorem}
+
+\subsection{Phases and atoms}
+
+$\mathrm{phC}(q,ks)$ is the coefficient monomial of $\mathrm{ex}(q+\sum_jks_jg_j)$: phase $\mathrm{rnorm}(1,q)$ and atom exponents $\mathrm{ztrim}(ks)$. With $\rho.\mathrm{atom}(j)=\mathrm{ex}(g_j)$ and $\mathrm{lin}(ks,gs)=\sum_jks_jg_j$, $\mathrm{den}(\mathrm{phC}(q,ks))=\mathrm{ex}(\theta)$ for $\theta=q+\mathrm{lin}(ks,gs)$, and for $\theta$ differing from it by an integer (\lean!phC_den!, \lean!phC_den_int!; \lean!ex_zpow'!, \lean!zpw_ex!). A phase rule $\theta(k)=\mathrm{rEv}(k,cs)/\mathrm{den}(D)$ with $\mathrm{rEv}(0,cs)=0$ gives $\mathrm{ex}([j\neq0]\,\theta(j))=\mathrm{rV}((D,cs),j)$ (\lean!rule_ex!). $\mathrm{dP}(D,k)=\mathrm{rtD}(D,2k)$ denotes $\mathrm{den}(D)^k$ (\lean!dP_den!).
+
+\section{The Term Checker over \texorpdfstring{$\mathbb{F}_2$}{F2}}\label{sec:lean-sym-f2}
+
+Module \file{SymF2.lean} (imports \file{SymNet.lean}; namespace \lean!ArchytasZX.SymF2!) proves equalities of qubit networks of phase-free Z and X spiders and F nodes, every dimension $2$, by one term
+\[
+q\,\sqrt2^{\,k}\prod_{d}[d=0]\prod_{(u,w)}(-1)^{uw}
+\]
+of affine forms over $\mathbb{F}_2$, the stabilizer form of such networks~\cite{dehaene2003clifford}.
+
+\subsection{Affine forms and terms}
+
+A form is a natural number used as a bit mask: bit $0$ is the constant $1$, bit $v+1$ the variable $v$; $\mathrm{vb}(v)=2^{v+1}$. With $\mathrm{wt}_\nu(0)=1$ and $\mathrm{wt}_\nu(i)=\nu(i-1)$, the value is $\mathrm{par}_\nu(m)=\sum_{i<\mathrm{size}(m)}[\text{bit }i\text{ of }m]\,\mathrm{wt}_\nu(i)\in\mathbb{F}_2$; XOR of masks adds values (\lean!par_xor!, \lean!par_zero!, \lean!par_one!, \lean!par_vb!, \lean!par_range!, \lean!size_xor_le!). $\mathrm{clr}(x,m)$ removes $x$ ($m\oplus\mathrm{vb}\,x$ when $m$ reads $x$); $\mathrm{sub}(x,v,m)=m\oplus\mathrm{vb}\,x\oplus v$ when $m$ reads $x$, else $m$, with $\mathrm{par}_\nu(\mathrm{sub}(x,v,m))=\mathrm{par}_{\nu[x\mapsto\mathrm{par}_\nu v]}(m)$ (\lean!par_sub!, \lean!par_upd!, \lean!par_update_of_not!, \lean!testBit_vb!, \lean!clr_not!).
+
+\begin{definition}[\lean!QTm!]
+A term has $q\in\Z$, $k\in\Z$, $\mathit{dels}$ (forms) and $\mathit{phs}$ (pairs of forms), with value $q\sqrt2^{\,k}\,\mathrm{dval}_\nu(\mathit{dels})\,\mathrm{pval}_\nu(\mathit{phs})$, $\mathrm{dval}=\prod_d[\mathrm{par}\,d=0]$, $\mathrm{pval}=\prod_{(u,w)}(-1)^{\mathrm{par}\,u\cdot\mathrm{par}\,w}$; $\mathrm{oval}(\mathrm{none})=0$. $\mathrm{mulQ}(a,b)=(a.q\,b.q,\ a.k+b.k,\ a.\mathit{dels}\mathbin{+\!\!+}b.\mathit{dels},\ a.\mathit{phs}\mathbin{+\!\!+}b.\mathit{phs})$ multiplies values (\lean!val_mulQ!).
+\end{definition}
+
+\subsection{Summing a variable}
+
+\begin{definition}[\lean!sumX!]
+$\mathrm{sumX}(x,t)$: if a delta reads $x$, let $d$ be the first (\lean!pickD!), and $\mathrm{elimD}$ replaces every other delta $e$ by $e\oplus d$ when $e$ reads $x$ (\lean!subW!), drops results $0$, returns $\mathrm{none}$ on a result $1$, collects the kept deltas in reverse order (\lean!subDels!), and maps both forms of every phase likewise (\lean!subPhs!). Otherwise $\mathrm{charX}$ computes $A=\bigoplus_{(u,w)}\mathrm{cA}(x,(u,w))$ with
+\[
+\mathrm{cA}(x,(u,w))=[a\land b]\oplus(a\,?\,\mathrm{clr}(x,w))\oplus(b\,?\,\mathrm{clr}(x,u)),\quad a,b\text{ whether }u,w\text{ read }x,
+\]
+and gives $(q,k+2,\mathit{dels},\mathrm{clrPhs})$ for $A=0$, $\mathrm{none}$ for $A=1$, and $(q,k+2,A\mathbin{::}\mathit{dels},\mathrm{clrPhs})$ otherwise, where $\mathrm{clrPhs}$ removes $x$ from every phase and drops phases with a zero form.
+\end{definition}
+
+\begin{theorem}[\lean!sumX_ok!]
+$t.\mathrm{val}(\nu[x\mapsto0])+t.\mathrm{val}(\nu[x\mapsto1])=\mathrm{oval}(\mathrm{sumX}(x,t),\nu)$.
+\end{theorem}
+
+With a delta $d=x+r$ the sum picks the single value $x=r$ (\lean!elimD_ok!, \lean!subDels_ok!, \lean!subPhs_ok!, \lean!dlt_add_bit!). Without one, $uw=x\,\mathrm{cA}+u'w'$ over $\mathbb{F}_2$ ($x^2=x$, \lean!cA_par!), and $\sum_x(-1)^{xA}=2[A=0]$ (\lean!charX_ok!, \lean!clrPhs_ok!, \lean!fold_cA!). \lean!bitOf!, \lean!pcons!, \lean!scons! and \lean!withNat! reduce numbers to numerals before matching, so the kernel evaluates them fast; each has a lemma stating it is the plain operation.
+
+\subsection{Generators}
+
+\begin{definition}[\lean!trQ!]
+Z with no ports: $(1,2,[],[])$; Z with ports $l_0\mathbin{::}ls$: $(1,0,[\mathrm{vb}\,l\oplus\mathrm{vb}\,l_0\mid l\in ls],[])$; X with $n$ ports: $(1,2-n,[\bigoplus_l\mathrm{vb}\,l],[])$; F with $[o],[i]$: $(1,-1,[],[(\mathrm{vb}\,o,\mathrm{vb}\,i)])$; every other node: $\mathrm{none}$.
+\end{definition}
+
+\begin{theorem}[\lean!val_trQ!]
+For $\sigma$ with values below $2$, a node of dimension value $2$ and zero phase, $\mathrm{trQ}(n)=\mathrm{some}\,a$ gives $\mathrm{val}(E,\sigma,n)=a.\mathrm{val}(\mathrm{bits}\,\sigma)$, $\mathrm{bits}(\sigma)(l)=\sigma(l)\bmod2$. (\lean!om_two!, \lean!fou_bits!, \lean!fou_conj!, \lean!z_val!, \lean!tZ_zero!, \lean!par_legsX!, \lean!prod_fou!.)
+\end{theorem}
+
+\subsection{Runs}
+
+A state (\lean!St!) is $(S,t)$: the mask $S$ of summed labels and $t:\mathrm{Option\ QTm}$. $\mathrm{sumLs}(\mathit{IM},ls,s)$ sums the labels of $ls$ in turn, each required to be a bit of $\mathit{IM}$ and not yet in $S$ (else $\mathrm{none}$), setting its bit and applying $\mathrm{sumX}$. $\mathrm{stepQ}(\mathit{IM},(n,h),s)$ requires no label of $n$ to be summed yet, multiplies $\mathrm{trQ}(n)$ in front of $t$, then sums the hint labels $h$. $\mathrm{runQ}$ applies the steps in order; \lean!runQ_append!, \lean!runQ_cut!, \lean!runQ_seg! and \lean!runQ_end! split runs into blocks. The invariant $\mathrm{Inv}(E,\mathit{IM},P,Ls,s)$ says that $S$'s bits are exactly $Ls$, $Ls$ has no duplicates and lies in $\mathit{IM}$, and $\mathrm{oval}(t,\mathrm{bits}\,\sigma)=\mathrm{sumOver}(\mathrm{labDim}\,E,Ls,\mathrm{prodVal}(E,P),\sigma)$ for $\sigma$ below $2$; \lean!sumLs_ok!, \lean!stepQ_ok! and \lean!runQ_ok! keep it.
+
+$\mathrm{maskL}(ls)$ is the mask of $ls$; $\mathrm{netQ}(N,H)$ checks $|H|=|N.\mathrm{nodes}|$, no summed label twice (\lean!nodupS!), every node of dimension index $0$ and every port label summed or boundary. $\mathrm{finQ}(N,s)$ sums the summed labels no step summed, in $N.\mathrm{int}$ order. $\mathrm{ordQ}(\mathit{rev},N)$ is $N.\mathrm{nodes}$, reversed when $\mathit{rev}$.
+
+\begin{theorem}[\lean!eval_q!]
+If $E.\mathrm{dimv}(0)=2$, every phase is zero, every label has dimension index $0$, $\mathrm{netQ}(N,H)$, $\mathrm{runQ}(\mathrm{maskL}\,N.\mathrm{int},\mathrm{ordQ}(\mathit{rev},N).\mathrm{zip}\,H,(0,\mathrm{some}(1,0,[],[])))=\mathrm{some}\,s$ and $\mathrm{finQ}(N,s)=\mathrm{some}\,t$, then $\mathrm{eval}(E,N,\sigma)=\mathrm{oval}(t,\mathrm{bits}(\mathrm{trunc}\,\sigma))$ for $\sigma$ in range on $N.\mathrm{bnd}$, $\mathrm{trunc}$ replacing values above $1$ by $0$.
+\end{theorem}
+
+\subsection{Canonical form and equality}
+
+\begin{definition}[\lean!canonQ!]
+The pivot of a row $r$ is its top bit $\log_2 r$. $\mathrm{redR}(R,m)$ adds each row of $R$ in order to $m$ when $m$ holds the row's pivot. $\mathrm{insR}(R,a)$ reduces $a$ by $R$: a result $0$ keeps $R$, a result $1$ gives $\mathrm{none}$ (inconsistent), otherwise the result $a'$ is put in front and added to every row holding its pivot. $\mathrm{echR}$ inserts the deltas from the last to the first, giving reduced echelon form (\lean!insR_ok!, \lean!echR_ok!, \lean!redR_par!, \lean!rowsX_eq!). $\mathrm{redP}$ reduces both forms of a phase by $R$ and orders them; $\mathrm{cleanP}$ drops phases with a zero form and counts the phases $(1,1)$ (each $-1$, \lean!cleanP_ok!). $\mathrm{canonQ}(t)$ is $\mathrm{none}$ when $\mathrm{echR}$ fails, and otherwise has $q$ negated for an odd count, $k$ kept, the rows sorted decreasing and the cleaned phases sorted lexicographically (\lean!canonQ_ok!: $t.\mathrm{val}=\mathrm{oval}(\mathrm{canonQ}\,t)$).
+\end{definition}
+
+\begin{definition}[\lean!scalEq!, \lean!cmpQ!, \lean!qCheck!]
+$\mathrm{scalEq}(A_0,A_1,e)$ requires $e$ even and $A_0\,2^{e/2}=A_1$ for $e\ge0$, $A_0=A_1\,2^{-e/2}$ otherwise (\lean!scalEq_ok!: $A_0\sqrt2^{\,e}=A_1$). $\mathrm{cmpQ}(a_0,b_0,K_0,a_1,b_1,K_1,t_0,t_1)$ requires $b_0,b_1\neq0$ and, after $\mathrm{canonQ}$, both terms $\mathrm{none}$, or both present with equal deltas, equal phases and $\mathrm{scalEq}(a_0u_0.q\,b_1,\ a_1u_1.q\,b_0,\ (K_0+u_0.k)-(K_1+u_1.k))$ (\lean!cmpQ_ok!). $\mathrm{qCheck}$ requires the boundaries to be permutations of each other, $\mathrm{netQ}$ of both, and $\mathrm{cmpQ}$ on their $\mathrm{finQ}$ terms.
+\end{definition}
+
+\begin{theorem}[\lean!equal_q!]
+Under the hypotheses of \lean!eval_q! on $E$, with $\mathrm{runQ}$ of both networks from $\mathrm{st0}=(0,\mathrm{some}(1,0,[],[]))$ giving $s_0$, $s_1$, $\mathrm{qCheck}(N_0,N_1,H_0,H_1,s_0,s_1,a_0,b_0,K_0,a_1,b_1,K_1)$ gives
+\[
+\mathrm{Equal}\bigl(E,\ \tfrac{a_0}{b_0}\sqrt2^{\,K_0},\ N_0,\ \tfrac{a_1}{b_1}\sqrt2^{\,K_1},\ N_1\bigr).
+\]
+\end{theorem}
+
+\begin{example}[Two Hadamards]
+$N_0$ has the F nodes $(o{=}0,i{=}2)$ and $(o{=}2,i{=}1)$, summed label $2$; $N_1$ is one Z with ports $0,1$. Masks: $\mathrm{vb}(0)=2$, $\mathrm{vb}(1)=4$, $\mathrm{vb}(2)=8$. After both steps the term is $(1,-2,[],[(8,4),(2,8)])$. Summing label $2$: no delta reads it; $\mathrm{cA}$ gives $4$ and $2$, so $A=6$ and the term is $(1,0,[6],[])$, both phases cleared to zero forms and dropped. $\mathrm{trQ}$ of the Z is $(1,0,[4\oplus2],[])=(1,0,[6],[])$; \lean!cmpQ! accepts with $a=b=1$, $K=0$.
+\end{example}
+
+\subsection{Bridging diagrams and checkpoints}
+
+Module \file{SymF2Bridge.lean} checks in linear time that a network is $D.\mathrm{toNet}(\mathit{off})$ of a diagram $D$ and that $D.\mathrm{check}$ holds for the labels $[(l,0)\mid l<M]$, for a diagram whose ports all have dimension index $0$. A port's key is $\mathrm{pkey}_P(p)=(2p.\mathit{node}+[\lnot p.\mathit{out}])P+p.\mathit{pos}$; the wires are packed in one number $\mathit{WB}=\sum_j(k_{j,1}+2^Kk_{j,2})\,2^{2Kj}$ (\lean!packW!), and $\mathrm{legOK}$ says a port is at label $l$: boundary slot $l$ for $l<\mathit{off}$, else a key of wire $l-\mathit{off}$ in $\mathit{WB}$. $\mathrm{nodeOKQ}$ compares a node of $D$ with a network node (kind, dimension, phase, port counts, each port at its label). $\mathrm{bridgeQ}(P,K,\mathit{off},M,\mathit{WB},D,N)$ requires $|D.\mathrm{bnd}|\le\mathit{off}$, $\mathit{off}+|D.\mathrm{wires}|\le M$, all port dimensions $0$ and port counts at most $P$, every boundary port and wire end of position below $P$ and key below $2^K$, all keys distinct, $\mathit{WB}=\mathrm{packW}$, $N.\mathrm{int}=[\mathit{off},\dots,\mathit{off}+|\mathit{wires}|-1]$, $N.\mathrm{bnd}=[0,\dots,|\mathrm{bnd}|-1]$ and $\mathrm{nodeOKQ}$ node by node. \lean!bridge_ok! gives $D.\mathrm{check}(\ldots)=\mathit{true}$ and $D.\mathrm{toNet}(\mathit{off})=N$ (\lean!lookup_range!, \lean!portDim_zero!).
+
+Module \file{SymF2Chain.lean} adds the command \lean!qchain n IM R ks!: it evaluates \lean!runQ IM! over the steps \lean!R! by compiled code, cuts the run into blocks of sizes \lean!ks! (an error when a block fails or the blocks do not cover the steps), declares each block's final state as the abbreviation \lean!n_s<j+1>! of raw numerals (\lean!qStE!, \lean!qListE!, \lean!qIntE!), proves each block \lean!runQ IM ((R.drop i).take k) prev = some cur! by \lean!decide! as the theorem \lean!n_h<j>!, checked by the Lean kernel at once (\lean!qAddThm!), composes them with \lean!runQ_seg! and \lean!runQ_end!, and adds \lean!n_fin! and \lean!n : runQ IM R st0 = some n_fin!. The tactic \lean!qscal! proves a scalar $\frac ab\sqrt2^{\,K}$ equal to its stated form by \lean!norm_num!, \lean!field_simp! and \lean!ring_nf!.
+
+\section{Python Mirrors of the Symbolic Checkers}\label{sec:lean-sym-py-sym}
+
+\subsection{The mirror of SymNet}
+
+\module{archytaszx.semantics.lean_sym} mirrors the Lean functions on tuples: a \lean!DMon! is \py!(c, e)!, an \lean!IPoly! a tuple of \py!(monomial, coefficient)!, a \lean!CMon! \py!(q, r, sq, rc, am, gc)! with \py!Fraction! entries, a factor \py!(DMon, IPoly)!, a term \py!(CMon, sums, dels, phs)!. Each function bears its Lean namesake's name in snake case (\py!ip_ins!, \py!cm_mul!, \py!rt_d!, \py!elim_delta1!, \py!char_data!, \py!pivot_of!, \py!norm_del!, \py!canon_tm!, \py!norm_tm!, \py!tm_add!, \py!nf_ex!, \py!tr_node!, \py!net_chk!, \ldots) and follows its order of tries; \py!_emod! and \py!_ediv! reproduce Lean's Euclidean remainder and division. Constants: \py!OFF = 1000000!, \py!RBASE = 2000000!, \py!ROUNDS = 3!, \py!FULL_TERMS = 4096!, \py!NORM_TERMS = 1 << 14!. \py!nf_ex! caches \py!norm_tm! per (floors, term) in an LRU cache of $2^{16}$ entries and merges by a shape-keyed dictionary in insertion order, which gives \lean!nfEx!'s result order. \py!tr_nodes! computes \lean!trNodesB! from the last node and raises \py!NetUnsupported! once the product sizes $|a|\cdot|b|$ summed over the nodes exceed \py!NORM_TERMS!.
+
+\py!sym_check(fl, dt, pt, labs, ix, n0, n1, s0, s1)! predicts \lean!symCheck! (a network is \py!(nodes, internal, boundary)!): equal sorted boundaries, \py!net_chk! of both, constant scalars, then \py!tr_net! and \py!tr_net_full! in turn; \py!tr_net_full! is skipped when the product of the per-node term counts of either network exceeds \py!FULL_TERMS!. It returns \py!True! at the first route whose scaled difference normalizes to the empty tuple.
+
+\subsection{The exporter}
+
+\begin{signature}
+\py!export_symbolic(left: Diagram, right: Diagram, name: str = "main", describe=None, floors=None, shift=None, original=None, fixed=None) -> str!
+\end{signature}
+
+It builds a \py!_SymExport! and raises \py!NetUnsupported! (with the recorded reason, default \py!"the normal forms of the two networks differ"!) when \py!check()! fails, else returns \py!source(name)!. The default floors are \py!decide.dimension_floors(left, right)!. The constructor labels both diagrams through the network exporter (\cref{ch:lean-export-net}), collects the dimension symbols and the dimension expressions that are powers of a symbol, builds \py!dt! (each dimension expression as \py!(c, e)!), the phase rows \py!pt! (each stored entry as \lean!phC! of its rational part and atom coefficients, the atoms \py!_Atoms! over the exponents of \py!Ex! factors of the scalars and the stored phase values), the rules (\py!rule_of!: a rule $p(k)/D$ with integer coefficients and $p(0)=0$, else \py!NetUnsupported!), and the floors: a symbol with floor above $1$, raised to $1+$ the largest stored index of a Z or X node whose dimension is that single symbol. Scalars become constant terms by \py!monomial!: rationals, $i$ (\lean!exQ!$(k/4)$), $\omega_c$, $\sqrt{\cdot}$ and its inverse (\lean!rtD!), dimension symbols and their inverses (\lean!dP!), and $\mathrm{ex}$ factors (\lean!phC!); any other factor raises \py!NetUnsupported!. A scalar factor outside the exact model shared by both sides is divided out and multiplied back by \lean!Equal.congr_s! and \lean!Equal.smul!.
+
+\py!check()! without multiplicity symbols first tries \py!q_plan()!, then \py!sym_check!. \py!q_plan! applies when there are no multiplicities, constraints, parameters, opaque or common scalar, the only dimension is $2$, no phase is stored, every label has index $0$, every node is translated by \py!lean_f2.tr_q!, both scalars are $\frac ab\sqrt2^{\,K}$ (\py!scalar_of!), the boundaries agree, \py!lean_f2.plan! succeeds on both networks and \py!cmp_q! holds. With multiplicity symbols the family routes apply (\py!fam!, \py!plan_shift!, \py!plan_fixed!; their Lean lemmas are specified in \cref{ch:lean-export-net}).
+
+\py!source(name)! for the plain route declares \lean!DT!, \lean!PT!, \lean!RL!, \lean!IX!, \lean!FL!, \lean!GS! (the atoms' arguments), $\rho$ (a \lean!Val!), \lean!S0!, \lean!S1!, the theorems \lean!rhoOK!, \lean!flOK!, \lean!envD!, \lean!envP!, \lean!scal0!, \lean!scal1!, \lean!chk : symCheck FL DT PT RL labs IX A B S0 S1 = true! by \lean!decide +kernel! (with \lean!maxHeartbeats 0!), and the theorem \lean!name! by \lean!equal_sym!, with hypotheses $\max(\mathit{floor},1)\le d$ for every dimension symbol and any dimension constraints. The header notes the floors and constraints assumed. The $\mathbb{F}_2$ route (\py!q_source!) declares per side \lean!H<i>!, \lean!R<i>! (\lean!(ordQ rev N).zip H!), \lean!IM<i>! (in hexadecimal) with \lean!IM<i>_eq!, \lean!KS<i>! and \lean!qchain q<i> IM<i> R<i> KS<i>!, then \lean!hph!, \lean!hL!, \lean!qc : qCheck ... = true!, the theorem through \lean!equal_q! and \lean!qscal!, each diagram bridged by \lean!WB<n>!, \lean!D<n>_bq!, \lean!D<n>_net! and \lean!D<n>_chk! through \lean!bridge_ok!, and \lean!labs! as \lean!(List.range top).map fun l => (l, 0)!.
+
+\subsection{The mirror of SymF2}
+
+\module{archytaszx.semantics.lean_f2} mirrors \file{SymF2.lean} and \file{SymF2Bridge.lean} on Python integers: \py!vb!, \py!tb! (bit test), \py!sub!, \py!clr!, \py!tr_q!, \py!sum_x!, \py!sum_ls!, \py!step_q!, \py!mask_of!, \py!piv!, \py!red_r!, \py!canon_q!, \py!scal_eq!, \py!cmp_q!, \py!pkey!, \py!pack_w!. \py!hints(nodes, internal)! gives each node the summed labels it reads last (labels no node reads are summed by \lean!finQ!). \py!run_q(nodes, internal, hs)! runs from \lean!st0!, cuts blocks of at most \py!CHAIN = 40! steps, and closes a block before a step when the block's work plus the step's work $w=1+(|\mathit{dels}|+|\mathit{phs}|)\max(1,|h|)$ (of the term before the step) would exceed \py!BLOCK_WORK = 6000!; it returns the final term, the block sizes and the total work, or \py!False! when a check fails. \py!plan(nodes, internal)! runs both node orders (as listed, reversed) and keeps the one of less total work, the listed order on ties. \py!scalar_of(model)! reads $\frac ab\sqrt2^{\,K}$ from a SymPy product of rationals and integer powers of $\sqrt2$ and its inverse, else \py!None!; \py!lean_hints! writes the hint lists.

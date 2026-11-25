@@ -1,0 +1,1483 @@
+\chapter{The Rule Library}\label{ch:rules}
+
+% Local drawing helpers of this chapter: a fan of legs above or below a node, with a count.
+\providecommand{\rulesup}[2]{%
+  \draw[wire] (#1) -- ++(-0.3,0.75); \draw[wire] (#1) -- ++(0.3,0.75);
+  \node[dimlabel] at ($(#1)+(0,0.62)$) {$\cdots$};
+  \node[dimlabel,anchor=west] at ($(#1)+(0.32,0.72)$) {$#2$};}
+\providecommand{\rulescn}[1]{\nolinkurl{#1}}
+\providecommand{\rulesdown}[2]{%
+  \draw[wire] (#1) -- ++(-0.3,-0.75); \draw[wire] (#1) -- ++(0.3,-0.75);
+  \node[dimlabel] at ($(#1)+(0,-0.62)$) {$\cdots$};
+  \node[dimlabel,anchor=west] at ($(#1)+(0.32,-0.72)$) {$#2$};}
+
+The module \module{archytaszx.rewrite.rules_library} defines the concrete rewrite rules of the engine and the registry that resolves a rule name back to its rule. It defines 28 rules by hand, each with its own matcher (in \module{archytaszx.rewrite.match}, \module{archytaszx.rewrite.match_zxw} or \module{archytaszx.rewrite.match_box}) and its own right-hand-side builder, and it wraps the 123 equations of \module{archytaszx.rewrite.rules_axioms} as \term{template rules}. The registry \py!RULES! holds all 151 rules. The discard rules of \module{archytaszx.rewrite.rules_discard} are not in \py!RULES!, but \py!lookup_rule! resolves their names (\cref{sec:rules-registry}); they are specified in \cref{ch:mixed}. The template equations themselves, their matcher and their builder are specified in \cref{ch:completeness}; the rule record, the pattern interface, the engine that applies a rule, and the certificate a rewrite step records are specified in \cref{ch:rewriting}. \Cref{app:rules} lists the rule sets that the automatic layers use.
+
+This chapter specifies every hand-coded rule: its equation as a picture and in denotational terms, its exact scalar, the side conditions its matcher decides and the order in which the matcher enumerates matches, the diagram its builder produces, its treatment of \bboxes{}, its quantifiers, its color-swapped twin, and its source in the literature. The ZX calculus is due to Coecke and Duncan~\cite{coecke2011interacting} (see also~\cite{vandewetering2020working}); the ZXW calculus and its qudit axioms are those of Po\'or et al.~\cite{poor2023zxw}, cited as [P1]; the qufinite ZXW calculus with mixed dimensions and the dimension connectives is that of Wang et al.~\cite{wang2023qufinitezxw,wang2021qufinite}, cited as [P2]. !-Boxes follow Dixon, Duncan and Kissinger~\cite{dixon2009graphical,kissinger2014pattern}.
+
+\section{Conventions}\label{sec:rules-conventions}
+
+\subsection{Denotations}\label{sec:rules-denotations}
+
+Every rule below is an equation between two diagrams whose ports all carry one dimension $d$, except the connective rules, whose ports carry $s$, $t$ and $st$. The denotations are those of \cref{ch:semantics}; this section restates the ones the rules use. Let $\omega=e^{2\pi i/d}$ and let $\ket{k}$, $k\in\{0,\dots,d-1\}$, be the computational basis of $\C^d$.
+
+\begin{definition}[Generator denotations]\label{def:rules-denotations}
+\leavevmode
+\begin{enumerate}
+\item A \term{phase vector} over $d$ fixes coefficients $a_0=1$ and $a_k=w_k\,e^{2\pi i\theta_k}$ for $1\le k\le d-1$, where $\theta_k$ is the phase in turns and $w_k$ the weight (1 unless a weight is stored). A node with no phase vector has $a_k=1$ for every $k$.
+\item The Z spider with $m$ inputs, $n$ outputs and coefficients $a$ is
+\[\sem{Z^{m\to n}_a}=\sum_{k=0}^{d-1}a_k\,\ket{k}^{\otimes n}\bra{k}^{\otimes m}.\]
+\item The Fourier box is the unitary discrete Fourier transform $F=\frac{1}{\sqrt d}\sum_{j,k}\omega^{jk}\ket{j}\bra{k}$. It satisfies $F^2\ket{k}=\ket{-k \bmod d}$ and $F^4=I$.
+\item The X spider is the Fourier conjugate of the Z spider: $\sem{X^{m\to n}_a}=F^{\otimes n}\,\sem{Z^{m\to n}_a}\,(\overline{F})^{\otimes m}$.
+\item The triangle $T$ and its inverse $T^{-1}$ are
+\[T\ket{0}=\ket{0},\quad T\ket{i}=\ket{0}+\ket{i},\qquad T^{-1}\ket{0}=\ket{0},\quad T^{-1}\ket{i}=\ket{i}-\ket{0}\qquad(1\le i\le d-1).\]
+\item The W node with one input and $m$ outputs is
+\[\sem{W^{1\to m}}\ket{0}=\ket{0}^{\otimes m},\qquad \sem{W^{1\to m}}\ket{i}=\sum_{p=1}^{m}\ket{0}^{\otimes(p-1)}\ket{i}\ket{0}^{\otimes(m-p)}\quad(1\le i\le d-1).\]
+In particular $W^{1\to 1}$ is the identity and $W^{1\to 0}=\bra{0}$.
+\item The dimension binder $B$ maps $\C^s\otimes\C^t$ to $\C^{st}$ by $\ket{a}\ket{b}\mapsto\ket{at+b}$; the dimension splitter $S$ is its inverse $\ket{at+b}\mapsto\ket{a}\ket{b}$.
+\end{enumerate}
+\end{definition}
+
+The phaseless one-legged spiders recur in many rules. From \cref{def:rules-denotations},
+\begin{equation}\label{eq:rules-states}
+\sem{Z^{0\to1}}=\sum_k\ket{k},\qquad \sem{X^{0\to1}}=\sqrt d\,\ket{0},\qquad
+\sem{Z^{1\to0}}=\sum_k\bra{k},\qquad \sem{X^{1\to0}}=\sqrt d\,\bra{0}.
+\end{equation}
+The chapter calls a one-output, no-input spider a \term{state} and a one-input, no-output spider an \term{effect}.
+
+\subsection{Equations, scalars and pictures}
+
+A rule rewrites an occurrence of its left-hand side $L$ into its right-hand side $R$ and multiplies the diagram scalar by the rule's scalar $c$. The scalar is defined by
+\[\sem{L}=c\cdot\sem{R},\]
+so that the rewritten diagram, scalar included, denotes the same linear map. Every picture in this chapter shows the equation in that form, $L=c\cdot R$, with inputs at the bottom and outputs at the top. A filled small circle is a phaseless spider (green for Z, red for X); a labeled circle carries the coefficients $a$ or $b$; a yellow square is $F$; a white triangle pointing up is $T$, pointing down $T^{-1}$; a black triangle is a W node; the trapezia are $B$ and $S$. A fan of legs labeled with a count $n$ stands for $n$ legs; the count may be zero.
+
+A rule's scalar is stored in three fields of the \py!Rule! record (\cref{ch:rewriting}): \py!scalar_introduced!, the scalar written in the rule's own dimension symbol \code!d!; \py!scalar_in_dim!, a function of the matched dimension, when the scalar depends on it; and \py!scalar_in_match!, a function of the match, when the scalar also depends on a matched leg count. \py!Rule.scalar_for_match(match)! returns \py!scalar_in_match(match)! when that field is set, otherwise \py!scalar_in_dim(match.shared_dim)! when that field is set, otherwise \py!scalar_introduced!. Every scalar is an exact \py!Scalar! (\cref{ch:algebra}); a power $d^{p/q}$ is built by \py!Scalar.dim_power(d, p, q)!, which is the SymPy expression \py!Pow(d, Rational(p, q))!.
+
+\subsection{Matcher predicates}\label{sec:rules-predicates}
+
+The matchers share the following predicates. They read the diagram only; none mutates it.
+
+\begin{definition}[Node predicates]\label{def:rules-node-predicates}
+Let $v$ be a node.
+\begin{enumerate}
+\item $v$ \term{carries} the generator $g$ when its generator type has $g$'s name and the generator registry holds exactly that type (\py!REGISTRY.is_registered!, \cref{ch:diagrams}).
+\item $v$ is \term{phaseless} when it has no phase vector or its phase vector is zero: every stored phase is provably zero and no weight is stored (\py!PhaseVector.is_zero!). The cap rules use the stricter test \term{phase-free}: $v$ has no phase vector at all.
+\item The \term{uniform leg dimension} of $v$ is the one \py!Dim! every input and output port of $v$ carries; it is undefined when $v$ has no port or two ports carry \py!Dim!s that differ as values. Unless a rule says otherwise, ``every leg carries one dimension'' means that the set of the \py!Dim! values of the named ports has exactly one element; no unification takes place.
+\end{enumerate}
+\end{definition}
+
+\begin{definition}[Port claims]\label{def:rules-claims}
+The \term{claim count} of a port $p$ is the number of wires with $p$ as an endpoint. A port is \term{singly wired} when its claim count is exactly 1 and neither boundary list holds it. A port is \term{at most singly claimed} when its claim count plus one if a boundary list holds it is at most 1.
+\end{definition}
+
+A matcher that splices a wire through a removed node uses the following construction.
+
+\begin{definition}[Splice]\label{def:rules-splice}
+Let a rule remove a node (or a pair of nodes) with two outer ports, the \term{consumed} port $c$, which carries a wire $w$, and the \term{surviving} port $s$. The \term{far port} $f$ is the endpoint of $w$ other than $c$. The splice maps $s$ to $f$ in the builder's port mapping and consumes $w$; the engine then rewires whatever held $s$ (a wire or a boundary slot) onto $f$. The \term{spliced dimension constraint} of $(s,f)$ is computed as follows. Let $\delta_s$ and $\delta_f$ be the \py!Dim!s of $s$ and $f$ and $r=\delta_s.\mathtt{unify}(\delta_f)$ (\cref{ch:algebra}).
+\begin{enumerate}
+\item If $r$ is a failure, there is no match.
+\item If $\delta_s=\delta_f$, or $s$ carries a wire whose far endpoint has \py!Dim! equal to $\delta_s$, the constraint list is empty.
+\item Otherwise, if $r$ is deferred, the list is one \py!DimensionConstraint(! $\delta_s$, $\delta_f$, connecting-pair source, \py!DEFERRED)!; if $r$ binds symbols, it is one \py!DimensionConstraint! with outcome \py!BOUND! and the bindings sorted by name; else it is empty.
+\end{enumerate}
+The match records the list as its \py!dimension_constraints!.
+\end{definition}
+
+\subsection{!-Boxes}\label{sec:rules-boxes}
+
+A diagram's \bboxes{} are specified in \cref{ch:diagrams}. A \term{node-scoped} \bbox{} holds a set of nodes; a \term{port-scoped} \bbox{} holds a set of ports; a \bbox{} may have a parent and may be \term{extended} (a chain, pair, tree or fed \bbox{} with groups and link ports). For a node $v$ let $\mathcal{B}(v)$ be the set of node-scoped \bboxes{} that hold $v$. The \term{innermost} node-scoped \bbox{} of $v$ is the element of $\mathcal{B}(v)$ with the fewest nodes, ties broken by the smaller \bbox{} id, or none when $\mathcal{B}(v)$ is empty (\py!innermost_node_scope_box!). For a port $p$ let $\Lambda(p)$ be the set of chain \bboxes{} that have $p$ as a link port.
+
+The matchers decide the following \bbox{} conditions on the matched nodes $V$; \cref{app:rules} names each by its letter.
+
+\begin{definition}[!-Box conditions]\label{def:rules-box-conditions}
+\leavevmode
+\begin{enumerate}
+\item[O] \emph{Outside every \bbox{}.} No node of $V$ lies in a node-scoped \bbox{}; no port of a node of $V$ lies in a port-scoped \bbox{}; and no wire joins a node $u\in V$ to a node $u'$ with $\mathcal{B}(u')\ne\mathcal{B}(u)$ (\py!_in_any_bang_box!).
+\item[S] \emph{Same scope.} All nodes of $V$ have the same innermost node-scoped \bbox{}, or none of them has one.
+\item[E] \emph{Equal scopes.} All nodes of $V$ have the same set $\mathcal{B}(v)$.
+\item[N] \emph{No emptied \bbox{}.} No node-scoped \bbox{} with a non-empty node set has all its nodes in the set of nodes the rule deletes without replacement (\py!_exhausts_a_node_scope_box!).
+\item[P] \emph{No port-boxed leg.} No port of the removed node lies in a port-scoped \bbox{}.
+\item[K] \emph{Splice keeps copies} (\py!_splice_keeps_copies!), decided by \cref{alg:rules-splice-keeps-copies}.
+\item[L] \emph{Liftable \bbox{}} (\py!_liftable_box!), decided by \cref{alg:rules-liftable}.
+\item[T] \emph{Template condition.} No node of $V$ lies in a node-scoped \bbox{} or has a port in a port-scoped \bbox{}, and no port of a node of $V$ is wired to a node that lies in a node-scoped \bbox{} or has a port in a port-scoped \bbox{} (\cref{ch:completeness}).
+\item[U] \emph{Unfusion condition} of \azx!port_box_unfusion!, stated with that rule (\cref{sec:rules-port-box-unfusion}).
+\end{enumerate}
+\end{definition}
+
+\begin{algorithm}[Splice keeps copies]\label{alg:rules-splice-keeps-copies}
+Input: the removed node $v$; its two neighbors $u_0,u_1$ (the far nodes of the wires on its input and output, each possibly absent); optionally the far ports $f_0,f_1$; optionally $v$'s own input and output ports $o_0,o_1$. Let $M=\mathcal{B}(v)$; an absent far port has $\Lambda=\emptyset$.
+\begin{enumerate}
+\item If the own ports are given, let $\ell_k=(\Lambda(o_k)\ne\emptyset)$.
+  \begin{enumerate}
+  \item If $\ell_0$ and $\ell_1$, return false.
+  \item If exactly one $\ell_i$ holds, let $k=1-i$ and return whether $u_k$ and $f_k$ exist, $\Lambda(f_k)=\emptyset$, $\Lambda(f_i)=\emptyset$, and $\mathcal{B}(u_k)=M$.
+  \end{enumerate}
+\item If $\Lambda(f_0)\cap\Lambda(f_1)\ne\emptyset$, return false.
+\item For each present neighbor $u_j$ let $\sigma_j=\mathcal{B}(u_j)\setminus\Lambda(f_j)$.
+\item If some $\sigma_j\not\subseteq M$, return false.
+\item Return true if $M=\emptyset$ or some $\sigma_j=M$; otherwise false.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Liftable \bbox{}]\label{alg:rules-liftable}
+Input: the removed identity spider $v$, its surviving port $s$ and the far port $f$. Return the id of the \bbox{} to lift, or none.
+\begin{enumerate}
+\item Let $b$ be the innermost node-scoped \bbox{} of $v$; if none, return none.
+\item If $b$'s node set is not exactly $\{v\}$, or $b$ is extended, return none.
+\item If some \bbox{} has parent $b$, return none.
+\item If $s$ is not on either boundary list, return none.
+\item Let $u$ be $f$'s node. If $u$ is not a Z or X spider, or some port of $u$ lies in a port-scoped \bbox{}, return none.
+\item If $\mathcal{B}(u)\ne\mathcal{B}(v)\setminus\{b\}$, return none.
+\item If $b$'s parent differs from the innermost node-scoped \bbox{} of $u$, return none.
+\item Return $b$.
+\end{enumerate}
+\end{algorithm}
+
+Builders that consume nodes inside node-scoped \bboxes{} leave each \bbox{} in place and replace the consumed nodes by the created ones. Multiplicity, parent and every other field stay unchanged: one rewrite inside a \bbox{} stands for the same rewrite in every copy.
+
+\begin{algorithm}[Rescoping]\label{alg:rules-rescope}
+\py!_rescope_boxes(diagram, consumed, created, context)!.
+\begin{enumerate}
+\item Compute the set of innermost node-scoped \bboxes{} of the consumed nodes (with ``none'' as a value). If the set does not have exactly one element, raise a \py!RewriteDomainError!. Its message is \texttt{<context>: the matched nodes do not share one innermost node-scope bang box (found [...])}, with the ids found in place of the dots.
+\item For every \bbox{} in ascending id order that is node-scoped and holds every consumed node: let its new node set be the old one less the consumed nodes, plus the created nodes.
+  \begin{enumerate}
+  \item If the \bbox{} has no groups, set the new node set.
+  \item Otherwise let $H$ be the indices of the groups that meet the consumed set, and let $g=1$ if some consumed node lies in no group, else $0$. If $|H|+g>1$, raise \py!RewriteDomainError! with \code!<context>: the matched nodes lie in different groups of bang box <id>!. Otherwise replace each group $G_i$ by $(G_i\setminus\text{consumed})\cup(\text{created if }i\in H)$, drop the empty groups, and set the node set and groups together (\py!set_bang_box_extension!).
+  \end{enumerate}
+\end{enumerate}
+\end{algorithm}
+
+A \bbox{} that does not hold every consumed node is untouched. \py!_follow_port_scopes(diagram, port_mapping)! then replaces, in every port-scoped \bbox{} that holds a mapped port, each mapped port by its image, in ascending \bbox{} id order.
+
+\subsection{Builder protocol}\label{sec:rules-builder-protocol}
+
+Every builder has the signature \py!builder(diagram: Diagram, match: Match) -> BuildResult! (\cref{ch:rewriting}). It mutates the working diagram it receives by adding nodes and editing \bboxes{}, and returns a \py!BuildResult! with the new node ids, the consumed node ids, the consumed wires, the port mapping from every surviving port of a consumed node to its image, the scalar, any new wires between new nodes, and, for spider fusion only, the phase substitutions. The engine removes the consumed nodes and wires, remaps every wire endpoint and boundary entry through the port mapping, and adds the new wires. A builder never removes a node itself.
+
+Every builder first re-derives the match from the diagram it was handed; a match is never trusted for graph surgery. In order:
+\begin{enumerate}
+\item The match must be of the rule's match class. Otherwise the builder raises \py!RewriteGrammarError! with the message \code!<builder> requires a <MatchClass>, got <type name>!.
+\item The match's side-condition outcomes must cover exactly the declared side conditions, each passed (\py!check_side_condition_coverage!, \cref{ch:rewriting}); otherwise \py!RewriteDomainError!.
+\item The match must be among those the rule's matcher finds afresh in the diagram (\py!_require_rediscovered!); otherwise the builder raises \py!RewriteDomainError! with \code!<builder>: the match is not among those rediscovered in this diagram, so it is not evidence of this rule's pattern!. The F-chain and cap builders use their own wording, given with them; spider fusion re-runs its resolution instead (\cref{sec:rules-spider-fusion}).
+\end{enumerate}
+A builder of a swapped twin first checks that the match's \py!swapped! flag is set and otherwise raises \py!RewriteGrammarError! with \code!<builder> requires a colour-swapped match!; it then delegates to the unswapped builder, which reads the flag. Match equality is the dataclass equality of all fields, so rediscovery fails when any recorded field (a dimension, a constraint, a leg index) differs.
+
+Every builder of this module except \py!zx_cap_builder! and \py!fourier_cancellation_builder! carries an attribute \py!side_conditions! equal to the tuple of the rule it builds (for \py!connective_inverse_builder!, the tuple both connective-inverse rules share); the \py!Rule! constructor rejects a rule whose tuple differs from its builder's (\cref{ch:rewriting}).
+
+\subsection{Match order}\label{sec:rules-order}
+
+Every matcher returns its matches in a deterministic order, given with each rule as its order key (\py!Pattern.order_key!); \py!find_matches(D)! equals its own result sorted by that key. The engine's first-match strategy tries the rules of a set in order and, within a rule, the matches in this order (\cref{app:rules}). Matchers that scan wires scan them in \py!Diagram.sorted_wires()! order and try both orientations of each wire, the stored $(a,b)$ orientation first. Every pattern also defines a \term{locality radius}, the number of wire hops beyond a match's support that its decision reads; the incremental matcher of \cref{ch:rewriting} uses it.
+
+\section{Spider Rules}\label{sec:rules-spiders}
+
+\subsection{\texttt{spider\_fusion}}\label{sec:rules-spider-fusion}
+
+\begin{signature}
+\py|SPIDER_FUSION = Rule(name="spider_fusion", pattern=FusionPattern(), builder=spider_fusion_builder, side_conditions=FUSION_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("m_a", "n_a", "m_b", "n_b"), dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!FusionMatch(a_id, b_id, wire, shared_dim, side_condition_outcomes, dimension_constraints=(), bindings={})!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} Two spiders of one color joined by a wire are one spider whose coefficients are the products of theirs. For X the joining wire runs from an output of one spider to an input of the other; for Z it may join any two legs.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zs] (a) at (0,0) {$a$};
+  \node[zs] (b) at (1.3,1.4) {$b$};
+  \draw[wire] (a) -- (b);
+  \rulesdown{a}{m_a}
+  \rulesup{a}{n_a-1}
+  \rulesdown{b}{m_b-1}
+  \rulesup{b}{n_b}
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[zs] (c) at (0,0) {$ab$};
+  \rulesdown{c}{m_a+m_b-1}
+  \rulesup{c}{n_a+n_b-1}
+\end{tikzpicture}
+\end{equation*}
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[xs] (a) at (0,0) {$a$};
+  \node[xs] (b) at (1.3,1.4) {$b$};
+  \draw[wire] (a) -- (b);
+  \rulesdown{a}{m_a}
+  \rulesup{a}{n_a-1}
+  \rulesdown{b}{m_b-1}
+  \rulesup{b}{n_b}
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[xs] (c) at (0,0) {$ab$};
+  \rulesdown{c}{m_a+m_b-1}
+  \rulesup{c}{n_a+n_b-1}
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} For Z, contracting an output leg of $Z_a$ against an input leg of $Z_b$ identifies their basis index $k$, so the product is $\sum_k a_kb_k\ket{k}^{\otimes(n_a+n_b-1)}\bra{k}^{\otimes(m_a+m_b-1)}$. Because the Z tensor is diagonal in every axis and contraction applies no conjugation, a wire joining two inputs or two outputs of Z spiders identifies the same index, and the same equation holds. For X, the wire contracts an $F$ against an $\overline{F}$ on the shared axis, which cancel because $F$ is unitary and symmetric; the result is the Fourier conjugate of the fused Z spider. A same-direction X wire contracts $F$ against $F$, a permutation, and is not this rule. The coefficient product is phase-vector addition: phases add componentwise and weights multiply (\cref{ch:algebra}). Neither derivation depends on the consumed wire being the only wire between the two spiders; a further wire between them survives as a self-loop on the merged spider.
+
+\paragraph{Scalar.} $c=1$ for every match.
+
+\paragraph{Pattern.} \py!find_matches(diagram, *, dimension_guards=(), anchors=None)! first validates both endpoints of every wire (in \py!sorted_wires()! order) and then every boundary entry (inputs, then outputs), raising \py!RewriteGrammarError! on a reference to an unknown node or an out-of-range port index. It groups the wires by the unordered pair of their end nodes, skipping self-loops, and considers every wire of every pair as a candidate. For a candidate wire, $A$ is the end node with the lower id and $B$ the other. A candidate whose two nodes do not carry one registered fusable generator (Z or X) is skipped; every other candidate is decided by \py!resolve_fusion_match(diagram, A, B, wire, dimension_guards=...)!, which reports the nine side conditions of \cref{tab:rules-fusion-conditions} in declared order. A pair joined by $k$ wires yields up to $k$ matches, each decided alone.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}r>{\raggedright\arraybackslash}p{0.36\linewidth}X@{}}
+\toprule
+& Condition & Requirement as decided \\
+\midrule
+1 & \rulescn{distinct_nodes} & Recorded fact: $A\ne B$. Always passes. \\
+2 & \rulescn{same_generator_type} & Both nodes carry the identical registered generator type, and its name is Z or X. \\
+3 & \rulescn{parallel_wires_become_self_loops} & Recorded fact: the number of other wires joining $A$ and $B$. Always passes. \\
+4 & \rulescn{consumed_wire_direction_permitted_for_color} & For X, the consumed wire joins an output to an input. For Z, any two directions. \\
+5 & \rulescn{consumed_ports_singly_claimed} & Neither consumed port carries a wire other than the consumed one, and neither boundary list holds it. \\
+6 & \rulescn{bang_box_scope_agreement} & Condition S: $A$ and $B$ have the same innermost node-scoped \bbox{}, or neither has one. \\
+7 & \rulescn{dimension_agreement} & The consumed pair and every surviving leg of both nodes unify with the shared dimension in the bounded fixpoint below; a deferred unification or a binding is recorded as a dimension constraint. \\
+8 & \rulescn{phase_dimension_agreement} & Every phase vector present unifies with the shared dimension exactly or by binding symbols to concrete values; a deferred unification or a non-concrete binding fails. Every phase entry stays in range after the bindings are substituted. \\
+9 & \rulescn{dimension_guards_satisfied} & Every dimension guard of the rule holds at the shared dimension; an undecided guard fails. \\
+\bottomrule
+\end{tabularx}
+\caption{Side conditions of \texttt{spider\_fusion}, in declared order.}
+\label{tab:rules-fusion-conditions}
+\end{table}
+
+\begin{algorithm}[Fusion resolution, \py!resolve_fusion_match!]\label{alg:rules-fusion-resolution}
+Input: diagram $D$, node ids $A<B$, a wire $w$, guards $\Gamma$.
+\begin{enumerate}
+\item If $A=B$, if either node is absent, if $w$ does not join $A$ and $B$, if an endpoint of $w$ names an unknown node or an out-of-range port, or if $w$ is not an element of $D$'s wire set, raise \py!RewriteGrammarError!.
+\item Let $r_A$ and $r_B$ be the endpoints of $w$ on $A$ and $B$. Decide conditions 1 to 6 in order. At the first failure, report every remaining condition as failed with the detail \code!not evaluated: <condition> failed first! and stop; a failed resolution has no shared dimension.
+\item Let $\delta_A,\delta_B$ be the \py!Dim!s of $r_A$ and $r_B$. If resolving them through $D$'s parameter environment changes either, and the resolved pair fails to unify, fail conditions 7 and 8.
+\item Seed the shared dimension $\delta\leftarrow\delta_A$ and the bindings $\beta\leftarrow\emptyset$. Repeat at most 32 passes (\py!_MAX_FIXPOINT_PASSES!):
+  \begin{enumerate}
+  \item Unify $\delta_A$ and $\delta_B$, each with the concrete entries of $\beta$ substituted; record the outcome under the connecting-pair source; merge any new bindings into $\beta$ (a contradictory rebinding fails) and substitute them into $\delta$.
+  \item For $A$ and then $B$, for every surviving leg in input-then-output, index order: substitute $\beta$ into its \py!Dim!, unify with $\delta$, record the outcome under that leg's source, merge bindings and refine $\delta$. A failure fails conditions 7 and 8.
+  \item For the phase of $A$ and then of $B$, when present: substitute $\beta$ into its \py!Dim! and unify with $\delta$. A failure, a deferred result or a binding to a non-concrete value fails condition 8 (condition 7 then passes, reported from the state after the leg sweep). Otherwise record and merge as above.
+  \item Stop when a full pass changes neither $\delta$ nor $\beta$.
+  \end{enumerate}
+  If 32 passes do not stabilize, fail conditions 7 and 8 with a budget-exhaustion detail.
+\item Re-verify that both consumed legs, every surviving leg and every phase, under the final $\beta$, unify with $\delta$; this check does not fail on the convergence path.
+\item For each present phase, reattach it to $\delta$ under $\beta$ (\py!reattach_phase!, \cref{ch:rewriting}); an entry out of range fails condition 8.
+\item Evaluate every guard of $\Gamma$ at $\delta$ (condition 9).
+\item On success return the shared dimension $\delta$, the bindings $\beta$, and the recorded dimension constraints in first-derivation order, at most one per source.
+\end{enumerate}
+\end{algorithm}
+
+The shared dimension is seeded from the lower-id node's consumed leg, so a pair whose \py!Dim!s merely defer (for example $d$ against $d\cdot e$) fuses onto the lower-id node's \py!Dim!. A recorded constraint is an assumption, not a proof: a surviving leg of $d^2$ forced onto a shared dimension $d$ records $d^2=d$, which holds over the positive integers only at $d=1$; discharging such a constraint is the job of the layers of \cref{ch:proofs}.
+
+\paragraph{Order.} By $(A, B)$, then by the consumed wire's (direction, index) on $A$, then on $B$.
+
+\paragraph{Right-hand side.} \py!spider_fusion_builder(diagram, match, *, dimension_guards=(), context="spider_fusion")! checks the match class and side-condition coverage (\cref{sec:rules-builder-protocol}) and then calls \py!resolve_fusion_match! afresh on the diagram it was handed. It raises \py!RewriteDomainError! when the fresh resolution fails or when the match's \py!shared_dim!, \py!bindings!, \py!dimension_constraints! or \py!side_condition_outcomes! differ from the fresh ones, and builds only from the fresh resolution. It then:
+\begin{enumerate}
+\item lists the surviving inputs of $A$ in index order followed by those of $B$, and likewise the outputs;
+\item computes the merged phase: if neither node has a phase vector, the merged node has none, except that a merged node with no surviving leg gets the zero vector over $\delta$; otherwise each node's phase (the zero vector over $\delta$ when absent) is reattached to $\delta$ under $\beta$ and the two are added; an entry out of range raises \py!RewriteDomainError! with \code!spider_fusion cannot reattach a phase vector to shared dimension <dim>: <detail>!;
+\item adds one node of $A$'s generator with every input and output port at $\delta$, never at a port's own original \py!Dim!;
+\item maps the $i$-th surviving input (output) to input (output) $i$ of the merged node; every parallel wire between $A$ and $B$ is remapped at both ends and becomes a self-loop;
+\item rescopes the \bboxes{} with consumed $\{A,B\}$ and created the merged node (\cref{alg:rules-rescope}), and sends every port-scoped \bbox{} through the port mapping;
+\item returns the consumed wire, scalar 1, and as phase substitutions the bindings substituted into each node's phase entries, keyed by node id.
+\end{enumerate}
+Because every surviving port is rebuilt at $\delta$, a neighboring wire whose \py!Dim!s agreed exactly before the fusion may only agree up to a recorded constraint after it, and a surviving boundary port carries $\delta$.
+
+\paragraph{!-Boxes.} Condition S. The fusion is applied once and stands for the fusion in every copy. A port-scoped \bbox{} never holds a consumed port: a port-scoped \bbox{}'s port is a boundary slot, and condition 5 excludes boundary slots. \azx!spider_fusion! is one of the two rules that may consume the far end of a chain \bbox{}'s link wire without consuming a node of that \bbox{} (\cref{app:rules}).
+
+\paragraph{Quantifiers.} The leg counts $m_a,n_a,m_b,n_b$ of the two spiders and the dimension $d$.
+
+\paragraph{Twin.} One rule covers both colors. The Z case is S1 of [P1]~\cite{poor2023zxw}; the X case follows from S1 and the definition of the X spider (\py!x_spider_definition!, \cref{ch:completeness}).
+
+\subsection{\texttt{z\_fusion\_prime\_d}}\label{sec:rules-z-fusion-prime}
+
+\begin{signature}
+\py|Z_FUSION_PRIME_D = Rule(name="z_fusion_prime_d", pattern=FusionPattern(dimension_guards=PRIME_DIMENSION_GUARDS), builder=z_fusion_prime_d_builder, side_conditions=FUSION_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("m_a", "n_a", "m_b", "n_b"), dimensions=("d",)), scalar_introduced=Scalar.one(), dimension_guards=PRIME_DIMENSION_GUARDS)|
+
+\py!PRIME_DIMENSION_GUARDS = (DimensionGuard(DimensionGuardKind.PRIME),)!; locality radius 1; automatic.
+\end{signature}
+
+The rule is \azx!spider_fusion! restricted by one dimension guard: the shared dimension must be a concrete prime. Its matcher is the fusion matcher with \py!dimension_guards=PRIME_DIMENSION_GUARDS!, so condition 9 of \cref{tab:rules-fusion-conditions} fails at a composite dimension, at $d=1$ (neither prime nor composite), and at every non-concrete dimension (the guard is undecided there, and an undecided guard blocks). Its builder \py!z_fusion_prime_d_builder(diagram, match)! is \py!spider_fusion_builder! with the same guards and the context \py!"z_fusion_prime_d"!. Despite its name the rule fuses X spiders as well as Z spiders; the equation, scalar 1, ordering, right-hand side and \bbox{} behavior are those of \cref{sec:rules-spider-fusion}.
+
+\subsection{\texttt{identity\_removal}}\label{sec:rules-identity-removal}
+
+\begin{signature}
+\py|IDENTITY_REMOVAL = Rule(name="identity_removal", pattern=IdentityRemovalPattern(), builder=identity_removal_builder, side_conditions=IDENTITY_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!IdentityMatch(node_id, wire, surviving_ref, far_ref, shared_dim, side_condition_outcomes, dimension_constraints=(), lifted_box=None)!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} A phaseless spider of either color with one input and one output is a bare wire.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zdot] (a) at (0,0.6) {};
+  \draw[wire] (0,0) -- (a) -- (0,1.2);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \draw[wire] (0,0) -- (0,1.2);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[xdot] (a) at (0,0.6) {};
+  \draw[wire] (0,0) -- (a) -- (0,1.2);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $\sem{Z^{1\to1}}=\sum_k\ket{k}\bra{k}=I$ and $\sem{X^{1\to1}}=F\,I\,\overline{F}=F\overline{F}=I$, since $F$ is unitary and symmetric. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_identity_matches(diagram, *, anchors=None)! scans nodes in ascending id and takes a node $v$ that is a registered Z or X spider, phaseless, with exactly one input and one output, and with a uniform leg dimension. Let $o_0$ be its input port and $o_1$ its output port, and $w_0,w_1$ the wires they carry, if any.
+\begin{enumerate}
+\item Both $o_0$ and $o_1$ are at most singly claimed (\cref{def:rules-claims}).
+\item $w_1$ and $w_0$ are not the same wire (no self-loop).
+\item The spliced wire: if $w_1$ exists and either $w_0$ is absent or $o_1$ is not a link port of a chain \bbox{}, consume $w_1$ (consumed port $o_1$, surviving $o_0$); otherwise, if $w_0$ exists, consume $w_0$ (consumed $o_0$, surviving $o_1$); otherwise no match.
+\item The far port $f$ is not on $v$ itself.
+\item If the surviving port is on a boundary list, $f$ has the surviving port's direction.
+\item If the surviving port carries a wire, that wire's far end is not $f$ (the splice keeps two ports).
+\item No port of $v$ lies in a port-scoped \bbox{} (condition P).
+\item The spliced dimension constraint of \cref{def:rules-splice} exists.
+\item If the surviving port carries no wire, the \bbox{} to lift is computed by \cref{alg:rules-liftable}. If there is none, condition N must hold for $\{v\}$ and condition K must hold with the far nodes and far ports of $w_0,w_1$ and the own ports $(o_0,o_1)$.
+\end{enumerate}
+All nine declared side conditions then pass: \code!node_is_a_phaseless_spider!, \code!one_in_one_out!, \code!not_a_self_loop!, \code!legs_singly_claimed!, \code!splice_keeps_two_ports!, \code!same_dimension!, \code!leaves_every_bang_box_populated!, \code!no_port_boxed_leg!, \code!splice_keeps_copies!. The match records the uniform leg dimension as its shared dimension and the spliced constraint as its dimension constraints.
+
+\paragraph{Order.} By the removed node's id.
+
+\paragraph{Right-hand side.} \py!identity_removal_builder! maps the surviving port to the far port and consumes $v$ and the spliced wire. Without a lifted \bbox{} it rescopes with consumed $\{v\}$ and created $\emptyset$. With a lifted \bbox{} $b$ it removes $b$, rescopes the remaining \bboxes{} the same way, and adds a new port-scoped \bbox{} with $b$'s multiplicity, port set $\{f\}$ and $b$'s parent. It sends every port-scoped \bbox{} through the port mapping. Scalar 1.
+
+\paragraph{!-Boxes.} Conditions P and N (waived when a \bbox{} lifts), and K or L. Lifting turns a node-scoped \bbox{} that holds only a boundary identity into a port-scoped \bbox{} on the spider leg it was attached to:
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zs] (s) at (0,0) {$a$};
+  \node[zdot] (i) at (0,1.1) {};
+  \draw[wire] (s) -- (i) -- (0,1.9);
+  \node[bang,fit=(i)] (bx) {};
+  \node[banglabel] at (bx.north east) {$\mu$};
+  \rulesdown{s}{m}
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[zs] (s) at (0,0) {$a$};
+  \draw[wire] (s) -- (0,1.9);
+  \node[bang,minimum width=3mm,minimum height=4mm] (bx) at (0,1.1) {};
+  \node[banglabel] at (bx.north east) {$\mu$};
+  \rulesdown{s}{m}
+\end{tikzpicture}
+\end{equation*}
+\azx!identity_removal! is one of the two rules that may consume the far end of a chain \bbox{}'s link wire without consuming a node of that \bbox{} (\cref{app:rules}).
+
+\paragraph{Quantifiers.} The dimension $d$. \textbf{Twin.} One rule covers both colors. \textbf{Source.} S2 of [P1]~\cite{poor2023zxw}, both parts (\py!zxw_s2!, \py!zxw_s2_pink!).
+
+\subsection{\texttt{port\_box\_unfusion}}\label{sec:rules-port-box-unfusion}
+
+\begin{signature}
+\py|PORT_BOX_UNFUSION = Rule(name="port_box_unfusion", pattern=PortBoxUnfusionPattern(), builder=port_box_unfusion_builder, side_conditions=PORT_BOX_UNFUSION_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("n",), dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!PortBoxUnfusionMatch(node_id, box_id, boxed, shared_dim, side_condition_outcomes, dimension_constraints=())!, defined in \module{archytaszx.rewrite.match_box}; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} A spider with one port in a port-scoped \bbox{} and at least two other ports is the same spider without that port, plus one new port, wired to a new phaseless one-input, one-output spider of its color that carries the boxed port.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zs] (s) at (0,0) {$a$};
+  \draw[wire] (s) -- (0.9,1.3);
+  \node[bang,minimum width=3mm,minimum height=4mm] (bx) at (0.75,1.05) {};
+  \node[banglabel] at (bx.north east) {$\mu$};
+  \rulesdown{s}{m}
+  \draw[wire] (s) -- ++(-0.5,0.75);
+  \draw[wire] (s) -- ++(-0.1,0.75);
+  \node[dimlabel] at ($(s)+(-0.3,0.62)$) {$\cdots$};
+  \node[dimlabel,anchor=east] at ($(s)+(-0.52,0.72)$) {$n$};
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[zs] (s) at (0,0) {$a$};
+  \node[zdot] (t) at (0.7,0.9) {};
+  \draw[wire] (s) -- (t) -- (0.9,1.7);
+  \node[bang,minimum width=3mm,minimum height=4mm] (bx) at (0.83,1.45) {};
+  \node[banglabel] at (bx.north east) {$\mu$};
+  \rulesdown{s}{m}
+  \draw[wire] (s) -- ++(-0.5,0.75);
+  \draw[wire] (s) -- ++(-0.1,0.75);
+  \node[dimlabel] at ($(s)+(-0.3,0.62)$) {$\cdots$};
+  \node[dimlabel,anchor=east] at ($(s)+(-0.52,0.72)$) {$n$};
+\end{tikzpicture}
+\end{equation*}
+The picture shows a boxed output; a boxed input is the mirror image, with the new spider below.
+
+\paragraph{Denotation.} This is \azx!spider_fusion! read right to left with the identity spider $Z^{1\to1}$ (or $X^{1\to1}$) as one operand. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_port_box_unfusion_matches(diagram, *, anchors=None)! scans the \bboxes{} in ascending id. A \bbox{} $b$ qualifies when it is port-scoped, has no parent, is the parent of no \bbox{}, and holds exactly one port $p$. The node $v$ of $p$ must be a registered Z or X spider with at least three ports in all, no other \bbox{} may hold $p$, $v$ must have a uniform leg dimension, and $v$ must lie in no node-scoped \bbox{}. These checks are condition U; the matcher does not inspect $v$'s other ports' port-scoped \bboxes{} or the \bboxes{} of $v$'s neighbors. Declared side conditions: \code!node_is_a_spider!, \code!one_leg_port_boxed!, \code!two_other_legs!, \code!same_dimension!, \code!outside_every_bang_box!. The match's \py!boxed! field is $p$ and its \py!shared_dim! the uniform leg dimension.
+
+\paragraph{Order.} By (node id, \bbox{} id).
+
+\paragraph{Right-hand side.} \py!port_box_unfusion_builder! builds two nodes of $v$'s generator.
+\begin{enumerate}
+\item The main node has $v$'s input and output \py!Dim!s, except that in the boxed port's direction the boxed port is deleted and one port of dimension $\delta$ (the shared dimension) is appended last; it receives $v$'s phase vector when $v$ has one.
+\item The side node is phaseless, with one input and one output at $\delta$.
+\item Port mapping: $p$ maps to the side node's port of $p$'s direction (index 0); a port of $v$ in $p$'s direction with index greater than $p$'s maps to index one less on the main node; every other port maps to the same direction and index on the main node.
+\item One new wire: for a boxed output, from the main node's appended output to the side node's input; for a boxed input, from the side node's output to the main node's appended input.
+\end{enumerate}
+The builder consumes $v$ and no wire, sends the port-scoped \bboxes{} through the port mapping (so $b$ now holds the side node's port), and returns scalar 1.
+
+\paragraph{Quantifiers.} One leg count $n$ and the dimension $d$. \textbf{Twin.} One rule covers both colors. \textbf{Converse.} None. \textbf{Source.} S1 of [P1]~\cite{poor2023zxw} read right to left; port-scoped \bboxes{} as in~\cite{kissinger2014pattern}.
+
+\section{Fourier Rules}\label{sec:rules-fourier}
+
+\subsection{\texttt{fourier\_cancellation}}\label{sec:rules-fourier-cancellation}
+
+\begin{signature}
+\py|FOURIER_CANCELLATION = Rule(name="fourier_cancellation", pattern=FourierCancellationPattern(), builder=fourier_cancellation_builder, side_conditions=FOURIER_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=FOURIER_CANCELLATION_SCALAR)|
+
+\py!FOURIER_CANCELLATION_SCALAR = Scalar.one()!; \py!FOURIER_CHAIN_LENGTH = 4!. Match class \py!FourierMatch(node_ids, wires, shared_dim, side_condition_outcomes, dimension_constraints=())!; locality radius 3; automatic.
+\end{signature}
+
+\paragraph{Equation.} Four Fourier boxes in series are a bare wire. The builder writes the bare wire as a phaseless identity spider, which \azx!identity_removal! removes.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[fbox] (f1) at (0,0.5) {$F$};
+  \node[fbox] (f2) at (0,1.2) {$F$};
+  \node[fbox] (f3) at (0,1.9) {$F$};
+  \node[fbox] (f4) at (0,2.6) {$F$};
+  \draw[wire] (0,0) -- (f1) -- (f2) -- (f3) -- (f4) -- (0,3.1);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[zdot] (i) at (0,1.55) {};
+  \draw[wire] (0,0) -- (i) -- (0,3.1);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \draw[wire] (0,0) -- (0,3.1);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $F^2\ket{k}=\ket{-k}$, so $F^4=I$. Each box contributes $d^{-1/2}$ and the two character sums $\sum_k\omega^{jk}=d\,[j\equiv0]$ contribute $d$ each, so the product is exactly $1$. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_fourier_matches(diagram, *, anchors=None)! scans nodes in ascending id. A start node must carry the registered F generator. From it the matcher builds a chain: the successor of a chain node is the node at the far end of the wire on its output 0, provided that far end is on a different node, is an input with index 0, and lies on a node whose generator is named F; the chain stops when there is no successor or the successor is already in the chain. A chain of fewer than four nodes is no match. The eight \py!Dim!s (output 0 and then input 0 of each chain node, in chain order) must agree: the first is the shared dimension $\delta$, and each later one that differs from $\delta$ must unify with it; a failure is no match, and each non-identical but unifying one is recorded as a \py!DimensionConstraint(assumed=!$\delta$\py!, equal_to=!other\py!, source=connecting pair, outcome=DEFERRED)!. Then the chain must meet the anchors (when given), and condition E must hold: all four nodes lie in the same set of node-scoped \bboxes{}. Declared side conditions: \rulescn{chain_is_series} and \rulescn{same_dimension}, the latter flagged deferred when constraints were recorded. A run of five F boxes in series yields two overlapping matches, one from each of its first two boxes.
+
+\paragraph{Order.} By the first chain node's id.
+
+\paragraph{Right-hand side.} \py!fourier_cancellation_builder! checks the match class, coverage and rediscovery; a match not rediscovered raises \py!RewriteDomainError! with \code!fourier_cancellation_builder: the match is not among those rediscovered in this diagram, so it is not evidence of an F^4 chain!. A chain node that is not an F box raises \py!RewriteGrammarError!. The builder adds a phaseless Z spider with one input and one output at $\delta$, maps input 0 of the first box and output 0 of the last box to the new spider's input and output, consumes the four boxes and the three internal wires, and rescopes the \bboxes{} with consumed the four boxes and created the new spider.
+
+\paragraph{!-Boxes.} Condition E. \textbf{Quantifiers.} The dimension $d$. \textbf{Twin.} None. \textbf{Source.} P1 of [P1]~\cite{poor2023zxw}: $H;H$ is the multiplier $-1$, whose square is the identity.
+
+\subsection{\texttt{fourier\_state\_color\_change} and its twin}\label{sec:rules-fourier-state}
+
+\begin{signature}
+\py|FOURIER_STATE_COLOR_CHANGE = Rule(name="fourier_state_color_change", pattern=FourierStateColorChangePattern(), builder=fourier_state_color_change_builder, side_conditions=FOURIER_STATE_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+\py|FOURIER_STATE_COLOR_CHANGE_SWAPPED = Rule(name="fourier_state_color_change_swapped", pattern=FourierStateColorChangePattern(swapped=True), builder=fourier_state_color_change_swapped_builder, side_conditions=FOURIER_STATE_SWAPPED_SIDE_CONDITIONS, ...)| with the same quantifiers and scalar.
+
+Match class \py!FourierStateMatch(spider_id, fourier_id, wire, free_ref, is_state, shared_dim, side_condition_outcomes, dimension_constraints=(), swapped=False)!; locality radius 1; both automatic.
+\end{signature}
+
+\paragraph{Equation.} An F box on a phaseless Z state is a phaseless X state; dually, an F box whose output feeds a phaseless Z effect is a phaseless X effect. The twin exchanges the colors.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0) {};
+  \node[fbox] (f) at (0,0.7) {$F$};
+  \draw[wire] (s) -- (f) -- (0,1.3);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0.35) {};
+  \draw[wire] (s) -- (0,1.3);
+\end{tikzpicture}
+\qquad
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,1.3) {};
+  \node[fbox] (f) at (0,0.6) {$F$};
+  \draw[wire] (0,0) -- (f) -- (s);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0.95) {};
+  \draw[wire] (0,0) -- (s);
+\end{tikzpicture}
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0) {};
+  \node[fbox] (f) at (0,0.7) {$F$};
+  \draw[wire] (s) -- (f) -- (0,1.3);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0.35) {};
+  \draw[wire] (s) -- (0,1.3);
+\end{tikzpicture}
+\qquad
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,1.3) {};
+  \node[fbox] (f) at (0,0.6) {$F$};
+  \draw[wire] (0,0) -- (f) -- (s);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0.95) {};
+  \draw[wire] (0,0) -- (s);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} By \eqref{eq:rules-states}, $F\sum_k\ket{k}=\sqrt d\,\ket{0}$, $\bigl(\sum_k\bra{k}\bigr)F=\sqrt d\,\bra{0}$, $F\sqrt d\,\ket{0}=\sum_k\ket{k}$ and $\sqrt d\,\bra{0}F=\sum_k\bra{k}$. \textbf{Scalar.} $c=1$ in all four forms.
+
+\paragraph{Pattern.} \py!find_fourier_state_matches(diagram, *, anchors=None, swapped=False)! scans \py!sorted_wires()! and both orientations (spider end, F end) of each wire. The spider must be named Z (X when swapped), the other node named F, both registered, distinct; the F box must have one input and one output; the spider must be phaseless. If the spider's end of the wire is an output, the spider must be a state (no input, one output), the F end must be input 0 of the box, and the free port is the box's output 0; otherwise the spider must be an effect (one input, no output), the F end must be output 0, and the free port is input 0. The spider's port must have index 0. Both joined ports must be singly wired, the free port at most singly claimed, every port of the two nodes must carry one \py!Dim!, and condition S must hold. Declared side conditions: \rulescn{spider_is_a_phaseless_z_state} (\rulescn{spider_is_a_phaseless_x_state} for the twin), \rulescn{fourier_box_on_that_leg}, \rulescn{joined_and_unclaimed}, \rulescn{free_leg_singly_claimed}, \rulescn{same_dimension}, \rulescn{bang_box_scope_agreement}.
+
+\paragraph{Order.} By (spider id, F id).
+
+\paragraph{Right-hand side.} The builder adds a phaseless spider of the other color (X for the rule, Z for the twin): a state (no input, one output) when \py!is_state!, else an effect (one input, no output), at the shared dimension; maps the free port to its one port; consumes the spider, the box and their wire; and rescopes with consumed (spider, box) and created the new spider. The twin's builder requires a swapped match.
+
+\paragraph{!-Boxes.} Condition S. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} The definition of the X spider as the Fourier conjugate of the Z spider (\py!x_spider_definition!, \cref{ch:completeness}); in [P1]~\cite{poor2023zxw} the pink spider is defined from the green one through the Hadamard box.
+
+\section{Two-Color Rules}\label{sec:rules-two-colour}
+
+\subsection{\texttt{zx\_cap} and \texttt{zx\_cap\_swapped}}\label{sec:rules-zx-cap}
+
+\begin{signature}
+\py|ZX_CAP = Rule(name="zx_cap", pattern=CapPattern(), builder=zx_cap_builder, side_conditions=CAP_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=zx_cap_scalar(Dim.symbol("d")), scalar_in_dim=zx_cap_scalar)|
+
+\py|ZX_CAP_SWAPPED = Rule(name="zx_cap_swapped", pattern=CapPattern(swapped=True), builder=zx_cap_builder, side_conditions=CAP_SWAPPED_SIDE_CONDITIONS, ...)| with the same quantifiers and scalar fields.
+
+\py!zx_cap_scalar(dim) = Scalar.dim_power(dim, 1, 2)!. Match class \py!CapMatch(state_id, effect_id, wire, shared_dim, side_condition_outcomes, dimension_constraints=(), swapped=False)!; locality radius 1; both automatic.
+\end{signature}
+
+\paragraph{Equation.} A phaseless Z state wired into a phaseless X effect is the empty diagram times $\sqrt d$; the twin exchanges the colors, with the same scalar.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0) {};
+  \node[xdot] (e) at (0,0.9) {};
+  \draw[wire] (s) -- (e);
+\end{tikzpicture}
+\;=\;\sqrt d
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0) {};
+  \node[zdot] (e) at (0,0.9) {};
+  \draw[wire] (s) -- (e);
+\end{tikzpicture}
+\;=\;\sqrt d
+\end{equation*}
+
+\paragraph{Denotation.} $\sqrt d\,\bra{0}\sum_k\ket{k}=\sqrt d$ and $\sum_k\bra{k}\sqrt d\,\ket{0}=\sqrt d$. \textbf{Scalar.} $c=\sqrt d$ at the shared dimension (\py!scalar_in_dim!).
+
+\paragraph{Pattern.} \py!find_cap_matches(diagram, *, anchors=None, swapped=False)! counts the wire claims of every port and collects the boundary ports, then scans \py!sorted_wires()! and both orientations (state end, effect end), requiring the state end to be an output. Both nodes must exist, be distinct and registered; the state must be named Z and the effect X (X and Z for the twin); the state must have no input and one output, the effect one input and no output; both must be \emph{phase-free} (no phase vector at all, \cref{def:rules-node-predicates}); both joined ports must have claim count 1 and lie on no boundary list; the two port \py!Dim!s must be equal; and condition O must hold. Declared side conditions: \rulescn{state_is_a_z_spider}, \rulescn{effect_is_an_x_spider} (for the twin \rulescn{state_is_an_x_spider}, \rulescn{effect_is_a_z_spider}), \rulescn{joined_and_unclaimed}, \rulescn{phaseless}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (state id, effect id).
+
+\paragraph{Right-hand side.} \py!zx_cap_builder! checks the match class (\code!zx_cap_builder requires a CapMatch, got <type>!), the coverage of the conditions that the match's \py!swapped! flag selects, and rediscovery under that flag; a match not rediscovered raises \py!RewriteDomainError! with \code!zx_cap_builder: the match is not among those rediscovered in this diagram, so it is not evidence of a Z state wired into an X effect! for both rules. It adds nothing, consumes both nodes and the wire, has an empty port mapping, and introduces $\sqrt{\delta}$ at the match's shared dimension $\delta$. Both rules share this builder; it does not check that the flag agrees with the rule.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} \azx!zx_cap_swapped! is Ept of [P1]~\cite{poor2023zxw} (\py!zxw_ept!: the pink dot state into a Z box effect is the empty diagram) at the phaseless Z effect; \azx!zx_cap! is its color-swapped form.
+
+\subsection{\texttt{state\_copy} and \texttt{state\_copy\_swapped}}\label{sec:rules-state-copy}
+
+\begin{signature}
+\py|STATE_COPY = Rule(name="state_copy", pattern=StateCopyPattern(), builder=state_copy_builder, side_conditions=STATE_COPY_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("n",), dimensions=("d",)), scalar_introduced=state_copy_scalar(Dim.symbol("d"), 0), scalar_in_match=_state_copy_scalar_for)|
+
+\py|STATE_COPY_SWAPPED = Rule(name="state_copy_swapped", pattern=StateCopyPattern(swapped=True), builder=state_copy_swapped_builder, side_conditions=STATE_COPY_SWAPPED_SIDE_CONDITIONS, ...)| with the same quantifiers and scalar fields.
+
+\py!state_copy_scalar(dim, output_count) = Scalar.dim_power(dim, 1 - output_count, 2)!. Match class \py!StateCopyMatch(state_id, spider_id, wire, output_count, shared_dim, side_condition_outcomes, dimension_constraints=(), swapped=False)!; locality radius 1; both automatic.
+\end{signature}
+
+\paragraph{Equation.} A phaseless X state into a phaseless Z spider with one input and $n$ outputs is $n$ phaseless X states, times $d^{(1-n)/2}$; the twin exchanges the colors.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0) {};
+  \node[zdot] (z) at (0,0.8) {};
+  \draw[wire] (s) -- (z);
+  \rulesup{z}{n}
+\end{tikzpicture}
+\;=\; d^{\frac{1-n}{2}}\cdot
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s1) at (0,0.8) {};
+  \node[xdot] (s2) at (0.8,0.8) {};
+  \draw[wire] (s1) -- (0,1.55);
+  \draw[wire] (s2) -- (0.8,1.55);
+  \node[dimlabel] at (0.4,1.2) {$\cdots$};
+  \node[dimlabel,anchor=west] at (0.85,1.5) {$n$};
+\end{tikzpicture}
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0) {};
+  \node[xdot] (z) at (0,0.8) {};
+  \draw[wire] (s) -- (z);
+  \rulesup{z}{n}
+\end{tikzpicture}
+\;=\; d^{\frac{1-n}{2}}\cdot
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s1) at (0,0.8) {};
+  \node[zdot] (s2) at (0.8,0.8) {};
+  \draw[wire] (s1) -- (0,1.55);
+  \draw[wire] (s2) -- (0.8,1.55);
+  \node[dimlabel] at (0.4,1.2) {$\cdots$};
+  \node[dimlabel,anchor=west] at (0.85,1.5) {$n$};
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $\sem{Z^{1\to n}}\sqrt d\,\ket{0}=\sqrt d\,\ket{0}^{\otimes n}$, while $n$ X states are $d^{n/2}\ket{0}^{\otimes n}$. For the twin, $\sem{X^{1\to n}}\sum_k\ket{k}=F^{\otimes n}Z^{1\to n}\sqrt d\ket{0}=\sqrt d\,d^{-n/2}\bigl(\sum_k\ket{k}\bigr)^{\otimes n}$. \textbf{Scalar.} $c=d^{(1-n)/2}$ with $n$ the spider's output count (\py!scalar_in_match!); \py!scalar_introduced! writes it at $n=0$, $\sqrt d$. At $n=0$ the right-hand side is empty.
+
+\paragraph{Pattern.} \py!find_state_copy_matches(diagram, *, anchors=None, swapped=False)! scans \py!sorted_wires()! and both orientations (state end, spider end). The state end must be an output; the spider end must be input 0. Both nodes must exist, be distinct and registered; the state must be named X and the spider Z (Z and X for the twin); the state must have no input and one output and the spider exactly one input; both must be phaseless; both joined ports must be singly wired; the state's output and every port of the spider must carry one \py!Dim!; and condition O must hold. Declared side conditions: \rulescn{state_is_a_phaseless_x_spider}, \rulescn{spider_is_a_phaseless_z_spider} (twin: \rulescn{state_is_a_phaseless_z_spider}, \rulescn{spider_is_a_phaseless_x_spider}), \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}. The match records the spider's output count.
+
+\paragraph{Order.} By (state id, spider id).
+
+\paragraph{Right-hand side.} The builder adds $n$ nodes of the state's generator, each with no input and one output at the shared dimension; maps output $i$ of the spider to the only output of the $i$-th new state; consumes the state, the spider and their wire; rescopes with consumed (state, spider) and created the new states; and returns $d^{(1-n)/2}$.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The output count $n$ and the dimension $d$. \textbf{Source.} The copy rule of the ZX calculus~\cite{coecke2011interacting}; for qudits, K0 of [P1]~\cite{poor2023zxw} at $j=0$ (\py!zxw_k0!, the two-output case).
+
+\subsection{\texttt{hopf} and \texttt{hopf\_swapped}}\label{sec:rules-hopf}
+
+\begin{signature}
+\py|HOPF = Rule(name="hopf", pattern=HopfPattern(), builder=hopf_builder, side_conditions=HOPF_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("m", "n", "p", "q"), dimensions=("d",)), scalar_introduced=hopf_scalar(Dim.symbol("d")), scalar_in_dim=hopf_scalar)|
+
+\py|HOPF_SWAPPED = Rule(name="hopf_swapped", pattern=HopfPattern(swapped=True), builder=hopf_swapped_builder, side_conditions=HOPF_SWAPPED_SIDE_CONDITIONS, ...)| with the same quantifiers and scalar fields.
+
+\py!hopf_scalar(dim) = Scalar.dim_power(dim, -1, 1)!. Match class \py!HopfMatch(z_id, x_id, fourier_ids, wires, z_leg_indices, x_leg_indices, shared_dim, side_condition_outcomes, dimension_constraints=(), swapped=False)!; locality radius 3; both automatic.
+\end{signature}
+
+\paragraph{Equation.} A Z spider and an X spider joined by a bare wire from a Z output to an X input and by a second wire from another Z output through two F boxes to another X input fall apart, times $d^{-1}$. The spiders keep their coefficients and their remaining legs. The twin has the X spider below and the Z spider above.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zs] (z) at (0,0) {$a$};
+  \node[xs] (x) at (0,2.2) {$b$};
+  \node[fbox] (f1) at (0.6,0.8) {$F$};
+  \node[fbox] (f2) at (0.6,1.4) {$F$};
+  \draw[wire] (z) to[bend left=35] (x);
+  \draw[wire] (z) -- (f1) -- (f2) -- (x);
+  \rulesdown{z}{m}
+  \draw[wire] (z) -- ++(0.75,0.35);
+  \draw[wire] (z) -- ++(0.75,0.05);
+  \node[dimlabel,anchor=west] at ($(z)+(0.78,0.2)$) {$n$};
+  \rulesup{x}{q}
+  \draw[wire] (x) -- ++(0.75,-0.35);
+  \draw[wire] (x) -- ++(0.75,-0.05);
+  \node[dimlabel,anchor=west] at ($(x)+(0.78,-0.2)$) {$p$};
+\end{tikzpicture}
+\;=\; d^{-1}\cdot
+\begin{tikzpicture}[zxd]
+  \node[zs] (z) at (0,0) {$a$};
+  \node[xs] (x) at (0,2.2) {$b$};
+  \rulesdown{z}{m}
+  \draw[wire] (z) -- ++(0.75,0.35);
+  \draw[wire] (z) -- ++(0.75,0.05);
+  \node[dimlabel,anchor=west] at ($(z)+(0.78,0.2)$) {$n$};
+  \rulesup{x}{q}
+  \draw[wire] (x) -- ++(0.75,-0.35);
+  \draw[wire] (x) -- ++(0.75,-0.05);
+  \node[dimlabel,anchor=west] at ($(x)+(0.78,-0.2)$) {$p$};
+\end{tikzpicture}
+\end{equation*}
+Here the Z spider has $m$ inputs and $n+2$ outputs and the X spider $p+2$ inputs and $q$ outputs; the $n$ further outputs of Z and $p$ further inputs of X are drawn to the side.
+
+\paragraph{Denotation.} The direct wire carries the Z index $k$ into one X input and the $F^2$ wire carries $-k$ into the other. The two $\overline F$ factors of the X spider at those inputs contribute $\frac1d\omega^{-jk}\omega^{jk}=d^{-1}$ for every X index $j$, independently of $k$ and $j$; so the double connection factors out as $d^{-1}$, and the coefficients $a_k$ and $b_j$ stay with their spiders. For the twin, the X spider's two outputs carry $z$ and $-z$ and drop out of its sum, and its normalization loses two factors of $d^{-1/2}$. Without the F pair the double edge contracts to $d^{-1/2}[o\equiv2i]$, which is not disconnected; the plain double edge is not a match. \textbf{Scalar.} $c=d^{-1}$ at the shared dimension.
+
+\paragraph{Pattern.} \py!find_hopf_matches(diagram, *, anchors=None, swapped=False)! scans nodes in ascending id as the lower spider $z$, which must carry the registered generator named Z (X for the twin) and have a uniform leg dimension $\delta$. For each output index $i$ of $z$ in ascending order (the direct leg):
+\begin{enumerate}
+\item The port must carry a wire and be singly wired; its far end must be an input of a different registered node $x$ named X (Z for the twin), singly wired, and $x$ must have uniform leg dimension $\delta$.
+\item For each other output index $j\ne i$ in ascending order: the port must be singly wired, and the path from it must pass through two F boxes: at each step the wire on the current port must exist, its far end must be input 0 of a registered F box with one input and one output, not already on the path, whose input and output 0 are both singly wired; the path continues from that box's output 0. The wire on the second box's output must exist; its far end must be an input of $x$ other than the direct input, singly wired.
+\item Both F boxes must have uniform leg dimension $\delta$; every phase vector present on $z$ or $x$ must have \py!Dim! equal to $\delta$; condition O must hold for $z$, $x$ and both boxes.
+\end{enumerate}
+The phases of $z$ and $x$ are unrestricted. Declared side conditions: \rulescn{z_and_x_spiders} (twin: \rulescn{x_and_z_spiders}), \rulescn{two_paths}, \rulescn{path_ports_unclaimed}, \rulescn{same_dimension}, \rulescn{phase_dimension_agreement}, \rulescn{outside_every_bang_box}. The match records the leg indices $(i,j)$ on $z$ and the two input indices on $x$, the two box ids, and the four wires (direct wire first, then the three path wires).
+
+\paragraph{Order.} By ($z$ id, $x$ id, $z$ leg indices, $x$ leg indices).
+
+\paragraph{Right-hand side.} The builder adds a copy of $z$ without outputs $i$ and $j$ and a copy of $x$ without the two matched inputs, each keeping the remaining legs in their original order at $\delta$ and keeping its phase vector; a copy left with no leg and no phase vector gets the zero vector over $\delta$. It maps every kept port of $z$ and $x$ to its copy, consumes $z$, $x$, both boxes and the four wires, rescopes with consumed $(z,x,F_1,F_2)$ and created the two copies, and returns $d^{-1}$.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The leg counts $m,n,p,q$ and the dimension $d$. \textbf{Source.} The Hopf law of the ZX calculus~\cite{coecke2011interacting}, in its qudit form with the antipode $F^2$~\cite{poor2023zxw,ranchin2014depicting}.
+
+\subsection{\texttt{bialgebra} and \texttt{bialgebra\_swapped}}\label{sec:rules-bialgebra}
+
+\begin{signature}
+\py|BIALGEBRA = Rule(name="bialgebra", pattern=BialgebraPattern(), builder=bialgebra_builder, side_conditions=BIALGEBRA_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=bialgebra_scalar(Dim.symbol("d")), scalar_in_dim=bialgebra_scalar)|
+
+\py|BIALGEBRA_SWAPPED = Rule(name="bialgebra_swapped", pattern=BialgebraPattern(swapped=True), builder=bialgebra_swapped_builder, side_conditions=BIALGEBRA_SWAPPED_SIDE_CONDITIONS, ...)| with the same quantifiers and scalar fields.
+
+\py!bialgebra_scalar(dim) = Scalar.dim_power(dim, 1, 2)!. Match class \py!BialgebraMatch(x_id, z_id, wire, shared_dim, side_condition_outcomes, dimension_constraints=(), swapped=False)!, where \py!x_id! names the two-to-one spider; locality radius 1; both automatic.
+\end{signature}
+
+\paragraph{Equation.} A phaseless $X^{2\to1}$ into a phaseless $Z^{1\to2}$ is two $Z^{1\to2}$ crossed into two $X^{2\to1}$, times $\sqrt d$; the twin exchanges the colors.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[xdot] (x) at (0,0.5) {};
+  \node[zdot] (z) at (0,1.3) {};
+  \draw[wire] (x) -- (z);
+  \draw[wire] (x) -- (-0.4,0); \draw[wire] (x) -- (0.4,0);
+  \draw[wire] (z) -- (-0.4,1.8); \draw[wire] (z) -- (0.4,1.8);
+\end{tikzpicture}
+\;=\;\sqrt d\cdot
+\begin{tikzpicture}[zxd]
+  \node[zdot] (z1) at (-0.4,0.45) {};
+  \node[zdot] (z2) at (0.4,0.45) {};
+  \node[xdot] (x1) at (-0.4,1.35) {};
+  \node[xdot] (x2) at (0.4,1.35) {};
+  \draw[wire] (z1) -- (x1); \draw[wire] (z1) -- (x2);
+  \draw[wire] (z2) -- (x1); \draw[wire] (z2) -- (x2);
+  \draw[wire] (z1) -- (-0.4,0); \draw[wire] (z2) -- (0.4,0);
+  \draw[wire] (x1) -- (-0.4,1.8); \draw[wire] (x2) -- (0.4,1.8);
+\end{tikzpicture}
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[zdot] (x) at (0,0.5) {};
+  \node[xdot] (z) at (0,1.3) {};
+  \draw[wire] (x) -- (z);
+  \draw[wire] (x) -- (-0.4,0); \draw[wire] (x) -- (0.4,0);
+  \draw[wire] (z) -- (-0.4,1.8); \draw[wire] (z) -- (0.4,1.8);
+\end{tikzpicture}
+\;=\;\sqrt d\cdot
+\begin{tikzpicture}[zxd]
+  \node[xdot] (z1) at (-0.4,0.45) {};
+  \node[xdot] (z2) at (0.4,0.45) {};
+  \node[zdot] (x1) at (-0.4,1.35) {};
+  \node[zdot] (x2) at (0.4,1.35) {};
+  \draw[wire] (z1) -- (x1); \draw[wire] (z1) -- (x2);
+  \draw[wire] (z2) -- (x1); \draw[wire] (z2) -- (x2);
+  \draw[wire] (z1) -- (-0.4,0); \draw[wire] (z2) -- (0.4,0);
+  \draw[wire] (x1) -- (-0.4,1.8); \draw[wire] (x2) -- (0.4,1.8);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} With inputs $i_1,i_2$ and outputs $o_1,o_2$, the left side of the rule is $d^{-1/2}[o_1=o_2=i_1+i_2]$ and the right side $d^{-1}[o_1=i_1+i_2][o_2=i_1+i_2]$, sums modulo $d$. For the twin, the left side is $d^{-1/2}[i_1=i_2][o_1+o_2=i_1]$ and the right side $d^{-1}[o_1+o_2=i_1][o_1+o_2=i_2]$. \textbf{Scalar.} $c=\sqrt d$ at the shared dimension.
+
+\paragraph{Pattern.} \py!find_bialgebra_matches(diagram, *, anchors=None, swapped=False)! scans \py!sorted_wires()! and both orientations (lower end, upper end). The lower end must be output 0 and the upper end input 0. Both nodes must exist, be distinct and registered; the lower node must be named X with two inputs and one output and the upper node Z with one input and two outputs (Z below and X above for the twin); both must be phaseless; both joined ports singly wired; both nodes must have one uniform leg dimension, the same for both; condition O. Declared side conditions: \rulescn{x_is_a_phaseless_two_to_one}, \rulescn{z_is_a_phaseless_one_to_two} (twin: \rulescn{z_is_a_phaseless_two_to_one}, \rulescn{x_is_a_phaseless_one_to_two}), \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (lower id, upper id).
+
+\paragraph{Right-hand side.} The builder adds two nodes $u_0,u_1$ of the upper node's generator, each with one input and two outputs, then two nodes $\ell_0,\ell_1$ of the lower node's generator, each with two inputs and one output, all at the shared dimension. It maps input $k$ of the lower node to the input of $u_k$ and output $k$ of the upper node to the output of $\ell_k$ ($k=0,1$), and adds the four wires from output $x$ of $u_z$ to input $z$ of $\ell_x$ for $z,x\in\{0,1\}$, in the order $(z,x)=(0,0),(0,1),(1,0),(1,1)$. It consumes both nodes and their wire, rescopes with consumed (lower, upper) and created $(u_0,u_1,\ell_0,\ell_1)$, and returns $\sqrt d$.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} B2 of [P1]~\cite{poor2023zxw} (\py!zxw_b2!), whose pink spiders carry a different normalization. The rule grows the diagram from two nodes to four and is not in the normal-form set.
+
+\section{Triangle Rules}\label{sec:rules-triangle}
+
+\subsection{\texttt{triangle\_inverse\_cancellation}}\label{sec:rules-triangle-inverse}
+
+\begin{signature}
+\py|TRIANGLE_INVERSE_CANCELLATION = Rule(name="triangle_inverse_cancellation", pattern=TriangleInverseCancellationPattern(), builder=triangle_inverse_cancellation_builder, side_conditions=TRIANGLE_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!TriangleMatch(first_id, second_id, wire, spliced_wire, surviving_ref, far_ref, shared_dim, side_condition_outcomes, dimension_constraints=())!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} $T$ followed by $T^{-1}$, in either order, is a bare wire.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[tri] (a) at (0,0.5) {};
+  \node[trii] (b) at (0,1.2) {};
+  \draw[wire] (0,0) -- (a) -- (b) -- (0,1.7);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \draw[wire] (0,0) -- (0,1.7);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[trii] (a) at (0,0.5) {};
+  \node[tri] (b) at (0,1.2) {};
+  \draw[wire] (0,0) -- (a) -- (b) -- (0,1.7);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} The tensor of $T^{-1}$ (\cref{def:rules-denotations}) is the exact inverse of $T$'s at every dimension. \textbf{Scalar.} $c=1$ in both orders.
+
+\paragraph{Pattern.} \py!find_triangle_matches(diagram, *, anchors=None)! scans \py!sorted_wires()! and both orientations (output end, input end). The output end must be output 0 of the first node and the input end input 0 of the second node; the two nodes must be distinct, one named T and the other Ti, both registered, each with one input and one output. Both joined ports must be singly wired; all four ports of the pair must carry one \py!Dim!. The outer ports, the first node's input and the second node's output, must each be at most singly claimed. The spliced wire is the wire on the second node's output when there is one, otherwise the wire on the first node's input; with neither there is no match. The far port must not be on either node of the pair; if the surviving outer port carries a wire, that wire's far end must not be the far port. Condition S must hold for the pair, condition N for the pair, and condition K for the first node with the far nodes of both outer wires (no ports given). Finally the spliced dimension constraint (\cref{def:rules-splice}) must exist. Declared side conditions: \rulescn{inverse_pair_in_series}, \rulescn{joining_wire_unclaimed}, \rulescn{outer_legs_singly_claimed}, \rulescn{splice_keeps_two_ports}, \rulescn{same_dimension}, \rulescn{bang_box_scope_agreement}, \rulescn{leaves_every_bang_box_populated}.
+
+\paragraph{Order.} By (first id, second id).
+
+\paragraph{Right-hand side.} The builder maps the surviving outer port to the far port, consumes both nodes, the joining wire and the spliced wire, rescopes with consumed (first, second) and created none, sends the port-scoped \bboxes{} through the mapping, and returns 1.
+
+\paragraph{!-Boxes.} Conditions S, N and K. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} The inverse triangle of [P1]~\cite{poor2023zxw}, defined so that $T;T^{-1}$ is the identity (\py!triangle_inverse_definition!, \cref{ch:completeness}).
+
+\subsection{\texttt{triangle\_zero\_state}}\label{sec:rules-triangle-zero-state}
+
+\begin{signature}
+\py|TRIANGLE_ZERO_STATE = Rule(name="triangle_zero_state", pattern=FedStatePattern(triangle=True), builder=triangle_zero_state_builder, side_conditions=TRIANGLE_STATE_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!FedStateMatch(state_id, target_id, wire, output_count, shared_dim, side_condition_outcomes, dimension_constraints=())!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} $T$ and $T^{-1}$ each fix the phaseless X state.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0) {};
+  \node[tri] (t) at (0,0.7) {};
+  \draw[wire] (s) -- (t) -- (0,1.3);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0.35) {};
+  \draw[wire] (s) -- (0,1.3);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0) {};
+  \node[trii] (t) at (0,0.7) {};
+  \draw[wire] (s) -- (t) -- (0,1.3);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $T\ket0=\ket0$ and $T^{-1}\ket0=\ket0$, and the X state is $\sqrt d\,\ket0$. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_fed_state_matches(diagram, *, triangle=True, anchors=None)! scans \py!sorted_wires()! and both orientations (state end, target end). The state end must be an output and the target end input 0. The two nodes must be distinct; the state must be a registered X spider with no input, one output and no phase (phaseless); the target must carry the registered T or Ti and have one input and one output. Both joined ports must be singly wired, every port of the two nodes must carry one \py!Dim!, and condition O must hold. Declared side conditions: \rulescn{state_is_a_phaseless_x_spider}, \rulescn{target_is_a_triangle}, \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (state id, target id).
+
+\paragraph{Right-hand side.} The builder keeps the state node, maps the triangle's output 0 to the state's output 0, consumes the triangle and the joining wire, and returns 1. It adds no node and edits no node-scoped \bbox{}.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} The triangle of [P1]~\cite{poor2023zxw} (\py!triangle_definition!: a W node with one output on a plain green effect) and its inverse.
+
+\subsection{\texttt{triangle\_zero\_effect}}\label{sec:rules-triangle-zero-effect}
+
+\begin{signature}
+\py|TRIANGLE_ZERO_EFFECT = Rule(name="triangle_zero_effect", pattern=TriangleEffectPattern(), builder=triangle_zero_effect_builder, side_conditions=TRIANGLE_EFFECT_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=triangle_zero_effect_scalar(Dim.symbol("d")), scalar_in_match=_triangle_effect_scalar_for)|
+
+\py!triangle_zero_effect_scalar(dim) = Scalar.dim_power(dim, 1, 2)!. Match class \py!TriangleEffectMatch(triangle_id, effect_id, wire, shared_dim, side_condition_outcomes, dimension_constraints=())!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} $T$ into a phaseless X effect is a phaseless Z effect, times $\sqrt d$.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[tri] (t) at (0,0.5) {};
+  \node[xdot] (e) at (0,1.2) {};
+  \draw[wire] (0,0) -- (t) -- (e);
+\end{tikzpicture}
+\;=\;\sqrt d\cdot
+\begin{tikzpicture}[zxd]
+  \node[zdot] (e) at (0,0.85) {};
+  \draw[wire] (0,0) -- (e);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $\bra0T=\sum_k\bra k$, the all-ones row, and the X effect is $\sqrt d\,\bra0$. \textbf{Scalar.} $c=\sqrt d$ at the shared dimension (\py!scalar_in_match! reads it off the match).
+
+\paragraph{Pattern.} The matcher \py!find_triangle_effect_matches(diagram, *, anchors=None)! scans \py!sorted_wires()! and both orientations (output end, input end). The output end's node must carry the registered T (not Ti) with one input and one output; the input end's node must be a registered phaseless X spider with one input and no output; the nodes must be distinct; both joined ports singly wired; every port of the two nodes one \py!Dim!; condition O. The output end need not be output 0 explicitly; T has one output. Declared side conditions: \rulescn{node_is_a_triangle}, \rulescn{effect_is_a_phaseless_x_spider}, \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (triangle id, effect id).
+
+\paragraph{Right-hand side.} The builder adds a phaseless Z spider with one input and no output at the shared dimension, maps the triangle's input 0 to its input, consumes the triangle, the effect and their wire, and returns $\sqrt d$.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} The denotation of the triangle of [P1]~\cite{poor2023zxw}.
+
+\section{W Rules}\label{sec:rules-w}
+
+\subsection{\texttt{w\_fusion}}\label{sec:rules-w-fusion}
+
+\begin{signature}
+\py|W_FUSION = Rule(name="w_fusion", pattern=WFusionPattern(), builder=w_fusion_builder, side_conditions=W_FUSION_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("m", "n"), dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!WFusionMatch(first_id, second_id, position, wire, shared_dim, side_condition_outcomes, dimension_constraints=())!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} A W node fed by output $p$ of another W node is one W node, whose outputs are the first node's outputs with output $p$ replaced, in place, by the second node's outputs in order. When the second node has no outputs (the counit $\bra0$), the joined output is dropped.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w1) at (0,0.4) {};
+  \node[wnode] (w2) at (0,1.3) {};
+  \draw[wire] (0,-0.2) -- (w1);
+  \draw[wire] (w1) -- (w2);
+  \draw[wire] (w1) -- (-0.7,1.1); \draw[wire] (w1) -- (0.7,1.1);
+  \node[dimlabel] at (-0.55,0.75) {$\cdots$};
+  \node[dimlabel] at (0.55,0.75) {$\cdots$};
+  \rulesup{w2}{n}
+  \node[dimlabel,anchor=north] at (0.05,0.85) {$p$};
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w) at (0,0.4) {};
+  \draw[wire] (0,-0.2) -- (w);
+  \draw[wire] (w) -- (-0.8,1.1); \draw[wire] (w) -- (0.8,1.1);
+  \node[dimlabel] at (-0.6,0.75) {$\cdots$};
+  \node[dimlabel] at (0.6,0.75) {$\cdots$};
+  \draw[wire] (w) -- (-0.25,1.1); \draw[wire] (w) -- (0.25,1.1);
+  \node[dimlabel] at (0,1.0) {$\cdots$};
+  \node[dimlabel,anchor=south] at (0,1.1) {$n$};
+\end{tikzpicture}
+\end{equation*}
+The first node has $m$ outputs; the fused node has $m-1+n$.
+
+\paragraph{Denotation.} $W^{1\to n}$ applied to output $p$ of $W^{1\to m}$ sends $\ket0$ to $\ket0^{\otimes(m-1+n)}$ and $\ket i$ ($i\ne0$) to the sum over the $m-1+n$ positions of $\ket i$ there and $\ket0$ elsewhere, which is $W^{1\to m-1+n}$ with the outputs in the stated order. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_w_fusion_matches(diagram, *, anchors=None)! scans \py!sorted_wires()! and both orientations (output end, input end). Both end nodes must carry the registered W generator, be distinct, and each have exactly one input; both joined ports must be singly wired; every port of both nodes must carry one \py!Dim!; the two nodes must satisfy condition S and condition N. The match records the first node's output index as \py!position!. Declared side conditions: \rulescn{two_w_nodes}, \rulescn{joining_wire_unclaimed}, \rulescn{same_dimension}, \rulescn{bang_box_scope_agreement}, \rulescn{leaves_every_bang_box_populated}.
+
+\paragraph{Order.} By (first id, second id, position).
+
+\paragraph{Right-hand side.} Let $O_1$ be the first node's outputs other than $p$, in index order, and $O_2$ the second node's outputs in order; the fused order is $O_1[{:}p]\,O_2\,O_1[p{:}]$. The builder adds a W node with one input and $|O_1|+|O_2|$ outputs at the shared dimension, maps the first node's input to its input and the $k$-th port of the fused order to its output $k$, consumes both nodes and the joining wire, rescopes with consumed (first, second) and created the fused node, and returns 1.
+
+\paragraph{!-Boxes.} Conditions S and N. W fusion is the only rule of \module{archytaszx.rewrite.match_zxw} that fires inside a node-scoped \bbox{}. \textbf{Quantifiers.} The output counts $m,n$ and the dimension $d$. \textbf{Source.} WF of [P2]~\cite{wang2023qufinitezxw} (\py!qf_wf!); Aso of [P1]~\cite{poor2023zxw} for two outputs.
+
+\subsection{\texttt{w\_identity}}\label{sec:rules-w-identity}
+
+\begin{signature}
+\py|W_IDENTITY = Rule(name="w_identity", pattern=WIdentityPattern(), builder=w_identity_builder, side_conditions=W_IDENTITY_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!IdentityMatch! (the class of \cref{sec:rules-identity-removal}, \py!lifted_box! always \py!None!); locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} A W node with one input and one output is a bare wire.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w) at (0,0.6) {};
+  \draw[wire] (0,0) -- (w) -- (0,1.2);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \draw[wire] (0,0) -- (0,1.2);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $W^{1\to1}=I$ (\cref{def:rules-denotations}). \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_w_identity_matches(diagram, *, anchors=None)! scans nodes in ascending id and takes a node that carries the registered W generator with one input and one output and a uniform leg dimension. Both ports must be at most singly claimed and the two wires must not be one self-loop. The output's wire is spliced when it exists, otherwise the input's; with neither there is no match. The far port must not be on the node; if the surviving port carries a wire, its far end must not be the far port; condition N must hold for the node, condition P must hold, and condition K must hold with the far nodes of both wires (no ports given); the spliced dimension constraint must exist. Unlike \azx!identity_removal!, the matcher does not require a boundary surviving port's far port to share its direction, does not prefer the input wire at a chain link port, and never lifts a \bbox{}. Declared side conditions: \rulescn{node_is_a_w_node}, \rulescn{one_in_one_out}, \rulescn{not_a_self_loop}, \rulescn{legs_singly_claimed}, \rulescn{splice_keeps_two_ports}, \rulescn{same_dimension}, \rulescn{leaves_every_bang_box_populated}, \rulescn{no_port_boxed_leg}.
+
+\paragraph{Order.} By node id. \textbf{Right-hand side.} The builder maps the surviving port to the far port, consumes the node and the spliced wire, rescopes with consumed $\{v\}$ and created none, sends the port-scoped \bboxes{} through the mapping, and returns 1.
+
+\paragraph{!-Boxes.} Conditions N, P and K. \textbf{Quantifiers.} The dimension $d$. \textbf{Source.} The denotation of the W node of [P1]~\cite{poor2023zxw}.
+
+\subsection{\texttt{w\_zero\_copy}}\label{sec:rules-w-zero-copy}
+
+\begin{signature}
+\py|W_ZERO_COPY = Rule(name="w_zero_copy", pattern=FedStatePattern(), builder=w_zero_copy_builder, side_conditions=W_COPY_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("n",), dimensions=("d",)), scalar_introduced=state_copy_scalar(Dim.symbol("d"), 0), scalar_in_match=_w_copy_scalar_for)|
+
+Match class \py!FedStateMatch! (\cref{sec:rules-triangle-zero-state}); locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} A phaseless X state into a W node with $n$ outputs is $n$ phaseless X states, times $d^{(1-n)/2}$.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0) {};
+  \node[wnode] (w) at (0,0.75) {};
+  \draw[wire] (s) -- (w);
+  \rulesup{w}{n}
+\end{tikzpicture}
+\;=\; d^{\frac{1-n}{2}}\cdot
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s1) at (0,0.8) {};
+  \node[xdot] (s2) at (0.8,0.8) {};
+  \draw[wire] (s1) -- (0,1.55);
+  \draw[wire] (s2) -- (0.8,1.55);
+  \node[dimlabel] at (0.4,1.2) {$\cdots$};
+  \node[dimlabel,anchor=west] at (0.85,1.5) {$n$};
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $\sem{W^{1\to n}}\ket0=\ket0^{\otimes n}$, so the left side is $\sqrt d\,\ket0^{\otimes n}$ and $n$ X states are $d^{n/2}\ket0^{\otimes n}$. \textbf{Scalar.} $c=d^{(1-n)/2}$, $n$ the W node's output count (\py!scalar_in_match!, computed by \py!state_copy_scalar!).
+
+\paragraph{Pattern.} \py!find_fed_state_matches(diagram, *, triangle=False, anchors=None)!, as in \cref{sec:rules-triangle-zero-state} but with the target a registered W node with exactly one input and any number of outputs. Declared side conditions: \rulescn{state_is_a_phaseless_x_spider}, \rulescn{target_is_a_w_node}, \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}. The match records the W node's output count.
+
+\paragraph{Order.} By (state id, W id). \textbf{Right-hand side.} The builder adds $n$ phaseless X states at the shared dimension, maps output $i$ of the W node to the output of the $i$-th, consumes the state, the W node and their wire, rescopes with consumed (state, W) and created the states, and returns $d^{(1-n)/2}$.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The output count $n$ and the dimension $d$. \textbf{Source.} Bs0 of [P1]~\cite{poor2023zxw} (\py!zxw_bs0!), the two-output case.
+
+\subsection{\texttt{w\_z\_effect}}\label{sec:rules-w-z-effect}
+
+\begin{signature}
+\py|W_Z_EFFECT = Rule(name="w_z_effect", pattern=WEffectPattern(), builder=w_z_effect_builder, side_conditions=W_Z_EFFECT_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("m",), dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!WEffectMatch(w_id, effect_id, position, wire, output_count, zero, shared_dim, side_condition_outcomes, dimension_constraints=())! with \py!zero=False!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} An output of $W^{1\to m}$, $m\ge2$, into a phaseless Z effect is $T$ followed by $W^{1\to m-1}$.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w) at (0,0.5) {};
+  \node[zdot] (e) at (0,1.35) {};
+  \draw[wire] (0,-0.1) -- (w) -- (e);
+  \draw[wire] (w) -- (-0.75,1.25); \draw[wire] (w) -- (0.75,1.25);
+  \node[dimlabel] at (-0.45,0.95) {$\cdots$};
+  \node[dimlabel] at (0.45,0.95) {$\cdots$};
+  \node[dimlabel,anchor=west] at (0.8,1.25) {$m-1$};
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[tri] (t) at (0,0.3) {};
+  \node[wnode] (w) at (0,0.95) {};
+  \draw[wire] (0,-0.2) -- (t) -- (w);
+  \rulesup{w}{m-1}
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} Capping output $p$ with $\sum_k\bra k$ sends $\ket0$ to $\ket0^{\otimes(m-1)}$ and $\ket i$ ($i\ne0$) to $\ket0^{\otimes(m-1)}+\sum_{p'}\ket i_{p'}$, which is $W^{1\to m-1}(\ket0+\ket i)=W^{1\to m-1}T\ket i$. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_w_effect_matches(diagram, *, zero=False, anchors=None)! scans \py!sorted_wires()! and both orientations (output end, input end). The output end's node must be a registered W node with exactly one input and at least two outputs; the input end's node must be a registered phaseless Z spider with one input and no output; the nodes distinct; both joined ports singly wired; every port of both nodes one \py!Dim!; condition O. The match records the W output index as \py!position! and the W output count. Declared side conditions: \rulescn{node_is_a_w_node}, \rulescn{effect_is_a_phaseless_z_spider}, \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (W id, position).
+
+\paragraph{Right-hand side.} \py!w_z_effect_builder! requires a \py!WEffectMatch! with \py!zero! false (otherwise \py!RewriteGrammarError! with \code!w_z_effect_builder requires a Z-effect WEffectMatch, got <match>!). It adds a $T$ with one input and one output, then a W node with one input and $m-1$ outputs, all at the shared dimension; maps the kept W outputs, in index order, to the new W's outputs and the old W's input to the triangle's input; adds the wire from the triangle's output to the new W's input; consumes the old W, the effect and their wire; and returns 1.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The output count $m$ and the dimension $d$. \textbf{Source.} The definition of the triangle in [P1]~\cite{poor2023zxw} (\py!triangle_definition!: a W node with one output on a plain green effect), here generalized to $m$ outputs.
+
+\subsection{\texttt{w\_zero\_effect}}\label{sec:rules-w-zero-effect}
+
+\begin{signature}
+\py|W_ZERO_EFFECT = Rule(name="w_zero_effect", pattern=WEffectPattern(zero=True), builder=w_zero_effect_builder, side_conditions=W_ZERO_EFFECT_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("m",), dimensions=("d",)), scalar_introduced=w_zero_effect_scalar(Dim.symbol("d")), scalar_in_match=_w_zero_effect_scalar_for)|
+
+\py!w_zero_effect_scalar(dim) = Scalar.dim_power(dim, 1, 2)!. Match class \py!WEffectMatch! with \py!zero=True!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} An output of $W^{1\to m}$, $m\ge1$, into a phaseless X effect is $W^{1\to m-1}$, times $\sqrt d$. At $m=1$ the right side is the counit $W^{1\to0}=\bra0$.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w) at (0,0.5) {};
+  \node[xdot] (e) at (0,1.35) {};
+  \draw[wire] (0,-0.1) -- (w) -- (e);
+  \draw[wire] (w) -- (-0.75,1.25); \draw[wire] (w) -- (0.75,1.25);
+  \node[dimlabel] at (-0.45,0.95) {$\cdots$};
+  \node[dimlabel] at (0.45,0.95) {$\cdots$};
+  \node[dimlabel,anchor=west] at (0.8,1.25) {$m-1$};
+\end{tikzpicture}
+\;=\;\sqrt d\cdot
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w) at (0,0.5) {};
+  \draw[wire] (0,-0.1) -- (w);
+  \rulesup{w}{m-1}
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} Capping output $p$ with $\sqrt d\,\bra0$ keeps exactly the terms with $\ket0$ at $p$, which form $\sqrt d\,W^{1\to m-1}$. \textbf{Scalar.} $c=\sqrt d$ at the shared dimension.
+
+\paragraph{Pattern.} As for \azx!w_z_effect! with \py!zero=True!: the W node needs at least one output and the effect is a registered phaseless X spider with one input and no output. Declared side conditions: \rulescn{node_is_a_w_node}, \rulescn{effect_is_a_phaseless_x_spider}, \rulescn{joined_and_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (W id, position). \textbf{Right-hand side.} \py!w_zero_effect_builder! requires a \py!WEffectMatch! with \py!zero! true (otherwise \py!RewriteGrammarError! with \code!w_zero_effect_builder requires an X-effect WEffectMatch, got <match>!). It adds a W node with one input and $m-1$ outputs at the shared dimension, maps the kept outputs in index order and the old input to it, consumes the old W, the effect and their wire, and returns $\sqrt d$.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The output count $m$ and the dimension $d$. \textbf{Source.} The denotation of the W node of [P1]~\cite{poor2023zxw}.
+
+\subsection{\texttt{wz\_bialgebra}}\label{sec:rules-wz-bialgebra}
+
+\begin{signature}
+\py|WZ_BIALGEBRA = Rule(name="wz_bialgebra", pattern=WZBialgebraPattern(), builder=wz_bialgebra_builder, side_conditions=WZ_BIALGEBRA_SIDE_CONDITIONS, quantifiers=Quantifiers(leg_counts=("n", "m"), dimensions=("d",)), scalar_introduced=Scalar.one())|
+
+Match class \py!WZBialgebraMatch(z_id, w_id, wire, input_count, output_count, shared_dim, side_condition_outcomes, dimension_constraints=())!; locality radius 1; automatic.
+\end{signature}
+
+\paragraph{Equation.} A phaseless $Z^{n\to1}$, $n\ge2$, into $W^{1\to m}$, $m\ge2$, is $n$ copies of $W^{1\to m}$ crossed into $m$ phaseless copies of $Z^{n\to1}$: output $b$ of W copy $a$ feeds input $a$ of Z copy $b$. The picture shows $n=m=2$.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zdot] (z) at (0,0.5) {};
+  \node[wnode] (w) at (0,1.3) {};
+  \draw[wire] (z) -- (w);
+  \draw[wire] (z) -- (-0.4,0); \draw[wire] (z) -- (0.4,0);
+  \draw[wire] (w) -- (-0.4,1.9); \draw[wire] (w) -- (0.4,1.9);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w1) at (-0.45,0.45) {};
+  \node[wnode] (w2) at (0.45,0.45) {};
+  \node[zdot] (z1) at (-0.45,1.4) {};
+  \node[zdot] (z2) at (0.45,1.4) {};
+  \draw[wire] (w1) -- (z1); \draw[wire] (w1) -- (z2);
+  \draw[wire] (w2) -- (z1); \draw[wire] (w2) -- (z2);
+  \draw[wire] (w1) -- (-0.45,0); \draw[wire] (w2) -- (0.45,0);
+  \draw[wire] (z1) -- (-0.45,1.9); \draw[wire] (z2) -- (0.45,1.9);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} Both sides send $\ket{i_1\cdots i_n}$ to $0$ unless all $i_a$ are equal to one $i$, and then to $\sem{W^{1\to m}}\ket i$. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_wz_bialgebra_matches(diagram, *, anchors=None)! scans \py!sorted_wires()! and both orientations (output end, input end). The output end's node must carry the registered Z generator, be phaseless, and have exactly one output and at least two inputs; the input end's node must be a registered W node with exactly one input and at least two outputs; distinct nodes; both joined ports singly wired; every port of both nodes one \py!Dim!; condition O. Declared side conditions: \rulescn{z_is_a_phaseless_fan_in}, \rulescn{w_is_a_fan_out}, \rulescn{joining_wire_unclaimed}, \rulescn{same_dimension}, \rulescn{outside_every_bang_box}. The match records $n$ and $m$.
+
+\paragraph{Order.} By (Z id, W id).
+
+\paragraph{Right-hand side.} The builder adds $n$ W nodes $w_0,\dots,w_{n-1}$ with one input and $m$ outputs, then $m$ phaseless Z spiders $z_0,\dots,z_{m-1}$ with $n$ inputs and one output, all at the shared dimension. It maps input $a$ of the old Z to the input of $w_a$ and output $b$ of the old W to the output of $z_b$, and adds the $nm$ wires from output $b$ of $w_a$ to input $a$ of $z_b$, ordered by $a$ and then $b$. It consumes the old pair and their wire and returns 1.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The counts $n$ (Z inputs) and $m$ (W outputs) and the dimension $d$. \textbf{Source.} BZW of [P1]~\cite{poor2023zxw} (\py!zxw_bzw!), the bialgebra of the W node and the plain green dot, here for any $n$ and $m$.
+
+\section{Dimension Connective Rules}\label{sec:rules-connectives}
+
+The binder $B$ and the splitter $S$ change dimension: $B$ has inputs of dimensions $s$ and $t$ and an output of dimension $st$, and $S$ the reverse (\cref{def:rules-denotations}). Their rules quantify over the two dimensions $s$ and $t$ and compare \py!Dim!s port by port.
+
+\subsection{\texttt{connective\_inverse} and \texttt{connective\_inverse\_bind\_first}}\label{sec:rules-connective-inverse}
+
+\begin{signature}
+\py|CONNECTIVE_INVERSE = Rule(name="connective_inverse", pattern=ConnectiveInversePattern(), builder=connective_inverse_builder, side_conditions=CONNECTIVE_INVERSE_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("s", "t")), scalar_introduced=Scalar.one())|
+
+\py|CONNECTIVE_INVERSE_BIND_FIRST = Rule(name="connective_inverse_bind_first", pattern=ConnectiveInversePattern(bind_first=True), ...)| with the same builder, side conditions, quantifiers and scalar.
+
+Match class \py!ConnectiveInverseMatch(first_id, second_id, joining, splices, bind_first, side_condition_outcomes, dimension_constraints=())! with \py!Splice(wire, surviving_ref, far_ref)!; locality radius 2; both automatic.
+\end{signature}
+
+\paragraph{Equation.} $S$ splitting $st$ into $s$ and $t$, both fed in order into $B$, is the identity on $st$; $B$ binding $s$ and $t$, fed into $S$, is the identity on $s$ and on $t$.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[snode] (s) at (0,0.5) {$S$};
+  \node[bnode] (b) at (0,1.6) {$B$};
+  \draw[wire] (0,-0.1) -- (s);
+  \draw[wire] ($(s.north)+(-0.2,0)$) -- node[dimlabel,left] {$s$} ($(b.south)+(-0.2,0)$);
+  \draw[wire] ($(s.north)+(0.2,0)$) -- node[dimlabel,right] {$t$} ($(b.south)+(0.2,0)$);
+  \draw[wire] (b) -- (0,2.2);
+  \node[dimlabel,anchor=west] at (0.05,-0.05) {$st$};
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \draw[wire] (0,-0.1) -- node[dimlabel,right] {$st$} (0,2.2);
+\end{tikzpicture}
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[bnode] (b) at (0,0.5) {$B$};
+  \node[snode] (s) at (0,1.6) {$S$};
+  \draw[wire] ($(b.south)+(-0.2,0)$) -- ++(0,-0.45);
+  \draw[wire] ($(b.south)+(0.2,0)$) -- ++(0,-0.45);
+  \draw[wire] (b) -- node[dimlabel,right] {$st$} (s);
+  \draw[wire] ($(s.north)+(-0.2,0)$) -- ++(0,0.45);
+  \draw[wire] ($(s.north)+(0.2,0)$) -- ++(0,0.45);
+\end{tikzpicture}
+\;=\;
+\begin{tikzpicture}[zxd]
+  \draw[wire] (-0.2,-0.1) -- node[dimlabel,left] {$s$} (-0.2,2.2);
+  \draw[wire] (0.2,-0.1) -- node[dimlabel,right] {$t$} (0.2,2.2);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $B$ and $S$ are mutually inverse bijections of basis states. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_connective_inverse_matches(diagram, *, bind_first, anchors=None)! scans nodes in ascending id as the first node, which must carry the registered $S$ (the registered $B$ when \py!bind_first!). Its output 0 must carry a wire whose far end is on a different second node. The candidate is then decided by \py!_connective_candidate!:
+\begin{enumerate}
+\item The pair must be ($S$, $B$), or ($B$, $S$) when \py!bind_first!.
+\item Joining wires: for $S$ first, output $k$ of $S$ is joined to input $k$ of $B$ for $k=0,1$; for $B$ first, output 0 of $B$ to input 0 of $S$. Each joining port must be singly wired, and the two \py!Dim!s on each joining wire must be equal.
+\item Outer pairs: for $S$ first, the one pair ($S$ input 0, $B$ output 0) with equal \py!Dim!s; for $B$ first, the pairs ($B$ input $k$, $S$ output $k$), $k=0,1$, each with equal \py!Dim!s.
+\item For each outer pair, a splice (\py!_splice!): both ports at most singly claimed; the consumed port is the second port of the pair (on the second node) when it carries a wire, else the first; with neither wired there is no match. The far port must not lie on either node of the pair, and the surviving port's own wire, if any, must not end at the far port.
+\item The far ports of the splices must be pairwise distinct.
+\item The spliced dimension constraint of each splice must exist; the constraints are concatenated in splice order.
+\item Condition O must hold for the pair.
+\end{enumerate}
+Declared side conditions: \rulescn{inverse_pair}, \rulescn{joining_wires_unclaimed}, \rulescn{matching_dimensions}, \rulescn{outer_legs_singly_claimed}, \rulescn{splice_keeps_two_ports}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By (first id, second id); the scan yields at most one match per first node.
+
+\paragraph{Right-hand side.} \py!connective_inverse_builder! rediscovers the match under its own \py!bind_first! flag, maps each splice's surviving port to its far port, consumes both nodes, the joining wires and each splice's wire, and returns 1. It adds no node.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The dimensions $s$ and $t$. \textbf{Converse.} \azx!connective_inverse! has the template converse \azx!connective_inverse_converse!; \azx!connective_inverse_bind_first! has none. \textbf{Source.} The dimension splitter of [P2]~\cite{wang2023qufinitezxw} and the binder defined from it (\py!binder_definition!, (2.8) of [P2]).
+
+\subsection{\texttt{connective\_states} and \texttt{connective\_states\_swapped}}\label{sec:rules-connective-states}
+
+\begin{signature}
+\py|CONNECTIVE_STATES = Rule(name="connective_states", pattern=ConnectiveStatesPattern(), builder=connective_states_builder, side_conditions=CONNECTIVE_STATES_SIDE_CONDITIONS, quantifiers=Quantifiers(dimensions=("s", "t")), scalar_introduced=Scalar.one())|
+
+\py|CONNECTIVE_STATES_SWAPPED = Rule(name="connective_states_swapped", pattern=ConnectiveStatesPattern(swapped=True), builder=connective_states_swapped_builder, side_conditions=CONNECTIVE_STATES_SWAPPED_SIDE_CONDITIONS, ...)| with the same quantifiers and scalar.
+
+Match class \py!ConnectiveStatesMatch(connective_id, end_ids, wires, joint_dim, effects, swapped, side_condition_outcomes, dimension_constraints=())!; locality radius 1; both automatic.
+\end{signature}
+
+\paragraph{Equation.} Phaseless Z states on both inputs of $B$ are one phaseless Z state on its output; dually, $S$ into two phaseless Z effects is one phaseless Z effect on its input. The twin does the same for X.
+\begin{equation*}
+\begin{tikzpicture}[zxd]
+  \node[zdot] (a) at (-0.2,0) {};
+  \node[zdot] (c) at (0.2,0) {};
+  \node[bnode] (b) at (0,0.8) {$B$};
+  \draw[wire] (a) -- node[dimlabel,left] {$s$} ($(b.south)+(-0.2,0)$);
+  \draw[wire] (c) -- node[dimlabel,right] {$t$} ($(b.south)+(0.2,0)$);
+  \draw[wire] (b) -- (0,1.4);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[zdot] (a) at (0,0.4) {};
+  \draw[wire] (a) -- node[dimlabel,right] {$st$} (0,1.4);
+\end{tikzpicture}
+\qquad
+\begin{tikzpicture}[zxd]
+  \node[zdot] (a) at (-0.2,1.4) {};
+  \node[zdot] (c) at (0.2,1.4) {};
+  \node[snode] (s) at (0,0.6) {$S$};
+  \draw[wire] (a) -- ($(s.north)+(-0.2,0)$);
+  \draw[wire] (c) -- ($(s.north)+(0.2,0)$);
+  \draw[wire] (0,0) -- (s);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[zdot] (a) at (0,1.0) {};
+  \draw[wire] (0,0) -- node[dimlabel,right] {$st$} (a);
+\end{tikzpicture}
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[xdot] (a) at (-0.2,0) {};
+  \node[xdot] (c) at (0.2,0) {};
+  \node[bnode] (b) at (0,0.8) {$B$};
+  \draw[wire] (a) -- ($(b.south)+(-0.2,0)$);
+  \draw[wire] (c) -- ($(b.south)+(0.2,0)$);
+  \draw[wire] (b) -- (0,1.4);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[xdot] (a) at (0,0.4) {};
+  \draw[wire] (a) -- (0,1.4);
+\end{tikzpicture}
+\qquad
+\begin{tikzpicture}[zxd]
+  \node[xdot] (a) at (-0.2,1.4) {};
+  \node[xdot] (c) at (0.2,1.4) {};
+  \node[snode] (s) at (0,0.6) {$S$};
+  \draw[wire] (a) -- ($(s.north)+(-0.2,0)$);
+  \draw[wire] (c) -- ($(s.north)+(0.2,0)$);
+  \draw[wire] (0,0) -- (s);
+\end{tikzpicture}
+=
+\begin{tikzpicture}[zxd]
+  \node[xdot] (a) at (0,1.0) {};
+  \draw[wire] (0,0) -- (a);
+\end{tikzpicture}
+\end{equation*}
+
+\paragraph{Denotation.} $B\bigl(\sum_a\ket a\otimes\sum_b\ket b\bigr)=\sum_{p<st}\ket p$ and $B(\sqrt s\ket0\otimes\sqrt t\ket0)=\sqrt{st}\,\ket0$; the effect forms are the transposes. \textbf{Scalar.} $c=1$.
+
+\paragraph{Pattern.} \py!find_connective_states_matches(diagram, *, swapped=False, anchors=None)! scans nodes in ascending id. A node carrying the registered $S$ is an effects candidate; one carrying the registered $B$ a states candidate; any other node is skipped. The split side is the outputs of $S$ or the inputs of $B$ and must have exactly two ports. For each split port in index order: the port must carry a wire and be singly wired; the far node must exist, differ from the connective and from the end already found, be a phaseless spider of the rule's color (Z, or X for the twin) with one output and no input (states) or one input and no output (effects), have its own port singly wired, and have a uniform leg dimension equal to the split port's \py!Dim!. Then condition O must hold for the connective and both ends, and the joint side (the input of $S$ or the output of $B$) must have exactly one port, whose \py!Dim! is recorded as \py!joint_dim!. Declared side conditions: \rulescn{connective_with_two_ends}, \rulescn{joined_and_unclaimed}, \rulescn{matching_dimensions}, \rulescn{outside_every_bang_box}.
+
+\paragraph{Order.} By connective id.
+
+\paragraph{Right-hand side.} The builder adds one phaseless spider of the rule's color on \py!joint_dim!: an effect with one input when \py!effects!, mapped from the connective's input 0; else a state with one output, mapped from the connective's output 0. It consumes the connective, both ends and both wires, and returns 1.
+
+\paragraph{!-Boxes.} Condition O. \textbf{Quantifiers.} The dimensions $s$ and $t$. \textbf{Source.} The dimension connectives of [P2]~\cite{wang2023qufinitezxw}.
+
+\section{Template Rules}\label{sec:rules-templates}
+
+Every equation of \module{archytaszx.rewrite.rules_axioms} becomes a rule through one function. The equations, their sides, their matcher \py!TemplatePattern!, their builder \py!template_builder! and their per-match scalar \py!template_scalar! are specified in \cref{ch:completeness}; this section specifies how this module wraps them and which of them the automatic layers use.
+
+\begin{signature}
+\py!template_rule(axiom: TemplateAxiom) -> Rule! returns
+\py|Rule(name=axiom.name, pattern=TemplatePattern(axiom), builder=template_builder(axiom), side_conditions=axiom.side_conditions, quantifiers=Quantifiers(leg_counts=tuple(q for q in axiom.quantifiers if q != "d"), dimensions=("d",)), scalar_introduced=fixed_template_scalar(axiom) or Scalar.one(), scalar_in_match=lambda match: template_scalar(axiom, match), automatic=axiom.name in PROMOTED_RULE_NAMES)|.
+
+\py!TEMPLATE_RULES: tuple[Rule, ...] = tuple(template_rule(a) for a in (*AXIOMS, *CONVERSES))!: 48 equations of [P1], [P2] and their definitional rules, then 75 converses, 123 rules in all.
+\end{signature}
+
+The scalar a template rule introduces at a match is always \py!template_scalar(axiom, match)!, because \py!scalar_in_match! is set. \py!scalar_introduced! is the fixed scalar when the equation has one and $1$ otherwise; the shell's \azx!rules NAME! command prints it, or \code!per match! when \py!fixed_template_scalar! returns \py!None! (\cref{ch:shell}). Every quantifier of the equation other than \code!d! becomes a leg count of the rule, including the dimension quantifiers of the mixed-dimension equations of [P2]; the rule's dimension quantifier is always \code!d!.
+
+\begin{algorithm}[Fixed template scalar]\label{alg:rules-fixed-scalar}
+\py!fixed_template_scalar(axiom) -> Scalar | None!.
+\begin{enumerate}
+\item Let $d$ be \py!Dim.symbol("d")!. Build both sides at $d$ with no arity parameters, \py!axiom.left.template(d, {})! and \py!axiom.right.template(d, {})!; if either raises \py!KeyError!, \py!IndexError!, \py!ValueError! or \py!RewriteError!, return \py!None!.
+\item If either side is \py!None!, or either carries a scalar diagram, return \py!None!.
+\item If any node of either side is open (accepts further legs), return \py!None!.
+\item Let $\sigma$ be \py!axiom.scalar(d, {})!; if it raises \py!KeyError!, \py!ValueError! or \py!RewriteError!, return \py!None!.
+\item A \term{pink} node is an X spider in [P1]'s normalization, $d^{(m+n)/2-1}$ times the engine's X spider. Let
+\[e=\sum_{v\in R\text{ pink}}\Bigl(\frac{\mathit{ins}(v)+\mathit{outs}(v)}{2}-1\Bigr)-\sum_{v\in L\text{ pink}}\Bigl(\frac{\mathit{ins}(v)+\mathit{outs}(v)}{2}-1\Bigr),\]
+an exact rational, over the pink nodes of the right side $R$ and the left side $L$.
+\item Return $\sigma\cdot d^{e}$.
+\end{enumerate}
+\end{algorithm}
+
+\begin{signature}
+\py!PROMOTED_RULE_NAMES: frozenset[str]! $=$ \{\azx!zxw_ept!, \azx!scalar_box!, \azx!zxw_k0!, \azx!zxw_k2!, \azx!zxw_zer!, \azx!zxw_ad!, \azx!zxw_bs0!, \azx!zxw_bsj!, \azx!zxw_ta!, \azx!zxw_bzw!, \azx!zxw_aso!, \azx!zxw_hd!, \azx!zxw_va!, \azx!zxw_zv!, \azx!zxw_kz!, \azx!qf_dzx!, \azx!qf_e!, \azx!qf_k0!, \azx!qf_bzw!, \azx!qf_s1!\}: the 20 template rules with \py!automatic=True!.
+\end{signature}
+
+Every other template rule has \py!automatic=False!: the normal-form driver, the e-graph and the tactic moves never use it, but \azx!apply! accepts it by name, and exhaustive search uses it (\cref{app:rules}). Every template rule's \bbox{} condition is T of \cref{def:rules-box-conditions}. \Cref{tab:rules-templates} lists the template rules in registry order with their promotion, their fixed scalar and the quantifiers of their equation.
+
+\begin{xltabular}{\linewidth}{@{}r>{\raggedright\arraybackslash}X l l >{\raggedright\arraybackslash}p{0.22\linewidth}@{}}
+\caption{The template rules of \py!TEMPLATE_RULES!, in registry order. ``Auto'' is \py!automatic!; ``Fixed scalar'' is \py!fixed_template_scalar!, ``per match'' when it is \py!None!.}\label{tab:rules-templates}\\
+\toprule
+& Rule & Auto & Fixed scalar & Quantifiers \\
+\midrule
+\endfirsthead
+\toprule
+& Rule & Auto & Fixed scalar & Quantifiers \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+1 & \rulescn{zxw_s1} & no & per match & \code!k, legs, d! \\
+2 & \rulescn{zxw_s2} & no & $1$ & \code!--! \\
+3 & \rulescn{zxw_s2_pink} & no & $1$ & \code!--! \\
+4 & \rulescn{zxw_d1} & no & $1$ & \code!--! \\
+5 & \rulescn{zxw_ept} & yes & $\sqrt{d}$ & \code!--! \\
+6 & \rulescn{zxw_b2} & no & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+7 & \rulescn{zxw_k0} & yes & $\frac{1}{\sqrt{d}}$ & \code!j, d! \\
+8 & \rulescn{zxw_k1} & no & per match & \code!n, j, d! \\
+9 & \rulescn{zxw_k2} & yes & per match & \code!j, d! \\
+10 & \rulescn{zxw_zer} & yes & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+11 & \rulescn{zxw_p1} & no & $1$ & \code!--! \\
+12 & \rulescn{zxw_p1_multiplier} & no & per match & \code!--! \\
+13 & \rulescn{zxw_h1} & no & per match & \code!n, m, j, d! \\
+14 & \rulescn{zxw_pcy} & no & $1$ & \code!--! \\
+15 & \rulescn{zxw_ad} & yes & $1$ & \code!--! \\
+16 & \rulescn{zxw_sym} & no & $1$ & \code!--! \\
+17 & \rulescn{zxw_aso} & yes & $1$ & \code!--! \\
+18 & \rulescn{zxw_bzw} & yes & $1$ & \code!--! \\
+19 & \rulescn{zxw_ww} & no & per match & \code!n, m, d! \\
+20 & \rulescn{zxw_bs0} & yes & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+21 & \rulescn{zxw_bsj} & yes & $\sqrt{d}$ & \code!j, d! \\
+22 & \rulescn{zxw_ta} & yes & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+23 & \rulescn{zxw_hd} & yes & per match & \code!--! \\
+24 & \rulescn{zxw_zv} & yes & per match & \code!--! \\
+25 & \rulescn{zxw_va} & yes & per match & \code!--! \\
+26 & \rulescn{zxw_vw} & no & per match & \code!--! \\
+27 & \rulescn{zxw_kz} & yes & per match & \code!n, e_1..e_n, d! \\
+28 & \rulescn{qf_wf} & no & per match & \code!p, q, r, d! \\
+29 & \rulescn{qf_w_sym} & no & per match & \code!n, k, d! \\
+30 & \rulescn{qf_z_flex} & no & per match & \code!m, n, d! \\
+31 & \rulescn{qf_mw} & no & per match & \code!e, d! \\
+32 & \rulescn{qf_d1} & no & per match & \code!n, m, d! \\
+33 & \rulescn{qf_ww} & no & per match & \code!m, n, d! \\
+34 & \rulescn{qf_va} & no & per match & \code!--! \\
+35 & \rulescn{qf_hd} & no & per match & \code!--! \\
+36 & \rulescn{binder_definition} & no & per match & \code!s, t! \\
+37 & \rulescn{qf_dd} & no & per match & \code!m, n! \\
+38 & \rulescn{qf_e} & yes & per match & \code!n, e! \\
+39 & \rulescn{qf_dzx} & yes & per match & \code!m, n, p, q! \\
+40 & \rulescn{qf_k0} & yes & per match & \code!m, n1, n2, j! \\
+41 & \rulescn{qf_bzw} & yes & per match & \code!m, n, k! \\
+42 & \rulescn{qf_ta} & no & per match & \code!m, n, k, i, e_1..e_i! \\
+43 & \rulescn{qf_s1} & yes & per match & \code!legs, dimensions! \\
+44 & \rulescn{x_spider_definition} & no & per match & \code!n, m, d! \\
+45 & \rulescn{triangle_definition} & no & $1$ & \code!--! \\
+46 & \rulescn{triangle_inverse_definition} & no & $1$ & \code!--! \\
+47 & \rulescn{phase_to_weight} & no & per match & \code!--! \\
+48 & \rulescn{scalar_box} & yes & per match & \code!--! \\
+49 & \rulescn{zxw_s2_converse} & no & $1$ & \code!--! \\
+50 & \rulescn{zxw_s2_pink_converse} & no & $1$ & \code!--! \\
+51 & \rulescn{zxw_ept_converse} & no & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+52 & \rulescn{zxw_b2_converse} & no & $\sqrt{d}$ & \code!--! \\
+53 & \rulescn{zxw_k0_converse} & no & $\sqrt{d}$ & \code!j, d! \\
+54 & \rulescn{zxw_k1_converse} & no & per match & \code!n, j, d! \\
+55 & \rulescn{zxw_zer_converse} & no & $\sqrt{d}$ & \code!--! \\
+56 & \rulescn{zxw_p1_converse} & no & $1$ & \code!--! \\
+57 & \rulescn{zxw_p1_multiplier_converse} & no & per match & \code!--! \\
+58 & \rulescn{zxw_h1_converse} & no & per match & \code!n, m, j, d! \\
+59 & \rulescn{zxw_pcy_converse} & no & $1$ & \code!--! \\
+60 & \rulescn{zxw_sym_converse} & no & $1$ & \code!--! \\
+61 & \rulescn{zxw_aso_converse} & no & $1$ & \code!--! \\
+62 & \rulescn{zxw_bzw_converse} & no & $1$ & \code!--! \\
+63 & \rulescn{zxw_ww_converse} & no & per match & \code!n, m, d! \\
+64 & \rulescn{zxw_bs0_converse} & no & $\sqrt{d}$ & \code!--! \\
+65 & \rulescn{zxw_ta_converse} & no & $\sqrt{d}$ & \code!--! \\
+66 & \rulescn{zxw_hd_converse} & no & per match & \code!--! \\
+67 & \rulescn{zxw_vw_converse} & no & per match & \code!--! \\
+68 & \rulescn{zxw_kz_converse} & no & per match & \code!n, e_1..e_n, d! \\
+69 & \rulescn{qf_wf_converse} & no & per match & \code!p, q, r, d! \\
+70 & \rulescn{qf_w_sym_converse} & no & per match & \code!n, k, d! \\
+71 & \rulescn{qf_z_flex_converse} & no & per match & \code!m, n, d! \\
+72 & \rulescn{qf_mw_converse} & no & per match & \code!e, d! \\
+73 & \rulescn{qf_ww_converse} & no & per match & \code!m, n, d! \\
+74 & \rulescn{qf_hd_converse} & no & per match & \code!--! \\
+75 & \rulescn{binder_definition_converse} & no & per match & \code!s, t! \\
+76 & \rulescn{qf_dd_converse} & no & per match & \code!m, n! \\
+77 & \rulescn{qf_e_converse} & no & per match & \code!n, e! \\
+78 & \rulescn{qf_dzx_converse} & no & per match & \code!m, n, p, q! \\
+79 & \rulescn{qf_k0_converse} & no & per match & \code!m, n1, n2, j! \\
+80 & \rulescn{qf_bzw_converse} & no & per match & \code!m, n, k! \\
+81 & \rulescn{qf_ta_converse} & no & per match & \code!m, n, k, i, e_1..e_i! \\
+82 & \rulescn{x_spider_definition_converse} & no & per match & \code!n, m, d! \\
+83 & \rulescn{triangle_definition_converse} & no & $1$ & \code!--! \\
+84 & \rulescn{triangle_inverse_definition_converse} & no & $1$ & \code!--! \\
+85 & \rulescn{scalar_box_converse} & no & per match & \code!--! \\
+86 & \rulescn{zxw_d1_converse} & no & $1$ & \code!--! \\
+87 & \rulescn{zxw_k2_converse} & no & per match & \code!j, d! \\
+88 & \rulescn{zxw_s1_converse} & no & per match & \code!n, mask, k, d! \\
+89 & \rulescn{zxw_ad_converse} & no & $1$ & \code!--! \\
+90 & \rulescn{zxw_bsj_converse} & no & $\frac{1}{\sqrt{d}}$ & \code!j, d! \\
+91 & \rulescn{zxw_zv_converse} & no & per match & \code!--! \\
+92 & \rulescn{zxw_va_converse} & no & per match & \code!--! \\
+93 & \rulescn{qf_va_converse} & no & per match & \code!--! \\
+94 & \rulescn{qf_d1_converse} & no & per match & \code!n, m, d! \\
+95 & \rulescn{weight_to_phase} & no & per match & \code!--! \\
+96 & \rulescn{fourier_cancellation_converse} & no & $1$ & \code!--! \\
+97 & \rulescn{triangle_inverse_cancellation_converse} & no & $1$ & \code!--! \\
+98 & \rulescn{triangle_inverse_cancellation_ti_t_converse} & no & $1$ & \code!--! \\
+99 & \rulescn{w_identity_converse} & no & $1$ & \code!--! \\
+100 & \rulescn{zx_cap_converse} & no & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+101 & \rulescn{zx_cap_swapped_converse} & no & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+102 & \rulescn{fourier_state_color_change_converse} & no & $1$ & \code!--! \\
+103 & \rulescn{fourier_effect_color_change_converse} & no & $1$ & \code!--! \\
+104 & \rulescn{fourier_state_color_change_swapped_converse} & no & $1$ & \code!--! \\
+105 & \rulescn{fourier_effect_color_change_swapped_converse} & no & $1$ & \code!--! \\
+106 & \rulescn{triangle_zero_state_t_converse} & no & $1$ & \code!--! \\
+107 & \rulescn{triangle_zero_state_ti_converse} & no & $1$ & \code!--! \\
+108 & \rulescn{triangle_zero_effect_converse} & no & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+109 & \rulescn{w_z_effect_converse} & no & per match & \code!m! \\
+110 & \rulescn{w_zero_effect_converse} & no & per match & \code!m! \\
+111 & \rulescn{hopf_converse} & no & per match & \code!--! \\
+112 & \rulescn{hopf_swapped_converse} & no & per match & \code!--! \\
+113 & \rulescn{bialgebra_swapped_converse} & no & $\frac{1}{\sqrt{d}}$ & \code!--! \\
+114 & \rulescn{wz_bialgebra_converse} & no & per match & \code!n, m! \\
+115 & \rulescn{state_copy_converse} & no & per match & \code!n! \\
+116 & \rulescn{state_copy_swapped_converse} & no & per match & \code!n! \\
+117 & \rulescn{w_zero_copy_converse} & no & per match & \code!n! \\
+118 & \rulescn{connective_inverse_converse} & no & per match & \code!s, t! \\
+119 & \rulescn{connective_states_states_converse} & no & per match & \code!s, t! \\
+120 & \rulescn{connective_states_effects_converse} & no & per match & \code!s, t! \\
+121 & \rulescn{connective_states_swapped_states_converse} & no & per match & \code!s, t! \\
+122 & \rulescn{connective_states_swapped_effects_converse} & no & per match & \code!s, t! \\
+123 & \rulescn{x_fusion_converse} & no & per match & \code!ni, no, mi, mo! \\
+\end{xltabular}
+
+\subsection{Converses of library rules}\label{sec:rules-converses}
+
+Among the converses, 28 read a hand-coded rule of this chapter right to left; they let a search reach a diagram that a forward rule shrinks. \Cref{tab:rules-converses} pairs each with the forward rule. No converse is named after \azx!spider_fusion! for Z spiders, \azx!z_fusion_prime_d!, \azx!identity_removal!, \azx!bialgebra!, \azx!w_fusion!, \azx!connective_inverse_bind_first! or \azx!port_box_unfusion!; the converses of the [P1] and [P2] equations S1, S2, B2 and WF read the corresponding equations right to left.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.45\linewidth}>{\raggedright\arraybackslash}X@{}}
+\caption{Template converses of hand-coded rules.}\label{tab:rules-converses}\\
+\toprule
+Converse & Forward rule and form \\
+\midrule
+\endfirsthead
+\toprule
+Converse & Forward rule and form \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\rulescn{fourier_cancellation_converse} & \azx!fourier_cancellation! \\
+\rulescn{triangle_inverse_cancellation_converse} & \azx!triangle_inverse_cancellation!, $T$ then $T^{-1}$ \\
+\rulescn{triangle_inverse_cancellation_ti_t_converse} & \azx!triangle_inverse_cancellation!, $T^{-1}$ then $T$ \\
+\rulescn{w_identity_converse} & \azx!w_identity! \\
+\rulescn{zx_cap_converse} & \azx!zx_cap! \\
+\rulescn{zx_cap_swapped_converse} & \azx!zx_cap_swapped! \\
+\rulescn{fourier_state_color_change_converse} & \azx!fourier_state_color_change!, state form \\
+\rulescn{fourier_effect_color_change_converse} & \azx!fourier_state_color_change_swapped!, effect form ($F$ into an X effect is a Z effect) \\
+\rulescn{fourier_state_color_change_swapped_converse} & \azx!fourier_state_color_change_swapped!, state form \\
+\rulescn{fourier_effect_color_change_swapped_converse} & \azx!fourier_state_color_change!, effect form ($F$ into a Z effect is an X effect) \\
+\rulescn{triangle_zero_state_t_converse} & \azx!triangle_zero_state! with $T$ \\
+\rulescn{triangle_zero_state_ti_converse} & \azx!triangle_zero_state! with $T^{-1}$ \\
+\rulescn{triangle_zero_effect_converse} & \azx!triangle_zero_effect! \\
+\rulescn{w_z_effect_converse} & \azx!w_z_effect! \\
+\rulescn{w_zero_effect_converse} & \azx!w_zero_effect! \\
+\rulescn{hopf_converse} & \azx!hopf! \\
+\rulescn{hopf_swapped_converse} & \azx!hopf_swapped! \\
+\rulescn{bialgebra_swapped_converse} & \azx!bialgebra_swapped! \\
+\rulescn{wz_bialgebra_converse} & \azx!wz_bialgebra! \\
+\rulescn{state_copy_converse} & \azx!state_copy! \\
+\rulescn{state_copy_swapped_converse} & \azx!state_copy_swapped! \\
+\rulescn{w_zero_copy_converse} & \azx!w_zero_copy! \\
+\rulescn{connective_inverse_converse} & \azx!connective_inverse! \\
+\rulescn{connective_states_states_converse} & \azx!connective_states!, states on $B$ \\
+\rulescn{connective_states_effects_converse} & \azx!connective_states!, effects on $S$ \\
+\rulescn{connective_states_swapped_states_converse} & \azx!connective_states_swapped!, states on $B$ \\
+\rulescn{connective_states_swapped_effects_converse} & \azx!connective_states_swapped!, effects on $S$ \\
+\rulescn{x_fusion_converse} & \azx!spider_fusion! for X spiders \\
+\end{xltabular}
+
+\section{The Registry}\label{sec:rules-registry}
+
+\begin{signature}
+\py!RULES: Mapping[str, Rule]!, a read-only \py!MappingProxyType! keyed by rule name, in insertion order: \azx!spider_fusion!, \azx!z_fusion_prime_d!, \azx!fourier_cancellation!, \azx!zx_cap!, \azx!identity_removal!, \azx!triangle_inverse_cancellation!, \azx!state_copy!, \azx!hopf!, \azx!bialgebra!, \azx!fourier_state_color_change!, \azx!zx_cap_swapped!, \azx!state_copy_swapped!, \azx!hopf_swapped!, \azx!bialgebra_swapped!, \azx!fourier_state_color_change_swapped!, \azx!w_fusion!, \azx!w_identity!, \azx!w_zero_copy!, \azx!triangle_zero_state!, \azx!triangle_zero_effect!, \azx!connective_inverse!, \azx!connective_inverse_bind_first!, \azx!connective_states!, \azx!connective_states_swapped!, \azx!wz_bialgebra!, \azx!w_z_effect!, \azx!w_zero_effect!, \azx!port_box_unfusion!, then the 123 rules of \cref{tab:rules-templates} in that order: 151 entries.
+
+\py!lookup_rule(name: str) -> Rule! returns \py!RULES[name]! when present, else the discard rule of that name from \py!MIXED_RULES! (\cref{ch:mixed}), else raises \py!RewriteGrammarError! with \code!no such rule: '<name>'!.
+\end{signature}
+
+The registry order is the order of every rule set that the code derives from \py!RULES! (\cref{app:rules}). \py!lookup_rule! resolves a recorded step's rule name when a certificate is replayed (\cref{ch:rewriting}); it imports \module{archytaszx.rewrite.rules_discard} on first use, because that module imports this one.
+
+\Cref{tab:rules-summary} summarizes the hand-coded rules.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.34\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}lc>{\raggedright\arraybackslash}X@{}}
+\caption{The hand-coded rules: scalar $c$ with $\sem{L}=c\,\sem{R}$, \bbox{} conditions (\cref{def:rules-box-conditions}), locality radius, and quantifiers.}\label{tab:rules-summary}\\
+\toprule
+Rule & $c$ & !-Box & Radius & Quantifiers \\
+\midrule
+\endfirsthead
+\toprule
+Rule & $c$ & !-Box & Radius & Quantifiers \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\rulescn{spider_fusion} & $1$ & S & 1 & $m_a,n_a,m_b,n_b$; $d$ \\
+\rulescn{z_fusion_prime_d} & $1$ & S & 1 & $m_a,n_a,m_b,n_b$; $d$ prime \\
+\rulescn{fourier_cancellation} & $1$ & E & 3 & $d$ \\
+\rulescn{zx_cap} & $\sqrt d$ & O & 1 & $d$ \\
+\rulescn{identity_removal} & $1$ & N, P, K or L & 1 & $d$ \\
+\rulescn{triangle_inverse_cancellation} & $1$ & S, N, K & 1 & $d$ \\
+\rulescn{state_copy} & $d^{(1-n)/2}$ & O & 1 & $n$; $d$ \\
+\rulescn{hopf} & $d^{-1}$ & O & 3 & $m,n,p,q$; $d$ \\
+\rulescn{bialgebra} & $\sqrt d$ & O & 1 & $d$ \\
+\rulescn{fourier_state_color_change} & $1$ & S & 1 & $d$ \\
+\rulescn{zx_cap_swapped} & $\sqrt d$ & O & 1 & $d$ \\
+\rulescn{state_copy_swapped} & $d^{(1-n)/2}$ & O & 1 & $n$; $d$ \\
+\rulescn{hopf_swapped} & $d^{-1}$ & O & 3 & $m,n,p,q$; $d$ \\
+\rulescn{bialgebra_swapped} & $\sqrt d$ & O & 1 & $d$ \\
+\rulescn{fourier_state_color_change_swapped} & $1$ & S & 1 & $d$ \\
+\rulescn{w_fusion} & $1$ & S, N & 1 & $m,n$; $d$ \\
+\rulescn{w_identity} & $1$ & N, P, K & 1 & $d$ \\
+\rulescn{w_zero_copy} & $d^{(1-n)/2}$ & O & 1 & $n$; $d$ \\
+\rulescn{triangle_zero_state} & $1$ & O & 1 & $d$ \\
+\rulescn{triangle_zero_effect} & $\sqrt d$ & O & 1 & $d$ \\
+\rulescn{connective_inverse} & $1$ & O & 2 & $s,t$ \\
+\rulescn{connective_inverse_bind_first} & $1$ & O & 2 & $s,t$ \\
+\rulescn{connective_states} & $1$ & O & 1 & $s,t$ \\
+\rulescn{connective_states_swapped} & $1$ & O & 1 & $s,t$ \\
+\rulescn{wz_bialgebra} & $1$ & O & 1 & $n,m$; $d$ \\
+\rulescn{w_z_effect} & $1$ & O & 1 & $m$; $d$ \\
+\rulescn{w_zero_effect} & $\sqrt d$ & O & 1 & $m$; $d$ \\
+\rulescn{port_box_unfusion} & $1$ & U & 1 & $n$; $d$ \\
+\end{xltabular}

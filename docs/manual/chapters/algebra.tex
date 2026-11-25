@@ -1,0 +1,1272 @@
+\chapter{Algebra: Dimensions, Phases, Scalars and Path Sums}\label{ch:algebra}
+
+This chapter specifies the package \module{archytaszx.algebra}, the exact algebra on which every diagram, rule, and decision procedure of ArchytasZX rests. The package holds six modules, listed in import order:
+\begin{itemize}
+\item \module{archytaszx.algebra.dimension}: symbolic wire dimensions, their arithmetic, and the three-valued decision procedures \py!Dim.unify!, \py!solve! and \py!unify_all! (\cref{sec:algebra-dim});
+\item \module{archytaszx.algebra.phase}: phases in turns and phase vectors tied to a wire dimension, with spider-fusion addition (\cref{sec:algebra-phase});
+\item \module{archytaszx.algebra.scalar}: exact complex scalars built from roots of unity, dimension factors, free symbols, and index sums, with the simplifier that closes index sums (\cref{sec:algebra-scalar,sec:algebra-simplify});
+\item \module{archytaszx.algebra.algebraic}: the canonical form of an algebraic number and an enumeration of all algebraic numbers (\cref{sec:algebra-algebraic});
+\item \module{archytaszx.algebra.numfield}: number-field certificates that write finitely many algebraic numbers over one real root (\cref{sec:algebra-numfield});
+\item \module{archytaszx.algebra.pathsum}: path sums over $\Zd{2}$ and $\Zd{p}$, cyclotomic constants, their reduction rules, canonical forms, and comparison points (\cref{sec:algebra-cyclo,sec:algebra-pathsum-polys,sec:algebra-pathsum,sec:algebra-canon,sec:algebra-qudit}).
+\end{itemize}
+The file \file{archytaszx/algebra/__init__.py} holds only the package docstring and exports nothing. The diagram layer (\cref{ch:diagrams}) stores a \py!Dim! on every port, a \py!PhaseVector! on every spider, and a \py!Scalar! as every diagram's global factor; the rewrite layer (\cref{ch:rewriting,ch:rules}) builds rule scalars from \py!Scalar!; the semantics layer (\cref{ch:semantics,ch:proofs}) uses \py!Scalar.simplify!, the path-sum module, the algebraic canonical form, and number-field certificates; the Lean exporters (\cref{ch:lean-pathsum,ch:lean-export-net}) replay path-sum traces and number-field certificates. Every numeric parameter of this chapter recurs in \cref{app:params}; \cref{tab:algebra-constants} at the end of the chapter collects them.
+
+\section{Conventions Common to the Package}\label{sec:algebra-conventions}
+
+\subsection{Exactness and the SymPy backend}
+
+The modules \py!dimension!, \py!phase!, \py!scalar!, \py!algebraic! and \py!numfield! represent every value by one exact SymPy expression~\cite{meurer2017sympy} (\tool{SymPy}{https://www.sympy.org}). The module \py!pathsum! uses no SymPy in its core: it computes with Python integers, \py!fractions.Fraction!, and integer arrays of \tool{NumPy}{https://numpy.org}~\cite{harris2020numpy}; it imports SymPy only to read a diagram scalar in \py!constant!. No module of the package uses floating-point numbers for a value; floating-point numbers occur only as approximations that select a root (\cref{sec:algebra-algebraic,sec:algebra-numfield}) or as the output of the gated evaluators \py!Phase.to_complex!, \py!Scalar.to_complex! and \py!Cyclo.to_complex!. Every constructor that receives a SymPy \py!Float! anywhere in its expression tree raises a grammar error.
+
+\begin{definition}[Sound, incomplete equality]\label{def:algebra-sound-equality}
+The equality \py!==! of \py!Dim!, \py!Phase!, \py!PhaseVector! and \py!Scalar! is syntactic equality of the canonical SymPy expressions that the constructors produce. It is \term{sound}: equal objects denote equal values. It is incomplete for \py!Phase!, \py!PhaseVector! and \py!Scalar!: two objects that denote the same value may compare unequal when the cheap normalization of the constructor does not identify them. For \py!Dim! the normalization is a canonical form of the grammar of \cref{def:algebra-dim-grammar}. Every \py!__hash__! agrees with \py!__eq__!. A comparison with an object of another class returns \py!NotImplemented!, so \py!Dim(2) == 2! is \py!False!.
+\end{definition}
+
+No function of \py!scalar! quotients a global factor, normalizes to a leading coefficient, or drops a factor of modulus one: $s$, $2s$ and $\omega_d s$ are three unequal scalars, and no option of the module makes them equal. An equality up to a global phase or scalar exists only in the semantics layer, through the equality mode of \cref{ch:semantics}.
+
+\subsection{Symbol classes and their assumptions}
+
+Every free symbol is a SymPy \py!Symbol! whose assumptions fix its domain. One name may occur in several classes; SymPy treats symbols of one name and different assumptions as different symbols, and every substitution of this package selects symbols by name (\cref{sec:algebra-dim-guards}). \Cref{tab:algebra-symbols} lists the classes.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.28\linewidth}X@{}}
+\toprule
+Class & SymPy assumptions & Built by \\
+\midrule
+dimension symbol & \code!positive=True, integer=True! & \py!Dim(name)!, \py!Dim.symbol! \\
+exponent symbol & \code!integer=True, nonnegative=True! & \py!Dim.__pow__! with a symbolic exponent \\
+phase symbol & \code!real=True! & \py!Phase.symbol! (value in turns) \\
+scalar symbol & \code!complex=True! & \py!Scalar.symbol! \\
+engine index \code!_k<n>!, \code!_i<n>! & \code!integer=True, nonnegative=True! & \py!Scalar.index_sum!, index renaming, the translation of \cref{ch:semantics} \\
+case symbol \code!_q<n>! & \code!integer=True, nonnegative=True! & residue-case splitting (\cref{sec:algebra-simplify-cases}) \\
+phase index \code!_phase_k! & \code!integer=True, nonnegative=True! & the constant \py!INDEX! of \py!phase! \\
+\bottomrule
+\end{tabularx}
+\caption{Symbol classes of \texttt{archytaszx.algebra}.}\label{tab:algebra-symbols}
+\end{table}
+
+Every module rejects a symbol name that is not a Python identifier (\py!str.isidentifier!); a name such as \code!d*e! would print like a product and denote a different object. The module \py!scalar! further reserves every name matching \code!^_[ik][0-9]+$! (engine indices) or \code!^_q[0-9]+$! (case symbols) for itself: \py!Scalar.symbol! raises \py!ScalarGrammarError! on such a name, while expressions built inside the module may carry them. Internal temporary names are \code!_kbound! (the placeholder of \py!index_sum!), \code!_tmp<n>! (index renaming), \code!_frozen<i>! (frozen residues), \code!_y<n>! (nonnegativity relaxation), \code!theta_nf!, \code!y_nf!, \code!z_nf!, \code!t_nf! (number fields), and \code!x! (minimal polynomials).
+
+\subsection{Error classes}
+
+\Cref{tab:algebra-errors} lists every exception class of the package. Each module raises only its own classes, \py!TypeError! for an argument of the wrong Python type, and, through \py!PhaseVector.substitute!, the dimension errors of the \py!Dim! it rebuilds.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.3\linewidth}>{\raggedright\arraybackslash}p{0.2\linewidth}X@{}}
+\toprule
+Class & Base & Raised for \\
+\midrule
+\py!DimensionError! & \py!Exception! & base of the two below \\
+\py!DimensionDomainError! & \py!DimensionError! & a concrete dimension below $1$, a negative exponent, an out-of-domain substitution value, \py!to_int! or \py!abstract! on the wrong kind of \py!Dim! \\
+\py!DimensionGrammarError! & \py!DimensionError! & an expression outside \cref{def:algebra-dim-grammar}, a bad symbol name, a \py!bool! argument, a non-symbol substitution key \\
+\py!PhaseError! & \py!Exception! & base of the two below \\
+\py!PhaseDomainError! & \py!PhaseError! & numeric evaluation of a symbolic phase, a bad phase-vector index, a gauge violation at index $0$, fusion over unequal dimensions, a non-integral value for a dimension symbol \\
+\py!PhaseGrammarError! & \py!PhaseError! & a float or infinity, a bad constructor argument, a bad symbol name \\
+\py!ScalarError! & \py!Exception! & base of the four below \\
+\py!ScalarDomainError! & \py!ScalarError! & numeric evaluation of a symbolic scalar, a zero denominator, zero to a negative power \\
+\py!ScalarGrammarError! & \py!ScalarError! & a float, a head outside the scalar grammar, a reserved or invalid name \\
+\py!ScalarSumError! & \py!ScalarError! & a malformed index sum, substitution for a bound index \\
+\py!ScalarBudgetError! & \py!ScalarError! & \py!Scalar.simplify! exceeding its step budget \\
+\py!NotAlgebraicError! & \py!ValueError! & a value with free symbols or no minimal polynomial \\
+\py!NumberFieldError! & \py!ValueError! & a certificate that fails its check, or values without a certificate \\
+\py!PathSumError! & \py!Exception! & an internal inconsistency of a path-sum computation \\
+\py!PathSumUnsupported! & \py!PathSumError! & a diagram or a sum outside the path-sum class \\
+\bottomrule
+\end{tabularx}
+\caption{Exception classes of \texttt{archytaszx.algebra}.}\label{tab:algebra-errors}
+\end{table}
+
+\subsection{Gated evaluation and memo tables}
+
+A symbolic value becomes a Python number only through a gate: \py!Dim.to_int!, \py!Phase.to_complex! and \py!Scalar.to_complex! raise a domain error while a free symbol remains. Every code path that builds a matrix or dense tensor reaches numbers through these gates, so no dense object is built while a dimension in scope is symbolic.
+
+Several functions remember results in module-level tables. Each table holds at most a fixed number of entries; when it is full, the next insertion first empties it (the tables of \py!scalar!), or evicts the oldest entries (\py!pathsum._FOLDS!), or follows \py!functools.lru_cache! eviction. The tables change no result: a function returns the same value with an empty table. \Cref{tab:algebra-constants} lists their capacities.
+
+\section{Dimensions}\label{sec:algebra-dim}
+
+A port of a diagram carries a dimension, a positive integer that may be symbolic. The module \module{archytaszx.algebra.dimension} supplies dimension values and decides equations between them. It holds no ambient or default dimension: every port stores its own \py!Dim! (\cref{ch:diagrams}).
+
+\subsection{Grammar and canonical form}
+
+\begin{definition}[Dimension grammar]\label{def:algebra-dim-grammar}
+A \term{dimension expression} is generated by
+\begin{lstlisting}[style=grammar]
+dim      ::= integer >= 1 | dsym | dim * dim | dim ** exponent
+exponent ::= integer >= 0 | esym | exponent + exponent | exponent * exponent
+           | exponent ** exponent
+\end{lstlisting}
+where \code!dsym! is a dimension symbol and \code!esym! an exponent symbol (\cref{tab:algebra-symbols}). Sums, differences, quotients, roots, and floats of dimensions are outside the grammar; an exponent may be a sum, product, or power of exponents, because a substitution of a power for a dimension symbol multiplies exponents (\texttt{(d**m)**m} folds to \texttt{d**(m**2)}).
+\end{definition}
+
+The private checks \py!_check_dimension_domain! and \py!_check_exponent_domain! enforce the grammar on a SymPy expression: an \py!Integer! base must be at least $1$ (else \py!DimensionDomainError!), an \py!Integer! exponent at least $0$ (else \py!DimensionDomainError!); a \py!Symbol! must carry the assumptions of its role and an identifier name (else \py!DimensionGrammarError!); a \py!Mul! recurses into its factors; a \py!Pow! checks its base as a dimension and its exponent as an exponent; an \py!Add! is admitted only inside an exponent; every other head raises \py!DimensionGrammarError!.
+
+\begin{definition}[Canonical form of a dimension]\label{def:algebra-dim-canon}
+The canonical form of a dimension expression $e$ is \py!sympy.powsimp(e, force=True)!. Because dimension symbols are positive integers and exponent symbols nonnegative integers, the identities \py!powsimp! applies are valid on the domain: $d^a d^b=d^{a+b}$, $d\cdot d=d^2$, $d_1d_2=d_2d_1$. Two \py!Dim! values are equal exactly when their canonical expressions are identical SymPy trees; the hash is the hash of that tree.
+\end{definition}
+
+\begin{example}
+\py!Dim("d") * Dim("d")! prints as \code!Dim(d**2)!; \py!Dim("d")**Dim("n") * Dim("d")! prints as \code!Dim(d**(n + 1))!; \py!2 * Dim("d") * Dim("e")! prints as \code!Dim(2*d*e)!.
+\end{example}
+
+\subsection{The class \texttt{Dim}}
+
+\begin{signature}
+\py!class Dim!: immutable, hashable, one slot \py!_expr: sympy.Expr! (the canonical form).\\
+\py!Dim(value: int | str | Dim)!: an \py!int! $\ge 1$ gives the integer; a \py!str! gives the dimension symbol of that name; a \py!Dim! copies its expression. A \py!bool! raises \py!DimensionGrammarError!; an \py!int! below $1$ raises \py!DimensionDomainError!; another type raises \py!TypeError!.\\
+\py!Dim.concrete(value: int) -> Dim!, \py!Dim.symbol(name: str) -> Dim!: aliases of the constructor.\\
+\py!Dim.from_sympy(expr) -> Dim!: \py!sympify!, canonical form, grammar check.\\
+\py!to_sympy() -> sympy.Expr!: the canonical expression.\\
+\py!is_concrete: bool!: no free symbol. \py!free_symbols: frozenset[str]!: names of every dimension and exponent symbol.\\
+\py!to_int() -> int!: the value; \py!DimensionDomainError! naming the sorted free symbols when symbolic.\\
+\py!__mul__(other: Dim | int)!, \py!__rmul__!: canonical product; an \py!int! is converted by \py!Dim(int)!; a \py!bool! or other type returns \py!NotImplemented!.\\
+\py!__pow__(exponent: Dim | int)!: $e^{x}$ for an \py!int! $x\ge 0$, a concrete \py!Dim! $\ge 0$, or a \py!Dim! that is a bare symbol (read as the exponent symbol of that name). A compound \py!Dim! exponent raises \py!DimensionGrammarError!; a negative one \py!DimensionDomainError!.\\
+\py!__repr__!: \code!Dim(<expr>)!; \py!__str__!: \code!<expr>!, both through a memoized \py!str! (capacity 4096).
+\end{signature}
+
+\paragraph{Substitution.} \py!substitute(mapping: Mapping[str | Dim, int | Dim]) -> Dim! replaces symbols by concrete integers. A key is a symbol name or a \py!Dim! that is a bare symbol (else \py!DimensionGrammarError!; another type \py!TypeError!). A value is an \py!int! or a concrete \py!Dim! (a symbolic \py!Dim! raises \py!DimensionDomainError!; another type \py!TypeError!). The mapping need not be total. For every free symbol of the expression, in ascending name order, whose name the mapping binds, the value is checked against the symbol's domain: at least $1$ for a dimension symbol, at least $0$ for an exponent symbol, else \py!DimensionDomainError! naming that symbol. Substitution reaches exponents as well as bases; substituting only $d$ in $d^n$ by $2$ leaves $2^n$. The result is rebuilt through the canonical form and the grammar check.
+
+\paragraph{Rewriting.} \py!rewrite(mapping: Mapping[str | Dim, Dim]) -> Dim! replaces symbols by arbitrary \py!Dim! values, simultaneously: $\{d\mapsto e,e\mapsto 2\}$ sends $de$ to $2e$. A value for a dimension symbol may be any \py!Dim!; a value for an exponent symbol passes the exponent coercion of \py!__pow__! (concrete or a bare symbol). An empty mapping returns the object itself. A non-\py!Dim! value raises \py!TypeError!.
+
+\paragraph{Abstraction.} \py!abstract(*, avoid: Iterable[str] = (), stem: str = "d") -> tuple[Dim, Mapping[str, int]]! returns a fresh dimension symbol for a concrete \py!Dim! and a read-only binding (\py!MappingProxyType!) from its name to the value; \py!symbol.substitute(binding)! returns the original. The name is \code!stem! when not in \code!avoid!, else \code!stem1!, \code!stem2!, \ldots{} for the least suffix not in \code!avoid!. A symbolic \py!Dim! raises \py!DimensionDomainError!.
+
+\paragraph{Display of large counts.} \py!format_count(value: object) -> str! renders a count: a \py!bool! as \py!str!; an integer whose absolute value has at most $50$ bits (the constant \py!_EXACT_BITS!) as its decimal digits; a larger integer of bit length $b$ as \code!about 2^<b-1>!, prefixed by \code!-! when negative; a SymPy expression with each such large integer atom replaced by a symbol whose name is that text; anything else by \py!str!. Thus \py!format_count(2**60)! is \code!about 2^60!.
+
+\subsection{Deciding one equation: \texttt{Dim.unify}}\label{sec:algebra-unify}
+
+\begin{definition}[Three-valued result]\label{def:algebra-unify-status}
+\py!class UnifyStatus(enum.Enum)! has the members \py!SUCCESS = "success"!, \py!FAILURE = "failure"! and \py!DEFERRED = "deferred"!. A decision procedure of this module returns \texttt{SUCCESS} only for an equation it verified (possibly under the bindings it reports), \texttt{FAILURE} only for an equation without a solution in positive integers, and \texttt{DEFERRED} otherwise, with the residual constraint it could not decide.
+\end{definition}
+
+\begin{signature}
+\py!@dataclass(frozen=True) class UnifyResult!: \py!status: UnifyStatus!; \py!bindings: Mapping[str, Dim] = {}! (symbol name to the \py!Dim! it was unified with); \py!constraints: tuple[tuple[Dim, Dim], ...] = ()! (the reduced pairs asserted equal and left undecided). Properties \py!is_success!, \py!is_failure!, \py!is_deferred!.\\
+\py!Dim.unify(other: Dim) -> UnifyResult!: decides $\mathit{self}=\mathit{other}$ over the positive integers; a non-\py!Dim! raises \py!TypeError!.
+\end{signature}
+
+\begin{algorithm}[\texttt{Dim.unify}]\label{alg:algebra-unify}
+Let $L$ and $R$ be the two canonical expressions.
+\begin{enumerate}
+\item If both are concrete, return \texttt{SUCCESS} when their integer values agree, else \texttt{FAILURE}.
+\item If $L$ and $R$ are identical, return \texttt{SUCCESS}.
+\item \emph{Cancel common factors} (\py!_cancel_common_factors!): write $L=\prod_b b^{l_b}$ and $R=\prod_b b^{r_b}$ by SymPy's \py!as_powers_dict!. For every base $b$ of either side, in ascending order of \py!srepr(b)!, let $\nu=\mathrm{expand}(l_b-r_b)$. If $\nu$ is an integer, put $b^{\nu}$ on the left when $\nu>0$, $b^{-\nu}$ on the right when $\nu<0$, and nothing when $\nu=0$. Otherwise keep $b^{l_b}$ on the left and $b^{r_b}$ on the right (each when nonzero). The reduced pair $(L',R')$ shares no base whose exponents differ by an integer. Bases are compared as SymPy objects: the integers $4$ and $12$ are two bases, so $4d=12e$ is not reduced to $d=3e$.
+\item Return the decision of the reduced pair (\cref{alg:algebra-decide-reduced}).
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Decision of a reduced pair, \texttt{\_decide\_reduced}]\label{alg:algebra-decide-reduced}
+Input: two \py!Dim! values $L,R$ sharing no base.
+\begin{enumerate}
+\item Both concrete: \texttt{SUCCESS} when equal, else \texttt{FAILURE}. Identical: \texttt{SUCCESS}.
+\item One side is $1$: decide $X=1$ for the other side $X$ (\emph{against one}). For each base--exponent pair of $X$, in ascending \py!srepr! order of the base: if the exponent is not a positive integer, return \texttt{DEFERRED} with the residual $(X,1)$; if the base is an integer other than $1$, return \texttt{FAILURE}; if the base is not a symbol, return \texttt{DEFERRED} with $(X,1)$; else bind the base symbol to $1$. After the loop return \texttt{SUCCESS} with the bindings. Thus $de=1$ succeeds with $d:=1$, $e:=1$, and $d^n=1$ is deferred.
+\item \emph{Divide out the coefficient}: for $(S,C)$ in the order $(L,R)$, $(R,L)$, when $S$ is symbolic and $C$ concrete, write $S=k\cdot S'$ by \py!as_coeff_Mul!. If $k$ is an integer above $1$: return \texttt{FAILURE} when $k\nmid C$, else return the decision of the reduced pair $(S',C/k)$. Every symbolic factor is a positive integer, so $kS'$ is a multiple of $k$.
+\item \emph{Lone symbol}: for $(S,C)$ in the order $(L,R)$, $(R,L)$, when $S$ is a single symbol $s$ to an exponent $x$ (one base, the base a symbol) and $s$ does not occur in $C$: if $x=1$, return \texttt{SUCCESS} with the binding $s:=C$; if $x$ is an integer at least $2$ and $C$ concrete, compute the integer $x$-th root of $C$ (\py!sympy.integer_nthroot!) and return \texttt{SUCCESS} with $s:=\sqrt[x]{C}$ when it is exact, else \texttt{FAILURE}.
+\item Otherwise return \texttt{DEFERRED} with the single residual $(L,R)$.
+\end{enumerate}
+\end{algorithm}
+
+\Cref{tab:algebra-unify-examples} lists outcomes of \py!Dim.unify! confirmed on the implementation.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Equation & Status & Bindings or residual \\
+\midrule
+$de=6$ & \texttt{DEFERRED} & $(de,6)$ \\
+$2d=7$ & \texttt{FAILURE} & \\
+$d^2=9$ & \texttt{SUCCESS} & $d:=3$ \\
+$d^2=8$ & \texttt{FAILURE} & \\
+$de=1$ & \texttt{SUCCESS} & $d:=1$, $e:=1$ \\
+$d^n=8$ & \texttt{DEFERRED} & $(d^n,8)$ \\
+$de=df$ & \texttt{SUCCESS} & $e:=f$ \\
+$4d=12e$ & \texttt{DEFERRED} & $(4d,12e)$ \\
+\bottomrule
+\end{tabular}
+\caption{Outcomes of \texttt{Dim.unify}.}\label{tab:algebra-unify-examples}
+\end{table}
+
+\subsection{Deciding a system: \texttt{solve}}\label{sec:algebra-solve}
+
+\begin{signature}
+\py!@dataclass(frozen=True) class SolveResult!: \py!status: UnifyStatus!; \py!bindings: Mapping[str, Dim]! (concrete and symbolic, resolved against each other); \py!residual_pairs: tuple[tuple[Dim, Dim], ...]!; \py!exhausted: bool = False!; properties \py!is_success!, \py!is_failure!, \py!is_deferred!.\\
+\py!solve(constraints: Sequence[tuple[Dim, Dim]], *, max_passes: int | None = None) -> SolveResult!.
+\end{signature}
+
+\begin{algorithm}[\texttt{solve}]\label{alg:algebra-solve}
+\begin{enumerate}
+\item Drop every pair whose members are equal, remove duplicates, and sort the rest by the pair of \py!srepr! strings of the two canonical expressions. The result depends only on the set of constraints. An empty set returns \texttt{SUCCESS}.
+\item Let the budget be \py!max_passes!, or $\mathtt{\_MAX\_SOLVE\_PASSES}=32$ when it is \py!None!. Start with empty bindings $\beta$.
+\item Repeat for at most the budget of passes. In each pass clear the residual list and set \code!changed! false; for every pair $(l,r)$ in order:
+\begin{enumerate}
+\item Compute $l'=l.\mathrm{rewrite}(\beta)$, $r'=r.\mathrm{rewrite}(\beta)$ and $u=l'.\mathrm{unify}(r')$.
+\item If $u$ is \texttt{FAILURE}, return \texttt{FAILURE} with the current bindings.
+\item If $u$ is \texttt{DEFERRED}, append its constraints (or $(l',r')$ when it lists none) to the residuals and continue.
+\item Otherwise process a queue of the bindings of $u$ sorted by name. Pop the first $(s,v)$; rewrite $v$ through $\beta$. If $\beta$ binds $s$ to $w$: skip when $w=v$; else unify $w$ with $v$, returning \texttt{FAILURE} on failure, appending $(w,v)$ to the residuals on deferral, and appending the new bindings (sorted) to the queue on success. If $s$ is unbound and $s$ occurs in $v$, append $(s,v)$ to the residuals. Otherwise rewrite every held binding by $\{s\mapsto v\}$, bind $s:=v$, and set \code!changed!. After $\mathtt{\_MAX\_BINDING\_MERGES}=64$ pops of one pair's queue, append every queued $(s,v)$ as the residual $(s,v)$ and leave the queue.
+\end{enumerate}
+\item A pass with \code!changed! false ends the loop: return \texttt{DEFERRED} when residuals exist, else \texttt{SUCCESS}, with the bindings and the residuals deduplicated by their \py!srepr! key in first-occurrence order; \code!exhausted! is false.
+\item When the budget runs out: return \texttt{SUCCESS} if the last pass left no residual; else \texttt{DEFERRED} with the last pass's residuals and \code!exhausted! true.
+\end{enumerate}
+\end{algorithm}
+
+A result with \code!exhausted! true is an interrupted computation, not a decided answer: its residual pairs are a snapshot of the final, non-converged pass. Every caller keeps it apart from an ordinary \texttt{DEFERRED}; the diagram validator turns it into a hard error (\cref{ch:diagrams}).
+
+\subsection{Unifying a multiset: \texttt{unify\_all}}
+
+\begin{signature}
+\py!@dataclass(frozen=True) class UnifyAllResult!: \py!status!, \py!bindings: Mapping[str, Dim]! (concrete values only), \py!residual_pairs!, \py!exhausted: bool = False!, \py!declined_bindings: Mapping[str, Dim]! (bindings to non-concrete values such as $d:=e$); properties \py!is_success!, \py!is_failure!, \py!is_deferred!.\\
+\py!unify_all(dims: Sequence[Dim]) -> UnifyAllResult!: the values must all be equal to one shared value.
+\end{signature}
+
+\py!unify_all! sorts \code!dims! by the \py!srepr! of their expressions; fewer than two values give \texttt{SUCCESS}. It chains the sorted values into consecutive pairs (\py!itertools.pairwise!) and calls \py!solve! with \code!max_passes! $=\mathtt{\_MAX\_UNIFY\_ALL\_PASSES}=32$. It returns the status, residual pairs and \code!exhausted! flag of \py!solve!, and splits the bindings: concrete values into \code!bindings!, so that \py!Dim.substitute! accepts them, and the rest into \code!declined_bindings!. It raises only \py!DimensionError! subclasses. For example, \py!unify_all([Dim("d"), Dim("e"), Dim(2)])! succeeds with $d:=2$, $e:=2$.
+
+\subsection{Guards and assumptions on dimensions}\label{sec:algebra-dim-guards}
+
+The decision procedures assume only what the symbol classes state: a dimension symbol is a positive integer, an exponent symbol a nonnegative integer. They make no assumption on a lower floor of a dimension (such as $d\ge 2$); a rule that needs one states it as a guard of its own (\cref{ch:rules}), and \py!Scalar.with_dimension_floors! (\cref{sec:algebra-scalar-api}) applies such floors to scalars. Substitution and rewriting select symbols by name and dispatch on the assumptions of each matched symbol: a mapping entry for the name $n$ substitutes both a dimension symbol $n$ and an exponent symbol $n$, each checked against its own domain. The diagram validator rejects a diagram that uses one name in two roles (\cref{ch:diagrams}); this module does not check it.
+
+\section{Phases and Phase Vectors}\label{sec:algebra-phase}
+
+The module \module{archytaszx.algebra.phase} represents the phase data of a spider. A qudit Z spider of dimension $d$ with $m$ inputs, $n$ outputs, and phase vector $(\alpha_1,\ldots,\alpha_{d-1})$ denotes
+\begin{equation}\label{eq:algebra-zspider}
+\sum_{k=0}^{d-1} a_k\,\ket{k}^{\otimes n}\bra{k}^{\otimes m},\qquad a_0=1,\quad a_k=w_k\,e^{2\pi i\alpha_k}\ (1\le k\le d-1),
+\end{equation}
+the qudit and qufinite spiders of the ZX and ZXW calculi~\cite{coecke2011interacting,wang2021qufinite,wang2023qufinitezxw}. The phase $\alpha_0$ is fixed to $0$ and the weight $w_0$ to $1$ as a gauge; the weights $w_k$ are $1$ for a plain spider and arbitrary scalars for a Z box. Fusing two Z spiders of one dimension multiplies their coefficients pointwise, so it adds phases and multiplies weights; \py!Phase.__add__! and \py!PhaseVector.__add__! implement exactly this fusion (\cref{fig:algebra-fusion}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+\node[zs] (a) at (0,0) {$\alpha$};
+\node[zs] (b) at (0,1.2) {$\beta$};
+\draw[wire] (a) -- (b);
+\draw[wire] (a) -- (-0.5,-0.8); \draw[wire] (a) -- (0.5,-0.8);
+\draw[wire] (b) -- (-0.5,2.0); \draw[wire] (b) -- (0.5,2.0);
+\node[dimlabel] at (0.35,0.6) {$d$};
+\end{tikzpicture}
+\quad$=$\quad
+\begin{tikzpicture}[zxd]
+\node[zs] (c) at (0,0.6) {$\alpha{+}\beta$};
+\draw[wire] (c) -- (-0.5,-0.8); \draw[wire] (c) -- (0.5,-0.8);
+\draw[wire] (c) -- (-0.5,2.0); \draw[wire] (c) -- (0.5,2.0);
+\end{tikzpicture}
+\caption{Spider fusion: the phase vectors add componentwise; weights multiply.}\label{fig:algebra-fusion}
+\end{figure}
+
+\subsection{Phases in turns}
+
+\begin{definition}[Phase]\label{def:algebra-phase}
+A \term{phase} is an angle $2\pi t$ stored as its \term{turns} expression $t$, an exact SymPy expression: a rational, a phase symbol (real), or a compound expression such as $j/d$ built from a root-of-unity index and a possibly symbolic dimension. The root of unity $\omega_d^j=e^{2\pi i j/d}$ has turns $j/d$, and reduction modulo $2\pi$ is reduction of $t$ modulo $1$.
+\end{definition}
+
+\begin{definition}[Turn normalization]\label{def:algebra-turn-normal}
+The constructor normalizes $t$ by \py!_normalize_turns!:
+\begin{enumerate}
+\item a SymPy \py!Rational! $p/q$ becomes $(p \bmod q)/q\in[0,1)$;
+\item an expression with a \py!Float! atom raises \py!PhaseGrammarError!; one with \py!zoo!, \py!oo! or \py!nan! raises \py!PhaseGrammarError!;
+\item otherwise split $t=c+r$ by \py!as_coeff_Add!; when $c$ is a nonzero rational, replace it by $c-\lfloor c\rfloor$; leave $r$ unchanged.
+\end{enumerate}
+\end{definition}
+
+No other reduction takes place: $j/d$ with symbolic $d$, a free symbol $\theta$, or the constant $\pi$ in turns stays as it is. Two phases whose turns differ by a symbolic integer therefore compare unequal (\cref{def:algebra-sound-equality}). The character-sum identity $\sum_{k=0}^{d-1}\omega_d^{jk}=d\,[j\equiv 0 \bmod d]$ is not applied here; \py!Scalar.simplify! applies it (\cref{sec:algebra-simplify}).
+
+\begin{example}
+\py!Phase.turns(Rational(7, 4))! prints \code!3/4 turns!; \py!Phase.root_of_unity(5, Dim(3))! has turns $2/3$; \py!Phase.root_of_unity(5, Dim("d"))! prints \code!5/d turns!; the turns $5/2+x$ normalize to $x+1/2$.
+\end{example}
+
+\begin{signature}
+\py!class Phase!: immutable, hashable, one slot \py!_turns!.\\
+\py!Phase(turns: sympy.Expr)!: \py!sympify!, then \cref{def:algebra-turn-normal}.\\
+\py!Phase.zero()!: turns $0$. \py!Phase.turns(value: Rational | int)!: an exact turns value; a \py!bool! or other type raises \py!PhaseGrammarError!.\\
+\py!Phase.root_of_unity(index: int | sympy.Expr, dim: Dim)!: turns $\mathit{index}/d$ with $d=$\py!dim.to_sympy()!; a \py!bool! or other index type raises \py!PhaseGrammarError!.\\
+\py!Phase.symbol(name: str)!: the free real phase symbol \code!name!, in turns.\\
+\py!to_sympy_turns()!: the turns expression. \py!to_radians()!: $2\pi t$ as a SymPy expression (no concreteness required).\\
+\py!to_complex() -> complex!: $e^{2\pi i t}$; \py!PhaseDomainError! naming the sorted free symbols when symbolic.\\
+\py!is_zero!: $t$ is the literal $0$. \py!is_concrete!, \py!free_symbols: frozenset[str]!.\\
+\py!__add__!, \py!__sub__!, \py!__neg__!: the phase of $t_1\pm t_2$, $-t$, normalized.\\
+\py!scale(factor: int)!: turns $\mathit{factor}\cdot t$; a non-\py!int! or \py!bool! raises \py!PhaseGrammarError!.\\
+\py!at(index: int)!: $t$ with \py!INDEX! replaced by \code!index!.\\
+\py!substitute(mapping)!: keys are names or bare-symbol phases (a compound key raises \py!PhaseGrammarError!); values are \py!int!, \py!Rational!, SymPy expressions (substituted unreduced, then normalized), or a \py!Phase! (its turns); a \py!bool! or other value raises \py!PhaseGrammarError!. Keys naming no free symbol are ignored. A dimension symbol inside $j/d$ is substituted by the same mapping, since both live in one expression.\\
+\py!__repr__!: \code!Phase(turns=<t>)!, memoized per turns expression (capacity $2^{16}$); \py!__str__!: \code!<t> turns!.
+\end{signature}
+
+\subsection{Phase vectors}
+
+\begin{definition}[Phase vector]\label{def:algebra-phase-vector}
+A \term{phase vector} over a dimension $d$ is the tuple $(d,E,\rho,W,\varpi)$ of
+\begin{itemize}
+\item $E$: a finite sparse map from indices $k\ge 1$ to nonzero phases (absent indices read $0$);
+\item $\rho$: an optional \term{phase rule}, a phase whose turns may read the index symbol \py!INDEX! (\code!_phase_k!), added at every index;
+\item $W$: a finite sparse map from indices $k\ge 1$ to scalar weights;
+\item $\varpi$: an optional \term{weight rule}, a \py!Scalar! in \py!INDEX!, the weight at every index $k\ge 1$ without an entry in $W$.
+\end{itemize}
+Its phase at index $k$ is $\phi_k=0$ for $k=0$ and $\phi_k=E(k)+\rho(k)$ otherwise; its weight is $w_0=1$ and $w_k=W(k)$ if present, else $\varpi(k)$ if present, else $1$; its coefficient is $a_k=w_k\,e^{2\pi i\phi_k}$, the coefficient of \cref{eq:algebra-zspider}.
+\end{definition}
+
+Sparse storage is the only representation that exists at a symbolic dimension: a dense list of length $d-1$ needs a concrete $d$. A rule writes an index-dependent phase at a symbolic dimension, such as the phase $k/d$ of a Fourier-type spider. \py!Dim! has no subtraction, so the length $d-1$ is a Python integer (\py!length!) and \py!None! at a symbolic dimension.
+
+\paragraph{Construction and invariants.}
+\py!PhaseVector(dim, entries=None, rule=None, expand=True, weights=None, weight_rule=None)! checks and cleans its arguments:
+\begin{enumerate}
+\item \code!dim! must be a \py!Dim! (else \py!TypeError!).
+\item Every entry index must be an \py!int! and not a \py!bool!, every entry a \py!Phase! (else \py!PhaseGrammarError!). Index $0$ with a nonzero phase raises \py!PhaseDomainError! (gauge); index $0$ with phase zero is dropped. A negative index, or an index above $d-1$ at a concrete $d$, raises \py!PhaseDomainError!. Zero phases are dropped.
+\item The rule must be a \py!Phase! (else \py!PhaseGrammarError!) whose turns with \py!INDEX! $:=0$ normalize to $0$ (else \py!PhaseDomainError!); a zero rule is dropped.
+\item Weights pass \py!_clean_weights!: the weight rule must be a \py!Scalar! (else \py!PhaseGrammarError!); a rule equal to $1$ is dropped. Weight indices follow the index rules above (index $0$ must carry weight $1$, else \py!PhaseDomainError! ``index 0 is gauge-fixed to weight 1''), weights must be \py!Scalar! values, and an entry equal to its default (the rule at that index, or $1$) is dropped.
+\item At a concrete dimension with \code!expand! true, a stored rule is \term{read expanded}: \py!entries()! returns the phases $\phi_k$ at every $k$ with $\phi_k\ne 0$ and \py!rule! returns \py!None!; the same holds for the weight rule, \py!weights()! and \py!weight_rule!. The expanded views are computed once and cached. With \code!expand! false, or at a symbolic dimension, the rules are returned as rules.
+\end{enumerate}
+
+\begin{algorithm}[Rule values, \texttt{\_rule\_values}]\label{alg:algebra-rule-values}
+To expand a rule at a concrete $r=d$: if its turns read no symbol but \py!INDEX! and form a polynomial in \py!INDEX! with rational coefficients, evaluate it at $k=1,\ldots,r-1$ by Horner's rule in exact \py!Fraction! arithmetic and reduce each value modulo $1$; otherwise compute \py!rule.at(k)! for each $k$. The expanded phase at $k$ is the rule value plus $E(k)$.
+\end{algorithm}
+
+\begin{example}
+\py!PhaseVector(Dim(4), {}, rule=Phase(INDEX**2/8))! reads expanded as \code!PhaseVector[4]({1: 1/8 turns, 2: 1/2 turns, 3: 1/8 turns})!; its \py!rule! is \py!None! and its \py!stored_rule! is \code!_phase_k**2/8 turns!. At \py!Dim("d")! the vector with entry $1\mapsto 1/3$ and rule $k/d$ prints \code!PhaseVector[d]({1: 1/3 turns, k: k/d})!.
+\end{example}
+
+\begin{signature}
+\py!dim: Dim!; \py!length: int | None! ($d-1$ or \py!None!).\\
+\py!entries() -> Mapping[int, Phase]!: a fresh dict of $E$, or of the expanded phases when the rule is read expanded.\\
+\py!rule: Phase | None!: the rule unless read expanded. \py!stored_rule!: the rule as stored.\\
+\py!get(index: int) -> Phase!: $\phi_{\mathit{index}}$, \py!Phase.zero()! at $0$.\\
+\py!at(index: sympy.Expr) -> sympy.Expr!: the turns at a possibly symbolic index, $\sum_{k\in E}\delta_{\mathit{index},k}E(k)+\rho(\mathit{index})$ with SymPy \py!KroneckerDelta!.\\
+\py!weights()!, \py!weight_rule!: as \py!entries()! and \py!rule! for weights. \py!is_weighted!: $W$ nonempty or $\varpi$ present.\\
+\py!weight(index: int) -> Scalar!: $w_{\mathit{index}}$. \py!coefficient(index: int) -> Scalar!: $w_k\cdot$\py!Scalar.from_phase(get(k))!.\\
+\py!weight_at(index: sympy.Expr) -> sympy.Expr!: $\delta_{\mathit{index},0}+(1-\delta_{\mathit{index},0})\bigl(\sum_{k\in W}\delta_{\mathit{index},k}W(k)+(1-\sum_{k\in W}\delta_{\mathit{index},k})\,\varpi(\mathit{index})\bigr)$, with $\varpi=1$ when absent.\\
+\py!from_weights(dim, weights=None, rule=None, expand=True)!: a vector with no phase, the Z-box parameter of the rule \textsc{[P1]} (\cref{ch:rules}).\\
+\py!is_zero!: not weighted and every phase provably $0$. \py!is_concrete!: dimension, every stored phase and weight, and both rules (ignoring \py!INDEX!) free of symbols. \py!free_symbols!: the names of the union of those symbols, \py!INDEX! excluded, computed once.\\
+\py!sympy_symbols() -> frozenset[sympy.Symbol]!: the SymPy symbols (with their assumptions) of the dimension, of the read \py!entries()!, and of the read \py!rule! with \py!INDEX! $:=1$, computed once.
+\end{signature}
+
+\paragraph{Fusion.} \py!__add__(other)! requires equal dimensions (else \py!PhaseDomainError!). The entries add pointwise over the union of indices, and the rules add (one rule is kept when only one exists). When neither vector is weighted, the result carries no weights. Otherwise the weight entries are $\mathit{self}.\mathrm{weight}(k)\cdot\mathit{other}.\mathrm{weight}(k)$ for every index of either weight map, and the weight rules multiply (one is kept when only one exists). The constructor then re-cleans the result.
+
+\paragraph{Substitution.} \py!substitute(mapping)! returns the vector itself when no key names a free symbol. Keys naming a free symbol of the dimension are dimension substitutions: a \py!bool! raises \py!PhaseGrammarError!; a \py!Phase! raises \py!PhaseDomainError!; an \py!int!, or a \py!Rational! of denominator $1$, goes to \py!Dim.substitute!; a non-integral \py!Rational! raises \py!PhaseDomainError!; a SymPy expression with free symbols replaces the symbol in the dimension through \py!Dim.from_sympy!; any other value raises \py!PhaseGrammarError!. Each entry with a free symbol named in the mapping passes \py!Phase.substitute!; the rule passes it with the key \code!_phase_k! removed. Weights and the weight rule pass \py!Scalar.substitute! with the mapping converted by \py!_scalar_mapping! (a \py!Phase! value becomes the scalar of its turns, a non-rational SymPy expression a \py!Scalar!). The constructor rebuilds the vector, so a newly concrete dimension checks every index bound and raises \py!PhaseDomainError! on a violation.
+
+\paragraph{Equality, hash and text.} Two vectors are equal when they are the same object; or have equal dimensions and identical stored data with the same expansion flags; or have equal hashes and equal \emph{read} data (entries, rule, weights, and weight rule as returned by the accessors). The hash is computed once from the dimension, the sorted read entries, the read rule, and, when weighted, the sorted read weights and weight rule. \py!digest()! is the 128-bit BLAKE2b hex digest of \py!repr! (16 bytes), computed once. The texts are
+\begin{lstlisting}[style=grammar]
+repr: PhaseVector(dim=<repr Dim>, entries={<i>: <repr Phase>, ...}[, rule=<repr Phase>]
+      [, weights={<i>: <repr Scalar>, ...}[, weight_rule=<repr Scalar>]])
+str:  PhaseVector[<dim>]({<i>: <phase>, ...[, k: <rule turns with k for _phase_k>]})
+      [ weights{<i>: <w>, ...[, k: <weight rule with k for _phase_k>]}]
+\end{lstlisting}
+with indices ascending; the weights part is present exactly when read weights or a read weight rule exist.
+
+\subsection{Pair phases}\label{sec:algebra-pair-phase}
+
+\begin{definition}[Pair phase]\label{def:algebra-pair-phase}
+A \py!PairPhase! is the phase of a pair-phase node, a node with two ports of dimensions $d$ and $d'$ whose entry at the port values $(x,y)$ is $e^{2\pi i f(x,y)}$. It stores $d$, $d'$ and one \py!Phase! $f$ whose turns read the index symbols \py!INDEX! (\code!_phase_k!, the first port value) and \py!INDEX2! (\code!_phase_k2!, integer, nonnegative, the second port value).
+\end{definition}
+
+\py!PairPhase! subclasses \py!PhaseVector! (its inherited vector part is the empty vector over $d$) and overrides:
+\begin{signature}
+\py!PairPhase(dim: Dim, dim2: Dim, pair: Phase)!: a non-\py!Dim! \code!dim2! raises \py!TypeError!, a non-\py!Phase! \code!pair! raises \py!PhaseGrammarError!.\\
+\py!dim2!, \py!pair!; \py!at_pair(x, y) -> sympy.Expr!: the turns of $f$ with \py!INDEX! $:=x$, \py!INDEX2! $:=y$.\\
+\py!free_symbols!, \py!sympy_symbols()!: the symbols of both dimensions and of $f$, both index symbols excluded. \py!is_zero!: the turns of $f$ are the literal $0$. \py!is_concrete!: no free symbol.\\
+\py!__add__(other)!: \py!PairPhase(d, d', f + f')!; an operand that is not a pair phase over the same two dimensions raises \py!PhaseDomainError("a pair phase adds only to a pair phase over the same dims")!.\\
+\py!substitute(mapping)!: itself when no key names a free symbol; else, with the keys \code!_phase_k! and \code!_phase_k2! removed, each dimension substituted as the dimension of an empty \py!PhaseVector! and $f$ through \py!Phase.substitute!.\\
+\py!__eq__!: equal dimensions and equal $f$; against a plain \py!PhaseVector! \py!False!. \py!__hash__!: \py!hash(("pair", d, d', f))!. \py!digest()!: BLAKE2b (16 bytes) of \py!repr!, not cached.\\
+\py!__repr__!: \code!PairPhase(dim=<repr d>, dim2=<repr d'>, pair=<repr f>)!; \py!__str__!: \code!PairPhase[<d>, <d'>]({x, y: <f with x, y for the indices>})!.
+\end{signature}
+
+\section{Exact Scalars}\label{sec:algebra-scalar}
+
+The module \module{archytaszx.algebra.scalar} represents the exact complex numbers that diagrams, rules, and contractions produce: Gaussian rationals, roots of unity $\omega_d^j=e^{2\pi i j/d}$ with a possibly symbolic dimension $d$ and a possibly symbolic index $j$, bare dimension factors (a contracted loop gives a factor $d$), rational powers of dimensions such as $d^{-1/2}$, algebraic numbers, free scalar symbols, and index sums $\sum_{k=0}^{d-1}$. Scalars are closed under sum, product, integer power, and complex conjugation.
+
+\subsection{Grammar}
+
+\begin{definition}[Scalar grammar]\label{def:algebra-scalar-grammar}
+A \term{scalar expression} is a SymPy expression generated by
+\begin{lstlisting}[style=grammar]
+s ::= number | I | named constant | CRootOf(p, i) | symbol
+    | s + s | s * s | s ** s | exp(s) | conjugate(s)
+    | Sum(s, (k, 0, D - 1), ...) | ModDelta(s, s) | ModGcd(s, s) | ModResidue(s, s)
+\end{lstlisting}
+where a number is a SymPy \py!Number! other than a \py!Float!, a named constant is a SymPy \py!NumberSymbol! ($\pi$, $e$, \ldots), a symbol has an identifier name, and in every \py!Sum! each limit $(k,l,u)$ has a symbol $k$ with the assumptions \code!integer! and \code!nonnegative!, the lower bound $l=0$, and an upper bound with $u+1$ a dimension expression (\cref{def:algebra-dim-grammar}). A transcendental head such as \py!log! or \py!sin! is outside the grammar. The check \py!_check_scalar_domain! raises \py!ScalarGrammarError! for a head outside the grammar and \py!ScalarSumError! for a malformed sum; it memoizes the \py!ModDelta! nodes it accepted.
+\end{definition}
+
+\subsection{The arithmetic atoms}
+
+Three SymPy functions extend the grammar with exact integer-valued atoms. Each has two arguments and evaluates on construction by the rules below; a rule that returns nothing keeps the call unevaluated.
+
+\begin{definition}[Delta]\label{def:algebra-moddelta}
+\py!ModDelta(j, m)!, written $[j\equiv 0 \bmod m]$, is $1$ when $m$ divides the integer $j$ and $0$ otherwise, for a positive integer modulus $m$. SymPy assumptions: \code!integer!, \code!nonnegative!. Evaluation:
+\begin{enumerate}
+\item If $m$ is an integer other than $1$, $j$ has free symbols, and $j$ is an integer polynomial in symbols (\cref{def:algebra-integer-terms}): return the value or canonical delta of \cref{def:algebra-delta-canon} computed on its terms.
+\item Otherwise expand $j$. Return $1$ when $j=0$ or $m=1$. When $j$ and $m$ are integers, return $[m\mid j]$.
+\item For a symbolic $m$: return $1$ when \py!cancel(j/m).is_integer! is \py!True!; return $0$ when the \emph{off-factor} test holds: some $g$ with $2\le g\le\min(a,64)$ ($a$ the integer factor of $m$, $64$ the constant \py!_OFF_FACTOR_MAX!) divides $a$ and every non-constant term of $j$ (\py!cancel(rest/g).is_integer!) but not the integer constant of $j$; when $j$ is a sum, drop each term $t$ with $t/m$ provably an integer and rebuild.
+\item When $m=$\,\py!ModGcd(c, M)! with an integer $c$: reduce $j$ modulo $c$ (\py!_reduce_mod!), take the canonical residue; return $1$ when it is $0$, else the unevaluated delta of the residue when it differs from the argument.
+\item Otherwise replace $j$ by its canonical residue (\cref{def:algebra-delta-canon}) when that differs.
+\end{enumerate}
+At a symbolic modulus the outcome is memoized in \py!_SYMBOLIC_DELTAS! by $(j,m)$ (capacity $2^{13}$). The quotients $j/m$ and $t/m$ of steps 3 are SymPy's plain quotient when both are products of rationals, symbols, and integer powers of symbols, and \py!sympy.cancel! of the quotient otherwise (\py!_ratio!).
+\end{definition}
+
+\begin{definition}[Integer terms]\label{def:algebra-integer-terms}
+\py!_integer_terms(e)! reads an expression built from symbols and integers by sums, products, and nonnegative integer powers as a map from monomials (frozen sets of (symbol, exponent) pairs) to nonzero integer coefficients, and returns \py!None! for any other expression. \py!_terms_expr! rebuilds the SymPy sum from such a map, the symbols of each monomial in name order, through SymPy's unevaluated \py!Add! and \py!Mul!. Results on sums are memoized.
+\end{definition}
+
+\begin{definition}[Canonical residue of a delta]\label{def:algebra-delta-canon}
+The delta $[j\equiv 0\bmod m]$ equals $[-j\equiv 0\bmod m]$, and for an integer $m$ the coefficients of $j$ matter only modulo $m$. The \term{canonical residue} of $j$ is computed by \py!_canonical_residue!:
+\begin{enumerate}
+\item form the two candidates $\mathrm{expand}(j)$ and $\mathrm{expand}(-j)$;
+\item for an integer $m$, take every integer coefficient of each candidate into the interval $(-m/2,m/2]$ and drop zero terms; for a symbolic $m$, move every term $q\,m$ with $q$ a non-integer rational to $(q-\lfloor q\rfloor)\,m$;
+\item keep the candidates for which SymPy's \py!could_extract_minus_sign! is false (both, when neither qualifies);
+\item return the least kept candidate under \py!sympy.default_sort_key!.
+\end{enumerate}
+For an integer polynomial $j$ at an integer $m$ the module computes the same choice from the terms (\py!_canonical_terms!, \py!_canonical_choice!): when the reduced $+j$ and $-j$ coincide, that one; when the counts of negative coefficients decide \py!could_extract_minus_sign! (one term: its sign; several terms: more than half negative), the one without an extractable sign; otherwise the least under the sort key. When the reduced terms are empty the delta is $1$; when only a constant $c$ remains it is $[m\mid c]$.
+\end{definition}
+
+\begin{definition}[Greatest common divisor]\label{def:algebra-modgcd}
+\py!ModGcd(c, m)! is $\gcd(c,m)$ for an integer $c$ and a positive integer $m$. Assumptions: \code!integer!, \code!positive!. Evaluation: both integers give $\gcd(c,m)$; $c=\pm 1$ or $m=1$ gives $1$; $c=0$ gives $m$; a negative integer $c$ gives \py!ModGcd(-c, m)!; an integer $c$ with $m=$\,\py!ModGcd(c', M)!, $c'$ an integer, gives \py!ModGcd(gcd(c, c'), M)!; an integer $c$ with $m$ integer-valued gives $\gcd(c,\rho)$ when the residue $\rho$ of $m$ modulo $c$ (\py!_reduce_mod!) is an integer.
+\end{definition}
+
+\begin{definition}[Residue]\label{def:algebra-modresidue}
+\py!ModResidue(x, m)!, written $x\bmod m$, is the residue in $[0,m)$ of an integer $x$ for a concrete modulus $m\ge 1$. Assumptions: \code!integer!, \code!nonnegative!. Evaluation, only for an integer $m\ge 1$: $m=1$ gives $0$; an integer $x$ gives $x\bmod m$; otherwise every term $c\cdot r$ of the expanded $x$ must have an integer coefficient $c$ and an integer-valued $r$ (else the call stays); a term $c\cdot(y\bmod m')$ with $m\mid c\,m'$ is read as $c\cdot y$; every coefficient is taken modulo $m$; an integer result is reduced, and a changed one is rebuilt.
+\end{definition}
+
+The helper \py!_reduce_mod(e, m)! takes every integer coefficient of a polynomial $e$ (in its free symbols, sorted by name) into $(-m/2,m/2]$; it freezes every \py!ModResidue! atom to an integer symbol \code!_frozen<i>! first and restores it after, returns a non-polynomial or non-integer-coefficient $e$ unchanged, and reduces an integer constant the same way.
+
+\subsection{Normalization}
+
+\begin{algorithm}[Scalar normalization, \texttt{\_normalize}]\label{alg:algebra-scalar-normalize}
+Every \py!Scalar! constructor calls \py!sympify! and then:
+\begin{enumerate}
+\item Return the memoized result for the same argument if present.
+\item Raise \py!ScalarGrammarError! when a \py!Float! occurs anywhere outside the frequency of a flat delta (a \py!ModDelta! with an integer modulus whose frequency is a flat polynomial: integers, symbols, positive integer powers of symbols, products and sums of these).
+\item Replace every $\cos(q\pi)$ and $\sin(q\pi)$ with rational $q$ by $(z+z^{-1})/2$ and $(z-z^{-1})/(2i)$ for $z=e^{iq\pi}$ (\py!cyclotomic_trig!, public).
+\item Expand with \py!sympy.expand! (skipped when the expression is already a sum of products of integers, symbols, flat deltas, and their positive integer powers), distributing products over sums and folding rational and Gaussian-rational arithmetic.
+\item Apply \py!sympy.powsimp(..., force=True)!, which combines $e^ae^b$ into $e^{a+b}$; the identity holds unconditionally because $\exp$ is entire.
+\item Rename the bound indices (\cref{def:algebra-rename}).
+\item Check the grammar (\cref{def:algebra-scalar-grammar}) and memoize.
+\end{enumerate}
+\end{algorithm}
+
+\begin{definition}[Index renaming]\label{def:algebra-rename}
+\py!_rename_indices! gives every bound summation index a name fixed by its binder depth. Let $o$ be one more than the largest $n$ of a free symbol named \code!_k<n>!, or $0$ when there is none. A limit at position $p$ of a \py!Sum! enclosed by $\ell$ enclosing limits is named \code!_k<l+p+o>!. Two alpha-equivalent subexpressions therefore carry identical names wherever they occur, and sibling sums that differ only in a bound name cancel. An expression without a \py!Sum!, or one already named this way, is returned unchanged.
+\end{definition}
+
+\subsection{The class \texttt{Scalar}}\label{sec:algebra-scalar-api}
+
+\begin{signature}
+\py!class Scalar!: immutable, hashable, one slot \py!_expr! (the normalized expression).\\
+\py!Scalar(expr)!: \cref{alg:algebra-scalar-normalize}. \py!Scalar.zero()!, \py!Scalar.one()!.\\
+\py!Scalar.rational(p: int, q: int = 1)!: $p/q$; a \py!bool! or non-\py!int! raises \py!ScalarGrammarError!, $q=0$ raises \py!ScalarDomainError!.\\
+\py!Scalar.gaussian_rational(real, imag)!: $\mathit{real}+i\,\mathit{imag}$, each an \py!int! or \py!Rational! (else \py!ScalarGrammarError!).\\
+\py!Scalar.omega(dim: Dim, index: int | sympy.Expr = 1)!: $\exp(2\pi i\,\mathit{index}/d)$; at a concrete $d$ an integer index is first reduced modulo $d$. A \py!bool! or other index type raises \py!ScalarGrammarError!.\\
+\py!Scalar.from_dim(dim)!: the value $d$. \py!Scalar.dim_power(dim, numerator, denominator=1)!: $d^{p/q}$ (\py!ScalarGrammarError! for non-\py!int!, \py!ScalarDomainError! for $q=0$).\\
+\py!Scalar.symbol(name)!: a free complex scalar symbol; a reserved name raises \py!ScalarGrammarError!.\\
+\py!Scalar.from_phase(phase)!: $e^{i\cdot}$\py!phase.to_radians()!.\\
+\py!Scalar.index_sum(dim, body: Callable[[Scalar], Scalar])!: $\sum_{k=0}^{d-1}\mathit{body}(k)$, unevaluated (\cref{sec:algebra-index-sum}).\\
+\py!simplify(*, max_steps=1024, ranges: Mapping[str, Dim] | None = None, enumerate_concrete=True, split_carries=False)!: \cref{sec:algebra-simplify}.\\
+\py!with_dimension_floors(floors: Mapping[str, int])!: every delta $[s\mid c]$ (frequency a nonzero integer $c$, modulus a symbol $s$) with $|c|<\mathit{floors}[s]$ replaced by $0$.\\
+\py!to_sympy()!, \py!is_concrete!, \py!free_symbols: frozenset[str]!.\\
+\py!is_zero!, \py!is_one!: the expression is the literal $0$, $1$ (false when unverified).\\
+\py!is_provably_nonzero!: concrete, and \py!sympy.N(expr, 30, strict=True)! is nonzero; false when symbolic, or when evaluation raises \py!PrecisionExhausted!, \py!TypeError! or \py!ValueError!.\\
+\py!+!, \py!-!, unary \py!-!, \py!*!: exact, normalized; a non-\py!Scalar! operand returns \py!NotImplemented!.\\
+\py!__pow__(exponent: int)!: exact integer power; a non-\py!int! or \py!bool! raises \py!ScalarGrammarError!; zero to a negative power raises \py!ScalarDomainError!.\\
+\py!conjugate()!: $\overline{s}$ through \py!sympy.conjugate! ($\omega_d^j\mapsto\omega_d^{-j}$).\\
+\py!substitute(mapping)!: keys are names or bare-symbol scalars; values \py!int!, \py!Rational! or \py!Scalar!; a key naming a bound index raises \py!ScalarSumError!; keys naming no free symbol are ignored; dimension symbols and scalar symbols are substituted alike.\\
+\py!to_complex()!: \py!complex(expr)!; \py!ScalarDomainError! when symbolic.\\
+\py!__repr__!: \code!Scalar(<expr>)!; when printing raises \py!ValueError! (Python's limit on the digits of an integer converted to text), every rational too long to print is written as the symbol \code!_int_<P>_<Q>!, $P$ and $Q$ the first 32 hex digits of the SHA-256 of the signed big-endian bytes of its numerator and denominator. \py!__str__!: \code!<expr>!.
+\end{signature}
+
+Two public helpers read polynomials from SymPy's sparse dictionary without building a dense \py!Poly!: \py!poly_terms(expr, gens)! returns the nonzero (exponent tuple, coefficient) terms in descending exponent order, \code![((0,...,0), 0)]! for the zero polynomial, and \py!None! when \code!expr! is not a polynomial in \code!gens!; \py!poly_coeffs(expr, gens)! returns the coefficients that \py!sympy.Poly(expr, *gens).coeffs()! returns, in the coefficient domain SymPy constructs, and raises as \py!Poly! does. The module uses \py!poly_terms! wherever it reads a polynomial's terms; the semantics layer imports it (\cref{ch:semantics}).
+
+\begin{example}
+\py!Scalar.omega(Dim(4), 5)! is \code!I!; \py!Scalar.omega(Dim("d")).conjugate()! is \code!exp(-2*I*pi/d)!; \py!Scalar.dim_power(Dim("d"), -1, 2)! is \code!1/sqrt(d)!.
+\end{example}
+
+\subsection{Index sums}\label{sec:algebra-index-sum}
+
+\py!Scalar.index_sum(dim, body)! calls \code!body! on the scalar of the placeholder symbol \code!_kbound! (integer, nonnegative); a non-\py!Scalar! return value raises \py!ScalarSumError!. It then names the index \code!_k<n>! for $n$ one more than the largest \code!_k! index of the body (or $0$), replaces the placeholder, and returns the scalar of $\sum_{\mathtt{\_k<n>}=0}^{d-1}\mathit{body}$. Normalization renames the index by depth (\cref{def:algebra-rename}). Every call uses the same placeholder; a body that itself calls \py!index_sum! and reads the outer index in the inner body has both indices replaced by the inner one.
+
+\begin{example}\label{ex:algebra-character}
+For a dimension symbol $d$ and an integer symbol $j$, \py!Scalar.index_sum(d, lambda k: Scalar.omega(d, k.to_sympy()*j))! is \code!Sum(exp(2*I*pi*_k0*j/d), (_k0, 0, d - 1))!, and its \py!simplify()! is \code!d*ModDelta(j, d)!: the character-sum identity.
+\end{example}
+
+\section{Simplification of Scalars}\label{sec:algebra-simplify}
+
+\py!Scalar.simplify! closes every index sum that its identities reach, puts the remaining deltas in echelon form, and splits residue cases of dimension symbols. It is sound: the result denotes the same number for every value of the free symbols in their domains. It is incomplete: a sum outside the reach of the identities stays as a \py!Sum!.
+
+\subsection{Entry point, budget and memoization}
+
+\begin{signature}
+\py!Scalar.simplify(*, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS, ranges: Mapping[str, Dim] | None = None, enumerate_concrete: bool = True, split_carries: bool = False) -> Scalar!\\
+\py!DEFAULT_MAX_SIMPLIFY_STEPS = 1024!.
+\end{signature}
+
+\begin{itemize}
+\item \code!ranges! sizes free indices: an entry \code!name! $\mapsto D$ declares that the free engine index \code!name! (rebuilt as an integer nonnegative symbol) ranges over $\{0,\ldots,D-1\}$. Free indices arise when a contraction is simplified in pieces (\cref{ch:semantics}).
+\item \code!enumerate_concrete! false leaves a sum that no identity closes unexpanded even when its range is concrete.
+\item \code!split_carries! true enables the carry splitting of deltas outside every sum (\cref{sec:algebra-simplify-radix}) and the parity echelon and symbolic pivots of \cref{sec:algebra-simplify-residues}; the comparison of symbolic tensors in \cref{ch:semantics} sets it. It travels through the context variable \py!_CARRIES!.
+\item The step budget is one counter shared by the whole call. The outer fixpoint (\cref{alg:algebra-simplify}) spends one step per round and \py!_close_all! one step per \py!Sum! node it visits; when the counter falls below zero, \py!ScalarBudgetError! with the message \code!simplification exceeded its step budget; the expression is left unsimplified! is raised.
+\item Results are memoized in \py!_SIMPLIFIED! under the key (expression, \code!max_steps!, ranges in their given order, \code!enumerate_concrete!, \code!split_carries!); a budget failure is memoized as its message and raised again on a repeated call.
+\item The flag \code!enumerate_concrete! travels through a context variable, \py!_ENUMERATE!, reset on exit.
+\end{itemize}
+
+\begin{algorithm}[\texttt{\_simplify\_expr}]\label{alg:algebra-simplify}
+Input: the expression with indices renamed (\cref{def:algebra-rename}), the budget, and the ranges. Repeat:
+\begin{enumerate}
+\item Spend one step.
+\item Collapse residues (\cref{sec:algebra-simplify-residues}).
+\item Split radix deltas (\cref{sec:algebra-simplify-radix}); note whether this changed the expression.
+\item Close sums bottom-up (\py!_close_all!, \cref{alg:algebra-close-all}); note whether a sum closed.
+\item Reduce integer phases and canonicalize the top-level terms (\cref{sec:algebra-simplify-canon}).
+\item Expand, apply \py!powsimp(force=True)!, and pull constants out of sums (\cref{sec:algebra-simplify-canon}).
+\item Stop when neither step 3 nor step 4 changed the expression.
+\end{enumerate}
+Finally split residue cases (\cref{sec:algebra-simplify-cases}). \py!simplify! renames the indices of the result again and builds a \py!Scalar! from it.
+\end{algorithm}
+
+\begin{algorithm}[\texttt{\_close\_all}]\label{alg:algebra-close-all}
+For an expression without a \py!Sum! outside flat deltas, return it unchanged. Otherwise recurse into the arguments (for a \py!Sum!, into its summand only), with the ranges of a \py!Sum! node extended by each of its limits $(k,0,u)\mapsto u+1$. Rebuild the node. If the node is a \py!Sum!, spend one step and replace it by \py!_close_sum!(node, ranges of the enclosing context) when that returns a value. Report whether anything changed.
+\end{algorithm}
+
+\begin{algorithm}[\texttt{\_close\_sum}]\label{alg:algebra-close-sum}
+Let the limits be $(k_1,0,u_1),\ldots$ and the summand $f$.
+\begin{enumerate}
+\item Expand $f$, apply \py!powsimp(force=True)!, expand again, and split it into terms.
+\item Reduce each term over all limits (\py!_reduce_term!, \cref{alg:algebra-reduce-term}). If any term changed, return the sum of the reduced terms.
+\item Otherwise, if enumeration is on and some limit has a concrete size $u+1$, choose the limit of least size (on a tie, the last such limit), substitute each value $0,\ldots,u$ for its index in the original summand $f$, add the results, and keep the other limits on the sum. Else return nothing.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[\texttt{\_reduce\_term}]\label{alg:algebra-reduce-term}
+Input: one product term $t$, the limits $\Lambda$ of the indices over which it is summed, and the ranges. Results are memoized in \py!_REDUCED! (capacity $2^{12}$) under (term, limits, ranges in order).
+\begin{enumerate}
+\item With no limits return $(t,\text{false})$.
+\item If some limits bind indices absent from $t$, multiply $t$ by the product of their sizes and drop them (\emph{unused indices}).
+\item Otherwise try, in order, and take the first that applies: the delta step (\cref{sec:algebra-simplify-delta}), the character step, the Gauss step (\cref{sec:algebra-simplify-characters}), the radix-merge step, the delta-expansion step (\cref{sec:algebra-simplify-merge}), and the case step (\cref{sec:algebra-simplify-cases}).
+\item When none applies return $(\sum_\Lambda t,\text{false})$.
+\item Otherwise the step returns a closed expression and the remaining limits. Expand it, apply \py!powsimp(force=True)!, expand, reduce each term recursively over the remaining limits, and return the sum with true.
+\end{enumerate}
+\end{algorithm}
+
+Throughout, $N$ denotes the size $u+1$ of the limit under consideration, and a summand factor $e^{2\pi i\,x}$ is read as $\omega_N^{xN}$.
+
+\subsection{Periodicity}\label{sec:algebra-simplify-periodic}
+
+Several steps require that a factor is periodic in an index.
+
+\begin{definition}[Provable periodicity]\label{def:algebra-periodic}
+\py!_is_periodic_in(e, v, N)! returns true only when $e$, read as a function of the integer $v$, provably has period $N$:
+\begin{itemize}
+\item $e$ free of $v$;
+\item $e=\exp(x)$ with $xN/(2\pi i)$ a polynomial in $v$ whose $v$-dependent coefficients are integers (\py!_integer_slope!);
+\item $e=x\bmod m$ with $x=cv+r$ linear and $cN/m$ an integer;
+\item $e=[F\equiv 0\bmod M]$ with $v$ not in $M$, and either $M\mid N$ (\py!_divides!: $M=N$, or $M=\gcd(\cdot,N)$, or $N/M$ provably an integer) and $F$ of integer slope in $v$, or $F$ linear in $v$ of slope $c$ with $cN/M$ an integer;
+\item a sum or product of periodic factors; a power with exponent free of $v$ and a periodic base; the conjugate of a periodic factor; a \py!Sum! whose limits neither bind $v$ nor read it in an upper bound, with a periodic summand.
+\end{itemize}
+Every other expression answers false, which only withholds a closure.
+\end{definition}
+
+\subsection{Pinning an index by a delta}\label{sec:algebra-simplify-delta}
+
+The \emph{delta step} (\py!_delta_step!) removes one bound index $u$ of size $N$ that a delta factor pins. Let the term be $[F\equiv 0\bmod M]\,g$ (or a positive power of the delta), with $F=cu+r$ linear in $u$, $c$ a nonzero integer, $r$ integer-valued and free of the indices bound inside $g$. Let $s\in\{\pm1\}$ be the \emph{unit sign} of $c$ modulo $M$ when $c\equiv s \pmod M$ (\py!_unit_sign!: $c=\pm1$, or $c\bmod M\in\{1,M-1\}$ for an integer $M>1$), and $v=-s\,r$. The factors and limits are tried in order, and the first applicable case returns. The reduced term omits the limit of $u$.
+
+\paragraph{Case A: $M$ does not provably divide $N$.} Try the \emph{wrap pin}: for concrete $M$ and $N$ with $N\mid M$ and $c$ a unit,
+\begin{equation}
+\sum_{u<N}[cu+r\equiv 0\bmod M]\,g(u)=g(\bar v)\,[c\bar v+r\equiv 0\bmod M],\qquad \bar v=v\bmod N,
+\end{equation}
+the delta dropped when $N=M$. Else, when $s$ exists, try the \emph{window pin} with the ranges of the context and of the other limits: for $N\le M$ (provably) and bounds $[\lambda,\gamma]$ of $v$ (\cref{def:algebra-bounds}): $[\lambda,\gamma]\subseteq[0,N)$ gives $g(v)$; $\subseteq[-M,N-M)$ gives $g(v+M)$; $\subseteq[N-M,0)$ or $\subseteq[N,M)$ gives $0$. Containment is decided by \py!_nonnegative! (\cref{def:algebra-nonnegative}). Otherwise skip this limit.
+
+\paragraph{Case B: $M\mid N$ but $g$ is not provably $M$-periodic in $u$.} Require $s$ and $M=N$ exactly. If the bounds of $v$ lie in $[0,N-1]$, return $g(v)$. Otherwise try the wrap pin, then the \emph{corner pin}: when $\lambda=-1$ and $\gamma\le N-1$ (shift $+N$), or $\lambda\ge 0$ and $\gamma=N$ (shift $-N$), the out-of-range value occurs only at one corner $E$ of the ranges (\cref{def:algebra-bounds}), and
+\begin{equation}
+\sum_{u<N}[u\equiv v\bmod N]\,g(u)=(1-E)\,g(v)+E\,g(v\pm N);
+\end{equation}
+for a constant $v$ the result is $g(v\pm N)$.
+
+\paragraph{Case C: $M\mid N$ and $g$ is $M$-periodic in $u$.} Then
+\begin{equation}
+\sum_{u<N}[cu+r\equiv 0\bmod M]\,g(u)=\frac{N}{M}\sum_{u\in\Zd{M}}[cu+r\equiv 0\bmod M]\,g(u),
+\end{equation}
+and with $\tilde g=(N/M)\,g$:
+\begin{enumerate}
+\item $c$ a unit of sign $s$: $\tilde g(-s r)$.
+\item $M$ concrete (\py!_solve_congruence!): let $c'=c\bmod M$, $G=\gcd(c',M)$, $\sigma=M/G$, and $\iota=(c'/G)^{-1}\bmod\sigma$ (with $\iota=0$ when $\sigma=1$). For an integer $r$: $0$ when $G\nmid r$, else $\sum_{t<G}\tilde g(b+t\sigma)$ with $b=(-(r/G)\iota)\bmod\sigma$. For a symbolic $r$: $[r\equiv 0\bmod G]\sum_{t<G}\tilde g(-r\iota/G+t\sigma)$.
+\item $M$ symbolic and $g$ free of $u$: $\tilde g\cdot G\cdot[r\equiv 0\bmod G]$ with $G=$\,\py!ModGcd(c, M)!.
+\item $M$ symbolic with a known residue modulo $|c|$ (\py!_residue_roots!): let $C=|c|\ge 2$, $\rho=M\bmod C$ an integer, $e=\gcd(C,\rho)$, $C'=C/e$, $M'=M/e$. The inverse of $C'$ modulo $M'$ is $1$ when $C'=1$, else $(1+M'y_0)/C'$ with $y_0=-(\rho/e)^{-1}\bmod C'$. The root is $\mathit{target}\cdot\mathit{inverse}/e$ with $\mathit{target}=-r$ for $c>0$ and $r$ for $c<0$, and the result is $[r\equiv 0\bmod e]\sum_{t<e}\tilde g(\mathit{root}+tM')$. The factor $[r\equiv 0\bmod e]$ is the \term{guard} of the pin: the solutions exist only where it holds.
+\end{enumerate}
+
+\begin{definition}[Bounds and corners]\label{def:algebra-bounds}
+\py!_bounds(e, ranges)! returns $(\lambda,\gamma)$, the least and greatest value of an integer-linear $e=\sum_v c_vv+e_0$ over indices $v\in[0,R_v)$ sized by the ranges: $\lambda=e_0+\sum_{c_v<0}c_v(R_v-1)$, $\gamma=e_0+\sum_{c_v>0}c_v(R_v-1)$; an integer $e$ free of ranged indices is its own bounds. The coefficients $c_v$ are read, in order of trial, as the integer coefficients of an integer-linear form in all symbols, as integer coefficients of the ranged indices with an integer rest free of them (\py!_linear_over!), or as integer-valued coefficients free of the ranged indices and of known sign (\py!_signed_linear_over!; a nonnegative coefficient contributes to $\gamma$, a nonpositive one to $\lambda$). Any other $e$, or an index without a range, gives \py!None!. \py!_extreme(e, ranges, top)! is the product $\prod_v[v-x_v\equiv 0\bmod R_v]$ of deltas that hold every index at the value $x_v$ that maximizes ($\mathit{top}$) or minimizes $e$ ($x_v=R_v-1$ when $c_v>0$ matches $\mathit{top}$, else $0$), in name order: the indicator of that corner.
+\end{definition}
+
+\begin{definition}[Relaxed nonnegativity]\label{def:algebra-nonnegative}
+\py!_nonnegative(e)! is true when SymPy finds the expanded $e$ nonnegative, or when, after replacing every power $b^x$ ($b\ge 2$ an integer, $x$ symbolic and nonnegative) by $1+y$ for a fresh nonnegative symbol \code!_y<n>!, the result is a number $\ge 0$ or a polynomial in the $y$ with nonnegative coefficients; when other symbols remain, the answer is SymPy's nonnegativity of the relaxed expression.
+\end{definition}
+
+\subsection{Characters and Gauss sums}\label{sec:algebra-simplify-characters}
+
+\paragraph{Character step.} \py!_character_step! closes an index $u$ read only through $\omega_N$ powers. \py!_split_term! writes the term as $K\cdot\omega_N^{ju+o}$: every $u$-dependent factor must be an \py!exp!; their arguments are added (not combined by \py!powsimp!), and the ratio $\mathrm{argument}\cdot N/(2\pi i)$ must be a polynomial of degree at most one in $u$ with a $u$-free slope $j$. Then
+\begin{equation}\label{eq:algebra-character}
+\sum_{u=0}^{N-1}\omega_N^{ju+o}=\omega_N^{o}\,N\,[j\equiv 0\bmod N]
+\end{equation}
+when $j$ is integer-valued. When $j$ is not provably an integer but $j=X/t$ with $X$ an integer polynomial in integer symbols, a delta factor $[Y\equiv 0\bmod t']$ of the term with $t\mid t'$, and $X\equiv \ell Y \pmod t$ coefficientwise for a unit $\ell$ (so $X/t$ is an integer wherever the term is nonzero), and $N$ is concrete, the result is $\omega_N^{o}\,N\,[X\equiv 0\bmod tN]$ (\py!_carried_frequency!).
+
+\paragraph{Gauss step.} \py!_gauss_step! closes an index $u$ read through $\omega_N^{au^2+bu+c}$ with a nonzero integer $a$ and an integer-valued $b$ (degree exactly two), times a $u$-free factor $K$. For $a=s\in\{\pm1\}$, completing the square with $h=b/2$ uses $s u^2+2hu+c=s(u+sh)^2-sh^2+c$ and the quadratic Gauss sum~\cite{berndt1998gauss}:
+\begin{equation}
+\sum_{u=0}^{N-1}\omega_N^{su^2+bu+c}=K\,\omega_N^{c-sh^2}\,\frac{\sqrt N\,(1+si)}{2}\cdot\begin{cases}1+(si)^{-N}, & h\in\Z,\\ 1+(si)^{-N}(-1)^{b}, & h\notin\Z.\end{cases}
+\end{equation}
+For $|a|\ge 2$ the step applies the Landsberg--Schaar reciprocity~\cite{landsberg1893gauss,berndt1998gauss} (\py!_reciprocal_gauss!):
+\begin{equation}
+\sum_{u=0}^{N-1}\omega_N^{au^2+bu}=\sqrt{\frac{N}{2|a|}}\;\frac{1\pm i}{\sqrt2}\;\omega_N^{-b^2/(4a)}\sum_{n=0}^{2|a|-1}e^{-2\pi i\,(Nn^2+2bn)/(4a)},
+\end{equation}
+with $1+i$ for $a>0$ and $1-i$ for $a<0$; the result is multiplied by $K\,\omega_N^{c}$. The dual sum has $2|a|$ concrete terms.
+
+\begin{example}
+\py!index_sum(Dim(5), lambda k: omega(Dim(5), k**2)).simplify()! is \code!sqrt(5)!. At a symbolic $d$ the same sum simplifies to \code!(-1)**(d + 1/2)*I**d*sqrt(d)/2 + sqrt(d)*(-I)**d/2 + sqrt(d)/2 + I*sqrt(d)/2!.
+\end{example}
+
+\subsection{Merging indices and expanding deltas}\label{sec:algebra-simplify-merge}
+
+\paragraph{Radix merge.} \py!_radix_step! merges two bound indices $a$ (size $R_a$) and $b$ (size $R_b$) that the term reads only through $aR_b+b$: for an ordered pair $(a,b)$ of distinct limits both read by the term, with $R_b$ symbolic, $a$ not in $R_b$ and $b$ not in $R_a$, substitute $b:=w-aR_b$ for a fresh engine index $w$ (\code!_k<n>!, $n$ one more than the largest reserved index of the whole sum); when $a$ disappears, the pair of limits becomes one limit $w\in[0,R_aR_b)$, appended after the remaining limits.
+
+\paragraph{Delta expansion.} \py!_expand_delta! closes an index that a delta with a concrete modulus $m\ge 2$ pins when the other steps fail: for a delta factor $[F\equiv0\bmod m]$ and a limit $u$ read by $F$ with $m\mid N$, $F$ of integer slope in $u$, and the rest $g$ periodic in $u$ with period $N$, expand
+\begin{equation}
+[F\equiv 0\bmod m]=\frac1m\sum_{j=0}^{m-1}e^{2\pi i\,jF/m},
+\end{equation}
+reduce each term of the expanded $g\cdot(\ldots)$ over all limits, and accept the result when $u$ occurs in it neither free nor bound. The result carries no remaining limits.
+
+\subsection{Residue cases}\label{sec:algebra-simplify-cases}
+
+\paragraph{Case step.} \py!_case_step! closes a delta stuck on the residue of a dimension. Its candidates $(d,L)$ come from delta factors $[cu+r\equiv 0\bmod M]$ linear in a bound $u$: when $M=$\,\py!ModGcd(L, C)! with an integer $L$, the period is $L$ and the carrier $C$; when $M$ is symbolic and $|c|\ge 2$, the period is $|c|$ and the carrier $M$. The carrier must have exactly one free symbol $d$, integer-valued and neither an engine index nor a case symbol, and $L\ge 2$. For each candidate in order, with a fresh case symbol $q$ (\code!_q<n>!, the least $n$ unused): for $\rho=0,\ldots,L-1$ substitute $d:=Lq+\rho$ in the term, the upper bounds, and the ranges; expand; reduce each term; substitute back $q:=(d-\rho)/L$; and form $[d-\rho\equiv0\bmod L]\cdot(\ldots)$. When some case closed an index, the sum of the cases is the result, with no remaining limits.
+
+\paragraph{Final case split.} \py!_split_cases! runs after the fixpoint of \cref{alg:algebra-simplify}. It collects, from every delta atom $[p(d)\equiv0\bmod L]$ with a concrete $L\ge 2$, a frequency $p$ that is an integer polynomial in one integer symbol $d$ (not an engine index or case symbol), the least common multiple $P_d$ of the moduli per symbol. With no such delta it returns the expression. Otherwise it takes the symbol $d$ of least name and, for $\rho=0,\ldots,P_d-1$, substitutes $d:=P_dq+\rho$ (fresh $q$) in the expression and the ranges, renames indices, simplifies the case recursively with the same budget (\cref{alg:algebra-simplify}), drops a zero case, substitutes back, and multiplies by $[d-\rho\equiv0\bmod P_d]$. It returns the expanded sum of the cases. These deltas are the \term{residue guards} of the result: a value of $d$ reads exactly one case.
+
+\subsection{Radix splitting of deltas}\label{sec:algebra-simplify-radix}
+
+\py!_split_radix_deltas! replaces every delta by \py!_radix_split! of it, with each bound index of an enclosing sum sized by its limit; when that fails, a delta outside every sum, with \code!split_carries! on, is replaced by \py!_carry_split! of it (below); otherwise the delta stays. Results are memoized in \py!_RADIX! by the delta, the ranges of its symbols, and whether carry splitting applied. Divisors are enumerated by \py!sympy.divisors!. The splitting rests on
+\begin{equation}
+[tA+B\equiv 0\bmod Pt]=[B\equiv0\bmod t]\,[A\equiv 0\bmod P]\qquad\text{when }|B|<t.
+\end{equation}
+
+\paragraph{Symbolic modulus.} The modulus must be a product of at least two factors, $M=a\cdot S$ with $a$ its integer factor. The candidates $t$ (\py!_radix_moduli!) are, in order: each non-integer factor of $M$; $c\cdot S$ for each divisor $2\le c<a$ of $a$ (when $a>2$), ascending; each divisor $c\ge 2$ of $a$, from $a$ down. For each $t$, split the expanded frequency into the carry $A$ (the sum of $\mathit{piece}/t$ over pieces that $t$ divides with denominator $1$) and the digit $B$ (the other pieces), with $P=M/t$. When $B=0$ the result is $[A\equiv 0\bmod P]$. Otherwise let $(\lambda,\gamma)$ be the bounds of $B$ (skip $t$ when absent), $\alpha=t-\gamma$, $\beta=t+\lambda$:
+\begin{itemize}
+\item $\alpha$ and $\beta$ both provably positive: $[B\equiv0\bmod t][A\equiv0\bmod P]$;
+\item $\alpha=\beta=0$, so $B$ reaches $t$ only at the corner $H$ and $-t$ only at the corner $L$: $([B\equiv0\bmod t]-H-L)[A\equiv0\bmod P]+H[A+1\equiv0\bmod P]+L[A-1\equiv0\bmod P]$;
+\item $\alpha=0$, $\beta>0$ (corner $E$ at the top) or $\beta=0$, $\alpha>0$ (corner $E$ at the bottom): $([B\equiv0\bmod t]-E)[A\equiv0\bmod P]+E[A\pm1\equiv0\bmod P]$, with $+1$ at the top;
+\item otherwise try the next $t$.
+\end{itemize}
+
+\paragraph{Concrete modulus.} For a composite $m\ge 4$ and each divisor $2\le t<m$ ascending: the carry collects the pieces whose integer coefficient $t$ divides, divided by $t$; both carry and digit must be nonzero, and the bounds of the digit must satisfy $t-\gamma>0$ and $t+\lambda>0$; the result is $[B\equiv0\bmod t][A\equiv0\bmod m/t]$.
+
+\paragraph{Carry splitting.} \py!_carry_split! handles a delta $[F\equiv0\bmod pq]$ whose modulus is a power $pq\ge4$ of one prime $p$ and whose frequency the ranges do not bound inside $(-pq,pq)$ (the bounds of \cref{def:algebra-bounds}, or, for an integer polynomial over bits, the sum of its negative and of its positive coefficients plus its constant; non-integer bounds give no split). Every term of $F$ must have an integer coefficient $a$; with $\ell=a\bmod p$ taken into $(-p/2,p/2]$, the digit $B$ collects $\ell\cdot\mathit{rest}$ and the carry $A$ collects $\tfrac{a-\ell}p\cdot\mathit{rest}$, so $F=pA+B$; both must be nonzero, and the digit must have integer bounds $[\lambda,\gamma]$.
+\begin{itemize}
+\item For $p=2$ with every symbol of $B$ a bit: when $h=$\,\py!_bit_half!$(B,q)$ exists, the result is $[B\equiv0\bmod2]\,[A+h\equiv0\bmod q]$. Here $h$ is a bit polynomial equal to $B/2$ modulo $q$ wherever $B$ is even: for $q=2$, $B(B-1)/2$ with every power of a bit read as the bit; otherwise, for $B=x+R$ with $x$ the greatest-named bit that occurs only as its own term, $(R+\mathrm{par}(R))/2$ with $\mathrm{par}(R)=(1-\prod(-1)^{\cdot})/2$ the parity of the odd-coefficient terms of $R$ (a constant term contributes $-1$, a monomial $\mu$ contributes $1-2\mu$); with no such $x$, or a non-integer coefficient, $h$ does not exist.
+\item Otherwise $[F\equiv0\bmod pq]=\sum_c[B-pc\equiv0\bmod pq]\,[A+c\equiv0\bmod q]$ over the carries $c=\lceil\lambda/p\rceil,\ldots,\lfloor\gamma/p\rfloor$, provided every $B-pc$ stays inside $(-pq,pq)$; else no split.
+\end{itemize}
+
+\subsection{Residues and canonical deltas}\label{sec:algebra-simplify-residues}
+
+\paragraph{Collapsing residues.} \py!_collapse_residues! replaces a residue $x\bmod m$ by $x$ where only $x\bmod m$ matters, in three passes: (1) where the ranges bound $x$ inside $[0,m-1]$, and otherwise by $x-mw$ when the \emph{wrap} $w$ exists (\py!_wrap!, below); (2) inside an exponent $2\pi i q$ when the coefficient $a$ of the atom in $q$ (\py!_residue_coefficient!: $q=a\,\mathit{atom}+\mathit{rest}$, neither reading the atom) makes $am$ an integer; (3) inside a delta $[a(x\bmod m)+r\equiv0\bmod M]$ when $am/M$ is an integer.
+
+\paragraph{Wraps.} For an integer $m$ and $x=\sum_vc_vv+x_0$ linear over bits ($R_v=2$, every $c_v\ne0$) with integer bounds $[\lambda,\gamma]$: when $0\le\lambda$ and $m\le\gamma<2m$ (the top case, $\epsilon=\gamma-m$, sign $+1$) or $-m\le\lambda<0$ and $\gamma<m$ (the bottom case, $\epsilon=-1-\lambda$, sign $-1$), the corners where $x$ leaves $[0,m)$ lie within $\epsilon$ of the extreme corner. They form one face when the bits $F=\{v:|c_v|>\epsilon\}$ satisfy $\sum_{v\notin F}|c_v|\le\epsilon$; the face indicator is $\prod_{v\in F}b_v$ with $b_v=v$ when the sign of $c_v$ matches the case and $1-v$ otherwise (\py!_face!). Then $w=\pm(\text{face})$. Failing that, the complementary face test with $\epsilon'=m-1-\lambda$ (top) or $\epsilon'=\gamma$ (bottom) on the opposite extreme gives $w=\pm(1-\text{face})$; otherwise there is no wrap.
+
+\paragraph{Pinning residues.} \py!_pin_residues! replaces a free residue $x\bmod m$ ($m$ an integer, no bound symbol in it) of a term by an index $v$ of range $m$ when a delta factor $[cv+L\equiv0\bmod M]$ of the term has $m\mid M$, a linear frequency, $c$ a unit modulo $m$ of sign $s$, $v$ not bound, and $-sL-x$ a multiple of $m$ (\py!_multiple_of!: every term an integer multiple of $m$ times an integer).
+
+\begin{algorithm}[Canonical deltas of a product, \texttt{\_canonical\_deltas}]\label{alg:algebra-canonical-deltas}
+Input: a product term and the ranges.
+\begin{enumerate}
+\item Return $0$ when a delta factor can never hold (\py!_never!: the bounds of its linear frequency lie strictly between $0$ and $M$, or strictly between $-M$ and $0$).
+\item Drop every delta factor implied by another (\py!_implies!): $[X\equiv0\bmod M]$ implies $[Y\equiv0\bmod t]$ for integer moduli with $t\ge2$, $t\mid M$, $t\ne M$, and $X-\ell Y$ with every coefficient divisible by $t$ for some unit $\ell$ modulo $t$ (residue atoms frozen first). For integer coefficients the unit is found by \py!_unit_multiple!, which solves the congruences $x_\mu\equiv\ell y_\mu\pmod t$ monomial by monomial (a combined residue and step updated by each solvable congruence, an unsolvable one answering false) and accepts when the combined residue is prime to its step; otherwise every unit $\ell<t$ is tried. \py!_carried_frequency! uses the same test.
+\item Group the deltas with linear frequencies by modulus; the other factors form the rest $\Phi$.
+\item For each modulus $M$ in \py!default_sort_key! order, reduce its rows by Gauss--Jordan elimination over unit pivots (\py!_echelon!): repeatedly substitute the known pivots into each row and pick as pivot the engine index (name matching \code!^_[ik][0-9]+$!) with a unit coefficient that is greatest in string order of names, solving the row for it ($\mathit{var}=-s(\mathit{row}-c\,\mathit{var})$); at an integer $M$ every substituted row and pivot value passes \py!_trim_mod!, which replaces each integer coefficient $c$ with $|c|\ge M$ by $\mathrm{sign}(c)(|c|\bmod M)$; stop when a pass finds no pivot. For each pivot $v:=x$ in name order, set $\mathit{exact}$ (\py!_exact_pivot!) when $v$ has a range and either the bounds of $v-x$ lie strictly inside $(-M,M)$, or $v$ ranges over $[0,M)$ and the bounds of $x$ lie in $[0,M-1]$. When $v$ occurs in $\Phi$, is not bound in $\Phi$, $x$ reads no index bound in $\Phi$, and either $\mathit{exact}$ holds or every factor of $\Phi$ that reads $v$ is $M$-periodic in $v$, substitute $v:=x$ into $\Phi$ (deltas with integer moduli rebuilt from their substituted integer terms). Emit the defining delta $[v-x\equiv0\bmod M]$, and after the pivots emit every residual row as a delta.
+\item With more than one modulus, substitute each pivot into the emitted deltas of other moduli that read it, under the same exact-or-periodic condition, and drop implied deltas again.
+\item Return $\Phi$ times the emitted deltas.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Canonical placement of phases and constants}\label{sec:algebra-simplify-canon}
+
+\py!_canonical_top! replaces every positive power of a delta by the delta, expands, and applies to every top-level term, in order: residue pinning, residue collapsing, residue pivots, with \code!split_carries! the parity echelon and then symbolic pivots, and finally \cref{alg:algebra-canonical-deltas}.
+\begin{itemize}
+\item \emph{Residue pivots} (\py!_residue_pivots!, only with ranges): for a delta factor whose frequency reads residues $x\bmod m$ (integer $m$, no bound symbol), each residue is frozen to a fresh engine index of range $m$; when the bounds of the frozen frequency lie strictly inside $(-M,M)$ the delta holds exactly, and for the first residue of coefficient $\pm1$ whose solved value $v$ is residue-free, the residue is replaced by $v$ in the other factors; repeat until nothing changes.
+\item \emph{Parity echelon} (\py!_parity_echelon!): when a term has at least two deltas modulo $2$ over bits, one of them not linear, Gauss--Jordan reduction over them in \py!default_sort_key! order: each row (pivots substituted, powers of bits read as bits, coefficients through \py!_trim_mod! at $2$) takes as pivot the greatest-named bit that occurs only as its own term; the pivots are substituted into one another, and the term is rebuilt from $[x+v\equiv0\bmod2]$ per pivot and the reduced residual rows.
+\item \emph{Symbolic pivots} (\py!_symbolic_pivots!): for a delta factor with a frequency that is not integer-linear, reading ranged indices and no bound one, whose signed bounds (coefficients free of the ranges and of known sign) lie strictly inside $(-M,M)$, the first variable by name with coefficient $c=\pm1$ is replaced by $-c\cdot(\mathit{frequency}-cv)$ in the other factors; repeat until nothing changes.
+\end{itemize} \py!_reduce_integer_phases! rewrites every exponential $\exp(2\pi i q)$ whose $q$ is a polynomial with rational coefficients in integer-valued symbols by taking every coefficient (the constant included) modulo $1$; a rational $q$ without symbols becomes $q\bmod 1$; other exponentials stay. \py!_pull_constants! moves, recursively, every factor of a summand that reads no index bound by that sum outside the sum; an index-free factor therefore always sits outside, and two scalars that differ only in where such a factor stood compare equal.
+
+\section{Algebraic Numbers}\label{sec:algebra-algebraic}
+
+The module \module{archytaszx.algebra.algebraic} gives every algebraic number one canonical SymPy expression and enumerates all algebraic numbers. The exhaustive search of \cref{ch:rewriting} draws spider weights from this enumeration, and the proof kernel and the network exporter (\cref{ch:kernel,ch:lean-export-net}) compare weights through the canonical form.
+
+\begin{definition}[Canonical form of an algebraic number]\label{def:algebra-algebraic-canon}
+The \term{canonical form} of an algebraic number $\alpha$ is $\alpha$ itself when $\alpha$ is rational, and otherwise \py!CRootOf(p, i)!, where $p\in\Z[x]$ is the minimal polynomial of $\alpha$ made primitive (content removed) with a positive leading coefficient, and $i$ is the index of $\alpha$ in SymPy's fixed order of the roots of $p$. Two algebraic numbers are equal exactly when their canonical forms are identical.
+\end{definition}
+
+\begin{algorithm}[\texttt{canonical(expr)}]\label{alg:algebra-canonical-algebraic}
+\begin{enumerate}
+\item \py!sympify!; free symbols raise \py!NotAlgebraicError!. A \py!Rational! is returned.
+\item Let $(a,b)$ be \py!as_real_imag()!. When both are rationals, return the Gaussian form: \py!CRootOf!$(x^2-2ax+a^2+b^2,\,i)$, made primitive with positive leading coefficient, with $i=0$ for $b<0$ and $i=1$ otherwise (the root of negative imaginary part first).
+\item A \py!CRootOf! whose primitive polynomial is irreducible of degree above $1$ is re-indexed on that polynomial (step 5).
+\item Otherwise compute \py!sympy.minimal_polynomial(expr, x)!; \py!NotImplementedError!, \py!ValueError! or a SymPy \py!PolynomialError! becomes \py!NotAlgebraicError!. Make it primitive with positive leading coefficient. A linear $ax+b$ gives the rational $-b/a$.
+\item Return \py!CRootOf(p, i)! with $i$ found by \emph{root isolation}: for the precisions of $15$, $30$, $60$, $120$, $240$, and $480$ digits in turn, approximate the value and all roots of $p$ (memoized, capacity 4096), let $\sigma$ be the least distance between two roots, and take the roots within $\sigma/3$ of the value; a unique such root gives $i$. When no precision isolates one root, raise \py!NotAlgebraicError!.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}
+\py!canonical(sqrt(2))! is \code!CRootOf(x**2 - 2, 1)!; \py!canonical(1 + I)! is \code!CRootOf(x**2 - 2*x + 2, 1)!.
+\end{example}
+
+\begin{signature}
+\py!canonical(expr) -> sympy.Expr!; \py!canonical_scalar(value: Scalar) -> Scalar!: the scalar of the canonical form of its expression.\\
+\py!canonical_vector(pv: PhaseVector | None, dim: Dim) -> PhaseVector | None!: \py!None! stays \py!None!; a symbolic \code!dim! raises \py!NotAlgebraicError("a symbolic dimension")!; otherwise the weight vector \py!PhaseVector.from_weights(dim, {k: canonical_scalar(pv.coefficient(k))})! over $k=1,\ldots,d-1$, which carries every coefficient as a canonical weight and no phase.
+\end{signature}
+
+\subsection{Levels and the enumeration}
+
+\begin{definition}[Height and level]\label{def:algebra-level}
+The \term{height} of a rational $p/q$ in lowest terms ($q>0$) is $\max(|p|,q)$. The numbers of \term{level} $n$ are, in this order:
+\begin{enumerate}
+\item the rationals of height $n$, by ascending $q$ and then ascending $p$;
+\item for $n\ge 3$, the primitive $n$-th roots of unity $e^{2\pi ik/n}$, $\gcd(k,n)=1$, $k$ ascending, in canonical form;
+\item for $n\ge 2$, the Gaussian numbers $a+bi$ in Gaussian canonical form with $a$ and $b\ne 0$ rationals of levels $1,\ldots,n-1$ (each list in level order, $a$ the outer loop) and $\max(\mathrm{height}(a),\mathrm{height}(b))=n-1$;
+\item for every degree $D=2,\ldots,n-1$ with $H=n-D$, every coefficient tuple $(c_D,\ldots,c_0)\in\{-H,\ldots,H\}^{D+1}$ in \py!itertools.product! order with $\max|c_j|=H$ whose polynomial is irreducible, primitive, of degree $D\ge2$, with $c_D>0$, contributes its $D$ roots \py!CRootOf(p, i)!, $i=0,\ldots,D-1$.
+\end{enumerate}
+A number may occur at several levels.
+\end{definition}
+
+Every algebraic number has a level: a rational its height, an irrational one at most the degree plus the largest coefficient of its minimal polynomial. \py!level(n)! lists the numbers of level $n$; \py!algebraic_numbers()! is an infinite generator over the levels $1,2,\ldots$ that yields each number at its first level only, so it lists every algebraic number exactly once; \py!up_to_level(bound)! returns, as a tuple of \py!Scalar! values, every number of level at most \code!bound!, each once, in the same order.
+
+\begin{example}
+\py!level(1)! is $[-1,0,1]$. \py!level(2)! is $[-2,2,-\tfrac12,\tfrac12]$ followed by the six Gaussian numbers $a+bi$ with $a\in\{-1,0,1\}$ and $b\in\{-1,1\}$, in canonical form, beginning \code!CRootOf(x**2 + 2*x + 2, 0)!, the number $-1-i$.
+\end{example}
+
+\section{Number-Field Certificates}\label{sec:algebra-numfield}
+
+The module \module{archytaszx.algebra.numfield} writes finitely many algebraic numbers as polynomials in one real algebraic number $\theta$ and certifies that representation by exact data that a checker re-verifies without numerical trust. The proof kernel and the Lean network exporter (\cref{ch:kernel,ch:lean-export-net}) use such certificates to compute with algebraic spider weights. The construction follows the primitive-element method of computational algebraic number theory~\cite{cohen1993course}; the checker uses exact root counting (SymPy's \py!count_roots!) and Bernstein coefficients~\cite{basu2006algorithms}.
+
+\begin{definition}[Field certificate]\label{def:algebra-field-certificate}
+A \py!FieldCertificate! (frozen dataclass) holds
+\begin{itemize}
+\item \py!poly: tuple[int, ...]!: an irreducible $p\in\Z[\theta]$, constant term first;
+\item \py!lo!, \py!hi!: rationals with $\mathit{lo}<\mathit{hi}$ isolating one real root $\theta$ of $p$;
+\item \py!atoms!: a tuple of entries $(a,\,q_a,\,q_b,\,R)$: an atom $a$ (a SymPy expression), the rational coefficients (constant first) of polynomials $q_a,q_b$ of degree below $\deg p$ with $a=q_a(\theta)+i\,q_b(\theta)$, and a closed rectangle $R=(a_x,a_y,b_x,b_y)$, the set $[a_x,b_x]\times[a_y,b_y]$, that holds $a$ and exactly one root of the minimal polynomial of $a$.
+\end{itemize}
+Properties and methods: \py!degree! ($=\deg p$), \py!p()! ($p$ as a SymPy \py!Poly! in the symbol \py!T! $=$ \code!theta_nf! over $\Q$), \py!table()! (atom $\mapsto(q_a,q_b)$ as polynomials).
+\end{definition}
+
+\begin{definition}[Atoms of an expression]\label{def:algebra-nf-atoms}
+\py!atoms(expr)! lists, in first-occurrence order without repetition, the maximal subterms of a closed expression that are not a rational, $i$, a sum, a product, or an integer power: a sum or product contributes the atoms of its arguments, $b^k$ with an integer $k$ those of $b$, $i^x$ those of $e^{i\pi x/2}$; any other subterm (a \py!CRootOf!, a radical, a root of unity) is an atom. Free symbols raise \py!NotAlgebraicError!.
+\end{definition}
+
+\subsection{Atom data}
+
+For each atom the module computes (memoized, capacity 1024) either a rational or the record $(m,\,\mathit{value},\,\mathit{own},\,\mathit{real})$: the minimal polynomial $m$ in $y$, a 60-digit value ($\mathtt{\_DIGITS}=60$), an isolating rectangle $\mathit{own}$, and whether the atom is real. Numeric roots come from \tool{mpmath}{https://mpmath.org} \py!polyroots! at $80$ digits with \code!maxsteps=400! and \code!extraprec=400!.
+\begin{itemize}
+\item A \py!CRootOf! on an irreducible polynomial of degree above $1$ takes SymPy's isolating interval: $(a,0,b,0)$ for a real root, $(a_x,a_y,b_x,b_y)$ otherwise. With $\mathit{reach}$ the width plus the height of the rectangle and $c$ its center, the numeric root nearest $c$ must lie within $\mathit{reach}+10^{-40}$ and the second nearest beyond it, else \py!NumberFieldError!; the value is that root.
+\item Any other atom gets its minimal polynomial (failure: \py!NotAlgebraicError!); degree one gives a rational. Otherwise, with $\sigma$ the least distance between numeric roots, the root nearest the 60-digit value must lie within $\sigma/100$ of it (else \py!NumberFieldError!). With $h=2^{-\max(1,\,\lfloor-\log_2(\sigma/4)\rfloor_0+1)}$ ($\lfloor\cdot\rfloor_0$ truncation toward zero) and $c_x=\lfloor\mathrm{Re}/h\rfloor h$, a real root ($|\mathrm{Im}|<10^{-40}$) gets $(c_x-h,0,c_x+2h,0)$; a complex root gets $(c_x-h,c_y-h,c_x+2h,c_y+2h)$ with $c_y$ formed alike.
+\end{itemize}
+\py!algebraic(atom)! is true when this data exists.
+
+\subsection{Arithmetic in $\Q(\theta)(i)$}
+
+An element is a pair $(r,s)$ of rational polynomials in $\theta$ reduced modulo $p$, read as $r(\theta)+i\,s(\theta)$; because $\theta$ is real, the pair of reduced polynomials is unique for each element. Addition is componentwise; multiplication is $(r,s)(r',s')=(rr'-ss',\,rs'+sr')$ reduced; the inverse is $(r\nu,\,-s\nu)$ with $\nu$ the inverse of $r^2+s^2$ modulo $p$ (\py!sympy.invert!), and a zero norm raises \py!NumberFieldError("division by zero in the number field")!; integer powers use square-and-multiply, negative ones the inverse.
+
+\begin{signature}
+\py!element(cert, expr) -> tuple[Poly, Poly]!: \code!expr! over the atoms as a reduced pair; rationals, $i$, sums, products, integer powers, and $i^x$ are evaluated in the field; any other subterm must be an atom of \code!cert! (else \py!NumberFieldError!).\\
+\py!key(cert, expr) -> sympy.Expr!: the expanded $r(\theta)+i\,s(\theta)$ of \py!element!; equal values have equal keys.\\
+\py!inverse(cert, expr) -> sympy.Expr!: the inverse of a polynomial in \py!T! and $i$ (split into real and imaginary parts by the powers of $i$), as $r+i\,s$.\\
+\py!derivative(poly) -> tuple[int, ...]!: the coefficients of $p'$, constant first.\\
+\py!bernstein_derivative(cert) -> list[Rational]!: the Bernstein coefficients of $p'$ on $[\mathit{lo},\mathit{hi}]$.
+\end{signature}
+
+\begin{definition}[Bernstein coefficients and interval evaluation]\label{def:algebra-bernstein}
+For $f(x)=\sum_{k\le n}c_kx^k$ and an interval $[l,h]$, write $f(l+(h-l)t)=\sum_k a_kt^k$; the Bernstein coefficients are $b_j=\sum_{k=0}^{j}\binom{j}{k}\binom{n}{k}^{-1}a_k$, $j=0,\ldots,n$. All $b_j>0$ implies $f>0$ on $[l,h]$. The interval value of $f$ on $[l,h]$ is computed by Horner's rule in rational interval arithmetic: each step multiplies the running interval by $[l,h]$ (the minimum and maximum of the four products) and adds $c_k$. The rectangle of a pair $(q_a,q_b)$ on $[l,h]$ is the product of the two interval values.
+\end{definition}
+
+\subsection{Checking a certificate}
+
+\begin{algorithm}[\texttt{check(cert)}]\label{alg:algebra-nf-check}
+Raise \py!NumberFieldError! with the quoted message unless every claim holds:
+\begin{enumerate}
+\item $\deg p\ge 1$ and $p$ irreducible: ``p is not an irreducible polynomial of positive degree''.
+\item $\mathit{lo}<\mathit{hi}$: ``the interval is empty''.
+\item $p(\mathit{lo})<0<p(\mathit{hi})$: ``p does not change sign from negative to positive on the interval''.
+\item $p$ has exactly one root in $[\mathit{lo},\mathit{hi}]$ (\py!count_roots!): ``the interval does not isolate one root of p''.
+\item every Bernstein coefficient of $p'$ on the interval is positive: ``p' has a non-positive Bernstein coefficient on the interval''.
+\item For each atom $(a,q_a,q_b,R)$:
+\begin{enumerate}
+\item $q_a$ and $q_b$ have at most $\deg p$ coefficients: ``the coefficients of $a$ are not reduced'';
+\item with $m$ the minimal polynomial of $a$ (for a rational $r$, $m=y-r$), $m(q_a+iq_b)=0$ in $\Q(\theta)(i)$, by Horner's rule: ``the value written for $a$ is not a root of $m$'';
+\item for a rational $a$: $q_a$ is constant and $q_b=0$ (``the rational $a$ is written as an irrational''), and the remaining checks are skipped;
+\item for a real $a$ (its own rectangle has $a_y=b_y=0$): $q_b=0$ (``the real $a$ is written with an imaginary part'');
+\item the atom's own rectangle lies in $R$ (``the rectangle of $a$ does not hold the atom''), and the rectangle of $(q_a,q_b)$ on $[\mathit{lo},\mathit{hi}]$ lies in $R$ (``the value written for $a$ is not in its rectangle'');
+\item $m$ has exactly one root in $R$ (a real interval count when $a_y=b_y=0$, else a complex rectangle count): ``the rectangle of $a$ does not isolate one root''.
+\end{enumerate}
+\end{enumerate}
+\end{algorithm}
+
+The checks imply $a=q_a(\theta)+iq_b(\theta)$: both sides are roots of $m$ in $R$, and $R$ holds only one root of $m$.
+
+\subsection{Finding a certificate}
+
+\begin{algorithm}[\texttt{certificate(values)}]\label{alg:algebra-nf-certificate}
+Input: a list of closed expressions. Output: a checked certificate for all their atoms.
+\begin{enumerate}
+\item Collect the atoms of all values in order (\cref{def:algebra-nf-atoms}) and classify each: a rational; a real atom, whose generator is its minimal polynomial (in $z$) with its value; or a complex atom $\alpha$, whose generator is the real number $\mathrm{Re}\,\alpha+c\,\mathrm{Im}\,\alpha$ for the first shift $c$ in $\mathtt{\_SHIFTS}=(1,2,-1,3,-2,5,7,-3,11,13)$ that works. For a shift $c$ the generator's polynomial is the irreducible factor (\py!_choose!: the factor with a numeric root nearest the 60-digit value, within $10^{-20}$, else \py!NumberFieldError!) of the resultant
+\[\mathrm{Res}_y\Bigl(m(y),\ \textstyle\sum_k m_k\,(2z-(1-ci)y)^k(1+ci)^{n-k}\Bigr),\]
+normalized by its leading coefficient and required real (else \py!NumberFieldError!); it vanishes at $z=\mathrm{Re}\,\alpha+c\,\mathrm{Im}\,\alpha$ because $\bar\alpha=(2z-(1-ci)\alpha)/(1+ci)$. The shift works when $\alpha$ is the common root, over $\Q(z)(i)$, of $m(y)$ and $m\bigl((2z-(1-ci)y)/(1+ci)\bigr)$: their monic gcd, computed by Euclid's algorithm with field inverses, must be linear with a root numerically within $10^{-20}$ of $\alpha$. No working shift raises \py!NumberFieldError("no real generator for ...")!.
+\item Start the field at the first generator ($p$ its polynomial, $\theta$ its value), or at $p=\theta^2-2$, $\theta=\sqrt2$ when no generator exists. Each generator is kept as a polynomial in $\theta$ (the first is $\theta$ itself).
+\item For each further generator $g$ (polynomial $G$, value $\gamma$), try the shifts in order: the candidate $\theta'=\theta+c\gamma$ has the polynomial $p'$, the factor of $\mathrm{Res}_y(p(z-cy),G(y))$ with $\theta'$ as root. The shift works when the gcd over $\Q(\theta')$ of $G(y)$ and $p(\theta'-cy)$ is linear with a root near $\gamma$; that root writes $\gamma$ as a polynomial in $\theta'$. Rewrite every earlier generator through $\theta=\theta'-c\gamma$ modulo $p'$, append $\gamma$, and continue with $(p',\theta')$. No working shift raises \py!NumberFieldError("no primitive element found")!.
+\item Clear denominators of $p$, make it primitive over $\Z$, and isolate $\theta$ (\py!_isolate!): negate $p$ when $p'$ is negative at the rational $v$ of $\mathrm{Re}\,\theta$; for $k=2,\ldots,179$ let $w=2^{-k}$, $\mathit{lo}=(\lfloor v/w\rfloor-1)w$, $\mathit{hi}=\mathit{lo}+3w$, and accept the first interval with $p(\mathit{lo})<0<p(\mathit{hi})$, all Bernstein coefficients of $p'$ positive, and one root. None raises \py!NumberFieldError("no isolating interval found")!.
+\item Write each atom: a rational as a constant; a real atom as its generator's polynomial; a complex atom by the common-root gcd of step 1 over the final field, which yields both $q_a$ and $q_b$ (failure: \py!NumberFieldError!).
+\item Repeat at most 60 times: give each irrational atom the rectangle hull of its own rectangle and the rectangle of $(q_a,q_b)$ on the current interval (a rational atom gets $(0,0,0,0)$), build the certificate, and \py!check! it. Return it on success; re-raise a failure whose message lacks the text \code!isolate one root!; otherwise bisect the interval six times, each time keeping the half on which $p$ changes sign, and retry. After 60 rounds, \py!check! the last certificate (which raises) and return it.
+\end{enumerate}
+\end{algorithm}
+
+\section{Cyclotomic Constants}\label{sec:algebra-cyclo}
+
+The module \module{archytaszx.algebra.pathsum} implements path sums~\cite{amy2018pathsums} over Boolean variables ($\Zd{2}$) and over $\Zd{p}$ for an odd prime $p$. Its scalars are elements of cyclotomic fields $\Q(\zeta_n)$, $\zeta_n=e^{2\pi i/n}$~\cite{washington1997cyclotomic}, held as exact rational coordinates. The module computes with Python integers and \py!Fraction! values; no sum is ever enumerated except by the two functions that are named for it (\py!entry_enumerated!, \py!entry_enumerated_qudit!).
+
+\subsection{The class \texttt{Cyclo}}
+
+\begin{definition}[Cyclotomic number]\label{def:algebra-cyclo}
+A \py!Cyclo! is a pair $(n,c)$ of an order $n\ge1$ and a sparse map $c$ from exponents in $\{0,\ldots,n-1\}$ to nonzero rationals, denoting $\sum_e c_e\,\zeta_n^e$. The constructor \py!Cyclo(n, c)! takes every exponent modulo $n$, adds coefficients that meet, and drops zeros. The representation is not unique: $\zeta_n^0+\cdots+\zeta_n^{n-1}=0$ and $\zeta_n=\zeta_{2n}^2$.
+\end{definition}
+
+\begin{signature}
+\py!Cyclo.rational(v)!: $(1,\{0:v\})$. \py!Cyclo.root(turns: Fraction)!: $e^{2\pi i t}$ for $t=\mathit{turns}\bmod 1$, as $(q,\{p:1\})$ for $t=p/q$ in lowest terms.\\
+\py!lift(m)!: the same number over $\zeta_m$, $n\mid m$: exponent $e\mapsto e\,m/n$.\\
+\py!+!, \py!-!, unary \py!-!, \py!*!: computed over $\zeta_{\mathrm{lcm}(n,n')}$; \py!scale(v)!: times a rational; \py!conj()!: exponent $e\mapsto -e$.\\
+\py!reduced(m=None) -> tuple[Fraction, ...]!: the coordinates over $\zeta^0,\ldots,\zeta^{\varphi-1}$ of the number (lifted to $\zeta_m$ when given) reduced modulo the cyclotomic polynomial $\Phi_n$, $\varphi=\deg\Phi_n$.\\
+\py!sparse_reduced() -> dict[int, dict[tuple[int, ...], Fraction]]!: the canonical coordinates (\cref{def:algebra-cyclo-basis}).\\
+\py!is_zero!: \py!sparse_reduced()! is empty; computed once per object (slot \code!_zero!). \py!__eq__!: both lifted to the least common order, equal canonical coordinates. \py!__hash__!: \py!hash(n)!.\\
+\py!inverse()!: the inverse by Gauss--Jordan elimination over the basis $\zeta^0,\ldots,\zeta^{\varphi-1}$ (columns $\mathit{self}\cdot\zeta^i$ reduced); zero raises \py!PathSumError("the inverse of zero")!. \py!_cyclo_inverse(c)! computes the same and returns \py!None! for zero.\\
+\py!to_complex()!: $\sum_e c_e e^{2\pi ie/n}$ in floating point. \py!__repr__!: \code!Cyclo(<n>, {<e>: Fraction(...), ...})! with exponents ascending.
+\end{signature}
+
+\begin{definition}[Cyclotomic polynomials]\label{def:algebra-cyclotomic}
+\py!cyclotomic(n)! returns the coefficients of $\Phi_n$, lowest degree first: $x^n-1$ divided exactly by $\Phi_d$ for every proper divisor $d$ of $n$ (memoized, capacity 256); an inexact division raises \py!PathSumError!. For example, \py!cyclotomic(12)! is $(1,0,-1,0,1)$, the polynomial $x^4-x^2+1$.
+\end{definition}
+
+\begin{definition}[Canonical coordinates]\label{def:algebra-cyclo-basis}
+Let $p_1<\cdots<p_t$ be the distinct primes of $n$ (\py!_primes!, memoized, capacity 256), $r=\prod p_i$ its radical, and $m=n/r$. Since $\zeta_n^m=\zeta_r$ and $x^m-\zeta_r$ is the minimal polynomial of $\zeta_n$ over $\Q(\zeta_r)$, the powers $\zeta_n^s$, $0\le s<m$, form a basis of $\Q(\zeta_n)$ over $\Q(\zeta_r)$. By the Chinese remainder theorem $\Q(\zeta_r)=\bigotimes_i\Q(\zeta_{p_i})$, and $\zeta_r^e$ is labeled by the tuple $(e\bmod p_1,\ldots,e\bmod p_t)$; a basis of $\Q(\zeta_r)$ is the set of tuples $(j_1,\ldots,j_t)$ with $j_i<p_i-1$, a coordinate $j_i=p_i-1$ being rewritten as minus the sum of the labels $0,\ldots,p_i-2$ in that place (\py!_prime_coordinates!; products over the places multiply the signs). \py!sparse_reduced! groups the exponents $e=qm+s$ by $s$, maps each group $\sum c_e\zeta_r^q$ to its nonzero tuple coordinates, and keeps the nonempty groups. Two numbers over one order are equal exactly when these maps are equal.
+\end{definition}
+
+\subsection{Square roots and the reading of diagram scalars}
+
+\py!SQRT2! is $\zeta_8+\zeta_8^{-1}=\sqrt2$. A path sum carries a separate integer power of $\sqrt2$; \py!with_sqrt2(c, k)! folds $c\cdot\sqrt2^{\,k}$ into one \py!Cyclo!: for odd $k$ multiply by \py!SQRT2! and decrease $k$, then scale by $2^{k/2}$ (a negative power for negative $k$).
+
+\py!_sqrt_integer(n)! writes $\sqrt n$ as a pair (cyclotomic number, power of $\sqrt2$) by trial division: each prime power $p^e$ contributes $p^{\lfloor e/2\rfloor}$, and for odd $e$ the prime $p=2$ adds one to the power of $\sqrt2$, while an odd prime $p$ contributes the quadratic Gauss sum $g_p=\sum_{a=1}^{p-1}\bigl(\tfrac ap\bigr)\zeta_p^a$, which equals $\sqrt p$ for $p\equiv1\pmod4$ and $i\sqrt p$ for $p\equiv3\pmod4$~\cite{berndt1998gauss}; in the second case it is multiplied by $\zeta_4^{-1}$. \py!sqrt_prime(p)! is the cyclotomic part of \py!_sqrt_integer(p)!.
+
+\py!_cyclo_sqrt(square, approx)! searches a square root of a cyclotomic number near a complex approximation: for the factors $1,2,4,8$, let $M=\mathrm{lcm}(n,8)\cdot\mathit{factor}$; for every pair $i\le j<M$ with $u=\zeta_M^i$, $v=\zeta_M^j$ and $\delta=\mathrm{Im}(\bar uv)$: when $|\delta|<10^{-12}$ (only $i=j$ is tried) the candidate is $a\zeta_M^i$ with $a=\mathrm{Re}(\mathit{approx}/u)$; otherwise $a\zeta_M^i+b\zeta_M^j$ with $a=\mathrm{Im}(\overline{\mathit{approx}}\,v)/\delta$ and $b=\mathrm{Im}(\bar u\,\mathit{approx})/\delta$. Each coefficient is rounded to the nearest fraction with denominator at most $64$. The first candidate within $10^{-9}$ of the approximation whose square equals \code!square! exactly is returned; otherwise \py!None!.
+
+\begin{definition}[Reading a diagram scalar, \texttt{constant(expr)}]\label{def:algebra-constant}
+\py!constant(expr)! returns a pair $(c,k)$ with $\mathit{expr}=c\cdot\sqrt2^{\,k}$, recursively on the SymPy expression:
+\begin{itemize}
+\item a rational $v$: $(v,0)$; $i$: $(\zeta_4,0)$; $\exp(x)$ with $x/(2\pi i)$ simplifying (\py!nsimplify!) to a rational $t$: $(e^{2\pi it},0)$;
+\item a product: the product of the parts and the sum of the powers; a sum: the sum of the parts, each folded by \py!with_sqrt2!, with power $0$;
+\item $b^x$ for an integer $b>2$ and a half-integer, non-integer $x$: $b^{\lfloor x\rfloor}\sqrt b$ for $x>0$ and $b^{-(1-2x)/2}\sqrt b$ for $x<0$, with $\sqrt b$ from \py!_sqrt_integer!;
+\item $2^x$ with $2x$ an integer: $(1,2x)$; $(-1)^{p/q}$: $(e^{2\pi i\,p/(2q)},0)$; $i^{p/q}$: $(e^{2\pi i\,p/(4q)},0)$; a rational to an integer power: the rational power;
+\item $b^{\pm1/2}$ for a non-integer base: the square root found by \py!_cyclo_sqrt! of the folded base near the 30-digit value of $\sqrt b$, inverted for $-1/2$ (\py!PathSumUnsupported! when no inverse is found);
+\item $b^x$ for an integer $x\ge0$: the repeated product.
+\end{itemize}
+Every other expression raises \py!PathSumUnsupported("the scalar ... is not a cyclotomic number times a power of sqrt 2")!.
+\end{definition}
+
+\begin{example}
+\py!constant(sqrt(3))! is $(\zeta_{12}-\zeta_{12}^5,\,0)$; \py!constant(1/sqrt(2))! is $(\tfrac12,\,1)$; \py!constant(exp(pi*I/4))! is $(\zeta_8,\,0)$.
+\end{example}
+
+\section{Phase Polynomials and Boolean Polynomials}\label{sec:algebra-pathsum-polys}
+
+\begin{definition}[Monomials and $\mathbb{F}_2$ polynomials]\label{def:algebra-f2}
+Variables are nonnegative integers. A \term{monomial} (\py!Mono!) is a \py!frozenset! of variables, read as their product; the empty monomial \py!EMPTY! is $1$. An \term{$\mathbb{F}_2$ polynomial} (\py!F2Poly!) is a \py!frozenset! of monomials, read as their sum modulo $2$ (their XOR on Boolean values); \py!ONE! $=\{\emptyset\}$ is the constant $1$ and the empty set is $0$. Products are multilinear ($v^2=v$). \py!f2_add!: symmetric difference. \py!f2_mul!: $\{m_1\cup m_2\}$ over all pairs, XOR-accumulated. \py!f2_substitute(p, v, q)!: every monomial $m\ni v$ replaced by the XOR of $(m\setminus\{v\})\cup m'$ over $m'\in q$. \py!f2_assign(p, values)!: monomials with a variable set to $0$ dropped, variables set to $1$ removed, XOR-accumulated.
+\end{definition}
+
+\begin{definition}[Phase polynomial]\label{def:algebra-phasepoly}
+A \py!PhasePoly! is a map \py!terms! from monomials to rationals in $(0,1)$, denoting the multilinear polynomial $P=\sum_S c_S\prod_{v\in S}v$ with coefficients in $\Q/\Z$ (turns). \py!add(mono, coeff)! adds modulo $1$ and drops a zero; \py!variables()! is the union of the monomials; \py!copy()! is independent.
+\end{definition}
+
+\begin{definition}[Boolean lift]\label{def:algebra-xor-lift}
+The \term{Boolean lift} of the XOR $m_1\oplus\cdots\oplus m_r$ of monomials is the integer multilinear polynomial that agrees with it on Boolean values. \py!_xor_lift(items, modulus)! computes it with coefficients modulo \code!modulus! by the fold
+\begin{equation}
+T_0=0,\qquad T_{j}=T_{j-1}+m_j-2\,T_{j-1}m_j,
+\end{equation}
+the products of monomials taken as unions. The monomials are first sorted by $(|m|,\text{sorted variables})$ (\py!_mono_key!) when the lift is of an $\mathbb{F}_2$ polynomial (\py!int_lift!). When the fold exceeds $\mathtt{XOR\_LIFT\_TERMS}=2^{20}$ terms, it raises \py!PathSumUnsupported("an XOR lift of more than 1048576 terms")!.
+\end{definition}
+
+A term of the lift that is a union of $j$ monomials has coefficient a multiple of $(-2)^{j-1}$, so modulo $2^t$ only unions of at most $t$ monomials survive; \py!_lift_bound(items, modulus)! returns $\sum_{j=1}^{t}\binom{\mathit{items}}{j}$ for $\mathit{modulus}=2^t$ with $t<\mathit{items}$ and $2^{\mathit{items}}$ otherwise. \py!_lift_terms(items, coeff)! returns \code!coeff! times the lift modulo the denominator of \code!coeff!, as terms with nonzero turns.
+
+\paragraph{Array implementations.} The fold and the substitution below have equivalent NumPy implementations over bitmask monomials (bit $i$ the $i$-th variable in ascending order), used when they apply: the fold when it has at least $\mathtt{LIFT\_ARRAY\_ITEMS}=48$ items, fewer than $63$ variables, and a modulus below $2^{31}$ (results memoized by bitmask sequence and modulus in \py!_FOLDS!, at most $\mathtt{FOLD\_CACHE\_TERMS}=2^{20}$ terms over all entries, oldest evicted first); the substitution when it adds at least $\mathtt{SUBSTITUTE\_ARRAY\_PAIRS}=2^{15}$ (term, lift term) pairs, with fewer than $63$ variables, a common denominator below $2^{31}$, and no zero coefficient, in chunks of at most $\mathtt{SUBSTITUTE\_CHUNK}=2^{21}$ pairs. Both produce the same terms in the same insertion order as the scalar loops, so every later choice that reads the term order is unchanged.
+
+\paragraph{Substitution into a phase.} \py!PhasePoly.substitute(var, value)! replaces the variable by the Boolean lift of the $\mathbb{F}_2$ polynomial \code!value!. Let $H$ be the terms containing \code!var! and $D$ the least common multiple of their denominators. The lift of \code!value! is computed modulo $D$ first, so a lift that raises leaves the polynomial unchanged. Each term $c\cdot\mathit{var}\cdot R$ of $H$ is removed and $c\cdot R\cdot\mathrm{lift}$ is added, keeping only lift terms whose coefficient is nonzero modulo the denominator of $c$; all arithmetic runs over the common denominator of the whole polynomial, and new keys are inserted in the order of first touch. \py!assign(values)! sets variables to $0$ or $1$: a monomial with a variable set to $0$ is dropped, and the others lose their set variables.
+
+\section{Path Sums over \texorpdfstring{$\Zd{2}$}{Z2}}\label{sec:algebra-pathsum}
+
+\begin{definition}[Path sum]\label{def:algebra-pathsum}
+A \py!PathSum! (mutable dataclass) holds
+\begin{itemize}
+\item \py!boundary: tuple[int, ...]!: the boundary variables $x$ (the digits of the input and output indices);
+\item \py!path: set[int]!: the path variables $y$;
+\item \py!phase: PhasePoly!: the phase polynomial $P(x,y)$;
+\item \py!const: Cyclo!: the constant $c$; \py!sqrt2: int = 0!: the power $k$ of $\sqrt2$;
+\item \py!constraints: list[F2Poly]!: polynomials $C_j$ that must vanish;
+\item \py!amps: list[tuple[Cyclo, F2Poly]]!: amplitude atoms $(a,F)$, read as $a^{F}$, the value $a$ where $F=1$ and $1$ where $F=0$;
+\item \py!trace: list[Step]!: the rule applications so far.
+\end{itemize}
+It denotes the function of Boolean boundary values
+\begin{equation}\label{eq:algebra-pathsum}
+E(x)=c\,\sqrt2^{\,k}\,\prod_j[C_j(x)=0]\sum_{y\in\Zd{2}^{|\mathit{path}|}}e^{2\pi i P(x,y)}\prod_{(a,F)}a^{F(x,y)}.
+\end{equation}
+\py!is_zero! holds when $c=0$ or a constraint is the constant \py!ONE!. \py!amp_vars()! is the set of variables of the amplitude exponents. \py!copy()! copies the path set, phase, constraints, trace, and atoms.
+\end{definition}
+
+The translation of a diagram into a path sum (\cref{ch:semantics}) produces constraints that read no path variable, and every reduction rule below keeps that invariant: each constraint it adds reads only boundary variables, and each substitution of a path variable that could reach a constraint is applied to the constraints. The rules read a path variable's occurrences in the phase and in the amplitude exponents; [Pin] is the one rule that reads a path variable inside a constraint.
+
+\begin{definition}[Step]\label{def:algebra-step}
+A \py!Step! (frozen dataclass) records one rule application: \py!rule: str!; \py!var: int!; \py!pivot: int | None = None!; \py!value: F2Poly | None = None!; \py!group: tuple[int, ...] = ()! and \py!fresh: tuple[int, ...] = ()! (the digit group and fresh variables of [Dyadic]); \py!values: tuple[F2Poly, ...] = ()! (digit polynomials or a context); \py!poly: tuple[tuple[QMono, int], ...] = ()! (the integer polynomial $S$ of [Dyadic], each monomial as sorted $(v,1)$ pairs, or the $\mathbb{F}_p$ polynomial of a qudit step). The Lean path-sum exporter (\cref{ch:lean-pathsum}) replays traces; \cref{tab:algebra-rules} lists the rule names and the fields each sets.
+\end{definition}
+
+\subsection{Notation for the rules}
+
+For a path variable $y$ let $\mathrm{occ}(y)$ be the phase terms that contain $y$, in term order. When every term of $\mathrm{occ}(y)$ has coefficient $\tfrac12$, the \term{quotient} of $y$ is the $\mathbb{F}_2$ polynomial $Q=\{m\setminus\{y\}:m\in\mathrm{occ}(y)\}$ (\py!_hh_quotient!), and the $y$-part of the phase is $yQ/2$ modulo $1$; otherwise $y$ has no quotient. Each rule scans the path variables in ascending order and applies at the first that qualifies; ``free of path variables'' means that no monomial reads a path variable. The basic identities are
+\begin{equation}\label{eq:algebra-hh}
+\sum_{y\in\Zd2}1=2,\qquad \sum_{y\in\Zd2}(-1)^{yQ}=2\,[Q=0].
+\end{equation}
+
+\subsection{Balanced rules}
+
+\paragraph{[Elim]} (\code!elim!). A path variable $y$ in no phase term: remove $y$; $k\mathrel{+}=2$.
+
+\paragraph{[HH] on a path pivot} (\code!hh_pivot!). A path variable $y$ with quotient $Q$, and a path variable $z\ne y$ such that $\{z\}\in Q$ and $z$ occurs in no other monomial of $Q$. Then $[Q=0]$ fixes $z:=Q\setminus\{\{z\}\}$. The choice of $(y,z)$ (\py!_hh_choice!) runs in two passes. First, for $y$ ascending whose quotient reads only path variables, take the least such $z$ whose \emph{cost} is at most $\mathtt{PIVOT\_COST}=2^{12}$; the cost bounds the (term, lift term) pairs of the substitution: the sum, over the phase terms of $z$ not containing $y$, of $\min(\mathtt{\_lift\_bound}(|Q|-1,\text{denominator}),2^{40})$. Second, failing that, the least $y$ with a quotient and any pivot, and its least pivot. Remove $y$'s terms, substitute $z$ in the phase and in every constraint, remove $y$ and $z$ from the path; $k\mathrel{+}=2$. Trace: \code!var! $y$, \code!pivot! $z$, \code!value! the substituted polynomial.
+
+\paragraph{[HHgen]} (\code!hh_gen!). A path variable $y$ with a nonempty quotient $Q$, and a path variable $z$ of $Q$, ascending, with $Q=zA+B$ ($A=\{m\setminus\{z\}:z\in m\in Q\}$, $B$ the other monomials), $A\ne 1$, and $(1+A)(1+B)=0$. Substitute $z:=B$ in the phase and constraints and remove $z$ from the path; $y$ stays. Since $(1+A)(1+B)=0$, the phase $yQ/2$ becomes $y(1+A)/2$ and $\sum_z[zA+B=0]f(z)=[A=1]f(B)$; the later sum over $y$ supplies $[A=1]$ and the factor $2$.
+
+\paragraph{[$\omega$]} (\code!omega!, \code!omega_conj!). A path variable $y$ with the term $y$ of coefficient $\tfrac14$ or $\tfrac34$, all its other terms of coefficient $\tfrac12$ (quotient $Q$, empty when there are none). From
+\begin{equation}
+\sum_{y}i^{\pm y}(-1)^{yQ}=\sqrt2\,\zeta_8^{\pm1}\,e^{\mp2\pi i\,Q/4},
+\end{equation}
+remove $y$'s terms, add the lift of $\mp Q/4$ to the phase, multiply $c$ by $\zeta_8$ (for $\tfrac14$, trace \code!omega!) or $\zeta_8^{-1}$ (for $\tfrac34$, trace \code!omega_conj!), $k\mathrel{+}=1$, remove $y$. Trace \code!value!: $Q$.
+
+\paragraph{[Dyadic]} (\code!dyadic!). A \emph{digit group}: a path variable $y=Y_0$ whose terms have a largest denominator $2^K$, $K\ge2$; write its part as $Y_0S/2^K$ with $S$ the integer multilinear polynomial $s_0=\{m\setminus\{y\}\mapsto c_m2^K\bmod 2^K\}$. For $a=1,\ldots,K-1$ there must be a path variable $Y_a$, the least not yet in the group and in no monomial of $S$, whose terms are exactly $\{m\cup\{Y_a\}: (2^a s_m\bmod 2^K)\ne0\}$ with coefficients $(2^as_m\bmod2^K)/2^K$. Then $Y=\sum_a2^aY_a$ ranges over $\Zd{2^K}$, and
+\begin{equation}
+\sum_{Y\in\Zd{2^K}}e^{2\pi i\,YS/2^K}=2^K[S\equiv0\bmod 2^K]=\sum_{y'\in\Zd2^K}(-1)^{\sum_jy'_jb_j},
+\end{equation}
+with $b_j$ the $j$-th binary digit of $S$ as an $\mathbb{F}_2$ polynomial: $b_0=\{m:s_m\text{ odd}\}$, and $S\leftarrow(S-\mathrm{lift}(b_j))/2$ modulo $2^{K-j-1}$ (an odd remainder raises \py!PathSumError!). Before rewriting, the low-digit rules of the next paragraph are tried. Otherwise remove the group's terms and variables, add $K$ fresh path variables $f_j=t+j$ with $t$ one more than the largest boundary, path, digit, or phase variable, and add the terms $\tfrac12 f_jm$ for $m\in b_j$; $k$ is unchanged. Trace: \code!group!, \code!fresh!, \code!values! $(b_0,\ldots,b_{K-1})$, \code!poly! $S$.
+
+\paragraph{Low digit: [BSub] and [HH]} (\code!bsub!, \code!hh_constraint!). For a digit group whose $b_0$ reads only boundary variables and whose digits occur in no constraint (\py!_try_low_digit!):
+\begin{enumerate}
+\item For every boundary variable $u$ of $S$ (ascending) that occurs in exactly one constraint $C$, as the monomial $\{u\}$ and in no other monomial of $C$, with $C+u$ reading only boundary variables above $u$: collect $(u,C+u)$; then drop the pairs whose value reads another collected $u$. When pairs remain, substitute $u:=C+u$ in the phase only (valid on the support of $C$), one \code!bsub! step each, stopping at the first lift that raises; report success when at least one applied.
+\item Otherwise, inside the scope \py!dyadic_columns()! and for a group of at least $\mathtt{COLUMN\_DIGITS}=8$ digits, try [Dyadic] as constraints (next paragraph).
+\item Otherwise find the least boundary variable $v$ that is a singleton monomial of $b_0$, in no other monomial of $b_0$, no constraint, and no amplitude exponent. When none exists, the low-digit rules do not apply. Otherwise drop the terms of the top digit $Y_{K-1}$ and substitute $v:=b_0+v$ in the phase. When that lift raises: if the lift could exceed $2^{20}$ terms (\py!_lift_bound! over the terms of $v$ without the top digit), restore the phase and do not apply; else the error propagates. On success add the constraint $b_0$, remove the top digit from the path, $k\mathrel{+}=2$, and record \code!hh_constraint! (on the top digit) and \code!bsub! (on $v$).
+\end{enumerate}
+
+\paragraph{[Dyadic] as constraints} (\code!dyadic_columns!, only inside \py!dyadic_columns()!). The group sum equals $2^K[S\equiv0\bmod2^K]$. For the signs $\sigma=+1$ and then $-1$, choose for each $i<K$ the least boundary variable $c_i$, not yet chosen, whose singleton coefficient in $S$ is $\sigma2^i\bmod2^K$ and that occurs in no other monomial of $S$, in no phase term outside the group, in no constraint, and in no amplitude exponent. When all $K$ exist, $S=\sigma C+R$ with $C=\sum_i2^ic_i$; put every other monomial $\mu$ of $S$ (by \py!_mono_key!) into column $j$ for each bit $j$ of $(-\sigma s_\mu)\bmod2^K$, and compute the binary digits $d_i$ of $\sum_i2^i\cdot(\text{column }i\text{ count})$ below $2^K$ (\py!_column_digits!: digit $i$ is the XOR of column $i$, and the elementary symmetric polynomial $e_{2^j}$ over $\mathbb{F}_2$ of column $i$'s items is carried into column $i+j$). Remove the group's terms and digits, add the constraints $d_i+c_i$, $k\mathrel{+}=2K$. Trace: \code!group! the digits, \code!values! the constraints.
+
+\paragraph{[Rem]} (\code!rem!). A path variable $y$ whose quotient is a single nonempty monomial $m$. The sum over $y$ forces $m=0$, so every phase term $t\supseteq m$ with $y\notin t$ vanishes on the support: delete those terms (at least one must exist). Trace \code!value!: $\{m\}$.
+
+\paragraph{[HH] on a boundary constraint} (\code!hh_constraint!). A path variable $y$ with a nonempty quotient $Q$ free of path variables: remove $y$'s terms and $y$, $k\mathrel{+}=2$, and add the constraint $Q=0$; when $Q=1+m$ for one monomial $m$ of degree above $1$, add instead the constraints $1+v$ for each $v\in m$ (ascending), since $1+\prod_{v\in m}v=0$ holds exactly when every $v=1$.
+
+\paragraph{[HHnl]} (\code!hh_nl!). Two path variables $y<y'$ with nonempty quotients $Q$ and $Q'$, $y'$ not in $Q$ and $y$ not in $Q'$ (the first such pair in ascending order of $y$, then of $y'$). Substitute $y':=y+yQ$ in the phase and remove $y'$; $k\mathrel{+}=2$. The remaining sum over $y$ gives $2[Q+Q'+QQ'=0]=2[Q=0][Q'=0]$, the same as summing both variables. Trace: \code!var! $y$, \code!pivot! $y'$, \code!value! $y+yQ$.
+
+\paragraph{[Quarter]} (\code!quarter!). A path variable $y$ in no constraint whose terms all have denominators dividing $4$ and whose other monomials read no path variable. Write the part as $yS/4$ and $S=b_0+2b_1\bmod4$ on Booleans (\py!quarter_digits!; an odd remainder raises \py!PathSumError!). Then
+\begin{equation}
+\sum_y i^{yS}=2\Bigl(\frac{1+i}{2}\Bigr)^{b_0}i^{3b_0b_1}\,[(1+b_0)b_1=0].
+\end{equation}
+Remove $y$'s terms and $y$; add the lift of $\tfrac34\,b_0b_1$ to the phase, the constraint $(1+b_0)b_1$, and the atom $(\mathtt{QUARTER\_BASE},b_0)$ with $\mathtt{QUARTER\_BASE}=(1+i)/2$; $k\mathrel{+}=2$; fold the atoms. Trace \code!values!: $(b_0,b_1)$.
+
+\paragraph{[Turn]} (\code!turn!). A path variable $y$ in no constraint whose terms have largest denominator $2^K$, $K\ge3$, and whose other monomials read no path variable. Write the part as $yS/2^K$ with digits $b_0,\ldots,b_{K-1}$ of $S$ (\py!turn_digits!: $S=\sum_i2^ib_i\bmod2^K$; an odd remainder raises \py!PathSumError!), $\zeta=\zeta_{2^K}$, and $[b=s]=\prod_i(b_i+1+s_i)$ the indicator that the digits spell $s$ (\py!turn_indicator!). Then
+\begin{equation}
+\sum_y\zeta^{yS}=2\,[\,b\ne2^{K-1}]\prod_{s}\Bigl(\frac{1+\zeta^s}{2}\Bigr)^{[b=s]},
+\end{equation}
+$s$ over \py!turn_values(K)!: $1\le s<2^K$, $s\ne2^{K-1}$, ascending. Remove $y$'s terms and $y$; add the constraint $[b=2^{K-1}]$ and the atoms $(\mathtt{turn\_base}(s,K),[b=s])$ with $\mathtt{turn\_base}(s,K)=(1+\zeta^s)/2$; $k\mathrel{+}=2$; fold. \py!turn_indicators(bs)! returns all $2^K$ indicators at once (\py!_turn_table!, memoized for the last 8 digit lists), sharing the products over prefixes of the digits taken largest polynomial first. Trace \code!values!: the digits.
+
+\paragraph{[Turn] with $S$ reading path variables} (\code!turn_held!). As [Turn], for $y$ in no constraint and no amplitude exponent, with $S$ allowed to read path variables. The zero indicator $[b=2^{K-1}]$ becomes a constraint when it reads only boundary variables, and the atom $(0,[b=2^{K-1}])$ otherwise; each $(\mathtt{turn\_base}(s,K),[b=s])$ is added as an atom, multiplied into $c$ when $[b=s]=1$, and skipped when $[b=s]=0$; $k\mathrel{+}=2$.
+
+\subsection{Rules on amplitude atoms}
+
+\py!_fold_amps! normalizes the atoms after each of these rules: an atom with exponent $0$ is dropped; an atom with exponent \py!ONE! is multiplied into $c$; an atom of zero base whose exponent reads no path variable becomes the constraint $F=0$; the others are kept in order.
+
+\paragraph{[Pin]} (\code!pin!). A path variable $y$ and a constraint $\{y\}+B$ with $B$ free of $y$: drop the constraint and substitute $y:=B$ in the phase, the other constraints, and the atoms; remove $y$; fold.
+
+\paragraph{[Average]} (\code!average!). A path variable $y$ in the atoms but in no phase term or constraint, whose atoms reading $y$ all have the form $a^{G(1+y)}$ or $a^{Gy}$ for one $G$ free of $y$ (the quotient of the first such atom fixes $G$; each exponent must be $yG$ plus either $0$ or $G$). With $\alpha$ the product of the $a^{G(1+y)}$ bases and $\beta$ of the $a^{Gy}$ bases,
+\begin{equation}
+\sum_y\alpha^{G(1+y)}\beta^{Gy}=2\Bigl(\frac{\alpha+\beta}2\Bigr)^{G}.
+\end{equation}
+Replace those atoms by $((\alpha+\beta)/2,G)$, remove $y$, $k\mathrel{+}=2$, fold. Trace \code!value!: $G$.
+
+\paragraph{[Average] through a half phase} (\code!average_half!). A path variable $y$ in the atoms and no constraint, with a nonempty quotient $Q$ free of path variables, whose atoms reading $y$ are exactly of the forms $\alpha_j^{1+y}$ and $\beta_j^{y}$:
+\begin{equation}
+\sum_y(-1)^{yQ}\alpha^{1+y}\beta^{y}=2\Bigl(\frac{\alpha+\beta}2\Bigr)^{1+Q}\Bigl(\frac{\alpha-\beta}2\Bigr)^{Q}.
+\end{equation}
+Remove $y$'s terms and atoms, add the two atoms, remove $y$, $k\mathrel{+}=2$, fold.
+
+\paragraph{[Indicator]} (\code!indicator!, only inside the scope \py!zero_indicators()!). A path variable $y$ in the atoms and no constraint, all of whose phase terms have coefficient $\tfrac12$ (quotient $L$, possibly $0$), and all of whose atoms have base $0$, with exponents $yq_j+r_j$, $q_j$ and $r_j$ free of $y$. With $\bigvee$ the $\mathbb{F}_2$ disjunction $1+\prod(1+\cdot)$, $R=\bigvee_jr_j$ (the atoms at $y=0$) and $Q=\bigvee_j(q_j+r_j)$ (at $y=1$), and $N=(1+R)(1+Q)$,
+\begin{equation}
+\sum_y(-1)^{yL}\prod_j0^{yq_j+r_j}=0^{RQ\vee NL}\;2^{N(1+L)}\;(-1)^{R(1+Q)L}.
+\end{equation}
+Drop $y$'s terms and atoms, add the atoms $(0,RQ\vee NL)$, $(2,N(1+L))$ and $(-1,R(1+Q)L)$, remove $y$, fold; $k$ is unchanged. Trace \code!value!: $L$.
+
+\paragraph{[Average] on a context} (\code!average_ctx!). A path variable $y$ in the atoms and no constraint, with a quotient $Q$ (or no phase term, $Q=0$) free of path variables; every atom reading $y$ has exponent $F_0+yF_1$ with $F_0$ and $F_1$ free of path variables. Collect the \term{context}: the distinct nonconstant parts $C_1,\ldots,C_r$ of $Q$, the $F_0$, and the $F_1$; require $r\le4$ and every one of these polynomials to be $0$, $1$, some $C_i$, or $1+C_i$ (\py!ctx_value!). For each $N\in[0,2^r)$, with $v_b(N)$ the product of the bases whose exponent is $1$ at $y=b$ and $C=N$ (the bits of $N$, low bit first, as the values of the $C_i$), add the atom $\bigl((v_0(N)+(-1)^{Q(N)}v_1(N))/2,\,[C=N]\bigr)$. Remove $y$'s terms and atoms and $y$; $k\mathrel{+}=2$; fold. Trace: \code!value! $Q$, \code!values! the context.
+
+\subsection{The reduction strategy}
+
+\begin{algorithm}[\texttt{reduce(ps)}]\label{alg:algebra-reduce}
+\py!reduce! returns a reduced copy and leaves its argument unchanged.
+\begin{enumerate}
+\item Run $\mathit{out}=$ \py!_reduce(ps, held=False)!. If $\mathit{out}$ still has path variables and is not zero, run $\mathit{alt}=$ \py!_reduce(ps, held=True)! and return $\mathit{alt}$ when it has no path variable left; otherwise return $\mathit{out}$.
+\end{enumerate}
+The two scopes \py!dyadic_columns()! and \py!zero_indicators()! are context managers that set the context variables \py!_COLUMNS! and \py!_INDICATORS! (default false) for the duration of a \py!with! block; outside them the rules [Dyadic] as constraints and [Indicator] never apply.
+
+\py!_reduce(ps, held)! copies \code!ps!, replaces the copy's phase terms by an \emph{indexed} term map (\py!_Indexed!: a \py!dict! that keeps, per variable, its monomials in term order, a version counter per variable, the count of each denominator, and cached quotients; occurrence maps over it are live views, \py!_OccView!, that freeze a variable's list when its terms change after the view was taken), folds its atoms, and loops while path variables remain and the sum is not zero:
+\begin{enumerate}
+\item \emph{With atoms.} Let $\mathit{blocked}$ be the path variables of the amplitude exponents. Remove them from the path, run one balanced round (\py!_reduce_round!), and restore them. If the round applied a rule: when that rule was \code!hh_pivot! or \code!hh_gen!, substitute its pivot into the atoms; fold; continue. Otherwise try, in order, [Pin], [Average], [Average] through a half phase, inside \py!zero_indicators()! [Indicator], and with \code!held! [Average] on a context; continue when one applies. Otherwise try a [Turn] round; continue when it applies, else stop.
+\item \emph{Without atoms.} Run one balanced round; when it applies nothing, try a [Turn] round; stop when neither applies.
+\end{enumerate}
+A \emph{balanced round} recomputes $\mathrm{occ}$ for the path variables and tries the first applicable rule of: [Turn] with $S$ reading path variables (only with \code!held!), [Elim], [HH] on a path pivot, [HHgen], [$\omega$], [Dyadic] (with its low-digit rules), [Rem], [HH] on a boundary constraint, [HHnl], [Quarter]. A \emph{[Turn] round} removes the path variables of the amplitude exponents from the path for the duration of one [Turn] attempt. On exit the phase terms become a plain \py!dict! again. The indexed map and its views yield the same occurrences, in the same order, as \py!_occurrences! over a plain map; they change no rule choice.
+\end{algorithm}
+
+Every rule is an identity of \cref{eq:algebra-pathsum}, so the reduced sum denotes the same function. [Dyadic] trades $K$ digits for $K$ variables whose terms all have coefficient $\tfrac12$, which the [HH] rules take next. A reduction can stop with path variables left; \py!canonical! then returns \py!None! and \py!residual_form! applies.
+
+\begin{example}\label{ex:algebra-hh}
+Two Hadamard gates in sequence have boundary variables $x_0$ (input) and $x_1$ (output), one path variable $y=2$, phase $\tfrac12x_0y+\tfrac12yx_1$, constant $1$, and $k=-2$. \py!reduce! applies [HH] on a boundary constraint to $y$ (the quotient $x_0+x_1$ reads no path variable), adds the constraint $x_0+x_1=0$, and sets $k=0$. Its canonical form (\cref{sec:algebra-canon}) has the single row $x_0:=x_1$, no phase, and constant $1$: the identity.
+\end{example}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.2\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Trace name & Rule & Fields set besides \code!rule! and \code!var! \\
+\midrule
+\code!elim! & [Elim] & none \\
+\code!hh_pivot! & [HH] on a path pivot & \code!pivot! $z$, \code!value! \\
+\code!hh_gen! & [HHgen] & \code!pivot! $z$, \code!value! $B$ \\
+\code!omega!, \code!omega_conj! & [$\omega$] & \code!value! $Q$ \\
+\code!dyadic! & [Dyadic] & \code!group!, \code!fresh!, \code!values!, \code!poly! \\
+\code!dyadic_columns! & [Dyadic] as constraints & \code!group!, \code!values! (constraints) \\
+\code!indicator! & [Indicator] & \code!value! $L$ \\
+\code!bsub! & [BSub] & \code!value! \\
+\code!hh_constraint! & [HH] on a boundary constraint & \code!value! $Q$ or $b_0$ \\
+\code!rem! & [Rem] & \code!value! $\{m\}$ \\
+\code!hh_nl! & [HHnl] & \code!pivot! $y'$, \code!value! \\
+\code!quarter! & [Quarter] & \code!values! $(b_0,b_1)$ \\
+\code!turn!, \code!turn_held! & [Turn] & \code!values! digits \\
+\code!pin! & [Pin] & \code!value! $B$ \\
+\code!average! & [Average] & \code!value! $G$ \\
+\code!average_half! & [Average], half phase & \code!value! $Q$ \\
+\code!average_ctx! & [Average], context & \code!value! $Q$, \code!values! context \\
+\code!q_elim!, \code!q_hh_pivot!, \code!q_gauss!, \code!q_hh_constraint!, \code!q_fourier!, \code!q_hh_atom!, \code!q_convolve!, \code!q_kfourier!, \code!q_kconvolve! & qudit rules (\cref{sec:algebra-qudit}) & \code!poly!; \code!pivot! for \code!q_hh_pivot! ($z$), \code!q_gauss! ($a$), \code!q_fourier!, \code!q_kfourier!, \code!q_kconvolve! (the unit coefficient) \\
+\bottomrule
+\end{tabularx}
+\caption{Trace names of path-sum steps.}\label{tab:algebra-rules}
+\end{table}
+
+\section{Canonical and Residual Forms}\label{sec:algebra-canon}
+
+A reduced path sum without path variables is a function of its boundary written as constraints, a phase, a constant, and amplitude atoms. The canonical form writes it uniquely enough that equal data means equal functions; comparison of different data falls back to evaluation at chosen boundary points.
+
+\subsection{Elimination of constraints}
+
+\begin{algorithm}[\texttt{eliminate(constraints, boundary)}]\label{alg:algebra-eliminate}
+Gauss--Jordan elimination over $\mathbb{F}_2$ polynomials.
+\begin{enumerate}
+\item Drop zero constraints, remove duplicates, and sort by the sorted monomial keys. Return \py![None]! when a constraint is \py!ONE!.
+\item In passes, for each boundary variable $v$ in ascending order that is not yet a pivot: find the first constraint holding $\{v\}$ and no other monomial with $v$. Remove it, record the row $v:=C+v$, substitute $v$ by that value in every other constraint and every row, drop constraints that became zero, and return \py![None]! when one became \py!ONE!. Stop when a pass finds no pivot.
+\item Return \py!None! when constraints remain without a pivot; otherwise the rows sorted by pivot.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[\texttt{boolean\_eliminate(constraints, boundary)}]\label{alg:algebra-boolean-eliminate}
+For constraints without degree-one pivots. Monomials are bitmasks internally.
+\begin{enumerate}
+\item Form the support indicator $g=\prod_j(1+C_j)$; the Boolean ideal of the constraints is the principal ideal of $1+g$. An empty $g$ (the zero polynomial) returns no rows and the empty support.
+\item For each boundary variable $v$ ascending, write $g=vA+B$; skip when $A=0$; when $B(A+B)=0$, the variable is determined on the support as $v=A+B$: substitute it into $g$ and into the rows, and record the row $v:=A+B$.
+\item Return the rows sorted by pivot and the residual indicator $g$.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{The canonical form}
+
+\begin{definition}[Canonical form \texttt{Canon}]\label{def:algebra-canon}
+A \py!Canon! (frozen dataclass) has the fields
+\begin{itemize}
+\item \py!zero: bool!: the function is identically $0$;
+\item \py!rows!: pairs (pivot boundary variable, sorted monomials of its $\mathbb{F}_2$ value over the free variables), sorted by pivot;
+\item \py!phase!: sorted pairs (sorted monomial, coefficient in turns) over the free variables;
+\item \py!const: Cyclo!; \py!boundary!;
+\item \py!support!: the sorted monomials of the residual support indicator, empty when the support is unrestricted;
+\item \py!amps!: sorted pairs (sorted monomials of an exponent, base);
+\item \py!parity!: sorted pairs (sorted monomials of an $\mathbb{F}_2$ polynomial $g$ of boundary variables, coefficient), the phase terms $c\,[g]$ kept unlifted.
+\end{itemize}
+It denotes $\mathit{value}(x)=0$ off the support or off a row, and otherwise $\mathit{const}\cdot\prod_{(F,a):F(x)=1}a\cdot e^{2\pi i(\sum_{m\subseteq x}c_m+\sum_{g(x)=1}c_g)}$.
+\end{definition}
+
+\begin{algorithm}[\texttt{canonical(ps, parity=False)}]\label{alg:algebra-canonical}
+\begin{enumerate}
+\item A zero sum gives the zero form; a sum with path variables gives \py!None!. With atoms, fold them on a copy (zero then gives the zero form).
+\item Eliminate the constraints (\cref{alg:algebra-eliminate}); when that leaves a constraint without a pivot, use \cref{alg:algebra-boolean-eliminate} and keep its indicator as the support (an empty support gives the zero form). \py![None]! gives the zero form.
+\item Substitute every pivot into a copy of the phase, in row order. With \code!parity!, at the first substitution whose lift raises, move every phase term that reads that pivot or a later one into the parity terms unsubstituted, and stop substituting.
+\item Substitute the pivots into the atom exponents. Fold $c\cdot\sqrt2^{\,k}$ into one constant. For each atom: exponent $0$ is dropped; \py!ONE! multiplies the constant; a base $\pm\zeta_n^e$ (one coefficient of absolute value $1$) is written as the phase $t\cdot F$ with $t=e/n$ ($+\tfrac12$ for the sign $-1$), lifted into the phase (with \code!parity!, a raising lift becomes the parity term $t[F]$; without it, the error propagates); other bases with the same exponent multiply.
+\item For atoms $a^{F}$ and $a^{1+F}$ of equal base, replace the pair by the factor $a$ in the constant (exponents in sorted order).
+\item With a restricted support $\sigma$, drop every phase monomial $m$ with $m\cdot\sigma=0$.
+\item Move the constant phase term and the constant parity term into the constant as $e^{2\pi it}$. A zero constant gives the zero form.
+\item Return the \py!Canon! with every collection sorted as in \cref{def:algebra-canon}.
+\end{enumerate}
+\end{algorithm}
+
+\begin{signature}
+\py!Canon.same(other) -> bool!: both zero; or both nonzero with equal boundary, rows, support, phase, parity, constant, and pairwise equal atoms. Equal data denotes one function.\\
+\py!Canon.value(values) -> Cyclo!: the entry at a full boundary assignment (\cref{def:algebra-canon}).\\
+\py!Canon.complete(free) -> dict[int, int]!: the support point with the given values of the free (non-pivot) variables, others $0$, the pivots computed from the rows. \py!support_point()! is \py!complete({})!.\\
+\py!Canon.affine!: every row value has monomials of degree at most one.\\
+\py!canon_evaluator(x) -> Callable!: \py!Canon.value! with the phase and parity read as subsets of the set of variables that are $1$.\\
+\py!support_lift(support) -> tuple[Mono, Mono] | None!: $(a,b)$ with $1+\mathit{support}=a+ab$, $b$ nonempty and disjoint from $a$, when $1+\mathit{support}$ has exactly two monomials $a\subsetneq a'$ ($b=a'\setminus a$); else \py!None!.
+\end{signature}
+
+\subsection{The residual form}
+
+When path variables remain, \py!residual_form(ps)! gives a form that identifies sums up to a renaming of path variables.
+
+\begin{definition}[Residual]\label{def:algebra-residual}
+A \py!Residual! (frozen dataclass) has \py!rows!, \py!raw! (the sorted constraints as sorted monomials when they have no pivots, else empty), \py!phase! (over the boundary and the renamed path variables $\max(\mathit{boundary})+1,\ldots$), \py!const!, \py!boundary!, and \py!paths! (the number of path variables). \py!same! compares all six fields.
+\end{definition}
+
+\begin{algorithm}[\texttt{residual\_form(ps)}]\label{alg:algebra-residual}
+\begin{enumerate}
+\item A sum with atoms gives \py!None!. Eliminate the constraints: \py![None]! gives \py!None!; no pivots keeps them raw; otherwise substitute the rows into the phase.
+\item Fold $c\sqrt2^{\,k}$ and the constant phase term into the constant.
+\item Color the path variables by \emph{color refinement}: start with one color; in each of at most $|\mathit{path}|+1$ rounds, give each variable the signature (its color, the sorted list over its terms of (coefficient, the sorted non-path variables of the term, the sorted colors of the other path variables of the term)); rank the distinct signatures in sorted order as the new colors; stop when the number of colors no longer grows.
+\item When the product over color classes of the factorials of their sizes exceeds $\mathtt{RESIDUAL\_ORDERINGS}=5040$, return \py!None!.
+\item For every ordering that permutes each class (classes in color order), name the path variables consecutively from $\max(\mathit{boundary})+1$ and encode the phase as its sorted (sorted renamed monomial, coefficient) pairs; keep the least encoding.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Entries and comparison points}
+
+\begin{signature}
+\py!entry_at(ps, values) -> Cyclo!: assign the boundary values in the phase, constraints, and atoms; return $0$ when a constraint becomes \py!ONE!; reduce; return $0$ when zero or when a nonzero constraint remains; raise \py!PathSumUnsupported("<n> path variable(s) left at this entry")! when path variables remain; else $c\sqrt2^{\,k}e^{2\pi it}$ with $t$ the constant phase term.\\
+\py!entry_enumerated(ps, values, max_paths) -> Cyclo | None!: as \py!entry_at!, but sums exactly over every assignment of at most \code!max_paths! remaining path variables (skipping assignments that make a constraint \py!ONE!, multiplying in the atoms whose exponent becomes \py!ONE!); \py!None! when more remain.\\
+\py!rref(rows) -> list[tuple[int, set[int], int]] | None!: reduced row echelon form over $\mathbb{F}_2$ of rows (variable set, constant bit), columns ascending, as (pivot, other variables, constant); \py!None! when a row $0=1$ remains.\\
+\py!parity_difference(a, b) -> PhasePoly | None!: for two nonzero forms with equal rows, support, and atoms, the phase of $a$ minus that of $b$, parity terms lifted (a raising lift gives \py!None!), the shared rows substituted, and monomials zero on the support dropped; \py!None! otherwise.
+\end{signature}
+
+When two canonical forms are not \py!same!, the comparison of \cref{ch:proofs} evaluates both at boundary points that separate their differences.
+
+\begin{definition}[Witness points]\label{def:algebra-witness-points}
+\py!witness_points(a, b)! lists, for $(x,y)=(a,b)$ and then $(b,a)$, skipping a zero $x$: the support point of $x$; when both are affine, for each row $p:=R$ of $y$ the solution (free variables $0$, by \py!rref! over the rows of $x$ plus the negated row $p+R=1$) that lies on $x$'s support but off that row of $y$, when it exists; and for every monomial of $x$'s phase, rows, and parity polynomials, ordered by degree and then by its sorted variables, the support point of $x$ whose free variables in that monomial are $1$.
+\end{definition}
+
+\py!parity_points(a, b, diff)! yields boundary points for forms with parity terms, at most $\mathtt{PARITY\_POINTS}=4096$, each (form, free-variable set) once: first, for a nonzero form ($a$, or $b$ when $a$ is zero), the indicator point of each monomial of \code!diff! ordered by \py!_mono_key!; then, for $(a,b)$ and $(b,a)$, the support point, the off-row points of the affine case, and the indicator points of the phase, row, and parity monomials.
+
+\section{Path Sums over \texorpdfstring{$\Zd{p}$}{Zp}}\label{sec:algebra-qudit}
+
+For an odd prime $p$ the variables range over $\Zd p$, the phase is a polynomial over $\mathbb{F}_p$ read in units of $1/p$ turns, and spider tables enter as atoms~\cite{poor2023qupit}.
+
+\subsection{Polynomials over $\mathbb{F}_p$}
+
+\begin{definition}[Reduced $\mathbb{F}_p$ polynomial]\label{def:algebra-modpoly}
+A \py!QMono! is a sorted tuple of (variable, exponent) pairs with every exponent in $1,\ldots,p-1$; \py!ONE_Q! $=()$ is $1$. A \py!ModPoly! (dataclass) has the prime \py!p! and \py!terms: dict[QMono, int]! with nonzero coefficients modulo $p$. Products reduce exponents by $x^p=x$ (\py!_qmono_mul!: $e\mapsto(e-1)\bmod(p-1)+1$), which is valid as functions on $\mathbb{F}_p$.
+\end{definition}
+
+\begin{signature}
+\py!ModPoly.const(p, c)!; \py!add(mono, coeff)!; \py!+!; \py!*!; \py!scale(c)!; \py!power(e)! (repeated product); \py!variables()!; \py!degree_in(var)! (largest exponent); \py!coefficient(var, e)! (the polynomial multiplying $\mathit{var}^e$ exactly); \py!without(var)! (the terms free of \code!var!); \py!substitute(var, value)!; \py!assign(values)! (partial evaluation); \py!value(values)! (the constant term after a full assignment); \py!key()! (the sorted terms); \py!copy()!.\\
+\py!legendre(a, p)!: the Legendre symbol, $a^{(p-1)/2}\bmod p$ read as $-1$, $0$ or $1$.\\
+\py!gauss_sum(a, p) -> Cyclo!: $\sum_{y\in\Zd p}\zeta_p^{ay^2}=\bigl(\tfrac ap\bigr)\sum_{b=1}^{p-1}\bigl(\tfrac bp\bigr)\zeta_p^b$~\cite{berndt1998gauss}.\\
+\py!dft_table(table, p)!: $t\mapsto\sum_u\zeta_p^{ut}f(u)$.
+\end{signature}
+
+\begin{definition}[Qudit path sum]\label{def:algebra-qudit-pathsum}
+A \py!QuditPathSum! (dataclass) has \py!p!, \py!boundary!, \py!path!, \py!phase: ModPoly!, \py!const: Cyclo!, \py!constraints: list[ModPoly]!, \py!trace!, \py!atoms: list[tuple[ModPoly, tuple[Cyclo, ...]]]! (an argument polynomial and a table of $p$ values), and \py!katoms! (a tuple of $k$ argument polynomials and a table of $p^k$ values indexed by $\sum_ja_jp^j$). It denotes
+\begin{equation}
+E(x)=c\prod_j[C_j(x)=0]\sum_{y\in\Zd p^{m}}\omega_p^{P(x,y)}\prod_{(A,f)}f(A(x,y))\prod_{((A_0,\ldots,A_{k-1}),F)}F\Bigl(\sum_jA_j(x,y)\,p^j\Bigr).
+\end{equation}
+\py!is_zero!: $c=0$ or a constraint is a nonzero constant. \py!atom_vars()!: the variables of all atom arguments.
+\end{definition}
+
+\py!_q_fold_atoms! multiplies every unary atom with a constant argument into $c$ (table entry at the argument), multiplies every $k$-ary atom without a variable argument into $c$, turns a $k$-ary atom with one variable argument into a unary atom whose table is the slice along that axis, and keeps the rest.
+
+\subsection{Rules}
+
+The rules scan the path variables in ascending order and apply at the first that qualifies. For a variable $y$ of degree one in the phase, $Q$ denotes the coefficient polynomial of $y$, so the $y$-part is $yQ$, and $\sum_{y}\omega_p^{yQ}=p\,[Q=0]$.
+
+\paragraph{[Elim]} (\code!q_elim!). $y$ in no phase term or atom: remove it; $c\mathrel{\times}=p$.
+
+\paragraph{[HH] on a path pivot} (\code!q_hh_pivot!). $y$ in no atom, of degree one, and a path variable $z\ne y$ (least) that occurs in $Q$ only as the term $az$ with a constant $a$: $z:=-(Q-az)/a$. Drop $y$'s terms, substitute $z$ in the phase, constraints, and atoms; fold; remove $y$ and $z$; $c\mathrel{\times}=p$. Trace \code!pivot!: $z$.
+
+\paragraph{[Gauss]} (\code!q_gauss!). $y$ in no atom, of degree two, with a constant coefficient $a$ of $y^2$ and linear coefficient $Q$:
+\begin{equation}
+\sum_y\omega_p^{ay^2+Qy}=\omega_p^{-Q^2/(4a)}\,G(a),\qquad G(a)=\sum_y\omega_p^{ay^2}.
+\end{equation}
+The phase becomes the $y$-free part minus $(4a)^{-1}Q^2$; $c\mathrel{\times}=G(a)$. Trace \code!pivot!: $a$.
+
+\paragraph{[HH] on a boundary constraint} (\code!q_hh_constraint!). $y$ in no atom, of degree one, $Q$ free of path variables: drop $y$, add the constraint $Q$, $c\mathrel{\times}=p$.
+
+\paragraph{[Fourier]} (\code!q_fourier!). $y$ in no constraint and no $k$-ary atom, of degree at most one in the phase ($y$-part $yQ$, possibly $Q=0$), in exactly one unary atom $f(ay+c_0)$ with $a$ a nonzero constant:
+\begin{equation}
+\sum_y\omega_p^{yQ}f(ay+c_0)=\omega_p^{-Qc_0/a}\,\hat f(Q/a),\qquad\hat f(t)=\sum_u\zeta_p^{ut}f(u).
+\end{equation}
+Drop $y$'s terms, add $-a^{-1}Qc_0$ to the phase, replace the atom by $(a^{-1}Q,\hat f)$, remove $y$, fold. Trace \code!pivot!: $a$.
+
+\paragraph{[HH] into an atom} (\code!q_hh_atom!). $y$ in no atom, of degree one, $Q$ reading a path variable: drop $y$, add the atom $(Q,\delta)$ with $\delta(t)=[t=0]$, $c\mathrel{\times}=p$.
+
+\paragraph{[Convolve]} (\code!q_convolve!). $x$ in no constraint and no $k$-ary atom, in no phase term together with another variable, in at least one atom; the atoms on $x$ alone have product table $A$ (with the phase terms in $x$ absorbed as $\omega_p^{\cdot}$), and at most one other atom $g(ax+M)$ reads $x$, linearly with a nonzero constant $a$. With such an atom, replace both by $(M,H)$, $H(m)=\sum_vA(v)\,g(av+m)$; without one, $c\mathrel{\times}=\sum_vA(v)$. Drop $x$'s terms, remove $x$, fold.
+
+\paragraph{[Fourier] and [Convolve] along a $k$-ary atom} (\code!q_kfourier!, \code!q_kconvolve!). The same identities along one component $j$ of a $k$-ary atom that is the only atom component reading the variable, linearly with a constant unit coefficient (\py!_kslot!): [Fourier] for $y$ in no constraint or unary atom and of degree at most one in the phase replaces component $j$ by $a^{-1}Q$ and applies the DFT along axis $j$ of the table; [Convolve] for $x$ in no constraint, in no mixed phase term, and in unary atoms only on $x$ alone, convolves the table along axis $j$ with the weights of those atoms and phase terms (\py!_axis_map!).
+
+\begin{algorithm}[\texttt{reduce\_qudit(ps)}]\label{alg:algebra-reduce-qudit}
+Copy and fold the atoms; while path variables remain and the sum is not zero, apply the first applicable of [Elim], [HH] on a path pivot, [Gauss], [HH] on a boundary constraint, [Fourier], [HH] into an atom, [Convolve], [Fourier] along a $k$-ary atom, [Convolve] along a $k$-ary atom; stop when none applies.
+\end{algorithm}
+
+\subsection{Canonical form and comparison}
+
+\py!eliminate_qudit(constraints, boundary)! is \cref{alg:algebra-eliminate} over $\mathbb{F}_p$: a pivot is a boundary variable occurring in a constraint only as $av$ with a constant $a$, solved as $v:=-(C-av)/a$; a constraint that becomes a nonzero constant gives \py![None]!, and constraints left without a pivot give \py!None!.
+
+\begin{definition}[Qudit canonical form]\label{def:algebra-qudit-canon}
+A \py!QuditCanon! (frozen dataclass) has \py!p!, \py!zero!, \py!rows! (pivot, key of its value), \py!phase! (key), \py!const!, \py!boundary!, \py!atoms! (argument key, normalized table), and \py!katoms! (argument keys, normalized table). \py!same!: both zero, or equal $p$, boundary, rows, phase, constant, and pairwise equal atoms and tables. \py!value(values)!: $0$ off a row, else $\mathit{const}\cdot\omega_p^{P}\cdot\prod f(A)\cdot\prod F(\ldots)$. \py!complete(free)! and \py!affine! as for \py!Canon!.
+\end{definition}
+
+\begin{algorithm}[\texttt{canonical\_qudit(ps)}]\label{alg:algebra-canonical-qudit}
+\begin{enumerate}
+\item Zero gives the zero form; path variables, or constraints without a pivot, give \py!None!; \py![None]! gives the zero form.
+\item Substitute every pivot into the phase and the atom arguments; fold the atoms.
+\item Normalize the unary atoms (\py!_canon_atoms!): an atom with a constant argument multiplies the constant; otherwise make the argument monic and constant-free (lead monomial the least nonconstant one, $A=a\,A'+c_0$, the table permuted to $t\mapsto f(at+c_0)$); multiply tables of equal arguments. In argument order: an argument that is a single variable $x$ absorbs the phase terms in $x$ alone into its table; a table of nonzero values that is a constant times $p$-th roots of unity $f(t)=f(0)\zeta_p^{e_t}$ is written back as $c\mathrel{\times}=f(0)$ and the phase term $\sum_te_t\,(1-(A-t)^{p-1})$ (\py!_interp_mod!, Lagrange indicators); an all-zero table makes the constant $0$; any other table is divided by its first nonzero entry, which multiplies the constant.
+\item Normalize the $k$-ary atoms alike (\py!_canon_katoms!): each component monic and constant-free with its axis permuted, components sorted by key with the axes reordered, equal argument tuples multiplied, a root-of-unity table written back as phase over the product of the Lagrange indicators of its components, and every other table scaled to $1$ at its first nonzero entry.
+\item Move the constant phase term into the constant. A zero constant, or an atom table of zeros, gives the zero form.
+\end{enumerate}
+\end{algorithm}
+
+\py!witness_points_qudit(a, b)! lists, for $(x,y)=(a,b)$ and $(b,a)$ with $x$ nonzero: the support point of $x$; when both are affine, for each row of $y$ a solution of $x$'s rows that violates it by one (\py!_solve_mod!, Gauss--Jordan modulo $p$, free variables $0$); for each monomial of either phase or of $x$'s rows, the points whose variables in that monomial take every value up to their exponents; for each variable of an atom argument of either form, the $p$ points with that variable at $0,\ldots,p-1$; and for each $k$-ary atom whose argument variables number $v$ with $p^v\le625$, the full grid over those variables. \py!entry_at_qudit! and \py!entry_enumerated_qudit! are the qudit forms of \py!entry_at! and \py!entry_enumerated!.
+
+\section{Constants}\label{sec:algebra-constants-sec}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.36\linewidth}>{\raggedright\arraybackslash}p{0.14\linewidth}>{\raggedright\arraybackslash}p{0.42\linewidth}@{}}
+\caption{Numeric constants of \texttt{archytaszx.algebra}.}\label{tab:algebra-constants}\\
+\toprule
+Name (module) & Value & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Name (module) & Value & Meaning \\
+\midrule
+\endhead
+\code!_EXACT_BITS! (dimension) & $50$ & largest bit length \py!format_count! prints exactly \\
+\code!_MAX_SOLVE_PASSES! (dimension) & $32$ & default pass budget of \py!solve! \\
+\code!_MAX_BINDING_MERGES! (dimension) & $64$ & binding merges per pair and pass \\
+\code!_MAX_UNIFY_ALL_PASSES! (dimension) & $32$ & pass budget of \py!unify_all! \\
+\py!_expr_str! cache (dimension) & $4096$ & memoized \py!str! of dimensions \\
+\code!DEFAULT_MAX_SIMPLIFY_STEPS! (scalar) & $1024$ & step budget of \py!Scalar.simplify! \\
+\code!_MEMO_CAP! (scalar) & $2^{13}$ & capacity of the normalization, simplification, term, flatness, domain, and radix tables \\
+\code!_REDUCED_CAP! (scalar) & $2^{12}$ & capacity of the term-reduction table \\
+\code!_OFF_FACTOR_MAX! (scalar) & $64$ & largest divisor of the off-factor test \\
+\code!is_provably_nonzero! precision (scalar) & $30$ digits & strict evaluation \\
+root-isolation precisions (algebraic) & $15,\ldots,480$ & digits, doubling \\
+\code!_approx_roots! cache (algebraic) & $4096$ & memoized root approximations \\
+\code!_DIGITS! (numfield) & $60$ & digits of atom values; \py!polyroots! runs at $80$ \\
+\code!_SHIFTS! (numfield) & $(1,2,-1,3,-2,$ $5,7,-3,11,13)$ & shifts of generators and primitive elements \\
+\code!_info! cache (numfield) & $1024$ & memoized atom data \\
+isolation exponents (numfield) & $2,\ldots,179$ & dyadic interval widths $3\cdot2^{-k}$ \\
+certificate rounds (numfield) & $60\times6$ & check rounds, bisections per round \\
+\code!XOR_LIFT_TERMS! (pathsum) & $2^{20}$ & largest Boolean lift \\
+\code!LIFT_ARRAY_ITEMS! (pathsum) & $48$ & fewest items of an array fold \\
+\code!FOLD_CACHE_TERMS! (pathsum) & $2^{20}$ & terms held by the fold cache \\
+\code!SUBSTITUTE_ARRAY_PAIRS! (pathsum) & $2^{15}$ & fewest pairs of an array substitution \\
+\code!SUBSTITUTE_CHUNK! (pathsum) & $2^{21}$ & pairs per array chunk \\
+\code!PIVOT_COST! (pathsum) & $2^{12}$ & largest cost of a first-pass [HH] pivot \\
+\code!COLUMN_DIGITS! (pathsum) & $8$ & fewest digits of [Dyadic] as constraints \\
+\code!_SYMBOLIC_DELTAS! (scalar) & $2^{13}$ & memoized deltas at a symbolic modulus \\
+\py!_phase_repr! cache (phase) & $2^{16}$ & memoized phase \py!repr! \\
+\code!RESIDUAL_ORDERINGS! (pathsum) & $5040$ & most orderings \py!residual_form! compares \\
+\code!PARITY_POINTS! (pathsum) & $4096$ & most points of \py!parity_points! \\
+\py!_cyclo_sqrt! denominators (pathsum) & $64$ & coefficient denominators tried \\
+\py!cyclotomic! cache (pathsum) & $256$ & memoized cyclotomic polynomials \\
+\py!_turn_table! cache (pathsum) & $8$ & memoized indicator tables \\
+qudit grid cap (pathsum) & $625$ & largest full grid of \py!witness_points_qudit! \\
+\bottomrule
+\end{longtable}

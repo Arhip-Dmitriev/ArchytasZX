@@ -1,0 +1,1295 @@
+\chapter{Semantics}\label{ch:semantics}
+
+This chapter specifies what a diagram means and how ArchytasZX computes that meaning. A diagram denotes a linear map between tensor products of finite-dimensional complex spaces: the qufinite ZXW calculus of Wang, Poór, and coauthors~\cite{wang2021qufinite,poor2023zxw,wang2023qufinitezxw}, extended with the dimension binder~B, the dimension splitter~S, and, through doubling, the discard~G~\cite{selinger2007cpm,carette2019mixed}. The layer computes the denotation three ways and adds the transformations of claims that the decision procedure and the prover apply before they compute anything:
+\begin{itemize}
+\item \module{archytaszx.semantics.denote}: the tensor of a single generator at concrete dimensions (\cref{sec:semantics-denote}).
+\item \module{archytaszx.semantics.contract_numeric}: the dense \tool{NumPy}{https://numpy.org}~\cite{harris2020numpy} contraction of a fully concrete diagram (\cref{sec:semantics-numeric}).
+\item \module{archytaszx.semantics.contract_symbolic}: the exact contraction with every dimension and multiplicity formal, entries kept as \tool{SymPy}{https://www.sympy.org}~\cite{meurer2017sympy} expressions with Kronecker deltas and character sums (\cref{sec:semantics-symbolic}).
+\item \module{archytaszx.semantics.pathsum_diagram}: the path sum~\cite{amy2018pathsums} of a diagram whose dimensions are concrete powers of two or of one odd prime, and the comparison of two such path sums (\cref{sec:semantics-pathsum}).
+\item \module{archytaszx.semantics.columns} and \module{archytaszx.semantics.valuecount}: the generalization of a column count and of a power count to a fresh free multiplicity (\cref{sec:semantics-columns,sec:semantics-valuecount}).
+\item \module{archytaszx.semantics.carry_open}: the cut of a pair at the carry a chain leaves open (\cref{sec:semantics-carry}).
+\item \module{archytaszx.semantics.periodic}: the constant by which a side scales when its index grows by a multiple of a chain period (\cref{sec:semantics-periodic}).
+\item \module{archytaszx.semantics.interop}: oracle checks of the scalable notation (\cref{sec:semantics-interop}).
+\item \module{archytaszx.semantics.restrict}: restrictions of a claim to instances and restricted families of its free symbols (\cref{sec:semantics-restrict}).
+\end{itemize}
+The numeric oracle that compares two contracted tensors, the decision procedure that calls every module of this chapter, and the proof search live in \module{archytaszx.semantics.check}, \module{archytaszx.semantics.decide} and \module{archytaszx.semantics.prove} (\cref{ch:proofs}); the proof kernel that \module{archytaszx.semantics.columns} drives is specified in \cref{ch:kernel}. Exact scalars, phases, dimensions, the \py!ModDelta! atom, the simplifier \py!Scalar.simplify!, and the path-sum algebra (\py!PathSum!, \py!reduce!, \py!canonical!) are specified in \cref{ch:algebra}; diagrams, \bboxes{} and their expansion in \cref{ch:diagrams}.
+
+\section{Conventions}\label{sec:semantics-conventions}
+
+The conventions of this section hold in every module of the chapter. \Cref{tab:semantics-constants} at the end of the chapter collects every numeric constant.
+
+\begin{definition}[Phases and roots of unity]\label{def:semantics-turns}
+A phase $\alpha$ is stored in \term{turns}: its value is $e^{2\pi i\alpha}$, and \py!Phase.to_complex()! evaluates exactly that. For a dimension $d$, $\omega_d=e^{2\pi i/d}$. A \term{phase vector} over dimension $d$ (\cref{ch:algebra}) holds phases $\alpha_1,\dots,\alpha_{d-1}$ and weights $w_1,\dots,w_{d-1}$; the gauge fixes $\alpha_0=0$ and $w_0=1$. Its \term{coefficient} at index $k$ is
+\begin{equation}\label{eq:semantics-coefficient}
+a_k \;=\; w_k\, e^{2\pi i \alpha_k},\qquad a_0 = 1,
+\end{equation}
+which \py!PhaseVector.coefficient(k)! returns. An absent phase entry is $0$ turns and an absent weight is~$1$. A vector may carry a \term{rule}, a phase $\rho(\iota)$ in the index symbol $\iota$ (\py!INDEX!) added at every index $k\ge 1$, and a weight rule $w(\iota)$, the weight at every index $k\ge1$ without an explicit weight. At a concrete dimension a rule is read expanded (\py!PhaseVector.entries()! includes it and \py!PhaseVector.rule! is \py!None!); \py!PhaseVector.stored_rule! returns the rule as stored. A vector is \term{weighted} when it stores a weight entry or a weight rule. A node whose phase is \py!None! has $a_k=1$ for every~$k$.
+\end{definition}
+
+\begin{definition}[Brackets and deltas]\label{def:semantics-delta}
+For a statement $P$, $[P]$ is $1$ when $P$ holds and $0$ otherwise. For an integer-valued expression $j$ and a positive integer modulus $m$ (concrete or symbolic),
+\[
+\delta_m(j) \;=\; [\,j \equiv 0 \pmod m\,],
+\]
+the atom \py!ModDelta(j, m)! of \cref{ch:algebra}. The Kronecker delta of two indices is $\delta_m(a-b)$.
+\end{definition}
+
+\begin{definition}[Axis convention]\label{def:semantics-axes}
+A node with $m$ inputs and $n$ outputs denotes a rank-$(m+n)$ tensor whose axes are its outputs first, in \py!Node.outputs! order, then its inputs, in \py!Node.inputs! order. Axis $i$ has the length of that port's dimension. A diagram's tensor follows the same rule: its axes are \py!boundary_outputs! then \py!boundary_inputs!. As a linear map, a tensor $T[j_1,\dots,j_n,i_1,\dots,i_m]$ sends $\ket{i_1\cdots i_m}$ to $\sum_{j} T[j,i]\,\ket{j_1\cdots j_n}$. Every module of this chapter, and the oracle of \cref{ch:proofs}, uses this convention.
+\end{definition}
+
+\begin{definition}[Pairing convention]\label{def:semantics-pairing}
+A pair $(a,b)$ with $a\in[0,s)$ and $b\in[0,t)$ corresponds to the single index
+\[
+k \;=\; a\,t + b \in [0, st).
+\]
+The binder~B and the splitter~S both use it, so $S\circ B=\mathrm{id}_{s}\otimes\mathrm{id}_{t}$ and $B\circ S=\mathrm{id}_{st}$ hold exactly. The same convention groups axes into one axis wherever this chapter reshapes a tensor (\py!denote_mixed!, \cref{sec:semantics-denote-mixed}). In the path sum of \cref{sec:semantics-pathsum}, $a$ is the high digit block and $b$ the low one.
+\end{definition}
+
+\begin{definition}[Fourier matrix]\label{def:semantics-fourier}
+The unitary discrete Fourier matrix of dimension $d$ is
+\[
+F_d[j,k] \;=\; \frac{\omega_d^{\,jk}}{\sqrt d},\qquad j,k\in[0,d).
+\]
+The exponent sign and the normalization $1/\sqrt d$ are fixed here. $F_d$ is symmetric, so $F_d^\dagger=\overline{F_d}$.
+\end{definition}
+
+\section{Generator Denotations}\label{sec:semantics-denote}
+
+The module \module{archytaszx.semantics.denote} is the single leaf of the layer that says what one node means at concrete dimensions. Only it and \module{archytaszx.semantics.contract_numeric} allocate dense arrays. Its function \py!denote(node)! returns a \py!numpy.ndarray! of dtype \py!complex128! whose axes follow \cref{def:semantics-axes}. \Cref{fig:semantics-generators} draws the generators; the definitions below give each tensor.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+  \begin{scope}[xshift=0cm]
+    \node[zs] (z) at (0,0) {$\phi$};
+    \draw[wire] (z) -- (-0.5,-0.9); \draw[wire] (z) -- (0.5,-0.9);
+    \draw[wire] (z) -- (-0.5,0.9); \draw[wire] (z) -- (0.5,0.9);
+    \node at (0,-1.3) {Z};
+  \end{scope}
+  \begin{scope}[xshift=1.8cm]
+    \node[xs] (x) at (0,0) {$\phi$};
+    \draw[wire] (x) -- (-0.5,-0.9); \draw[wire] (x) -- (0.5,-0.9);
+    \draw[wire] (x) -- (-0.5,0.9); \draw[wire] (x) -- (0.5,0.9);
+    \node at (0,-1.3) {X};
+  \end{scope}
+  \begin{scope}[xshift=3.4cm]
+    \node[fbox] (f) at (0,0) {$F$};
+    \draw[wire] (f) -- (0,-0.9); \draw[wire] (f) -- (0,0.9);
+    \node at (0,-1.3) {F};
+  \end{scope}
+  \begin{scope}[xshift=4.8cm]
+    \node[tri] (t) at (0,0) {};
+    \draw[wire] (t) -- (0,-0.9); \draw[wire] (t) -- (0,0.9);
+    \node at (0,-1.3) {T};
+  \end{scope}
+  \begin{scope}[xshift=6.2cm]
+    \node[trii] (ti) at (0,0) {};
+    \draw[wire] (ti) -- (0,-0.9); \draw[wire] (ti) -- (0,0.9);
+    \node at (0,-1.3) {Ti};
+  \end{scope}
+  \begin{scope}[xshift=7.8cm]
+    \node[wnode] (w) at (0,0) {};
+    \draw[wire] (w) -- (0,-0.9); \draw[wire] (w.north) -- (-0.5,0.9); \draw[wire] (w.north) -- (0.5,0.9);
+    \node at (0,-1.3) {W};
+  \end{scope}
+  \begin{scope}[xshift=9.5cm]
+    \node[bnode] (b) at (0,0) {B};
+    \draw[wire] (b.south west) ++(0.15,0) -- ++(0,-0.75) node[below,dimlabel] {$s$};
+    \draw[wire] (b.south east) ++(-0.15,0) -- ++(0,-0.75) node[below,dimlabel] {$t$};
+    \draw[wire] (b) -- (0,0.9) node[above,dimlabel] {$st$};
+    \node at (0,-1.6) {B};
+  \end{scope}
+  \begin{scope}[xshift=11.3cm]
+    \node[snode] (s) at (0,0) {S};
+    \draw[wire] (s) -- (0,-0.9) node[below,dimlabel] {$st$};
+    \draw[wire] (s.north west) ++(0.15,0) -- ++(0,0.75) node[above,dimlabel] {$s$};
+    \draw[wire] (s.north east) ++(-0.15,0) -- ++(0,0.75) node[above,dimlabel] {$t$};
+    \node at (0,-1.6) {S};
+  \end{scope}
+  \begin{scope}[xshift=12.9cm]
+    \coordinate (g) at (0,0);
+    \draw[wire] (0,-0.9) -- (g);
+    \zxground{g}
+    \node at (0,-1.3) {G};
+  \end{scope}
+\end{tikzpicture}
+\caption{The generators, drawn bottom (inputs) to top (outputs).}\label{fig:semantics-generators}
+\end{figure}
+
+\subsection{Spiders}\label{sec:semantics-denote-spiders}
+
+\begin{definition}[Z spider]\label{def:semantics-z}
+A Z spider with $m$ inputs, $n$ outputs, dimension $d$, and coefficients $a_k$ (\cref{eq:semantics-coefficient}) denotes
+\begin{equation}\label{eq:semantics-z}
+Z^{(m,n)} \;=\; \sum_{k=0}^{d-1} a_k\,\ket{k}^{\otimes n}\bra{k}^{\otimes m},
+\end{equation}
+that is,
+\[
+Z[j_1,\dots,j_n,i_1,\dots,i_m] \;=\;
+\begin{cases} a_k & j_1=\dots=j_n=i_1=\dots=i_m=k,\\ 0 & \text{otherwise.}\end{cases}
+\]
+With $m=n=0$ it is the scalar $\sum_{k=0}^{d-1}a_k$. The implementation \py!_z_tensor! adds, for each $k$, the value $1$ (phase \py!None!), \py!phase.coefficient(k).to_complex()! (a weighted vector), or \py!phase.get(k).to_complex()! (an unweighted vector) at the all-$k$ position of a zero tensor of shape $(d,\dots,d)$.
+\end{definition}
+
+\begin{definition}[X spider]\label{def:semantics-x}
+An X spider is the Fourier conjugate of the Z spider with the same arity and phase vector:
+\begin{equation}\label{eq:semantics-x}
+X^{(m,n)} \;=\; F_d^{\otimes n}\circ Z^{(m,n)}\circ (F_d^\dagger)^{\otimes m},
+\qquad
+X[j,i] \;=\; d^{-(m+n)/2}\sum_{k=0}^{d-1} a_k\,\omega_d^{\,k\left(\sum_r j_r-\sum_r i_r\right)}.
+\end{equation}
+\py!_x_tensor! builds the Z tensor, applies $F_d$ to each output axis and $\overline{F_d}$ to each input axis (\py!_apply_matrix_to_axis! contracts the matrix's second index with the axis and moves the result back into place).
+\end{definition}
+
+\begin{proposition}\label{prop:semantics-x-closed}
+The two expressions of \cref{eq:semantics-x} agree.
+\end{proposition}
+\begin{proof}
+Expanding the composite, $X[j,i]=\sum_{k}a_k\prod_{r=1}^{n}F_d[j_r,k]\prod_{r=1}^{m}\overline{F_d}[k,i_r]$, because $Z$ is diagonal and $(F_d^\dagger)[k,i]=\overline{F_d[i,k]}=\overline{F_d}[k,i]$ by symmetry. Each factor contributes $\omega_d^{\pm k\,\cdot}/\sqrt d$, which multiply to $d^{-(m+n)/2}\omega_d^{k(\sum j-\sum i)}$.
+\end{proof}
+
+The X spider's phases therefore weight the Fourier basis states $F_d\ket{k}$: a phaseless X spider is $d^{-(m+n)/2}\cdot d\cdot\delta_d(\sum j-\sum i)$, the ``sum-to-zero'' tensor~\cite{wang2023qufinitezxw,poor2023qupit}.
+
+\subsection{Fourier box, triangles, and W node}
+
+\begin{definition}[Fourier box F]\label{def:semantics-f}
+F has one input and one output and denotes $F_d$ of \cref{def:semantics-fourier}: $F[j,k]=\omega_d^{jk}/\sqrt d$, output index $j$, input index~$k$.
+\end{definition}
+
+\begin{definition}[Triangle T and inverse triangle Ti]\label{def:semantics-triangle}
+T and Ti have one input and one output. With output index $o$ and input index $i$,
+\[
+T[o,i] \;=\; [\,o=0 \;\lor\; o=i\,],\qquad
+T^{-1}[o,i] \;=\; [\,o=i\,]\;-\;[\,o=0\,][\,i\ge 1\,].
+\]
+T sends $\ket{0}$ to $\ket 0$ and $\ket{i}$ to $\ket 0+\ket i$ for $i\ge 1$; Ti sends $\ket i$ to $\ket i-\ket 0$. Ti is built in closed integer form, so $T\circ T^{-1}=T^{-1}\circ T=\mathrm{id}$ holds exactly in the dense tensors.
+\end{definition}
+
+For $d=3$,
+\[
+T=\begin{pmatrix}1&1&1\\0&1&0\\0&0&1\end{pmatrix},\qquad
+T^{-1}=\begin{pmatrix}1&-1&-1\\0&1&0\\0&0&1\end{pmatrix}
+\]
+(rows $o$, columns $i$).
+
+\begin{proposition}\label{prop:semantics-triangle-inverse}
+$T\circ T^{-1}=T^{-1}\circ T=\mathrm{id}_d$.
+\end{proposition}
+\begin{proof}
+Write $T=I+N$ with $N[o,i]=[o=0][i\ge1]$ and $T^{-1}=I-N$. Then $N^2[o,i]=\sum_k[o=0][k\ge1][k=0][i\ge1]=0$, so $(I+N)(I-N)=(I-N)(I+N)=I-N^2=I$.
+\end{proof}
+
+\begin{definition}[W node]\label{def:semantics-w}
+A W node has exactly one input and any number $n\ge 0$ of outputs. Its tensor $W[o_1,\dots,o_n,i]$ is $1$ at $(0,\dots,0,0)$ and, for each $i\in[1,d)$ and each position $p\in[1,n]$, at the index with $o_p=i$, every other $o_q=0$, and input~$i$; it is $0$ elsewhere:
+\[
+W\ket 0=\ket{0}^{\otimes n},\qquad
+W\ket i=\sum_{p=1}^{n}\ket{0}^{\otimes (p-1)}\ket{i}\ket{0}^{\otimes(n-p)}\quad(1\le i<d).
+\]
+With $n=0$ it is the effect $\bra 0$.
+\end{definition}
+
+\subsection{Dimension binder and splitter}
+
+\begin{definition}[Binder B and splitter S]\label{def:semantics-bs}
+B has two inputs of dimensions $s$ and $t$ (input~0 and input~1) and one output of dimension~$st$; S has one input of dimension $st$ and two outputs of dimensions $s$ and $t$ (output~0 and output~1). Under \cref{def:semantics-pairing},
+\[
+B[k,a,b] \;=\; [\,k=a\,t+b\,],\qquad S[a,b,k] \;=\; [\,k=a\,t+b\,].
+\]
+\py!_connective_tensor! checks the leg counts ($2\to1$ for B, $1\to2$ for S), reads the three port dimensions through \py!leg_dimensions!, and raises \py!DenoteGrammarError! when $s\cdot t$ differs from the joint dimension.
+\end{definition}
+
+\begin{proposition}\label{prop:semantics-bs-inverse}
+$S\circ B=\mathrm{id}_s\otimes\mathrm{id}_t$ and $B\circ S=\mathrm{id}_{st}$.
+\end{proposition}
+\begin{proof}
+$(S\circ B)[a',b',a,b]=\sum_{k}[k=a't+b'][k=at+b]=[a't+b'=at+b]$, and $a't+b'=at+b$ with $b,b'\in[0,t)$ forces $a=a'$ and $b=b'$ (Euclidean division by $t$). $(B\circ S)[k',k]=\sum_{a,b}[k'=at+b][k=at+b]=[k'=k]$, since every $k\in[0,st)$ has exactly one pair $(a,b)$.
+\end{proof}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}lllX@{}}
+\toprule
+Generator & Inputs & Outputs & Port dimensions \\
+\midrule
+Z, X & any $m$ & any $n$ & all equal; a portless spider takes its phase vector's dimension \\
+F, T, Ti & 1 & 1 & equal \\
+W & 1 & any $n$ & all equal \\
+B & 2 ($s$, $t$) & 1 ($st$) & product checked \\
+S & 1 ($st$) & 2 ($s$, $t$) & product checked \\
+G & \multicolumn{2}{l}{one port in total} & any dimension; no pure denotation \\
+\bottomrule
+\end{tabularx}
+\caption{Arity and dimension rules that \texttt{denote} enforces.}\label{tab:semantics-arity}
+\end{table}
+
+\subsection{The discard and mixed diagrams}\label{sec:semantics-denote-mixed}
+
+The discard G has no pure denotation; \py!denote! refuses it. A diagram with discards denotes a completely positive map, computed from its doubled diagram (\py!archytaszx.diagram.mixed.double!, \cref{ch:mixed})~\cite{selinger2007cpm,carette2019mixed}.
+
+\begin{signature}
+\py!denote_mixed(diagram: object) -> numpy.ndarray!
+\end{signature}
+\noindent Contracts \py!double(diagram)! numerically (\cref{sec:semantics-numeric}) and reshapes the result to the rank-4 tensor $T[o,o',i,i']$: the plain outputs, the conjugate outputs, the plain inputs, and the conjugate inputs of \py!diagram! each grouped into one axis under \cref{def:semantics-pairing}. With $n_o$ boundary outputs and $n_i$ boundary inputs, the doubled tensor's axes are $n_o$ plain outputs, $n_o$ conjugate outputs, $n_i$ plain inputs and $n_i$ conjugate inputs; the output extent is the product of the first $n_o$ axis extents (1 when $n_o=0$) and the input extent the product of axes $2n_o,\dots,2n_o+n_i-1$ (1 when $n_i=0$). A non-\py!Diagram! argument raises \py!DenoteGrammarError!.
+
+\subsection{Dimension resolution and guards}
+
+Every generator other than B and S has the dimension policy \py!ALL_LEGS_EQUAL! (\cref{ch:diagrams}): all its ports share one dimension.
+
+\begin{signature}
+\py!resolve_dimension(node: Node) -> int!\\
+\py!resolve_dim(node: Node) -> Dim!\\
+\py!leg_dims(node: Node) -> tuple[Dim, ...]!\\
+\py!leg_dimensions(node: Node) -> tuple[int, ...]!\\
+\py!denote(node: Node) -> numpy.ndarray!
+\end{signature}
+
+\begin{algorithm}[\texttt{resolve\_dimension}]\label{alg:semantics-resolve}
+\begin{enumerate}
+\item If the node's dimension policy is not \py!ALL_LEGS_EQUAL!, raise \py!DenoteGrammarError! (``\ldots has dimension policy \ldots, which denote() does not yet support'').
+\item Read the shared leg dimension (\py!_leg_dim!): with no ports, none; otherwise the first port's dimension (outputs before inputs), every port checked concrete (\py!DenoteDomainError! ``\ldots has a non-concrete port dimension \ldots'') and equal to it (\py!DenoteDomainError! ``\ldots legs disagree'').
+\item With no ports, take the phase vector's dimension; with no ports and no phase vector, raise \py!DenoteGrammarError! (``has no legs and no phase vector; its dimension cannot be determined'').
+\item Raise \py!DenoteDomainError! when the dimension is not concrete, when the phase vector is not concrete, or when the phase vector's dimension differs from the leg dimension.
+\item Return the dimension as an \py!int!.
+\end{enumerate}
+\end{algorithm}
+
+\py!resolve_dim! performs the same steps without any concreteness check and returns the \py!Dim!; the symbolic contraction uses it. \py!leg_dims! returns every port dimension, outputs then inputs, with no agreement check. \py!leg_dimensions! returns them as integers, raising \py!DenoteDomainError! on a non-concrete one; for a zero-port \py!ALL_LEGS_EQUAL! node it calls \py!resolve_dimension! for its errors only and returns~\py!()!.
+
+\begin{algorithm}[\texttt{denote}]\label{alg:semantics-denote}
+\begin{enumerate}
+\item If \py!REGISTRY.is_registered(node.generator_type)! fails, raise \py!DenoteGrammarError!: dispatch is on the registered generator object, never on a bare name.
+\item If the generator is the discard (in \py!MIXED_ONLY!), raise \py!DenoteGrammarError! naming \py!double!.
+\item For B or S, return \py!_connective_tensor(node)!.
+\item Otherwise $d$ = \py!resolve_dimension(node)!. Return the Z tensor, the X tensor, $F_d$ (after checking arity $1\to1$), $T$ ($1\to1$), $T^{-1}$ ($1\to1$), or $W$ (exactly one input). An arity violation raises \py!DenoteGrammarError! (``\ldots has $m$ input(s) and $n$ output(s); exactly \ldots are required''). Any other generator raises \py!DenoteGrammarError!.
+\end{enumerate}
+No array is allocated before every check in scope has passed.
+\end{algorithm}
+
+\begin{signature}
+\py!class DenoteError(Exception)!\\
+\py!class DenoteDomainError(DenoteError)!: a non-concrete port dimension or phase vector; legs, or legs and phase vector, that disagree on dimension.\\
+\py!class DenoteGrammarError(DenoteError)!: an unregistered or unknown generator, an unsupported dimension policy, a wrong fixed arity, a B or S whose dimensions do not multiply, a zero-port node with no phase vector, the discard, or a non-diagram passed to \py!denote_mixed!.
+\end{signature}
+
+\section{Numeric Contraction}\label{sec:semantics-numeric}
+
+The module \module{archytaszx.semantics.contract_numeric} contracts a fully concrete diagram into one dense tensor. It denotes every node with \py!denote! and contracts the node tensors along the wires; it never rewrites, simplifies, or reorders the diagram. Besides \module{archytaszx.semantics.denote}, it is the only module allowed to construct a dense array.
+
+\subsection{Interface}
+
+\begin{signature}
+\py!contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> ContractionResult!
+
+\py!@dataclass(frozen=True, slots=True) class ContractionResult!: \py!tensor: numpy.ndarray!, \py!axis_refs: tuple[PortRef, ...]!, \py!num_boundary_outputs: int!; property \py!shape -> tuple[int, ...]!.
+\end{signature}
+
+\noindent \py!axis_refs[i]! is the boundary port that axis $i$ of \py!tensor! came from, in \py!boundary_outputs! then \py!boundary_inputs! order; the first \py!num_boundary_outputs! entries are the boundary outputs. The split count is carried in the result, so a caller can separate outputs from inputs without the diagram.
+
+\subsection{Algorithm}
+
+\begin{algorithm}[\texttt{contract}]\label{alg:semantics-contract}
+\begin{enumerate}
+\item \textbf{Validation.} Run \py!validate(diagram)! (\cref{ch:diagrams}). If the report is not valid or carries a deferred dimension issue, raise \py!ContractValidationError(report)!. A deferred issue exists only when a dimension pair could not be decided, which cannot happen once every dimension is concrete.
+\item \textbf{Concreteness.} Raise \py!ContractDomainError! when the diagram still has a \bbox{} (``expand them \ldots before contracting numerically''), when the diagram scalar is not concrete, when any port dimension is not concrete, or when any phase vector is not concrete. Both refusals precede any allocation.
+\item \textbf{Empty diagram.} With no nodes, return the rank-0 array holding \py!diagram.scalar.to_complex()!, with the boundary references as axis references.
+\item \textbf{Labels.} Assign one integer label per port by \py!_assign_labels! (\cref{alg:semantics-labels}).
+\item \textbf{Operands.} For each node in \py!diagram.nodes! order: check its element count (the product of its leg dimensions) against \py!max_elements! and its axis count against \py!MAX_AXES! (raising \py!ContractSizeError!), denote it, and pair the tensor with the labels of its ports, outputs then inputs. A port without a label, or a label count that differs from the tensor's rank, raises \py!ContractGrammarError!; \py!validate! rules both out, and the checks stand behind that guarantee.
+\item \textbf{Output.} A boundary reference without a label raises \py!ContractGrammarError!. The output labels are the boundary references' labels in axis order. The output's element count (the product of the boundary port dimensions) and axis count are checked against the caps.
+\item \textbf{Scalar.} $c$ = \py!diagram.scalar.to_complex()!. If $c$ is not finite, or $c=0$ while the scalar is not exactly zero (an underflow), raise \py!ContractDomainError! (``the diagram's scalar has no finite nonzero complex value'').
+\item \textbf{Network.} Contract the operands by \py!_contract_network! (\cref{alg:semantics-network}), convert to \py!complex128!, and multiply by $c$. A non-finite entry raises \py!ContractDomainError! (``the contracted tensor leaves the complex float range'').
+\end{enumerate}
+\end{algorithm}
+
+The exact scalar is carried to the end: the contraction runs on the node tensors alone, and \py!Scalar.to_complex()!, the only sanctioned conversion of a scalar to a number, is applied once, to the finished tensor.
+
+\begin{algorithm}[\texttt{\_assign\_labels}]\label{alg:semantics-labels}
+A union-find over ports~\cite{tarjan1975unionfind}, with integer labels drawn from a counter starting at~0.
+\begin{enumerate}
+\item Give each boundary output, then each boundary input, a fresh label (a port already labeled keeps its label).
+\item Visit the wires sorted by \py!Wire.sort_key()!. When neither end is labeled, give both one fresh label. When one end is labeled, give the other end its label. When both are labeled with different labels, rewrite every port wearing the higher label to the lower one.
+\end{enumerate}
+A wire therefore unifies its two ports' labels regardless of direction, and a self-loop unifies two labels on one tensor, which is a partial trace. The merge branch of step~2 is unreachable from \py!contract!, whose validation refuses ports claimed twice; the function also accepts an unvalidated wire set. The sorted order keeps the label map reproducible across hash seeds; the tensor is invariant under any consistent relabeling.
+\end{algorithm}
+
+\begin{algorithm}[\texttt{\_contract\_network}]\label{alg:semantics-network}
+Input: operands $(T_r,L_r)$ (a tensor and its axis labels), the output labels, the extent of every label, and \py!max_elements!.
+\begin{enumerate}
+\item Drop every extent-one axis from every operand (\py!_squeezed!). The \term{wanted} labels are the output labels of extent other than one.
+\item Count the \term{readers} of each label: one for each wanted occurrence, plus one for each live tensor that carries the label.
+\item While more than one tensor is live:
+  \begin{enumerate}
+  \item Collect every pair of live tensors that share a label. If no pair shares one, take the two tensors smallest by (element count, key) and merge them by outer product.
+  \item For each candidate pair in sorted key order, the merged labels are the labels of the first tensor then the second, each once, kept when its reader count exceeds the number of the two tensors carrying it (another tensor or the output still reads it). Its cost is the product of the merged labels' extents. The first pair of least cost wins.
+  \item Check the cost against \py!max_elements! (``an intermediate tensor'').
+  \item Merge the pair by one two-operand \py!numpy.einsum! over labels renumbered from zero (\py!_einsum_local!, with \py!optimize! on when there is more than one operand), update the reader counts, and add the result under a new key.
+  \end{enumerate}
+\item Apply one single-operand \py!einsum! to the last tensor, which sums any label not wanted and orders the axes as the wanted labels, then reshape to the extents of all output labels, restoring the extent-one axes.
+\end{enumerate}
+Renumbering per \py!einsum! call leaves the diagram's label count unbounded.
+\end{algorithm}
+
+\begin{example}[Labels and merge order]\label{ex:semantics-numeric}
+Let $d=3$, node~0 a phaseless Z spider $1\to2$, nodes~1 and~2 Fourier boxes, the spider's outputs wired to the boxes' inputs, boundary outputs the two boxes' outputs and boundary input the spider's input.
+\begin{center}
+\begin{tikzpicture}[zxd]
+  \node[zs] (z) at (0,0) {};
+  \node[fbox] (f1) at (-0.7,1.1) {$F$};
+  \node[fbox] (f2) at (0.7,1.1) {$F$};
+  \draw[wire] (0,-0.9) -- (z) node[pos=0.3,right,dimlabel] {2};
+  \draw[wire] (z) -- (f1) node[midway,left,dimlabel] {3};
+  \draw[wire] (z) -- (f2) node[midway,right,dimlabel] {4};
+  \draw[wire] (f1) -- (-0.7,2) node[above,dimlabel] {0};
+  \draw[wire] (f2) -- (0.7,2) node[above,dimlabel] {1};
+\end{tikzpicture}
+\end{center}
+\py!_assign_labels! gives the boundary outputs labels 0 and 1, the boundary input label~2, and the two wires labels 3 and~4. The operands are the spider with labels $(3,4,2)$ and the boxes with $(0,3)$ and $(1,4)$. Both candidate first merges cost $3^3$; the pair (spider, first box) wins by key order and yields labels $(4,2,0)$; the second merge yields $(2,0,1)$; the final \py!einsum! orders the axes $(0,1,2)$. The result has shape $(3,3,3)$ and entries $T[j_1,j_2,i]=\omega_3^{\,i(j_1+j_2)}/3$.
+\end{example}
+
+\subsection{Size guard}
+
+A node's element count is the product of its per-port dimensions. The cap \py!max_elements! is checked against each node's tensor before it is denoted, against the output before contraction, and against every intermediate; each check raises \py!ContractSizeError! with the text ``\ldots would have $N$ elements, exceeding the cap of $C$ \ldots; pass a larger max\_elements to contract() if this is intentional'', where the cap's source is appended in parentheses when the cap is the default. Every array also has at most \py!MAX_AXES! $=64$ axes, the most NumPy gives one array; a node or output tensor above it raises \py!ContractSizeError! (``\ldots would have $k$ axes, above numpy's 64'').
+
+\begin{definition}[Default cap]\label{def:semantics-default-cap}
+\py!DEFAULT_MAX_ELEMENTS! and \py!DEFAULT_CAP_SOURCE! are computed once, at import, by \py!_default_cap()!:
+\begin{enumerate}
+\item \py!_memory_limit()! reads \file{/proc/self/cgroup}, takes the path of the line starting \code!0::! (cgroup v2), and walks from that directory under \file{/sys/fs/cgroup} up to the root, reading each \file{memory.max} (a missing file counts as \code!max!). The smallest numeric limit found, with source \code!cgroup memory.max!, is the memory limit. On any read or parse error, or with no numeric limit, it falls back to the soft \code!RLIMIT_AS! limit (source \code!RLIMIT_AS!), unless that limit is infinite or not positive. Otherwise there is no limit.
+\item With a limit of $B$ bytes, the cap is $\max(1,\lfloor\lfloor B/16\rfloor/4\rfloor)$: sixteen bytes per \py!complex128! element, and a quarter of the memory for one tensor. The source reads ``\textit{source} $B$ bytes / 16 / 4''.
+\item With no limit, the cap is \py!FALLBACK_MAX_ELEMENTS! $=10\,000\,000$ with source ``no memory limit, fallback''.
+\end{enumerate}
+For example, in a cgroup whose \file{memory.max} is $11\,811\,160\,064$ bytes the cap is $184\,549\,376$ elements.
+\end{definition}
+
+\subsection{Errors}
+
+\begin{signature}
+\py!class ContractError(Exception)!\\
+\py!class ContractDomainError(ContractError)!: a non-concrete dimension, phase vector, or scalar; a remaining \bbox{}; a scalar without a finite nonzero value; a non-finite result.\\
+\py!class ContractValidationError(ContractDomainError)!: \py!report: ValidationReport!; message ``diagram is not contractible: '' followed by the report's error messages (or its deferred messages when it has no errors), joined by ``; ''.\\
+\py!class ContractSizeError(ContractDomainError)!: a tensor above the element cap or the axis limit.\\
+\py!class ContractGrammarError(ContractError)!: a label-bookkeeping inconsistency.
+\end{signature}
+
+\section{Symbolic Contraction}\label{sec:semantics-symbolic}
+
+The module \module{archytaszx.semantics.contract_symbolic} contracts a diagram whose dimensions, phases, scalar, and \bbox{} multiplicities may all be symbolic. No dense array exists once $d$ is symbolic, so a tensor is an ordered list of axes plus one exact \py!Scalar! entry expression over per-axis index symbols. A wire becomes a bound summation index, and every Kronecker delta is a \py!ModDelta! (\cref{def:semantics-delta}); the simplifier \py!Scalar.simplify! of \cref{ch:algebra} closes the sums, so no separate tensor engine exists. Contraction never converts a \py!Dim! to an \py!int! and never calls \py!Scalar.to_complex!: the only route to a number is \py!SymbolicTensor.substitute! of a parameter environment followed by \py!SymbolicTensor.value_at! (\cref{sec:semantics-symbolic-tensor}).
+
+\paragraph{Determinism.} The result is a deterministic function of the diagram. Five orderings fix it: \bboxes{} by integer id, nodes by integer id, free axes as \py!boundary_outputs! then \py!boundary_inputs!, wires by \py!Wire.sort_key!, and SymPy sub-terms by \py!srepr!. No set is iterated unsorted, and no \py!sympy.Dummy! is created.
+
+\subsection{Index symbols}\label{sec:semantics-symbolic-names}
+
+Every index is a SymPy symbol with the assumptions \code!integer=True, nonnegative=True!. The names are reserved as in \cref{tab:semantics-index-names}; $k$, $g$ and $i$ stand for decimal numbers.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Name & Meaning \\
+\midrule
+\code!_i<k>! & the $k$-th fixed boundary axis, in layout order (also a path-sum boundary digit's axis, \cref{sec:semantics-pathsum-tensor}) \\
+\code!_k<k>! & the index of the $k$-th wire of the working diagram, wires sorted by \py!Wire.sort_key! \\
+\code!_t<g>_<i>! & the $i$-th template index of replicated group $g$ (one per boundary slot of one copy) \\
+\code!_u<g>_<i>! & the template index $i$ of the second copy of a pair of copies of group $g$ \\
+\code!_j<g>!, \code!_k<g>! & the copy number of an indexed group $g$, and the copy numbers $j<k$ of a pair of copies \\
+\code!_m<g>! & the mark of group $g$: an entry term carrying it takes the group's marked factor at one copy \\
+\code!_s<k>! & a shared index: the value of a spider some of whose ports are replicated \\
+\code!_c<k>! & a port of a spider outside every \bbox{} that a crossing \bbox{} meets \\
+\code!_b<k>! & a port of a spider that a bridged \bbox{} meets \\
+\code!_h<k>! & a hidden port of a replicated copy, met by a pair \bbox{} \\
+\code!_p<v>! & the path variable $v$ of a path sum \\
+\code!_phase_s! & the summation variable of a spider whose phase vector carries a rule or weights \\
+\code!_copy! & the copy number in a closed product over the copies of an indexed \bbox{} \\
+\bottomrule
+\end{tabularx}
+\caption{Reserved index-symbol names of the symbolic contraction.}\label{tab:semantics-index-names}
+\end{table}
+
+\subsection{The symbolic tensor}\label{sec:semantics-symbolic-tensor}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class SymbolicAxis!: \py!port: PortRef!, \py!dim: Dim!, \py!index: str!.
+
+\py!@dataclass(frozen=True, slots=True) class ReplicatedBlock!: \py!group: int!, \py!axes: tuple[LayoutSlot, ...]!.
+
+\py!@dataclass(frozen=True, slots=True) class ReplicatedFactor!: \py!multiplicity: Mult!, \py!factor: Scalar!, \py!marked: Scalar | None = None!, \py!inner: SymbolicTensor | None = None!, \py!index: str | None = None!, \py!pairs: Scalar | None = None!.
+
+\py!@dataclass(frozen=True, slots=True) class SharedIndex!: \py!name: str!, \py!dim: Dim!.
+
+\py!LayoutSlot = SymbolicAxis | ReplicatedBlock!
+
+\py!@dataclass(frozen=True, slots=True) class SymbolicTensor!: \py!axes: tuple[SymbolicAxis, ...]!, \py!entry: Scalar!, \py!layout: tuple[LayoutSlot, ...] | None = None!, \py!groups: tuple[ReplicatedFactor, ...] = ()!, \py!shared: tuple[SharedIndex, ...] = ()!.
+\end{signature}
+
+\begin{definition}[Fixed-rank and variable-rank tensors]\label{def:semantics-symbolic-tensor}
+A \term{fixed-rank symbolic tensor} has no groups. Its value at boundary indices $x=(x_1,\dots,x_r)$, $x_a\in[0,\text{\py!axes[a].dim!})$, is the entry with the index symbol \py!axes[a].index! replaced by $x_a$. A \term{variable-rank symbolic tensor} has groups: a \bbox{} whose multiplicity is symbolic and which meets the boundary makes the rank vary. Group $g$ is a \py!ReplicatedFactor! of multiplicity $\mu_g$, and its boundary slots form \py!ReplicatedBlock!s in the \py!layout!, which interleaves the fixed axes with the blocks. A block of group $g$ is laid out copy-major: for each copy $c=0,\dots,\mu_g-1$, one slot per template slot in \py!axes!. With concrete multiplicities, the value is
+\begin{equation}\label{eq:semantics-variable-rank}
+T \;=\; \sum_{\sigma}\; E(x,\sigma)\;\prod_{g} G_g(x,\sigma),\qquad
+G_g \;=\; \prod_{c=0}^{\mu_g-1} f_g\bigl(x,\sigma,t^{(c)},c\bigr)\;\prod_{0\le j<k<\mu_g} P_g\bigl(t^{(j)},t^{(k)},j,k\bigr),
+\end{equation}
+where $\sigma$ ranges over the values of every \py!SharedIndex! (each from 0 to its dimension minus one), $E$ is the entry, $f_g$ is the group's \py!factor! over its template indices $t^{(c)}$ (copy $c$ reads its own copy of every template index), the copy number $c$ is substituted for the symbol \py!index! when it is set, and $P_g$ is \py!pairs! (absent when \py!None!). Two modifications refine \cref{eq:semantics-variable-rank}:
+\begin{itemize}
+\item \textbf{Marks.} When \py!marked! is set and the entry carries the mark $m_g$ (\code!_m<g>!), the entry is linear in $m_g$, and the term $E_1\,m_g$ takes $\sum_{p} \text{\py!marked!}(p)\prod_{q\ne p} f_g(q)$ in place of $G_g$, while $E_0=E|_{m_g=0}$ keeps $G_g$.
+\item \textbf{Nested groups.} When \py!inner! is set, each copy is a copy of that self-contained variable-rank tensor, and \py!factor! is unused; the block's slots are the inner tensor's slots of the block's direction.
+\end{itemize}
+\end{definition}
+
+\begin{signature}
+\py!SymbolicTensor.rank -> int!: the number of fixed axes.\\
+\py!SymbolicTensor.is_variable_rank -> bool!: \py!True! when \py!groups! is nonempty.\\
+\py!SymbolicTensor.slots() -> tuple[LayoutSlot, ...]!: \py!layout!, or \py!axes! when \py!layout! is \py!None!.\\
+\py!SymbolicTensor.dims() -> tuple[Dim, ...]!: the fixed axes' dimensions.\\
+\py!SymbolicTensor.signature() -> tuple[object, ...]!: per slot, \py!(dim, direction)! for an axis and \py!(multiplicity, nested signatures)! for a block (the nested slots read from \py!inner! when set).\\
+\py!SymbolicTensor.multiplicities_concrete() -> bool!: every multiplicity concrete, nested ones included.\\
+\py!SymbolicTensor.ranges() -> dict[str, Dim]!: the dimension of each fixed-axis index and each shared index.
+\end{signature}
+
+\paragraph{\texttt{substitute(mapping)}.} Takes a mapping from symbol names to \py!int! or \py!sympy.Rational! values and pushes it into every dimension (integer values $\ge1$ only), every multiplicity (integer values $\ge0$, only for symbols the multiplicity carries), the entry, every factor, mark, pair factor and nested tensor (all values), and every shared index's dimension. When groups remain and every multiplicity is then concrete, the result is flattened.
+
+\paragraph{\texttt{flatten(*, max\_steps)}.} Turns a variable-rank tensor with concrete multiplicities into a fixed-rank one; a symbolic multiplicity raises \py!SymbolicContractionDomainError! (``\ldots substitute it first''). Nested tensors are flattened first. Walking the slots in layout order, each fixed axis and, per copy, each template axis (for a nested group, each inner axis of the block's direction) gets a fresh axis named \code!_i0!, \code!_i1!, \ldots. The expression is the entry with fixed names renamed, multiplied per group by the product of the per-copy renamed factors and the pair terms; a marked group whose mark occurs in the expanded entry contributes $E|_{m=0}\cdot\prod+\partial E/\partial m\cdot\sum_p \text{marked}(p)\prod_{q\ne p}f(q)$. Each shared index is then summed, the last one innermost, and the result simplified with \py!max_steps!.
+
+\paragraph{\texttt{simplify(*, max\_steps)}.} Simplifies the entry with \py!ranges()! as index ranges, and every factor, mark, nested tensor and pair factor without ranges.
+
+\paragraph{\texttt{value\_at(index, *, max\_steps)}.} The entry at one boundary index tuple, simplified. The tensor must have fixed rank (else \py!SymbolicContractionDomainError!, ``\ldots substitute every multiplicity first''). The tuple length must equal the rank and every value must be a non-negative \py!int! (both \py!SymbolicContractionGrammarError!); a value at or above a concrete axis dimension raises \py!SymbolicContractionDomainError!.
+
+\paragraph{\texttt{to\_dense(*, max\_elements=10\_000\_000)}.} Enumerates every entry into a \py!complex128! array. It requires fixed rank and every axis dimension concrete, and refuses more than \py!max_elements! entries (\py!SymbolicContractionDomainError!). Each entry is the entry expression at the index tuple, simplified and converted by \py!to_complex()!.
+
+\begin{example}[Symbolic results]\label{ex:semantics-symbolic}
+With $d$ symbolic, two Fourier boxes in sequence (input on the first, output on the second) contract to axes \code!_i0! (output) and \code!_i1! (input) with entry \py!ModDelta(_i0 + _i1, d)!, the antipode $F^2\ket i=\ket{-i}$. A phaseless Z spider $1\to1$ whose output is wired to its input contracts to the rank-0 entry $d$. A phaseless X spider $1\to 2$ contracts to $\delta_d(\text{\code!_i0!}+\text{\code!_i1!}-\text{\code!_i2!})/\sqrt d$. A phaseless Z spider $1\to1$ whose output carries a port-scope \bbox{} of multiplicity $n$ contracts to a variable-rank tensor with fixed axis \code!_i0! (the input), entry $1$, layout (block of group~0 holding template \code!_t0_0!, axis \code!_i0!), and one group of multiplicity $n$ with factor $\delta_d(\text{\code!_i0!}-\text{\code!_t0_0!})$; substituting $n=2$ flattens it to $\delta_d(\text{\code!_i0!}-\text{\code!_i1!})\,\delta_d(\text{\code!_i0!}-\text{\code!_i2!})$, where \code!_i0!, \code!_i1! are the two outputs and \code!_i2! the input.
+\end{example}
+
+\subsection{Generator entries}\label{sec:semantics-symbolic-entries}
+
+\py!_node_entry(diagram, node_id, port_index)! returns the entry of one node over the index symbols on its ports. Let $\ell_1,\dots,\ell_L$ be the port symbols, outputs then inputs; $o$ and $i$ the output and input symbols of a $1\to1$ node; $\tau=\sum\text{outputs}-\sum\text{inputs}$ the signed index total; and $d$ the node's dimension from \py!resolve_dim!. An unregistered generator raises \py!SymbolicContractionGrammarError!. The cases are tried in this order.
+
+\begin{enumerate}
+\item \textbf{B and S.} When a splitter is recognized as the end of a phase table (\py!_table_splitter_entry!, below), its table entry; otherwise the connective entry. B with output $k$ and inputs $a$ (dimension $s$) and $b$ (dimension $t$), and S with input $k$ and outputs $a$, $b$, both have entry $\delta_{st}(k-(a\,t+b))$. A node without exactly three ports raises \py!SymbolicContractionGrammarError!; when $s\cdot t$ provably differs from the joint dimension (\py!unify! fails), \py!SymbolicContractionDomainError!.
+\item \textbf{F.} $d^{-1/2}\exp(2\pi i\,o\,i/d)$.
+\item \textbf{T.} $\delta_d(o-i)+\delta_d(o)\bigl(1-\delta_d(i)\bigr)$. \textbf{Ti.} $\delta_d(o-i)-\delta_d(o)\bigl(1-\delta_d(i)\bigr)$.
+\item \textbf{W} with input $i$ and outputs $o_1,\dots,o_n$:
+\[
+-(n-1)\prod_{p}\delta_d(o_p)\,\delta_d(i)\;+\;\sum_{p}\delta_d(o_p-i)\prod_{q\ne p}\delta_d(o_q).
+\]
+At $i=0$ with every output 0 this is $-(n-1)+n=1$.
+\item \textbf{Ruled Z or X} (the phase vector carries a rule or weights): \py!_ruled_entry!, below.
+\item \textbf{Bilinear phase table}: \py!_bilinear_table_entry!, below.
+\item \textbf{Linear phase table}: when \py!_linear_table! finds the slope $a$ (below), an X spider has entry $d^{-L/2}\,d\,\delta_d(\tau+a)$, and a Z spider with $L\ge1$ ports has entry $\omega_d^{\,a\ell_1}\prod_{r\ge2}\delta_d(\ell_1-\ell_r)$.
+\item \textbf{Z and X with sparse phases.} Let $C$ be the stored phase entries, each $(c,\alpha_c)$ with a concrete index $c$, in ascending order (\py!_phase_corrections!), and $\varepsilon_c=e^{2\pi i\alpha_c}-1$. Then
+\begin{align}
+E_Z &= \prod_{r\ge 2}\delta_d(\ell_1-\ell_r) \;+\; \sum_{(c,\alpha_c)\in C}\varepsilon_c\prod_{r=1}^{L}\delta_d(\ell_r-c), &&(L\ge 1)\label{eq:semantics-z-sym}\\
+E_Z &= d+\sum_{(c,\alpha_c)\in C}\varepsilon_c, &&(L=0)\notag\\
+E_X &= d^{-L/2}\Bigl(d\,\delta_d(\tau)+\sum_{(c,\alpha_c)\in C}\varepsilon_c\,\omega_d^{\,c\tau}\Bigr).\label{eq:semantics-x-sym}
+\end{align}
+A phase vector is sparse over concrete indices with $0$ turns elsewhere, so subtracting the phaseless spider leaves a finite correction indexed only by concrete integers: nothing is ever indexed by a symbolic summation variable, which is what lets a phased spider contract with $d$ symbolic.
+\item Any other generator raises \py!SymbolicContractionGrammarError!.
+\end{enumerate}
+
+\begin{proposition}\label{prop:semantics-sparse}
+For $L\ge1$ ports, \cref{eq:semantics-z-sym} equals the Z tensor of \cref{eq:semantics-z} with $a_k=e^{2\pi i\alpha_k}$, and \cref{eq:semantics-x-sym} equals the X tensor of \cref{eq:semantics-x}.
+\end{proposition}
+\begin{proof}
+Split $a_k=1+(a_k-1)$; $a_k-1=\varepsilon_k$ is nonzero only at stored entries. For Z, $\sum_k\prod_r\delta_d(\ell_r-k)=\prod_{r\ge2}\delta_d(\ell_1-\ell_r)$, since exactly one $k$ meets $\delta_d(\ell_1-k)$; the stored entries contribute $\sum_{c}\varepsilon_c\prod_r\delta_d(\ell_r-c)$. For X, $\sum_k\omega_d^{k\tau}=d\,\delta_d(\tau)$ by \cref{eq:semantics-character}, and the stored entries contribute $\sum_c\varepsilon_c\,\omega_d^{c\tau}$; the factor $d^{-L/2}$ is common. With $L=0$ both reduce to $\sum_k a_k=d+\sum_c\varepsilon_c$.
+\end{proof}
+
+\begin{proposition}\label{prop:semantics-w-sym}
+The symbolic W entry equals the W tensor of \cref{def:semantics-w} at every index.
+\end{proposition}
+\begin{proof}
+Let $V=\prod_p\delta_d(o_p)$. At $i=0$ every term $\delta_d(o_p-i)\prod_{q\ne p}\delta_d(o_q)$ equals $V$, so the entry is $-(n-1)V+nV=V$: one exactly at the all-zero outputs. At $i\ne0$, $\delta_d(i)=0$, and the sum is one exactly when one output $o_p$ equals $i$ and all others are~0; two terms cannot both be one, because $o_p=i\ne0$ contradicts $\delta_d(o_p)=1$.
+\end{proof}
+
+\paragraph{Ruled entries.} For a Z or X spider whose phase vector carries a rule or weights, \py!_rule_weight(node, s)! is the coefficient $a_s$ of \cref{eq:semantics-coefficient} at a possibly symbolic value $s$:
+\begin{itemize}
+\item unweighted: $\exp\bigl(2\pi i\,\text{\py!phase.at(s)!}\bigr)$, where \py!phase.at(s)! is $\sum_k [s=k]\,\alpha_k+\rho(s)$ (SymPy Kronecker deltas over the stored entries, plus the rule at $s$);
+\item weighted, with base weight $\beta(s)$ (the weight rule at $s$, or 1): the weight
+$\beta(s)+\delta_d(s)\bigl(1-\beta(0)\bigr)+\sum_{k}\delta_d(s-k)\bigl(w_k-\beta(k)\bigr)$ over the explicit weights $w_k$, times the phase factor $e^{2\pi i\rho(s)}\prod_k\bigl(1+\delta_d(s-k)(e^{2\pi i\alpha_k}-1)\bigr)$ over the stored entries (the rule factor only when \py!phase.rule! is set).
+\end{itemize}
+The ruled entry is then $a_{\ell_1}\prod_{r\ge2}\delta_d(\ell_1-\ell_r)$ for a Z spider with ports, $\sum_{s=0}^{d-1}a_s$ for a Z spider without ports, and $d^{-L/2}\sum_{s=0}^{d-1}a_s\,\omega_d^{\,s\tau}$ for an X spider, $s$ the symbol \code!_phase_s!.
+
+\paragraph{Linear phase tables.} \py!_linear_table(node, dim)! returns the integer $a$ when the dimension is concrete, $D\ge3$, the vector stores exactly $D-1$ entries, every stored phase is rational, $a=(D\,\alpha_1)\bmod D$ is a nonzero integer residue, and $\alpha_k\equiv ak/D\pmod 1$ for every $k\in[1,D)$; otherwise \py!None!. The X entry follows from $\sum_k\omega_D^{ak}\omega_D^{k\tau}=D\,\delta_D(\tau+a)$.
+
+\paragraph{Bilinear phase tables.} \py!_bilinear_table(diagram, node_id)! recognizes a Z spider $1\to1$ with an unweighted, rule-free, nonempty phase vector at a concrete dimension $D$ whose input is wired to the output of a binder B with concrete input dimensions $d_1,d_2$, $d_1d_2=D$, every stored phase rational. Writing $t(j)$ for the phase at $j$ in turns (0 when absent), it sets $b=t(d_2)$ if $d_1>1$ (else 0), $c=t(1)$ if $d_2>1$ (else 0), and $a=t(d_2+1)-b-c$ if $d_1,d_2>1$ (else 0), and requires
+\[
+a\,xy+b\,x+c\,y \;\equiv\; t(x\,d_2+y)\pmod 1\qquad\text{for all } x\in[0,d_1),\ y\in[0,d_2).
+\]
+It returns the binder, $d_1$, $d_2$ and $(a,b,c)$. The spider's entry (\py!_bilinear_table_entry!) is then $\delta_D(o-i)\exp\bigl(2\pi i(a\,xy+b\,x+c\,y)\bigr)$ over the index symbols $x,y$ of the binder's two inputs; when either input carries no index symbol the case does not apply. A splitter S whose input is wired to the output of such a spider, and whose output dimensions are $(d_1,d_2)$, has entry $\delta_{d_1}(o_0-x)\,\delta_{d_2}(o_1-y)$ (\py!_table_splitter_entry!). The chain B, table, S thus reads as one diagonal phase on the digit pair $(x,y)$.
+
+\subsection{Sums: delta and character sums}\label{sec:semantics-symbolic-sums}
+
+A contraction multiplies the node entries and sums every bound index. The simplifier of \cref{ch:algebra} closes the sums with these identities, among others:
+\begin{align}
+\sum_{k=0}^{d-1}\omega_d^{\,jk} &= d\,\delta_d(j) &&\text{(character sum)}\label{eq:semantics-character}\\
+\sum_{k=0}^{d-1}\delta_d(k-e)\,f(k) &= f(e) &&\text{($f$ periodic mod $d$; delta elimination)}\notag\\
+\sum_{k=0}^{d-1}\omega_d^{\,k^2} &= \sqrt d\,\frac{(1+i)(1+i^{-d})}{2} &&\text{(quadratic Gauss sum)}\label{eq:semantics-gauss}
+\end{align}
+with the general quadratic exponent $\pm k^2+bk+c$ completed to a square and reciprocity applied for a leading coefficient other than $\pm1$~\cite{berndt1998gauss,landsberg1893gauss}.
+
+\begin{signature}
+\py!_sum_out(head, parts, summed, max_steps, boundary=None) -> Scalar!
+\end{signature}
+
+\begin{algorithm}[\texttt{\_sum\_out}]\label{alg:semantics-sum-out}
+Input: a head factor, the parts (one entry per node, and one closed factor per crossing \bbox{}), the summed indices with their dimensions, and the boundary indices' dimensions.
+\begin{enumerate}
+\item If some summed dimension is symbolic and there are at most \py!_NESTED_INDICES! $=24$ summed indices, form $\text{head}\cdot\prod\text{parts}$, wrap one nested sum (the first summed index outermost), and simplify once.
+\item Otherwise eliminate one index at a time, in the manner of bucket elimination~\cite{dechter1999bucket}. The \term{width} of an index is the number of distinct summed indices carried by the parts it occurs in. Repeat while indices remain:
+  \begin{enumerate}
+  \item Choose, among the indices not deferred (all of them if every one is deferred), the one of least (width, name). It is \term{final} when it was deferred.
+  \item With no part carrying it, multiply the head by its dimension and drop it.
+  \item Otherwise sum the product of the parts carrying it over the index and simplify, with the boundary indices and the other summed indices of those parts sized, and with concrete enumeration (\py!enumerate_concrete!) only when final. When the index is not final and the result carries more unevaluated sums than the product did, defer the index and choose again.
+  \item Replace those parts by the result, drop the index, clear the deferral of every index those parts carried, and recompute their widths.
+  \end{enumerate}
+\item Return $\text{head}\cdot\prod\text{remaining parts}$, simplified with the boundary indices sized.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{The contraction algorithm}\label{sec:semantics-symbolic-algorithm}
+
+\begin{signature}
+\py!contract_symbolic(diagram: Diagram, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS) -> SymbolicTensor!
+\end{signature}
+\noindent \py!DEFAULT_MAX_SIMPLIFY_STEPS! is $1024$ (\cref{ch:algebra}). A \bbox{} closed off from the rest contributes its scope's scalar to the power of its multiplicity; a node-scope \bbox{} meeting only the boundary, and a port-scope \bbox{} on spiders, become groups of a variable-rank tensor; a spider with a replicated port is summed over a shared index, which is eliminated when the entry pins it.
+
+\begin{algorithm}[\texttt{contract\_symbolic}]\label{alg:semantics-contract-symbolic}
+\begin{enumerate}
+\item \textbf{Validation.} Run \py!validate!; a report with errors raises \py!SymbolicContractionValidationError(report)! (deferred dimension issues are allowed). A diagram with a discard raises \py!SymbolicContractionUnsupportedError! (``\ldots contract the doubled diagram (contract\_symbolic\_pair)'').
+\item \textbf{Concrete boxes.} Expand every \bbox{} of concrete multiplicity (\py!expand_concrete_boxes!).
+\item \textbf{Path-sum shortcut.} With no \bbox{} left, try \py!_path_sum_tensor! (\cref{sec:semantics-pathsum-tensor}); return its result when it gives one.
+\item \textbf{Preprocessing of special \bboxes{}}, in this order: chain \bboxes{} (\py!_resolve_chains!, \cref{sec:semantics-symbolic-chains}); a \bbox{} fed by a tree raises \py!SymbolicContractionUnsupportedError!; tree \bboxes{} (\py!_resolve_trees!); fan candidates (\py!_resolve_fans!); pair \bboxes{} (\py!_detach_pairs!).
+\item \textbf{Box checks and copy scalars.} For each \bbox{} by id: a pair, chain or tree \bbox{} still present raises \py!SymbolicContractionUnsupportedError!; so does an indexed \bbox{} with a port-scope child whose multiplicity reads the index. A top-level \bbox{} with a copy scalar $\kappa$ multiplies the \term{box factor} by \py!_index_power(kappa, box)!.
+\item \textbf{Plan.} Classify the top-level \bboxes{} by \py!_plan_boxes! (\cref{alg:semantics-plan}). A \bbox{} with pair \bboxes{} that is not a replicated \bbox{} raises \py!SymbolicContractionUnsupportedError!.
+\item \textbf{Closed \bboxes{}.} Contract each closed \bbox{}'s scope (as a diagram with empty boundary, \py!_scope_subdiagram!) recursively; multiply the box factor by \py!_index_power! of its entry; drop the scope from the working diagram (\py!_drop_scope! removes the scope's nodes and every \bbox{} lying wholly inside).
+\item \textbf{Crossing \bboxes{}.} Contract each crossing \bbox{}'s scope with the inside ends of its crossing wires as boundary (outputs, then inputs, wires sorted). A variable-rank result raises \py!SymbolicContractionUnsupportedError!. Rename each axis to \code!_c<k>!, keyed by the outside port it meets, and drop the scope.
+\item \textbf{Layout.} Walk the boundary outputs, then the boundary inputs. A boundary port of a node in a replicated or bridged \bbox{} opens, at its first occurrence, one block holding a template axis \code!_t<g>_<i>! for every boundary port of that \bbox{} in the same list and the same part; the part is 1 for a \bbox{} with sheets and a position in the second half of the list, else 0. A port in a port-scope \bbox{} gets a template axis in a one-axis block and is marked \term{boxed}. Any other port gets the next fixed axis \code!_i<k>!. Groups are numbered in order of first appearance.
+\item \textbf{Replicated \bboxes{}.} Contract each replicated \bbox{}'s scope with its template ports, plus the hidden ports its pair \bboxes{} meet, as boundary. A variable-rank result becomes the group's nested tensor (\py!inner!), refused with pair \bboxes{}. Otherwise the group factor is the entry with its axes renamed to the template symbols and the hidden ports to \code!_h<k>!; with pair \bboxes{}, the hidden ports are pinned (\py!_hidden_pins!) and the pair factor built (\py!_pair_factor!, \cref{sec:semantics-symbolic-pairs}). Drop the scope.
+\item \textbf{Bridged \bboxes{}.} Contract each bridged \bbox{}'s scope with its template ports and the inside ends of its crossing wires as boundary; a variable-rank result raises \py!SymbolicContractionUnsupportedError!. Template axes get the template symbols; each crossing end gets \code!_b<k>!, and the outside spider port it meets is boxed with that symbol. Drop the scope.
+\item \textbf{Port-scope \bboxes{}} are removed from the working diagram; their ports stay boxed.
+\item \textbf{Shared indices.} Each node with a boxed port gets one shared index \code!_s<k>! of its dimension. Each spider met by a crossing \bbox{} gets one too, numbered after them, which is summed in step~16 rather than kept.
+\item \textbf{Wires.} Each wire of the working diagram, sorted, gets the next symbol \code!_k<k>!, on both ends.
+\item \textbf{Parts.} The head is the diagram scalar times the box factor. For each node by id: a port with no index and not boxed raises \py!SymbolicContractionGrammarError!. A W node with a shared index contributes \py!_shared_w_entry! (below), with the marks of the groups whose ports it carries. A spider with a shared index contributes \py!_shared_spider_entry! (below); each replicated port's per-copy factor multiplies the crossing \bbox{}'s copy factor, the bridged group's factor, or the port-scope group's factor. Any other node contributes \py!_node_entry!.
+\item \textbf{Closing.} For each group with W ports, set its mark factor to the group factor times $\sum_p e_p\prod_{q\ne p}v_q$ and multiply its factor by $\prod_q v_q$, where $(v_q,e_q)$ are the vacuum and excited factors of its W ports. Sum each bridged group's factor over its \code!_b<k>! symbols and simplify. Each crossing \bbox{} contributes the part \py!_index_power! of its copy, the copy being $\sum_{\text{\code!_c!}}\text{inner entry}\cdot\text{copy factor}$, simplified. Then $\textit{closed}$ = \py!_sum_out(head, parts, crossing shared + wire indices, max_steps, fixed-axis dims)!.
+\item \textbf{Fixed rank.} With no group, return \py!SymbolicTensor(fixed_axes, closed)!.
+\item \textbf{Shared-index elimination.} For each shared index: when \py!_pinned_value! (\cref{sec:semantics-symbolic-pins}) finds a value $v$, substitute $v$ into the entry, every factor and every mark; otherwise keep it. A kept index that no factor or mark carries is summed out of the entry. When indices remain kept, no group is marked, and no group is indexed, try \py!_split_pinned_terms!; on success no index stays kept. Finally apply \py!_pin_boundary_in_factors!.
+\item \textbf{Groups.} For each group, with an indexed \bbox{} rename the \bbox{}'s index symbol to \code!_j<g>! in its factor and mark (an indexed \bbox{} with a nested tensor raises \py!SymbolicContractionUnsupportedError!), and build the \py!ReplicatedFactor! with simplified factor, mark and pair factor. Blocks of nested groups take the nested tensor's slots of the block's direction.
+\item Return \py!SymbolicTensor(fixed_axes, closed, layout, groups, kept)!.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[\texttt{\_plan\_boxes}]\label{alg:semantics-plan}
+Classify every \bbox{}, by id:
+\begin{enumerate}
+\item A \bbox{} with a parent is skipped when the parent is node-scoped (the recursive contraction of the parent's scope handles it); under a port-scoped parent it raises \py!SymbolicContractionUnsupportedError!.
+\item A node-scope \bbox{} is \term{closed} when its scope is closed (\py!scope_is_closed!); \term{replicated} when it has no crossing wire (it meets only the boundary); \term{crossing} when it meets no boundary slot and every crossing wire ends at a Z or X spider that lies in no node-scope \bbox{} and in no port scope; \term{bridged} when it meets a boundary slot and every crossing wire ends at such a spider. Otherwise it raises \py!SymbolicContractionUnsupportedError! (``\ldots has symbolic multiplicity \ldots and meets the rest of the diagram at a wire'').
+\item A port-scope \bbox{} is \term{ported} when it replicates ports of at most one W node and every replicated port belongs to a Z spider, an X spider or a W node that lies in no node-scope \bbox{}; otherwise it raises \py!SymbolicContractionUnsupportedError!.
+\item Over the crossing and bridged \bboxes{}, list every pair (\bbox{}, outside node of a crossing wire). When one outside node belongs to two \bboxes{}, or when there are two or more crossing \bboxes{} and any outside node repeats in the list, raise \py!SymbolicContractionUnsupportedError! (``two node-scope bang boxes meet one spider at wires'').
+\end{enumerate}
+\end{algorithm}
+
+\Cref{fig:semantics-box-classes} draws the five classes on small examples.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+  % closed
+  \begin{scope}[xshift=0cm]
+    \node[zs] (a) at (0,0) {};
+    \node[xs] (b) at (0,0.9) {};
+    \draw[wire] (a) to[bend left=40] (b); \draw[wire] (a) to[bend right=40] (b);
+    \node[bang,fit=(a)(b)] (bb) {};
+    \node[banglabel] at (bb.north west) {$n$};
+    \node at (0,-1.4) {closed};
+  \end{scope}
+  % replicated
+  \begin{scope}[xshift=2.2cm]
+    \node[zs] (a) at (0,0.4) {};
+    \draw[wire] (a) -- (0,1.5); \draw[wire] (a) -- (0,-0.9);
+    \node[bang,fit=(a)] (bb) {};
+    \node[banglabel] at (bb.north west) {$n$};
+    \node at (0,-1.4) {replicated};
+  \end{scope}
+  % crossing
+  \begin{scope}[xshift=4.6cm]
+    \node[xs] (a) at (0,0) {};
+    \node[zs] (s) at (0,1.2) {};
+    \draw[wire] (a) -- (s); \draw[wire] (s) -- (0,2);
+    \draw[wire] (s) -- (0.6,0.6) -- (0.6,-0.9);
+    \node[bang,fit=(a)] (bb) {};
+    \node[banglabel] at (bb.north west) {$n$};
+    \node at (0,-1.4) {crossing};
+  \end{scope}
+  % bridged
+  \begin{scope}[xshift=7cm]
+    \node[xs] (a) at (0,0.2) {};
+    \node[zs] (s) at (0,1.3) {};
+    \draw[wire] (a) -- (s); \draw[wire] (s) -- (0,2.1);
+    \draw[wire] (a) -- (0,-0.9);
+    \node[bang,fit=(a)] (bb) {};
+    \node[banglabel] at (bb.north west) {$n$};
+    \node at (0,-1.4) {bridged};
+  \end{scope}
+  % ported
+  \begin{scope}[xshift=9.4cm]
+    \node[zs] (s) at (0,0.2) {};
+    \draw[wire] (s) -- (0,-0.9);
+    \draw[wire] (s) -- (0,1.5);
+    \node[bang,minimum width=0.4cm,minimum height=0.5cm] (bb) at (0,1.05) {};
+    \node[banglabel] at (bb.north west) {$n$};
+    \node at (0,-1.4) {ported};
+  \end{scope}
+\end{tikzpicture}
+\caption{The \bbox{} classes of \texttt{\_plan\_boxes}: a closed scope; a scope meeting only the boundary; a scope meeting only a spider outside every \bbox{}; a scope meeting the boundary and such a spider; a replicated port of a spider.}\label{fig:semantics-box-classes}
+\end{figure}
+
+\paragraph{Spiders with replicated ports.} \py!_shared_spider_entry! writes a Z or X spider some of whose ports are replicated over its value $s$ (the shared index). Its weight is $a_s$ (\py!_rule_weight!) for a ruled vector and $1+\sum_{(c,\alpha_c)\in C}\varepsilon_c\,\delta_d(s-c)$ otherwise. For a Z spider the unreplicated part is $a_s\prod_{\ell\text{ fixed}}\delta_d(\ell-s)$ and each replicated port's per-copy factor is $\delta_d(t-s)$ over its template symbol $t$. For an X spider with $\Phi$ fixed ports of signed total $\tau_\Phi$, the part is $d^{-\Phi/2}a_s\,\omega_d^{\,s\tau_\Phi}$ and each replicated port's factor is $d^{-1/2}\omega_d^{\pm st}$, $+$ for an output and $-$ for an input. Multiplying out the copies recovers \cref{eq:semantics-z,eq:semantics-x}.
+
+\paragraph{W nodes with replicated outputs.} \py!_shared_w_entry! writes a W node over its input value $s$:
+\[
+\delta_d(i-s)\Bigl(W_\Phi(s)+\bigl(1-\delta_d(s)\bigr)\prod_{f\in\Phi}\delta_d(f)\sum_g m_g\Bigr),
+\]
+where $W_\Phi(s)$ is the W entry over the fixed outputs $\Phi$ with input value $s$ and $m_g$ are the marks of the groups replicating its outputs. Each replicated output has a vacuum factor $\delta_d(t)$ and an excited factor $\delta_d(t-s)$. Read with \cref{def:semantics-symbolic-tensor}: at $s=0$ every output is $0$; at $s\ne0$ exactly one output carries $s$, either a fixed one (every replicated copy in vacuum) or one replicated copy chosen by the mark.
+
+\paragraph{Products over copies.} \py!_index_power(expr, box)! is $\text{expr}^{\mu}$ for the \bbox{}'s multiplicity $\mu$, or, when \py!expr! reads the \bbox{}'s index symbol, the closed form of $\prod_{c=0}^{\mu-1}\text{expr}|_{\text{index}=c}$ by \py!_closed_product!: after \py!powsimp(expand_power_base(expr, force=True))!, each factor free of the copy number is raised to $\mu$; an exponential or a power of a copy-free base becomes the base to the closed sum of its exponent over the copies (\py!sympy.summation!); any other factor goes through \py!sympy.product!. An unevaluated sum or product raises \py!SymbolicContractionUnsupportedError! (``the product over copies of \ldots has no closed form'').
+
+\subsection{Pinned shared indices}\label{sec:semantics-symbolic-pins}
+
+\begin{definition}[Pins and periodicity]\label{def:semantics-pins}
+A delta factor $\delta_m(j)$ of a term \term{pins} a symbol $s$ to $e$ when $m$ is the index's modulus, $j$ is linear in $s$ with coefficient $\pm1$, and $e=-(j-\text{coefficient}\cdot s)\cdot\text{coefficient}$ is free of $s$ (\py!_pins!). An expression is \term{structurally periodic} in $s$ modulo $m$ (\py!_periodic!) when $s$ does not occur, or it is a sum or product of periodic parts, a power whose exponent is free of $s$ and whose base is periodic, a delta modulo $m$ whose argument is a polynomial in $s$ with integer coefficients, or an exponential $\exp(2\pi i P/m)$ with $P$ such a polynomial. A term is \term{pinned by a delta} to $v$ when some factor pins $s$ to $v$ and the product of the other factors is periodic.
+\end{definition}
+
+\py!_pinned_value(entry, index, max_steps, others)! collects the pins of every term of the entry, in order. The \py!others! are the group factors and marks; they are periodic when all are structurally periodic. A candidate $v$ is considered only when the others are periodic, $v=0$, or $v$ is a bare symbol. It is accepted when every term $\theta$ either is pinned by a delta to $v$ (allowed when the others are periodic and $v$ is integer-valued) or satisfies $\theta-\delta(s-v)\,\theta|_{s=v}=0$ after simplification. The first accepted candidate is returned, else \py!None!.
+
+\py!_split_pinned_terms(closed, shared, factors, multiplicities, max_steps)! sums out the kept shared indices when every term $\theta_k$ of the entry pins every kept index to an integer $v$ by a delta with all factors periodic, and no pin carries a shared symbol. With $\pi_k$ the pins of term $k$ and base factors $b_g=f_g|_{\pi_1}$ (all nonzero), the new entry is
+\[
+\sum_k \theta_k|_{\pi_k}\prod_g\Bigl(\frac{f_g|_{\pi_k}}{b_g}\Bigr)^{\mu_g},
+\]
+each ratio simplified and rewritten in exponentials; a ratio that is infinite, undefined, or carries a template symbol \code!_t...! makes the function return \py!None!. On success the factors become $b_g$. This uses $\prod_{c}f_g(\pi_k,t^{(c)})=\lambda_{kg}^{\mu_g}\prod_c b_g(t^{(c)})$ when $f_g|_{\pi_k}=\lambda_{kg}b_g$.
+
+\py!_pin_boundary_in_factors(closed, factors, marked, boundary)! looks at each delta factor of the entry; for each boundary symbol that the factors or marks carry, when the delta pins it to a value without template symbols and every factor and mark is periodic in it modulo the delta's modulus, it substitutes the first such value into every factor and mark and moves to the next delta.
+
+\subsection{Chain, tree, and fan \texorpdfstring{\bboxes{}}{!-boxes}}\label{sec:semantics-symbolic-chains}
+
+Chain, tree and fan \bboxes{} (\cref{ch:diagrams}) are rewritten into plain \bboxes{} before planning when one copy's tensor is a \term{carry-copy}: it copies the carried value unchanged.
+
+\begin{definition}[Open copy]\label{def:semantics-open-copy}
+\py!_open_copy(diagram, box_id)! removes the wire at each link port of the \bbox{}, then takes as boundary every port of a scope node that lies on no wire inside the scope: outputs first, each group ordered by \py!PortRef.sort_key!. It returns that scope subdiagram (\py!_scope_subdiagram!) and the open ports in axis order. \py!_scope_subdiagram! copies the scope's nodes (renumbered in id order), the wires inside the scope, the descendants of the excluded \bbox{} (its children becoming top-level), the given boundary, scalar one, and the diagram's parameters.
+\end{definition}
+
+\paragraph{Chains.} \py!_resolve_chains! visits each top-level \bbox{} with links, by id. Links running through a child \bbox{} (\py!zip_child!) raise \py!SymbolicContractionUnsupportedError!, as does a cyclic chain whose multiplicity has no integer constant term $\ge1$ (``\ldots may be 0''). It contracts one open copy; a variable-rank copy is refused. For every link $(p,q)$, the copy's entry must carry a copy (\py!_carries_copy!): it has a factor $\delta_m(\pm(p-q))$ with the link's modulus $m$, or it equals $\delta_m(p-q)\cdot\text{entry}|_{p=q}$ after simplification; otherwise \py!SymbolicContractionUnsupportedError! (``the transfer tensor is neither carry-copy nor neighbor''). \py!_spider_links! then drops the links: for each link $(p,q)$ it removes the wires at $p$ and $q$ and joins to one new phaseless Z spider of the link's dimension the ports $p$ and $q$, and, for a non-cyclic chain, the former partner of each (or, for a link port on the boundary, a new boundary slot in its place). The \bbox{} becomes a plain \bbox{} meeting that spider at wires, and it is planned as a crossing or bridged \bbox{}. Each copy of a carry-copy transfer passes the carried value unchanged, so all copies read one value; the spider holds that value, and every copy meets it.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+  \begin{scope}
+    \node[draw,minimum width=1cm,minimum height=0.6cm] (c) at (0,0.6) {copy};
+    \draw[wire] (0,-0.6) -- (c.south) node[pos=0.2,right,dimlabel] {$q$ (link in)};
+    \draw[wire] (c.north) -- (0,1.8) node[pos=0.8,right,dimlabel] {$p$ (link out)};
+    \draw[wire] (c.east) -- (1.2,0.6) -- (1.2,1.8);
+    \node[bang,fit=(c)] (bb) {};
+    \node[banglabel] at (bb.north west) {$n$};
+  \end{scope}
+  \node at (2.2,0.6) {$\Longrightarrow$};
+  \begin{scope}[xshift=3.6cm]
+    \node[draw,minimum width=1cm,minimum height=0.6cm] (c) at (0,0.6) {copy};
+    \node[zs] (s) at (-1.1,0.6) {};
+    \draw[wire] (s) to[out=-60,in=-90] (c.south);
+    \draw[wire] (s) to[out=60,in=90] (c.north);
+    \draw[wire] (s) -- (-1.1,-0.6) node[below,dimlabel] {head};
+    \draw[wire] (s) -- (-1.1,1.8) node[above,dimlabel] {tail};
+    \draw[wire] (c.east) -- (1.2,0.6) -- (1.2,1.8);
+    \node[bang,fit=(c)] (bb) {};
+    \node[banglabel] at (bb.north west) {$n$};
+  \end{scope}
+\end{tikzpicture}
+\caption{\texttt{\_spider\_links} on a chain whose copy is a carry-copy: one phaseless Z spider takes the link ports $p$ and $q$ and the chain's head and tail ends.}\label{fig:semantics-chain-spider}
+\end{figure}
+
+\paragraph{Trees.} \py!_resolve_trees! visits each top-level tree \bbox{} with $b$ leaf ports, multiplicity $k$, and parent port $q$. The open copy must meet exactly the tree ports. Its fixed-rank entry $E$ must equal $\prod_{p}\delta(p-q)\cdot E|_{p=q}$, with the constant $c=E|_{p=q}$ (simplified) free of $q$ and of the \bbox{}'s level, position and index names; otherwise \py!SymbolicContractionUnsupportedError!. \py!_spider_tree! replaces the scope by a phaseless Z spider $1\to1$ whose near port takes the head end (a wire or a boundary slot) and whose leaf port replaces the $b$ leaf slots in the boundary list, at the first leaf's position; a child \bbox{} raises \py!SymbolicContractionUnsupportedError!. The leaf port gets a port-scope \bbox{} of multiplicity $b^k$, and the scalar is multiplied by $c^{(b^k-1)/(b-1)}$ ($c^k$ when $b=1$), one factor $c$ per copy of the tree.
+
+\paragraph{Fans.} \py!_fan_candidate! accepts a top-level node-scope \bbox{} with no links, pair, tree, feed, index, child or pair \bbox{}, exactly one crossing wire ending at a Z spider outside every \bbox{} scope and port scope, and a nonempty set of boundary slots all of that spider port's direction. \py!_resolve_fans! requires the open copy to meet exactly the crossing end and the $b$ slots, contracts it (a refusal skips the \bbox{}), and requires a carry-copy with constant $c$ as for trees. It removes the crossing wire, the scope and the \bbox{}, puts the spider's port at the position of the first slot in its boundary list (the other slots removed), boxes that port with multiplicity $b\mu$, and multiplies the scalar by $(c\,\kappa)^{\mu}$ for multiplicity $\mu$ and copy scalar $\kappa$ (1 when absent).
+
+\subsection{Pair \texorpdfstring{\bboxes{}}{!-boxes}}\label{sec:semantics-symbolic-pairs}
+
+A pair \bbox{} contributes one tensor for every pair of copies $j<k$ of its parent (\cref{ch:diagrams}). \py!_detach_pairs! requires each pair \bbox{}'s parent to be top-level and indexed and the pair \bbox{} to have a pair index and no child. Each crossing wire of its scope must end at a Z spider port in its left or right port set (left when in \py!left_ports!). The scope, with the crossing wires' inside ends as boundary, is contracted to a fixed-rank entry times the copy scalar; the scope and the \bbox{} are removed, and a record \py!_Pair(entry, legs, index, pair_index)! is kept under the parent, each leg being (axis symbol, parent port, side). Violations raise \py!SymbolicContractionUnsupportedError!.
+
+During the replicated step, \py!_hidden_pins! replaces each hidden port symbol in the group factor by the value a delta pins it to, free of the other hidden ports, verified by $f-\delta(h-v)f|_{h=v}=0$; an unpinned port raises \py!SymbolicContractionUnsupportedError! (``the spider at \ldots that a pair box meets is not pinned by the boundary''). \py!_pair_factor! multiplies the pair tensors with each leg at its parent port's pinned value; on a right leg the template symbols \code!_t<g>_<i>! become \code!_u<g>_<i>!; the parent's index becomes \code!_j<g>! and the pair index \code!_k<g>!. In \cref{eq:semantics-variable-rank} the factor $P_g$ is evaluated with copy $j$'s template indices as \code!_t!, copy $k$'s as \code!_u!, and the copy numbers substituted.
+
+\subsection{Chain periods}\label{sec:semantics-chain-period}
+
+\begin{signature}
+\py!chain_period(diagram: Diagram, box_id: BangBoxId, max_steps: int = 64) -> tuple[int, sympy.Expr]!
+\end{signature}
+
+\noindent Returns the least $p\le$ \py!MAX_PERIOD! $=8$ and the nonzero $c$ with $T^p=c\,I$, where $T$ is the exact transfer matrix of one copy of the chain \bbox{}, copy scalar included. Rows are indexed by the link-out values and columns by the link-in values, each a tuple over the links ordered by \py!itertools.product! (the first link most significant). Entry $(r,s)$ is the copy's entry with the link-out symbols at row tuple $r$ and the link-in symbols at column tuple $s$, simplified. The powers $T,T^2,\dots$ are formed with every entry simplified, and $c=(T^p)_{0,0}$. The function raises \py!SymbolicContractionUnsupportedError! when the \bbox{} is not a plain open chain (no links, cyclic, indexed, or a tree), has a child \bbox{}, has an open port other than its link ends, has a variable-rank copy, has a copy entry reading any symbol other than its axes, has a link dimension that is not a concrete integer, has link dimensions whose product exceeds \py!MAX_TRANSFER_SIZE! $=64$, or has no scalar power up to~8.
+
+\begin{example}[Hadamard chain]
+A chain \bbox{} of multiplicity $n$ over one Fourier box of dimension~2, linked from its output to its input, has $T=F_2$, $T^2=I$, and \py!chain_period! returns $(2,1)$.
+\end{example}
+
+\subsection{Mixed diagrams and pairs of diagrams}
+
+\begin{signature}
+\py!contract_mixed_symbolic(diagram, *, max_steps=DEFAULT_MAX_SIMPLIFY_STEPS) -> SymbolicTensor!\\
+\py!contract_symbolic_pair(left, right, *, max_steps=DEFAULT_MAX_SIMPLIFY_STEPS) -> tuple[SymbolicTensor, SymbolicTensor]!
+\end{signature}
+\noindent \py!contract_mixed_symbolic! contracts \py!double(diagram)!; its axes are the plain outputs, the conjugate outputs, the plain inputs, and the conjugate inputs. \py!contract_symbolic_pair! contracts both diagrams, doubling both when either has a discard.
+
+\subsection{Counterexample entry search}\label{sec:semantics-entry-search}
+
+The symbolic-witness rung of the decision procedure (\cref{ch:proofs}) searches for an entry where two symbolic tensors differ, through \py!archytaszx.semantics.check.find_entry_witness!. For each assignment, in order, it substitutes the assignment into both tensors (skipping it on any substitution error), skips it when the axis dimensions differ between the sides, are not all concrete, or the axis names differ, or when an entry symbol stays free, and simplifies the difference of the entries; a zero difference skips it. It then evaluates both sides exactly with \py!value_at! at the support points of the difference (\py!support_points!, \cref{ch:proofs}) and returns the first point where the values differ by more than the tolerance times $\max(1,|L|,|R|)$, or where the exact difference is provably nonzero (as a cyclotomic number times a power of $\sqrt2$ when it is one, else by \py!Scalar.is_provably_nonzero!).
+
+\subsection{Errors}
+
+\begin{signature}
+\py!class SymbolicContractionError(Exception)!\\
+\py!class SymbolicContractionDomainError(SymbolicContractionError)!: a value outside the domain of an operation (a symbolic multiplicity at flatten, an index out of range, a non-concrete dense extent, a dense cap, a dimension product mismatch).\\
+\py!class SymbolicContractionGrammarError(SymbolicContractionError)!: a malformed diagram \py!validate! should have refused, or a malformed index tuple.\\
+\py!class SymbolicContractionValidationError(SymbolicContractionDomainError)!: \py!report: ValidationReport!; message ``cannot contract a diagram that fails validation: '' and the errors joined by ``; ''.\\
+\py!class SymbolicContractionUnsupportedError(SymbolicContractionDomainError)!: a diagram shape outside the covered class.
+\end{signature}
+
+\section{Path Sums of Diagrams}\label{sec:semantics-pathsum}
+
+The module \module{archytaszx.semantics.pathsum_diagram} translates a diagram whose every dimension is a concrete power of two, or a concrete power of one odd prime $p$, into a path sum in the sense of Amy~\cite{amy2018pathsums}, and compares two such path sums. The path-sum algebra itself (the classes \py!PathSum! and \py!QuditPathSum!, the reduction rules \py!reduce! and \py!reduce_qudit!, the canonical forms \py!canonical! and \py!canonical_qudit!, the cyclotomic numbers \py!Cyclo!, and the polynomials \py!PhasePoly!, \py!F2Poly! and \py!ModPoly!) is specified in \cref{ch:algebra}; this section fixes the translation and the comparison.
+
+\begin{definition}[Binary path sum]\label{def:semantics-binary-pathsum}
+A \py!PathSum! with boundary variables $x$, path variables $y$, phase polynomial $\Phi$ (rational coefficients, read mod~1), constant $c\in\Q(\zeta)$, $\sqrt2$ exponent $e$, constraints $C_1,\dots,C_r\in\mathbb F_2[x,y]$ and amplitude atoms $(a_1,F_1),\dots$ denotes the function
+\[
+x\;\mapsto\; c\,\sqrt2^{\,e}\;\prod_{j}\bigl[C_j(x,y)=0\bigr]\;\sum_{y\in\{0,1\}^{|y|}}\;e^{2\pi i\,\Phi(x,y)}\;\prod_{t}a_t^{F_t(x,y)},
+\]
+where the constraints are read inside the sum and $a^{F}$ means $1$ when $F$ is even and $a$ when $F$ is odd.
+\end{definition}
+
+\begin{definition}[Digits]\label{def:semantics-digits}
+A port of dimension $2^k$ is $k$ Boolean \term{digits} $x_0,\dots,x_{k-1}$, low digit first, with value $\sum_j 2^j x_j$; a port of dimension $p^k$ is $k$ base-$p$ digits with value $\sum_j p^j x_j$. The boundary digits are the variables $0,1,\dots$ in boundary order (outputs, then inputs), low digit first within each port. \py!index_tuple(bits, values, base=2)! converts a digit assignment back to port values in boundary order, an absent digit reading~0; \py!port_bits(diagram, base=2)! lists each boundary port's digit count.
+\end{definition}
+
+\subsection{Dimension base}
+
+\py!diagram_base(diagram)! collects every port dimension and, for a node without ports, its concrete phase-vector dimension; a symbolic dimension raises \py!PathSumUnsupported!. Among the dimensions above~1, if none exist or all are powers of two, the base is~2. Otherwise $p$ is the least divisor $\ge 2$ of the smallest such dimension; $p$ must be an odd prime and every dimension above 1 a power of~$p$, else \py!PathSumUnsupported! (``leg dimensions \ldots are neither powers of two nor powers of one odd prime''). \py!_bits! returns a port's digit count, raising when its dimension is symbolic or not a power of the base.
+
+\subsection{Translation}
+
+\begin{signature}
+\py!from_diagram(diagram: Diagram, layout: dict[str, object] | None = None, w_nodes: bool = False) -> PathSum | QuditPathSum!
+\end{signature}
+
+\begin{algorithm}[\texttt{from\_diagram}]\label{alg:semantics-from-diagram}
+\begin{enumerate}
+\item Expand every \bbox{} of concrete multiplicity; one of symbolic multiplicity raises \py!PathSumUnsupported!. Every node must be Z, X, F, B or S (and W when \py!w_nodes!); another generator raises \py!PathSumUnsupported! (``node \ldots is a \ldots'').
+\item Fix the base (\py!diagram_base!) and each port's digit count.
+\item \textbf{Digit identification.} Over items \code!("p", port key, j)! and \code!("z", node, j)!, a union-find (\py!_Union!, path-compressing; on union the root with the smaller \py!repr! survives) identifies: the two ends of each wire, digit by digit (a wire between different digit counts raises \py!PathSumUnsupported!); every port digit $j$ of a Z spider with the spider's digit $j$ (a portless Z spider has the digit count of its phase vector's dimension); and, for B and S, the whole port's low $q$ digits with the low part's digits and its next digits with the high part's digits, where the low part is input~1 of B or output~1 of S ($q$ its digit count) and the high part is input~0 or output~0.
+\item \textbf{Variables.} Each boundary digit, in order, becomes the next boundary variable. A boundary digit whose class already has a variable adds the constraint $x_a+x_b=0$ and records the equal pair. Every class without a variable, in \py!repr! order of its root, becomes a path variable, numbered after the boundary.
+\item With base $p$ odd, a W node raises \py!PathSumUnsupported!; the rest follows \cref{alg:semantics-qudit}.
+\item \textbf{Constant.} $(c,e)$ = \py!constant(diagram.scalar)!: the scalar as a cyclotomic number times $\sqrt2^{\,e}$ (\cref{ch:algebra}); a scalar of another form raises.
+\item \textbf{Nodes}, by id:
+  \begin{itemize}
+  \item Z with digits $z$: add the phase terms of its table over $z$ (\py!_phase_terms!, below); with a weighted vector, the weighted terms instead (below).
+  \item X of $k$ digits: fresh path digits $y_0,\dots,y_{k-1}$; for each port of sign $\sigma$ ($+1$ output, $-1$ input) with digits $x$, add the terms $\sigma\,2^{a+b}y_a x_b/2^k$ for $a+b<k$ (the products with $a+b\ge k$ are integers); subtract $k$ from $e$ per port; then the table terms over $y$ as for~Z.
+  \item F of $k$ digits with output digits $x$ and input digits $z$: add $2^{a+b}x_az_b/2^k$ for $a+b<k$ and subtract $k$ from~$e$.
+  \item W (only with \py!w_nodes!; every port of dimension~2, else \py!PathSumUnsupported!): record the parity $\text{in}+\sum\text{outs}$ and the products $o_ao_b$ of every two outputs.
+  \end{itemize}
+\item \textbf{W constraints.} For each recorded W node, in order, substitute the earlier pins into its parity. When the parity has a degree-one monomial on a path variable, pin the least such variable $v$ to the rest of the parity (substituted into the phase, the constraints and the amplitude atoms; $v$ leaves the path) and record the pin; otherwise add the nonzero parity as a constraint. Each pair product, with the pins substituted, becomes a constraint. A constraint left on a path variable raises \py!PathSumUnsupported! (``a W node's two outputs on path variables'').
+\item With \py!layout!, record \code!diagram! (the expanded diagram), \code!digit! (each port's digit variables), \code!fresh! (each X spider's fresh digits), \code!zdigits! (each portless Z spider's digits) and \code!wpins! (the W pins).
+\item Return \py!PathSum(boundary, path, phase, c, e, constraints, [], amps)!.
+\end{enumerate}
+\end{algorithm}
+
+The X terms realize $X=\sum_y a_y\prod_{\text{ports}}\omega_{2^k}^{\pm y\cdot x}/\sqrt{2^k}$, and the F terms $F[x,z]=\omega_{2^k}^{xz}/\sqrt{2^k}$; a W node on dimension~2 has entry $[\,\text{in}=\sum\text{outs} \bmod 2\,]\prod_{a<b}[\,o_ao_b=0\,]$.
+
+\begin{example}
+A Fourier box on dimension $4$ has boundary variables $0,1$ (output digits $x_0,x_1$) and $2,3$ (input digits $z_0,z_1$), no path variable, phase $\tfrac14x_0z_0+\tfrac12x_0z_1+\tfrac12x_1z_0$, constant~1, and $\sqrt2$ exponent $-2$: $F_4[x,z]=\omega_4^{xz}/2$.
+\end{example}
+
+\paragraph{Phase tables.} A spider's table over its $k$ digits $z$ is $t(v)$, the phase at value $v\in[0,2^k)$ in turns (\py!_turns_table!; 0 for no phase vector; a weighted vector or an irrational phase raises \py!PathSumUnsupported!). Its \term{multilinear interpolation} (Möbius inversion) adds, for each digit subset $S$, the monomial $\prod_{j\in S}z_j$ with coefficient
+\[
+c_S \;=\; \sum_{T\subseteq S}(-1)^{|S|-|T|}\,t\Bigl(\sum_{j\in T}2^j\Bigr),
+\]
+skipping coefficients that are integers (\py!_interpolate!; an all-zero table adds nothing). \py!_phase_terms! uses the interpolation when the vector is absent or stores a rule, or when the stored nonzero entries span at least $2^k$ supersets ($\sum_v 2^{k-\mathrm{popcount}(v)}\ge 2^k$). Otherwise it reads the entries directly: each entry $t$ at digit set $T$ adds $(-1)^{|S|-|T|}t$ to every $S\supseteq T$, entries in increasing order, and the nonintegral totals are added in order of (size, subset). Both give the same polynomial.
+
+\begin{proposition}\label{prop:semantics-mobius}
+For $z\in\{0,1\}^k$ with value $v=\sum_j 2^jz_j$, $\sum_S c_S\prod_{j\in S}z_j=t(v)$; dropping integer coefficients changes the phase by an integer number of turns.
+\end{proposition}
+\begin{proof}
+With $Z=\{j: z_j=1\}$, the left side is $\sum_{S\subseteq Z}c_S=\sum_{T\subseteq Z}t(T)\sum_{T\subseteq S\subseteq Z}(-1)^{|S|-|T|}=t(Z)$, since the inner sum is $[T=Z]$. A monomial with an integer coefficient takes integer values on Boolean digits.
+\end{proof}
+
+The X and F terms with $a+b\ge k$ are dropped for the same reason: $2^{a+b}/2^k$ is then an integer.
+
+\begin{example}[X spider on a qubit]
+An X spider $1\to1$ on dimension~2 with phase $\tfrac12$ has boundary variables $0$ (output $o$) and $1$ (input $i$), one path variable $y$ (variable~2), phase $\tfrac12 yo+\tfrac12 yi+\tfrac12 y$ (the input term $-\tfrac12 yi$ read mod~1), constant~1 and $\sqrt2$ exponent $-2$: $\tfrac12\sum_y(-1)^{y(o+i+1)}=\delta_2(o+i+1)$, the NOT gate. The symbolic contraction returns the entry \py!ModDelta(_i0 + _i1 + 1, 2)!, and \py!compare_path_sums! against a phaseless Z spider $1\to1$ returns \code!unequal! at boundary index $(1,0)$ with entries $1$ and $0$.
+\end{example}
+
+\paragraph{Weighted tables.} \py!_weights(node_id, node, d)! reads each coefficient $a_v$ as $q\,\zeta_n^{\,u}\sqrt2^{\,\kappa}$ (one root-of-unity term with a rational $q$; zero allowed). Its turn is $u/n$, plus $\tfrac12$ when $q<0$, mod~1; its squared magnitude $q^2 2^\kappa$. The base is the entry of least squared magnitude; every nonzero entry's ratio to it must be 1 or 2, else \py!PathSumUnsupported!; all-zero weights also raise. The Z (or X) spider then adds the interpolated turns, multiplies $c$ by the base's $|q|$ and adds its $\kappa$ to $e$, adds the amplitude atom $(0,I_0)$ with $I_0$ the $\mathbb F_2$ indicator of the zero entries, and adds $(\sqrt2, I_2)$ with $I_2$ the indicator of the entries of ratio~2. The indicator of a 0/1 table is its Möbius inversion mod~2 (\py!_f2_indicator!).
+
+\subsection{Odd prime bases}\label{sec:semantics-qudit}
+
+\begin{definition}[Qudit path sum]\label{def:semantics-qudit-pathsum}
+A \py!QuditPathSum! over $\Z_p$ denotes
+\[
+x\;\mapsto\;c\prod_j\bigl[C_j(x,y)=0\bigr]\sum_{y\in\Z_p^{|y|}}\omega_p^{\,\Phi(x,y)}\prod_t f_t\bigl(A_t(x,y)\bigr),
+\]
+with $\Phi$, the constraints $C_j$ and each atom argument $A_t$ polynomials over $\mathbb F_p$, and each atom table $f_t$ its $p$ (or $p^k$ for a multi-digit atom) values in $\Q(\zeta)$.
+\end{definition}
+
+\begin{algorithm}[\texttt{\_qudit\_sum}]\label{alg:semantics-qudit}
+\begin{enumerate}
+\item $(c,e)$ = \py!constant(scalar)!, folded into one cyclotomic constant (\py!with_sqrt2!). Let $r=1/\sqrt p$ (\py!sqrt_prime(p)/p!).
+\item Z with digits $z$: add \py!_qudit_part!: the Lagrange interpolation $\sum_v \bigl(p\,t(v)\bigr)\prod_j\bigl(1-(z_j-v_j)^{p-1}\bigr)$ over $\mathbb F_p$, $v_j$ the base-$p$ digits of $v$, which requires every $t(v)$ to be a multiple of $1/p$; when it is not, or the vector is weighted, and the node has a phase vector, the coefficients $a_v$ become an atom on the digit (one digit) or a multi-digit atom (several), and the phase part is zero.
+\item X and F must have one digit (dimension $p$), else \py!PathSumUnsupported!. F with output digit $x$ and input digit $z$ adds $xz$ and multiplies $c$ by $r$; an F whose two ports share a digit (a self-loop) raises. X adds a fresh digit $y$, the term $\sigma\,yx$ for each port of sign $\sigma$ with digit $x$, its table part over $y$, and a factor $r$ per port.
+\item Each equal pair $(a,b)$ of boundary variables becomes the constraint $x_a-x_b$.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Comparison}
+
+\begin{signature}
+\py!@dataclass(frozen=True) class PathSumComparison!: \py!status: str!, \py!reason: str!, \py!index: tuple[int, ...] | None = None!, \py!left: Cyclo | None = None!, \py!right: Cyclo | None = None!, \py!point: tuple[tuple[str, int], ...] = ()!, \py!residual_enum: bool = False!.
+
+\py!compare_path_sums(left: Diagram, right: Diagram, max_residual_paths: int | None = None) -> PathSumComparison!
+\end{signature}
+\noindent \py!status! is \code!"equal"!, \code!"unequal"! (with the differing boundary index and both entries), or \code!"unknown"!; \py!point! names the parameter point it holds at, filled by callers; \py!residual_enum! marks an inequality found by evaluating residual sums.
+
+\begin{algorithm}[\texttt{compare\_path\_sums}]\label{alg:semantics-compare-pathsums}
+\begin{enumerate}
+\item Both diagrams must have one base and the same boundary digit layout, else \py!PathSumUnsupported!. An odd base goes to the qudit comparison (step~7).
+\item Translate and reduce both, and take the canonical forms with \py!parity=True!.
+\item If either has no canonical form: when neither sum is zero and both residual forms exist and agree up to renaming of path variables, return \code!equal! (``path sums reduce to one residual form up to renaming of $n$ path variable(s) ($a$ and $b$ rule steps)''). Otherwise the stuck reason is ``path\_sum: $a$ and $b$ path variable(s) left after reduction'' (or ``path\_sum: a support constraint is not affine'' with no path variable left); with \py!max_residual_paths! go to \py!_enumerate_residual!, else return \code!unknown!.
+\item Equal canonical forms (\py!Canon.same!) give \code!equal! (``path sums reduce to one canonical form \ldots'').
+\item With parity terms on either side, return \py!_compare_parity!: \code!equal! when the phase difference (\py!parity_difference!) is a constant $c_0$ and $c_L\,\zeta^{c_0}=c_R$; else \code!unequal! at the first of \py!parity_points! where the two canonical evaluators differ; else \code!unknown! (``\ldots differ at none of $N$ tried points'').
+\item Otherwise evaluate both canonical forms at each of \py!witness_points!; the first difference gives \code!unequal! (``path sums reduce to different canonical forms''), else \code!unknown! (``path\_sum: the canonical forms differ at no tried point'').
+\item Over $\Z_p$: reduce with \py!reduce_qudit!, take \py!canonical_qudit!; without canonical forms, the stuck reason names $\Z_p$ (``\ldots a support constraint over Z\_p has no pivot'' with no path variable left), and \py!max_residual_paths! leads to \py!_enumerate_residual_qudit!; equal forms give \code!equal!; otherwise \py!witness_points_qudit! as in step~6.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Residual enumeration.} \py!_enumerate_residual! refuses when either sum keeps more than \py!max_residual_paths! path variables, returning \code!unknown! with the stuck reason followed by ``; path\_sum.residual\_enum refused: $k$ path variables over max\_residual\_paths $m$''. Otherwise it visits boundary points in increasing Hamming weight (each weight's supports in \py!itertools.combinations! order), at most \py!_RESIDUAL_POINTS! $=64$, and evaluates both entries exactly by enumerating the $2^k$ path assignments (\py!entry_enumerated!; a point either side refuses is skipped). The first difference gives \code!unequal! with \py!residual_enum=True!; otherwise \code!unknown! (``\ldots equal at the $N$ boundary point(s) tried''). \py!_enumerate_residual_qudit! does the same over $\Z_p$, the points of each weight taking every nonzero value $1,\dots,p-1$ on their support. Residual enumeration only ever finds an inequality.
+
+\subsection{Path sums as symbolic tensors}\label{sec:semantics-pathsum-tensor}
+
+The symbolic contraction reads the contraction of a box-free diagram from its reduced path sum when it can (\cref{alg:semantics-contract-symbolic}, step~3).
+
+\begin{algorithm}[\texttt{\_path\_sum\_tensor}]\label{alg:semantics-pathsum-tensor}
+Return \py!None! (fall back to contraction) at any failed condition.
+\begin{enumerate}
+\item Every boundary dimension is concrete and equal to 1 or 2; the base is~2; \py!from_diagram! (without W nodes) and \py!reduce! succeed.
+\item The axes are \code!_i<k>! over the boundary ports. The dimension-2 axes must match the boundary variables one to one; each path variable $v$ is named \code!_p<v>!; every variable the phase, the amplitude atoms and the constraints use must be named.
+\item With no path variable and more than one constraint, build the entry from the canonical form (\py!_canon_entry!, below) and return it simplified (a simplifier budget error returns \py!None!); when there is no canonical form, continue with step~4.
+\item Otherwise the entry is
+\[
+\mathrm{const}\cdot\sqrt2^{\,e}\cdot\exp(2\pi i\Phi)\cdot\prod_j\delta_2\bigl(C_j\bigr)\cdot\prod_t\bigl(\delta_2(F_t)+a_t(1-\delta_2(F_t))\bigr)
+\]
+summed over each path variable from 0 to 1 (the last one innermost), with each $\mathbb F_2$ polynomial written as the integer sum of its monomials (\py!_parity_expr!) and each cyclotomic number as its sum of rational multiples of roots of unity (\py!_cyclo_expr!). Return it simplified; a budget error returns \py!None!.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Canonical entries.} \py!_solved_rows(constraints, order)! solves the $\mathbb F_2$ constraints for pivot rows $v=\text{rest}$: repeatedly it takes, over all remaining constraints, the degree-one monomial $\{v\}$ earliest in \py!order! whose variable occurs in no other monomial of its constraint, substitutes $v$ out of the other constraints and rows (a constraint reduced to $1=0$ makes it return \py!None!), and records the row; a constraint without such a pivot also returns \py!None!. It then swaps, while possible, a pivot $p$ for an earlier variable $u$ that occurs in $p$'s row only as a degree-one monomial, the latest pivot first and the earliest $u$. \py!_canon_entry(ps, var)! renames the variables so the pivots come first, takes \py!canonical(ps)!, and returns $0$ for a zero form; a canonical phase of more than \py!CANON_PHASE_TERMS! $=512$ terms raises \py!SymbolicContractionUnsupportedError! (the pair is left to the path-sum rung). The entry is the constant times $\exp(2\pi i\cdot\text{phase})$, one $\delta_2(\text{pivot}+\text{rest})$ per row, $\delta_2(\text{support}+1)$ for a residual support indicator, and $\delta_2(F)+b\,(1-\delta_2(F))$ per amplitude atom $(F,b)$.
+
+\section{Column Counts and Row Induction}\label{sec:semantics-columns}
+
+The module \module{archytaszx.semantics.columns} handles a pair over one free multiplicity $n$ in which each side holds a \term{rows \bbox{}}: a \bbox{} of multiplicity $n+c$, $c$ an integer, that holds a \bbox{} of multiplicity $n$. The \bboxes{} of multiplicity $n$ other than the rows \bbox{} count columns. The module generalizes the column count to a fresh multiplicity $m$, proves the generalized pair by induction over the rows with the proof kernel (\cref{ch:kernel}), and specializes the theorem back to $m=n$.
+
+\begin{signature}
+\py!class ColumnsError(Exception)!: the column count or the row induction does not apply or does not check.
+
+\py!@dataclass(frozen=True, slots=True) class Generalised!: \py!left: Diagram!, \py!right: Diagram!, \py!index: str!, \py!symbol: str!.
+
+\py!generalise(left: Diagram, right: Diagram) -> Generalised | None!\\
+\py!specialised(theorem: Theorem, found: Generalised, left: Diagram, right: Diagram) -> Theorem!\\
+\py!induct_rows(left: Diagram, right: Diagram, index: str) -> Theorem!\\
+\py!close_rows(replaced: Diagram, target: Diagram, index: str) -> Theorem!
+\end{signature}
+
+\begin{algorithm}[\texttt{generalise}]\label{alg:semantics-generalise-columns}
+\begin{enumerate}
+\item The free multiplicity symbols of both sides together must be exactly one name $n$; otherwise return \py!None!.
+\item Choose the fresh name $m$: the first of \code!m!, \code!m1!, \code!m2!, \ldots{} that is no free symbol and no \bbox{} index of either side.
+\item On each side, find the rows \bbox{} (\py!_rows_box!): the parents of the \bboxes{} of multiplicity exactly $n$ must be one single \bbox{}, and its multiplicity minus $n$ must expand to an integer; otherwise return \py!None!.
+\item On each side, set every \bbox{} of multiplicity exactly $n$ other than the rows \bbox{} to multiplicity $m$; a side with no such \bbox{} returns \py!None!.
+\item Return \py!Generalised(left', right', n, m)!.
+\end{enumerate}
+\end{algorithm}
+
+\py!specialised! instantiates the theorem $\textit{found.left}=\textit{found.right}$ at $m=n$ (\py!kernel.instance!) and closes it to $\textit{left}=\textit{right}$ by isomorphisms on both ends:
+\[
+\mathrm{trans}\bigl(\mathrm{iso}(\textit{left},t.\mathrm{lhs}),\;\mathrm{trans}(t,\mathrm{iso}(t.\mathrm{rhs},\textit{right}))\bigr).
+\]
+
+\begin{algorithm}[\texttt{induct\_rows}]\label{alg:semantics-induct-rows}
+Proves $\textit{left}=\textit{right}$ for every value of \py!index!, read in each side's rows \bbox{} with no negative constant. Every kernel, columns, induction, \bbox{} and validation error inside a step is recorded as a reason and the next option is tried.
+\begin{enumerate}
+\item \textbf{Peel.} Bring each side to a form with no \bbox{} carrying the index having a positive integer constant term (\py!_peeled_to!): at most 4 rounds of \py!kernel.peel(d, index)!, chained by \py!kernel.trans!; a side still not peeled down raises \py!ColumnsError! (``peel: the boxes carrying \ldots do not peel down''). Call the results $a$ and $b$.
+\item Choose a fresh step symbol $k$ (\py!_fresh_step_symbol(a, b, index, "k")!).
+\item For the side \code!START! (own $a$, other $b$) and then \code!GOAL! (own $b$, other $a$):
+  \begin{enumerate}
+  \item Form the successors of own and other at $k$ (\py!induction_successor!; none gives the reason ``no single box to peel'') and the hypotheses at $k$ (\py!induction_hypothesis!). The copy is the set of successor nodes not in own's hypothesis.
+  \item List the \term{exposures} (\py!_exposures!): the successor itself when a cut region of it off the copy reads own's hypothesis (\py!find_cut_region!), then each identity slide of the copy (\py!identity_slides!) with such a cut, proved by \py!kernel.identity_slide!. None gives the reason ``the hypothesis is not exposed''.
+  \item For each exposure and its cut: replace own's hypothesis in the exposed diagram by other's (\py!replace_cut_region!); prove the step $\textit{replaced}=\textit{other's successor}$ by \py!close_rows!; decide the base once, $\textit{base}(a)=\textit{base}(b)$ with \py!induction_base!, by a decision with no oracle sample (below); and form \py!kernel.induction(a, b, index, k, base, side, expose, cut.region, step, cut=cut)!. Return $\mathrm{trans}(\textit{to}_a,\mathrm{trans}(\textit{proved},\mathrm{symm}(\textit{to}_b)))$.
+  \end{enumerate}
+\item With no option left, raise \py!ColumnsError! with every reason joined by ``; '', each prefixed with its side.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Closing a step.} \py!close_rows(replaced, target, index)! returns \py!kernel.iso(replaced, target)! when the two are isomorphic. Otherwise it takes, on each diagram, the nodes off the \term{chain core} of the single top-level chain \bbox{} carrying the index (\py!_core!, through \py!box_core!; no such \bbox{}, or a core whose head and tail meet, raises \py!ColumnsError!), opens each part as its own diagram (\py!_open_region!), sets the first part's scalar to one and the second's to $\textit{target.scalar}/\textit{replaced.scalar}$, proves the two parts equal by \py!_rests!, locates the first part in \py!replaced! (\py!find_cut_region!; failure raises ``the part off the chain core is not its open diagram''), places the equation there by \py!kernel.congr!, and closes with an isomorphism to the target.
+
+\paragraph{Decisions without samples.} \py!_decided(left, right)! runs \py!decide_equal(left, right, samples=[])! (\cref{ch:proofs}); a verdict other than \texttt{EQUAL} raises \py!ColumnsError! (``\textit{verdict}: \textit{reason}''); an \texttt{EQUAL} becomes a theorem by \py!kernel.from_decision!. \py!_rests(a, b)! decides $a=b$ directly when neither side has \bbox{} groups; otherwise it decides the pair with every \bbox{}'s groups dropped (\py!_flat!) and restores them with \py!kernel.regroup!.
+
+\section{Value Counts}\label{sec:semantics-valuecount}
+
+The module \module{archytaszx.semantics.valuecount} generalizes a power \bbox{} count $b^e$ to a free \term{value count} $N$.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Generalised!: \py!left: Diagram!, \py!right: Diagram!, \py!symbol: str!, \py!power: Mult!.
+
+\py!generalise(left: Diagram, right: Diagram) -> Generalised | None!\\
+\py!specialised(theorem: Theorem, found: Generalised, left: Diagram, right: Diagram) -> Theorem!
+\end{signature}
+
+\noindent A \term{power multiplicity} is a \bbox{} multiplicity that is a SymPy power with an integer base and a symbolic exponent. \py!generalise! collects the power multiplicities of both sides; unless there is exactly one, $b^e$, it returns \py!None!. It chooses the fresh name $N$ (the first of \code!N!, \code!N1!, \ldots{} that is no free symbol and no \bbox{} index of either side), sets every \bbox{} of multiplicity $b^e$ on both sides to $N$, and replaces $b^e$ by $N$ in each scalar that contains it. \py!specialised! instantiates the theorem at $N=b^e$ (\py!kernel.instance!) and closes it by isomorphisms, as in \cref{sec:semantics-columns}.
+
+\section{The Carry Left Open After a Chain}\label{sec:semantics-carry}
+
+The module \module{archytaszx.semantics.carry_open} cuts a pair at the carry that a chain \bbox{} leaves open. The left side is read as $\textit{left}=M\circ U\circ L'$, where $L'$ is the part up to the chain's link-out ends, $U$ a path of unitaries on each carried wire, and $M$ a finite part on the boundary outputs; the right side is read as $\textit{right}=M\circ R'$. The module builds $L'$ and $R'$ and the left side with $L'$ replaced by $R'$, which equals \textit{right} when $M\circ U\circ U^{-1}=M$, so the claim reduces to $L'=R'$ followed by $U$.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+  \node[draw,minimum width=2.4cm,minimum height=0.7cm] (L) at (0,0) {$L'$ (chain)};
+  \node[fbox] (u) at (0.6,1.2) {$U$};
+  \node[draw,minimum width=1.4cm,minimum height=0.6cm] (m) at (0.6,2.3) {$M$};
+  \draw[wire] (-0.6,-1) -- (-0.6,-0.35);
+  \draw[wire] (-0.6,0.35) -- (-0.6,3.1);
+  \draw[wire] (0.6,0.35) -- (u) -- (m);
+  \draw[wire] (m) -- (0.6,3.1);
+  \node at (2.2,1.1) {$=$};
+  \node[draw,minimum width=2.4cm,minimum height=0.7cm] (R) at (4.4,0) {$R'$};
+  \node[fbox] (u2) at (5.0,1.2) {$U$};
+  \node[draw,minimum width=1.4cm,minimum height=0.6cm] (m2) at (5.0,2.3) {$M$};
+  \draw[wire] (3.8,-1) -- (3.8,-0.35);
+  \draw[wire] (3.8,0.35) -- (3.8,3.1);
+  \draw[wire] (5.0,0.35) -- (u2) -- (m2);
+  \draw[wire] (m2) -- (5.0,3.1);
+\end{tikzpicture}
+\caption{The carry cut: the left side with $L'$ replaced by $R'$, where $R'$ ends in $U^{-1}$.}\label{fig:semantics-carry}
+\end{figure}
+
+\begin{signature}
+\py!carry_tail(diagram: Diagram, index: str) -> tuple[tuple[PortRef, ...], frozenset[NodeId]]!\\
+\py!@dataclass(frozen=True) class OpenCarry!: \py!left_open: Diagram!, \py!right_open: Diagram!, \py!cut: CutRegion!, \py!closed: Diagram!.\\
+\py!open_carry(left: Diagram, right: Diagram, index: str) -> OpenCarry!\\
+\py!CHAIN_END_CUTS: tuple[str, ...] = ("both", "out", "in")!\\
+\py!@dataclass(frozen=True) class OpenEnds!: \py!left_open!, \py!right_open!, \py!context!, \py!closed: Diagram!; \py!cut: CutRegion!.\\
+\py!open_chain_ends(left: Diagram, right: Diagram, index: str, which: str) -> OpenEnds!
+\end{signature}
+\noindent Every refusal raises \py!InductionDomainError! (\cref{ch:kernel}) with the quoted message.
+
+\paragraph{The tail.} \py!carry_tail! finds the chain \bbox{} over the index (\py!_chain_owner!; none: ``no chain box carries the index''). Its link-out ends are the first ports of its links, sorted by \py!PortRef.sort_key!. The \term{tail} is the set of nodes off the \bbox{} reached from the partners of the link-out ends through wires, never entering the \bbox{}'s scope. An empty tail raises ``nothing follows the chain''; a tail that also contains a node reached from a link-in end raises ``the chain's tail meets its head''.
+
+\begin{algorithm}[\texttt{open\_carry}]\label{alg:semantics-open-carry}
+\begin{enumerate}
+\item Take the link-out ends and the tail of \textit{left}. The tail must touch no \bbox{} (node scope or port scope) and hold no boundary input.
+\item \textbf{Carry paths.} From each link-out end, walk along its partner while the partner is an input of a tail node that is a $1\to1$ \term{unitary}: F (Fourier power~1) or a phase-free Z or X spider (power~0), continuing from that node's output. The walk must stop at an input port of a tail node (``a carry path does not run into the tail's finite part''); that port is the path's stop, and the path's Fourier power is the sum mod~4. The \term{finite part} is the tail without the walked nodes.
+\item The stops must be distinct (``two carry paths run into one port''); every wire leaving the finite part must run from a stop to a walked node (``the tail's finite part meets more than the carry paths''); every boundary output in the tail must be on a finite-part node (``a carry path ends at a boundary output''); the two sides must have the same output count.
+\item $L'$ is the region of every non-tail node of \textit{left}, with inputs \textit{left}'s inputs and outputs \textit{left}'s outputs off the tail followed by the link-out ends; it is extracted (\py!_cut_extract!) with \textit{left}'s scalar.
+\item $M$ (``measured'') is the finite part extracted with the stops as inputs and \textit{left}'s tail outputs, in order, as outputs.
+\item On \textit{right}, the nodes at the same output slots must be exactly as many as the finite part's nodes, carry no boundary input, touch no \bbox{}, and form a cut region matching $M$ whose outputs are those slots (\py!find_cut_region!); otherwise ``the right side's output slots hold no copy of the tail''.
+\item $R'$ is \textit{right} without that region; for each matched input $i$, the port feeding it (which must be an output, ``\ldots is not fed by wires'') is continued by $(4-p_i)\bmod 4$ new Fourier boxes, $p_i$ the power of path~$i$, so the new end carries $U_i^{-1}=F^{-p_i}=F^{4-p_i}$. $R'$'s outputs are \textit{right}'s outputs off the region followed by the new ends.
+\item \textit{closed} is \textit{left} with the cut $L'$ replaced by $R'$ (\py!replace_cut_region(..., contiguous=False)!).
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Cutting at chain ends.} \py!open_chain_ends(left, right, index, which)! cuts, on both sides, every wire from a link end of the chain over the index to a node off the \bbox{}: link by link, the link-out end first, \py!which! keeping both ends (\code!"both"!), only link-out ends (\code!"out"!), or only link-in ends (\code!"in"!); \py!CHAIN_END_CUTS! lists the three in the order a caller tries them. No such wire on a side raises ``no link end of the chain is wired off the box''. The two sides must cut the same number of wires (``\ldots different numbers of cut link ends'') with matching directions and dimensions (``\ldots differ in direction or dimension''). \code!left_open! and \code!right_open! are the sides with those wires removed, both ends of each appended, in order, to the boundary list of its direction. \code!context! is \textit{left} with a phase-free Z spider $1\to1$ inserted on each cut wire; \code!cut! is the region of every other node, with boundary the original boundary followed by the cut ends of each direction; \code!closed! is \code!context! with that region replaced by \code!right_open!.
+
+\section{Periodic Sides}\label{sec:semantics-periodic}
+
+The module \module{archytaszx.semantics.periodic} computes the constant by which a side scales when its index grows by a step: the index is read only in the scalar and in the multiplicity of at most one top-level chain \bbox{} whose copy transfer matrix $T$ has a scalar power $T^p=c\,I$ (\cref{sec:semantics-chain-period}).
+
+\begin{signature}
+\py!class PeriodicError(Exception)!\\
+\py!chain_period(diagram: Diagram, index: str) -> tuple[int, sympy.Expr] | None!\\
+\py!shift_ratio(diagram: Diagram, index: str, step: int) -> sympy.Expr!\\
+\py!scaling(diagram: Diagram, index: str, step: int) -> sympy.Expr!
+\end{signature}
+
+\paragraph{\texttt{chain\_period}.} The \bboxes{} whose multiplicity carries the index are its owners. A node phase or port dimension carrying the index, or more than one owner, raises \py!PeriodicError! (``\ldots is read outside the scalar and one box''). With no owner it returns \py!None!. The owner's multiplicity must be exactly the index and the owner top-level (``the box is not a top-level box of multiplicity the index''), and its copy scalar must not read the index. It returns \py!contract_symbolic.chain_period(diagram, owner)!, converting that function's refusals to \py!PeriodicError!.
+
+\paragraph{\texttt{shift\_ratio}.} For the scalar $s(\iota)$ of the side, with $\iota$ the index: when $s$ does not carry $\iota$ the ratio is~1. Otherwise the ratio $a$ is $s(v+\text{step})/s(v)$ at the first $v\in\{0,\dots,5\}$ with $s(v)\ne0$ (``the scalar vanishes at index 0 .. 5'' when there is none), and $s(\iota+\text{step})-a\,s(\iota)$, expanded with power rules, must simplify to~0 (``the scalar at \ldots{} + \ldots{} is not a constant times the scalar'').
+
+\paragraph{\texttt{scaling}.} With $(p,c)$ from \py!chain_period! and the scalar's ratio $a$, the side at $\iota+\text{step}$ equals $a\,c^{\text{step}/p}$ times the side at $\iota$; a step that is not a multiple of $p$ raises \py!PeriodicError!. Without a chain the result is~$a$.
+
+\section{Oracle Checks of the Scalable Notation}\label{sec:semantics-interop}
+
+The module \module{archytaszx.semantics.interop} checks the scalable notation~\cite{carette2019szx,carette2022bangboxes} against the \bbox{} form~\cite{dixon2009graphical,kissinger2014pattern} by sampling: translation round trips, single sheet steps, and workflows that run sheet operations on a \bbox{} diagram. The scalable notation, \py!to_scalable!, \py!from_scalable!, \py!strip! and \py!validate_scalable! are specified in \cref{ch:diagrams}; sheet operations, \py!SheetStep! and \py!replay_sheet_step! in \cref{ch:rewriting}; the oracle \py!compare! and \py!score! in \cref{ch:proofs}. Every check samples; none is a proof.
+
+\subsection{Samples}
+
+\begin{signature}
+\py!default_samples(*diagrams: Diagram | ScalableDiagram, limit: int = DEFAULT_SAMPLE_LIMIT) -> tuple[Mapping[str, CheckAssignmentValue], ...]!
+\end{signature}
+
+\begin{algorithm}[\texttt{default\_samples}]\label{alg:semantics-default-samples}
+\begin{enumerate}
+\item \py!limit! must be a positive \py!int! (not a \py!bool!), else \py!InteropGrammarError!. A \py!ScalableDiagram! argument is translated by \py!from_scalable!; any other non-diagram raises \py!InteropGrammarError!.
+\item Classify the free symbols (\py!_symbol_roles!): multiplicity symbols (\py!free_mult_symbols!); dimension symbols, those of every port and phase-vector dimension, less the multiplicity symbols; other symbols, those of the scalars and phase vectors, less both.
+\item For each symbol name in sorted order, take the pool: \py!MULTIPLICITY_VALUES! $=(0,1,2)$ for a multiplicity, \py!DIMENSION_VALUES! $=(2,3)$ for a dimension, and otherwise \py!INTEGER_SAMPLE_POOL! when some SymPy symbol of that name is integer, else \py!RATIONAL_SAMPLE_POOL! (\cref{ch:proofs}; the pools are $(1,2,0,3,-1,4,5,-2,6,7,-3,8)$ and $(\tfrac13,\tfrac14,0,\tfrac12,1,2,-\tfrac13,-\tfrac14,-1,-\tfrac12,-2)$). Keep the pool values that meet every assumption of every SymPy symbol of that name; for an other symbol keep only the first \py!OTHER_VALUE_COUNT! $=2$.
+\item With no symbol, return one empty assignment. When some symbol keeps no value, return none.
+\item The rows are the index tuples of the grid (\py!_grid!, below) over the kept values' counts, names in sorted order.
+\item When some diagram binds a sampled symbol in its parameters and $\textit{limit}>1$, the rows become the first $\textit{limit}-1$ rows followed by the second grid row (the first when there is one row) without the bound symbols, which then take their bound values.
+\item Return the first \py!limit! rows, each as a read-only mapping.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{The grid.} For value counts $w_1,\dots,w_r$, \py!_grid! lists the diagonals $(\min(i,w_1-1),\dots,\min(i,w_r-1))$ for $i=0,\dots,\max w-1$, then the remaining tuples ordered by (largest index, index sum, tuple), each tuple once. When $\prod w>$ \py!_MAX_GRID_PRODUCT! $=4096$, the remaining tuples are instead, for each base $b<\max w$, each position $j$, and each value $i<w_j$, the tuple with $i$ at $j$ and $\min(b,w_q-1)$ elsewhere. For counts $(3,2)$ the order is $(0,0),(1,1),(2,1),(0,1),(1,0),(2,0)$.
+
+\begin{example}[Default samples]
+For a diagram with dimension $d$, multiplicity $n$, phase symbol $x$ and scalar symbol $t$ (neither integer), the names sort as $d,n,t,x$ with values $(2,3)$, $(0,1,2)$, $(\tfrac13,\tfrac14)$ and $(\tfrac13,\tfrac14)$. The first three of the twelve samples are the diagonals $\{d{:}2,n{:}0,t{:}\tfrac13,x{:}\tfrac13\}$, $\{d{:}3,n{:}1,t{:}\tfrac14,x{:}\tfrac14\}$ and $\{d{:}3,n{:}2,t{:}\tfrac14,x{:}\tfrac14\}$; the fourth is $\{d{:}2,n{:}0,t{:}\tfrac13,x{:}\tfrac14\}$.
+\end{example}
+
+\subsection{Sweeps}
+
+A \term{sweep} runs a list of checks over the samples against a \term{reference} diagram (the original diagram, or a step's \code!before! side).
+
+\begin{algorithm}[\texttt{\_sweep}]\label{alg:semantics-sweep}
+For each sample in order, stopping when every check has failed:
+\begin{enumerate}
+\item A sample whose values break the assumptions of the reference's symbols (\py!_admissible!, the symbol table built as in \py!_sympy_symbols!) is \term{gated} out.
+\item Run the gate on the reference (instantiation, or evaluation by \py!score!). A domain error (\cref{tab:semantics-domain-errors}) gates the sample out. Any other oracle error fails every check not yet failed, with ``the reference cannot be evaluated: \ldots''.
+\item Run each check not yet failed. A check that raises the one-sided signal (the other side is outside its domain here) records a one-sided skip. Otherwise the sample counts as evaluated for that check, and a returned problem is the check's failure and counterexample.
+\end{enumerate}
+Afterwards, a check with one-sided skips, no evaluated sample and no failure fails at its first one-sided sample (``the other side cannot be evaluated: \ldots''). Each sweep reports, per check, the evaluated, gated and one-sided counts and the first failure.
+\end{algorithm}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+Class & Members \\
+\midrule
+domain errors & \py!BangBoxDomainError!, \py!CheckDomainError!, \py!ContractDomainError!, \py!DenoteDomainError!, \py!DimensionDomainError!, \py!GeneratorDomainError!, \py!GraphDomainError!, \py!PhaseDomainError!, \py!ScalarDomainError! \\
+oracle errors & \py!BangBoxError!, \py!CheckError!, \py!ContractError!, \py!DenoteError!, \py!DimensionError!, \py!GeneratorError!, \py!GraphError!, \py!PhaseError!, \py!ScalableError!, \py!ScalarError!, \py!ValidateError! \\
+\bottomrule
+\end{tabularx}
+\caption{Exception classes of the interop sweeps; every domain error is also an oracle error.}\label{tab:semantics-domain-errors}
+\end{table}
+
+\paragraph{The checks.} \py!_expand(diagram, sample)! instantiates every multiplicity symbol at the sample over the diagram's parameters (the sample overriding): a missing value raises \py!CheckGrammarError!, a non-integer one \py!BangBoxDomainError!; then it expands the concrete \bboxes{}.
+\begin{itemize}
+\item \py!_family_problem!: the two diagrams' instances must be isomorphic (``instances are not isomorphic''); an oracle error is the problem ``instantiation failed: \ldots''.
+\item \py!_strip_problem!: \py!strip! of the scalable form at the sample's integer multiplicity values must be isomorphic to the instance (``strip is not isomorphic to bang-box instantiation''); an oracle error is ``strip or instantiation failed: \ldots''.
+\item \py!_oracle_mismatch!: \py!compare(reference, other, sample, mode=EqualityMode.EXACT)!. A domain error raises the one-sided signal; another oracle error is the problem ``the other side cannot be evaluated: \ldots''. A match, or a finite deviation at most \py!DEFAULT_TOLERANCE! $=10^{-9}$ times $\max(1,\text{largest entry modulus of the reference})$, is no problem; otherwise the comparison's reason is.
+\end{itemize}
+
+\paragraph{Notes.} \py!_notes(sweep, label, offered)! produces, in order: ``\textit{label} fails at \{\textit{k}: \textit{v}, \ldots\}: \textit{failure}'' (keys sorted), ``\textit{label}: $N$ sample(s) skipped: outside the reference's domain'', ``\textit{label}: $N$ sample(s) skipped: only the reference evaluates'', and ``\textit{label}: no sample evaluated ($N$ offered)'', each when it applies.
+
+\subsection{Round trips}
+
+\begin{signature}
+\py!check_round_trip(diagram: Diagram, samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None) -> RoundTripReport!
+
+\py!@dataclass(frozen=True, slots=True, eq=False) class RoundTripReport!: \py!scalable: ScalableDiagram!, \py!back: Diagram!, \py!identical: bool!, \py!family_equal: bool!, \py!stripped_ok: bool!, \py!oracle_ok: bool!, \py!samples_evaluated: int!, \py!counterexample: Mapping | None!, \py!reason: str!; property \py!ok!.
+\end{signature}
+
+\noindent The function translates \py!diagram! to scalable notation and back (\py!to_scalable! raises \py!ScalableGrammarError! for a diagram without a scalable form), records \py!identical! (id-for-id structural equality by \py!compare_structure!), and runs two sweeps over the samples (default \py!default_samples(diagram)!): one gated by instantiation with the family and strip checks, one gated by evaluation with the oracle check. \py!family_equal!, \py!stripped_ok! and \py!oracle_ok! hold when the respective check found no counterexample; \py!samples_evaluated! is the oracle's evaluated count; \py!counterexample! is the first of the family, strip and oracle counterexamples. The reason joins, with ``; '', the family and strip failures, the oracle notes, and ``not identical: \ldots''; with nothing to report it is ``round trip agrees at $N$ sample(s)''. \py!ok! requires at least one evaluated sample and all three checks to hold; \py!identical! does not enter it. A non-diagram argument or malformed samples (anything but \py!None! or a sequence of mappings) raise \py!InteropGrammarError!.
+
+\subsection{Sheet steps}
+
+\begin{signature}
+\py!check_sheet_step(step: SheetStep, samples=None) -> SheetCheck!
+
+\py!@dataclass(frozen=True, slots=True, eq=False) class SheetCheck!: \py!step: SheetStep!, \py!replayed: bool!, \py!valid: bool!, \py!oracle_ok: bool!, \py!samples_evaluated: int!, \py!counterexample: Mapping | None!, \py!reason: str!; property \py!ok!.
+\end{signature}
+
+\noindent The function replays the step (\py!replay_sheet_step!; a rewrite, scalable, \bbox{} or type error sets \py!replayed! false with ``replay failed: \ldots''). It reads each side's \bbox{} form (\py!_bang_box_form!): \py!validate_scalable! issues, a translation error, or \py!validate! errors of the translated diagram make the side invalid (``before is invalid: \ldots'', ``after is invalid: \ldots''). With both sides valid, it sweeps the oracle check with \code!before! as the reference over the samples (default \py!default_samples(before, after)!). \py!valid! holds when neither side is invalid. The reason joins the replay failure, the side issues and the oracle notes, or reads ``step checks at $N$ sample(s)''. \py!ok! requires replay, validity, no oracle counterexample and at least one evaluated sample.
+
+\subsection{Workflows}
+
+\begin{signature}
+\py!via_scalable(diagram: Diagram, operations: Sequence[tuple[str, Mapping[str, object]]], samples=None) -> InteropOutcome!
+
+\py!@dataclass(frozen=True, slots=True, eq=False) class InteropOutcome!: \py!start: Diagram!, \py!result: Diagram!, \py!steps: tuple[SheetStep, ...]!, \py!checks: tuple[SheetCheck, ...]!, \py!round_trip: RoundTripReport!; property \py!ok!.
+\end{signature}
+
+\noindent The function checks the round trip of \py!diagram!, then applies each named operation of \py!SHEET_OPERATIONS! to the current scalable state with the given keyword arguments; node and scale ids in the arguments are ids of the current state, and the first operation sees the ids of \py!diagram!. A refused operation raises its \py!SheetError!. An entry that is not a pair, an unknown name, or arguments that are not a string-keyed mapping raise \py!InteropGrammarError!. Every step is then checked by \py!check_sheet_step! with the same samples, and \py!result! is the final state translated back. \py!ok! requires the round trip and every step check to be \py!ok!.
+
+\section{Restricted Claims}\label{sec:semantics-restrict}
+
+The module \module{archytaszx.semantics.restrict} restricts a claim $L=R$ to instances and restricted families of its free symbols. A \term{restriction} is a sequence of \term{clauses}; the decision procedure (\cref{ch:proofs}) applies it to both sides before deciding, maps sample assignments between the original and the restricted symbols, and checks side conditions on counterexamples.
+
+\subsection{Clause grammar}\label{sec:semantics-restrict-grammar}
+
+\begin{lstlisting}[style=grammar,caption={Clause grammar of \texttt{parse\_clause}.}]
+restriction ::= clause ("," clause)*            (empty text: no clause)
+clause      ::= NAME "in" LATTICE
+              | NUM REL NAME REL NUM              (chained range)
+              | NAME OP NUM
+              | NAME "=" NUM
+              | NAME "=" [NUM ["*"]] NAME ["+" NUM]   (affine A*M + C)
+LATTICE     ::= "Z" | "(" "1" "/" INT ")" "Z" | "Z" "/" INT
+REL         ::= "<=" | "≤" | "<"
+OP          ::= "!=" | "≠" | ">=" | "≥" | "<=" | "≤" | ">" | "<"
+NUM         ::= ["+" | "-"] DIGITS ["/" DIGITS]
+NAME        ::= [A-Za-z_][A-Za-z0-9_]*
+\end{lstlisting}
+
+\noindent Whitespace around tokens is free. \code!(1/q)Z! and \code!Z/q! both denote the lattice of step $1/q$; \code!Z! is $q=1$; $q<1$ raises. The forms map to \py!Clause.form!: \code!eq! (\code!NAME = NUM!), \code!ge!, \code!gt!, \code!le!, \code!lt!, \code!ne!, \code!range!, \code!lattice!, and \code!affine! (fresh symbol $M$, coefficient $A$, default 1, and constant $C$, default 0; $A=0$ raises ``a = 0; write \ldots''). A \code!>=! clause whose right side is not a number raises ``\ldots is not an integer literal'', another operator's ``\ldots is not a rational literal''; an unmatched clause raises ``expected NAME = INT, NAME >= INT or NAME = A*M + C''. Every parse error is a \py!DecideGrammarError!. \py!parse_restriction(text)! accepts \py!None! (empty), a \py!Restriction! (returned as is), comma-separated text, or a mapping from symbol to clause text such as \code!"= 3"! or \code!">= 2"! (joined as \code!NAME TEXT!); another type raises \py!DecideGrammarError!. Kinds stay empty until \py!validate!.
+
+\subsection{Data}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Domain!: \py!lo: Fraction | None = None!, \py!lo_strict: bool = False!, \py!hi: Fraction | None = None!, \py!hi_strict: bool = False!, \py!q: int = 0!, \py!excluded: tuple[Fraction, ...] = ()!, \py!step: Fraction | None = None!, \py!offset: Fraction = Fraction(0)!; method \py!contains(value) -> bool!.
+
+\py!@dataclass(frozen=True, slots=True) class Clause!: \py!symbol: str!, \py!kind: str!, \py!form: str!, \py!a: int = 1!, \py!c: int = 0!, \py!fresh: str = ""!, \py!hi: Fraction | None = None!, \py!lo_strict: bool = False!, \py!hi_strict: bool = False!, \py!q: int = 0!, \py!source: str = ""!, \py!domain: Domain | None = None!, \py!fresh_domain: Domain | None = None!, \py!values: tuple[Fraction, ...] = ()!, \py!raw: str! (excluded from equality).
+
+\py!@dataclass(frozen=True, slots=True) class Restriction!: \py!clauses: tuple[Clause, ...] = ()!.
+\end{signature}
+
+\begin{definition}[Domain]\label{def:semantics-domain}
+A \py!Domain! is the set of rationals $x$ with $x\ge\textit{lo}$ ($>$ when \py!lo_strict!), $x\le\textit{hi}$ ($<$ when \py!hi_strict!), absent ends unbounded; $qx\in\Z$ when $q>0$ ($q=0$ means no lattice); $(x-\textit{offset})/\textit{step}\in\Z$ when \py!step! is set; and $x\notin$ \py!excluded!. \py!contains! converts its argument to an exact rational (an \py!int! or \py!Fraction! directly, a float by \py!nsimplify!, anything else by \py!sympify!, which must give a rational); a \py!bool! or a non-rational is not contained.
+\end{definition}
+
+The kinds are \code!multiplicity!, \code!dimension!, \code!phase! and \code!exponent!. After planning, the forms also include \code!shift! ($x=c+a\,s$ with a fresh $s$ and its range in \py!fresh_domain!), \code!finite! (finitely many values in \py!values!) and \code!side! (a side condition that changes nothing). Phase and exponent clauses hold rationals (\py!Fraction!) in the \py!a! and \py!c! slots.
+
+\paragraph{Clause methods.} \py!substitutes! is false for a side condition, a finite clause, and a dimension floor $d\ge c$, and true otherwise. \py!expression()! is the value the symbol takes: \code!c! for \code!eq!; for \code!shift!, \code!c + s!, \code!c + -s! or \code!c + a*s! (just the fresh term when $c=0$); otherwise \code!m!, or \code!a*m!, followed by \code! + c! when $c\ne0$. \py!text()! is the source text when set, empty for a side condition without one, \code!x >= c!, \code!x = c!, or \code!x = expression()!. \py!contains(value)! uses the domain when set; otherwise the value is read as an integer (a non-integer is not contained) and tested by $v=c$ (\code!eq!), $v\ge c$ (a dimension floor), or $v\ge c$ and $a\mid(v-c)$ (multiplicity \code!ge! and \code!affine!).
+
+\paragraph{Restriction properties.} \py!by_symbol! maps each constrained symbol to its clause, side conditions left out. \py!certifiable! holds when every clause has no domain and form \code!eq!, \code!ge! or \code!affine! (the forms the proof kernel states). \py!finite! lists the finite clauses; \py!instance_at(values)! replaces each finite clause by an \code!eq! clause at its value (an integer when integral). \py!ranged! holds when a shift's range has an upper end, or a shift or side condition excludes points. \py!empty! holds with no clause; \py!floors! maps each dimension with a floor to it; \py!instance! holds when there are clauses and all are \code!eq!; \py!text()! joins the nonempty clause texts with ``, ''.
+
+\subsection{Validation and planning}
+
+\begin{signature}
+\py!validate(restriction: Restriction, left: Diagram, right: Diagram) -> Restriction!
+\end{signature}
+
+\begin{algorithm}[\texttt{validate}]\label{alg:semantics-validate-restriction}
+\begin{enumerate}
+\item A non-\py!Restriction! raises \py!DecideGrammarError!.
+\item Classify the free symbols of both sides (\py!_free_symbols!, \cref{ch:proofs}): $M$ the multiplicity symbols; $\Delta$ the dimension symbols less $M$; the \term{exponent symbols} $E$, the scalar symbols less $M\cup\Delta$; the \term{phase symbols} $P$, the phase-vector symbols less $M\cup\Delta\cup E$.
+\item Every clause of form \code!eq!, \code!ge! or \code!affine! on a symbol outside $E\cup P$ must have non-negative integer literals (``\ldots is not an integer literal'', ``negative literal \ldots'').
+\item The \term{planned symbols} are those with some clause of the forms \code!ne!, \code!gt!, \code!le!, \code!lt!, \code!range! or \code!lattice!, and every symbol in $E\cup P$. For a planned symbol, at its first clause, its kind is resolved ($M$, $\Delta$, $E$, $P$ in that order; a symbol free in neither side raises ``\ldots is free in neither diagram (may be constrained: \ldots)''), and all its clauses are planned together (\cref{alg:semantics-plan-clauses}); later clauses on it are skipped.
+\item Every other clause: a second clause on one symbol raises ``a second clause on \ldots''. Its kind is $M$ or $\Delta$, else the ``free in neither'' error.
+  \begin{itemize}
+  \item A dimension clause takes only \code!d = v! or \code!d >= c! (``a dimension takes only d = v or d >= c''), with $c\ge1$ (``a dimension needs a positive literal''); \code!d >= 1! is dropped.
+  \item A multiplicity \code!n >= 0! is dropped. An affine clause's fresh symbol must be free in neither side, not constrained earlier, not used as a fresh symbol (``\ldots is not fresh (free symbols: \ldots)''), and not constrained by another clause. A \code!n >= c! clause gets the fresh symbol \code!m!, \code!m1!, \ldots{} avoiding every free symbol, fresh symbol and constrained symbol, and becomes \code!Clause(n, multiplicity, ge, a=1, c, m)!.
+  \end{itemize}
+\item Check bindings on both sides: an \code!eq! clause on a symbol a side binds in its parameters to another value raises ``the left side binds \ldots'' (or right).
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[\texttt{\_plan}]\label{alg:semantics-plan-clauses}
+Input: one symbol, its kind, its clauses, the names to avoid, and both sides. Integer kinds are multiplicity and dimension. Every error is \py!DecideGrammarError! ``clauses \ldots: \textit{reason}''.
+\begin{enumerate}
+\item Start with $\textit{lo}=0$ for a multiplicity, $1$ for a dimension, none otherwise; no upper end; lattice $q=1$ for integer kinds, else $0$. Fold every clause: \code!eq! sets the point (two different points: ``the intersection is empty''); \code!ge!, \code!gt! raise the lower end; \code!le!, \code!lt! lower the upper end; \code!range! does both; \code!lattice! sets $q$ (or its gcd with the current $q$) for non-integer kinds only; \code!ne! adds an excluded point; \code!affine! is kept (two of them: ``two A*M + C clauses'').
+\item \textbf{Affine.} It combines only with \code!ne! (``A*M + C combines only with x != v''). For a dimension it raises. The fresh symbol must not be in the avoided names. An integer kind gives the \code!affine! clause followed by a side condition excluding the \code!ne! points, if any. A phase or exponent symbol gives a \code!shift! clause $x=c+a\,s$ with domain the lattice $\{c+a\Z\}$ less the excluded points and fresh domain the integers.
+\item With a lattice, round the ends onto it: $\textit{lo}$ up to the least lattice point at or (strictly) above it, $\textit{hi}$ down likewise, both ends then non-strict.
+\item An empty interval raises. A point outside the domain raises; a point inside gives an \code!eq! clause (an integer when integral) with the domain.
+\item With a lattice and both ends, enumerate the lattice points of the domain: none raises; one gives an \code!eq! clause; more than \py!_MAX_INSTANCES! $=64$ raise (``$N$ instances, over 64''); otherwise a \code!finite! clause.
+\item A phase symbol with a lattice $q$ in whose every phase expression the symbol is 1-periodic (\py!_periodic!: the change under $x\mapsto x+1$ is an integer, the index symbol read as an integer, no weighted vector carrying it) gives a \code!finite! clause over $0,1/q,\dots,(q-1)/q$ with domain the lattice less the excluded points.
+\item An integer kind gives a floor (a dimension \code!ge! clause when the floor exceeds 1; a multiplicity \code!ge! clause with a fresh \code!m...! when it is not 0), followed by a side condition with the domain when points are excluded.
+\item A phase or exponent symbol gives a \code!shift! with a fresh \code!k...! (with a lattice) or \code!s...! (without), unit $1/q$ or $1$: with a lower end, $x=\textit{lo}+u\,s$, $s\ge0$ ($>$ when strict), with upper end $(\textit{hi}-\textit{lo})/u$ when bounded; with only an upper end, $x=\textit{hi}-u\,s$, $s\ge 0$; with a lattice and no ends, $x=u\,s$ over the integers; with nothing, a side condition with the domain.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}[Planned clauses]\label{ex:semantics-plan}
+For a pair with a multiplicity $n$, a dimension $d$, a phase symbol $x$ (free in a phase vector) and an exponent symbol $t$ (free only in the scalar), \py!validate! gives:
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Clause text & Validated clauses \\
+\midrule
+\code!n >= 2! & multiplicity \code!ge!, $n=m+2$, fresh \code!m! \\
+\code!n = 2*k + 1! & multiplicity \code!affine!, $a=2$, $c=1$, fresh \code!k! \\
+\code!n <= 3! & multiplicity \code!finite!, values $0,1,2,3$ \\
+\code!n != 1! & multiplicity \code!side!, excluding $1$ \\
+\code!d >= 3! & dimension \code!ge!, floor 3 (no substitution) \\
+\code!d = 4! & dimension \code!eq! \\
+\code!x = 1/3! & phase \code!eq!, $c=\tfrac13$ \\
+\code!x in (1/4)Z, 0 <= x < 1! & phase \code!finite!, values $0,\tfrac14,\tfrac12,\tfrac34$ \\
+\code!x in Z/3! & phase \code!finite!, values $0,\tfrac13,\tfrac23$ (1-periodic) \\
+\code!0 < x < 1/2! & phase \code!shift!, $x=s$, $s\in(0,\tfrac12)$ \\
+\code!t >= 1/2! & exponent \code!shift!, $t=\tfrac12+s$, $s\ge0$ \\
+\code!t != 0! & exponent \code!side!, excluding $0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{example}
+
+\subsection{Application}
+
+\begin{signature}
+\py!apply_clause(diagram: Diagram, clause: Clause, *, everywhere: bool = False) -> Diagram!\\
+\py!subst_one(diagram: Diagram, restriction: Restriction) -> Diagram!\\
+\py!subst_pair(left: Diagram, right: Diagram, restriction: Restriction) -> tuple[Diagram, Diagram]!
+\end{signature}
+
+\begin{algorithm}[\texttt{apply\_clause}]\label{alg:semantics-apply-clause}
+Returns a new diagram.
+\begin{enumerate}
+\item A \code!finite! clause raises \py!DecideGrammarError! (``\ldots takes finitely many values; the claim is decided instance by instance''). A clause that does not substitute returns a copy.
+\item A phase or exponent clause goes to \py!_apply_real! (below).
+\item A dimension clause substitutes $d=v$ and drops $d$ from the parameters (only the parameter when $d$ is not a free dimension symbol).
+\item A multiplicity clause drops the symbol from the parameters. For \code!eq!: instantiate the multiplicity (\py!instantiate_symbol!) and substitute the value wherever else the symbol is free.
+\item For \code!ge! and \code!affine!, with $n\mapsto a\,m+c$: substitute into every \bbox{} multiplicity carrying $n$ (expanded) and into the scalar; with \py!everywhere!, also into node phases (\py!substitute_index_phases!), port dimensions, and copy scalars. A symbol still free raises (``\ldots occurs outside the bang boxes and the scalar''). Finally \term{settle} the diagram (\py!_settle!): expand the concrete \bboxes{} and peel, least \bbox{} id first, each \bbox{} whose symbolic multiplicity has an integer constant term $c\ge1$, one copy at a time (\py!peel_one!), until none has.
+\end{enumerate}
+\end{algorithm}
+
+\py!_apply_real! substitutes a phase or exponent clause: \code!x = v! by the rational; a shift $x=c+a\,s$ by that expression into every phase (as a \py!Phase!) and, when the symbol stays in the scalar, into the scalar. The fresh symbol first carries its range's assumptions (\py!_fresh_symbol!: integer on a lattice, else real; nonnegative from $s\ge0$, positive from $s>0$); when that substitution leaves the scalar grammar (\py!ScalarGrammarError!), a plain complex symbol is used. \py!subst_one! applies every clause in order; \py!subst_pair! checks the bindings of both sides first and applies to both.
+
+\subsection{Assignments}
+
+\begin{signature}
+\py!in_domain(restriction, assignment) -> bool!\\
+\py!to_restricted(restriction, assignment) -> dict[str, object] | None!\\
+\py!to_original(restriction, assignment) -> dict[str, object]!\\
+\py!restricted_samples(restriction, samples) -> tuple[Mapping[str, object], ...]!
+\end{signature}
+\noindent \py!in_domain! holds when every clause's symbol has a value it contains. \py!to_restricted! reads an assignment of the original symbols over the restricted pair's symbols: a value outside its clause gives \py!None!; a substituting clause removes its symbol; a shift adds $s=(x-c)/a$ (\py!None! outside the fresh range); a multiplicity \code!ge! or \code!affine! clause adds $m=(n-c)/a$ (integer division). \py!to_original! is the inverse reading: each substituting \code!eq! clause adds its value; each shift or multiplicity clause whose fresh symbol is present replaces it by $c+a\cdot s$; the result is sorted by name. \py!restricted_samples! maps each sample through \py!to_restricted!, keeping those inside the clauses, in order, without duplicates.
+
+\subsection{Vanishing on a range}
+
+A difference of two sides that remains after symbolic contraction can vanish on a restricted range of a symbol without vanishing identically. These functions read an expression as a polynomial in its \term{index atoms} (every function or sum atom with free symbols other than an absolute value, plus every free symbol named \code!_i...!, \code!_k...! or \code!_q...! followed by digits) and test its coefficients on the range a clause gives.
+
+\paragraph{Ranges.} \py!_range_of(restriction, name, half_lines=False)! is the real hull of the range a clause gives \py!name!, as a SymPy set without the excluded points: the fresh range of a shift with that fresh symbol (its excluded points mapped through $(x-c)/a$), when it is bounded or punctures points; $[0,\infty)$ less the mapped holes for the fresh symbol of a multiplicity \code!ge! or \code!affine! clause with side-condition holes; or a side condition's own domain, when the symbol has no other clause than a dimension floor. With \py!half_lines!, unbounded or unpunctured ranges are returned too; otherwise \py!None!.
+
+\paragraph{Real parts.} \py!_real_parts(expr)! factors the radicand of each fractional power; when SymPy cannot show the result real it cancels it; a real expression (or zero) is returned as itself, otherwise its real and imaginary parts, both required real and free of \code!re!, \code!im!, \code!arg! and \code!atan2! (else \py!None!).
+
+\begin{signature}
+\py!vanishes_on_range(restriction, expr) -> str | None!\\
+\py!range_point(restriction, expr) -> dict[str, sympy.Rational] | None!
+\end{signature}
+
+\begin{algorithm}[\texttt{vanishes\_on\_range}]\label{alg:semantics-vanishes}
+\begin{enumerate}
+\item When the coefficients carry exactly one symbol outside the index atoms and a ranged clause gives it a range $\Omega$ (\py!_range_parts!): read each coefficient over a real dummy and take its real parts. Every part must be of one sign nowhere on $\Omega$: \py!reduce_inequalities! of part $>0$ and part $<0$, united and intersected with $\Omega$, must be empty; and \py!solveset! of the part on $\Omega$ must cover~$\Omega$. Return ``$x$ in $\Omega$''.
+\item Otherwise, with two or more such symbols (\py!_vanishes_on_ranges!), at least one with a bounded or punctured range and every one with a range (half-lines allowed): each real part of each coefficient, with every absolute value of a one-symbol argument resolved by its sign on that symbol's range (\py!_without_abs!), must simplify to~0. Return the ranges as ``$x$ in $\Omega_x$, \ldots''.
+\item Otherwise, or on any SymPy failure, return \py!None!.
+\end{enumerate}
+\end{algorithm}
+
+\py!range_point! returns a counterexample point: with one ranged symbol, the first part's region of nonzero sign on $\Omega$ yields a rational point (\py!_rational_in!: an interval's midpoint, one past a finite end of a half-line, $0$ for the whole line, an irrational midpoint rounded to 20 digits; a finite set's rational element; the first such point of a union, each checked inside); with several ranged symbols, \py!_ranges_point! tries every combination of candidate points (\py!_rational_candidates!: the point above, then the quarter points of the first interval, or the next two points past a finite end of a half-line, or $\pm1$, kept when inside) and returns the first at which some coefficient simplifies to a nonzero value. Otherwise it returns \py!None!.
+
+\section{Constants}\label{sec:semantics-constants}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.2\linewidth}X@{}}
+\toprule
+Constant & Value & Meaning \\
+\midrule
+\py!FALLBACK_MAX_ELEMENTS! & $10\,000\,000$ & numeric element cap without a memory limit \\
+\py!DEFAULT_MAX_ELEMENTS! & memory$/16/4$ & default numeric element cap (\cref{def:semantics-default-cap}) \\
+\py!MAX_AXES! & 64 & most axes of one numeric array \\
+\py!DEFAULT_MAX_SIMPLIFY_STEPS! & 1024 & simplifier step budget (\cref{ch:algebra}) \\
+\py!_NESTED_INDICES! & 24 & most symbolic-dimension indices summed as one nested sum \\
+\py!MAX_PERIOD! & 8 & largest power tried by \py!chain_period! \\
+\py!MAX_TRANSFER_SIZE! & 64 & largest transfer-matrix side \\
+\py!CANON_PHASE_TERMS! & 512 & most canonical phase terms read as a symbolic entry \\
+\code!to_dense! cap & $10\,000\,000$ & default \py!max_elements! of \py!SymbolicTensor.to_dense! \\
+\py!_RESIDUAL_POINTS! & 64 & most boundary points of residual enumeration \\
+\py!MULTIPLICITY_VALUES! & $(0,1,2)$ & interop multiplicity samples \\
+\py!DIMENSION_VALUES! & $(2,3)$ & interop dimension samples \\
+\py!OTHER_VALUE_COUNT! & 2 & interop values per other symbol \\
+\py!DEFAULT_SAMPLE_LIMIT! & 12 & interop sample cap \\
+\py!_MAX_GRID_PRODUCT! & 4096 & full grid up to this many tuples \\
+\py!_MAX_INSTANCES! & 64 & most instances of a finite restriction clause \\
+\code!_peeled_to! rounds & 4 & most peel rounds in \py!induct_rows! \\
+\code!shift_ratio! points & $0,\dots,5$ & index values tried for a nonzero scalar \\
+\bottomrule
+\end{tabularx}
+\caption{Numeric constants of the semantics layer.}\label{tab:semantics-constants}
+\end{table}

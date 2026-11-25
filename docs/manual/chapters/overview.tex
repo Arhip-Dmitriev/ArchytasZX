@@ -1,0 +1,137 @@
+\chapter{Overview}\label{ch:overview}
+
+ArchytasZX is a Lean-certifying rewriting and derivation engine for the qufinite ZXW-calculus with !-boxes. It represents finite-dimensional linear maps as diagrams, rewrites them by the rules of the calculus, decides equality of two diagrams, and emits Lean~4 theorems that certify its verdicts. The number of qudits ($n$) and their dimension ($d$) may stay symbolic throughout: one proof covers every value of $n$ and $d$ that meets the stated assumptions.
+
+This manual specifies the software at version~2.0.4. It describes every data structure, algorithm, input form, output form, numeric parameter and error condition in enough detail to rebuild the software in another language with the same behavior. This chapter fixes the scope, introduces the architecture and shows a complete session.
+
+\section{The Calculus}\label{sec:overview-calculus}
+
+The ZXW-calculus~\cite{poor2023zxw} is a graphical language for linear maps. A diagram is built from \term{generators} joined by wires; each wire carries the Hilbert space $\C^d$ of its dimension $d$, and each generator denotes a linear map on its attached wires. ArchytasZX implements the generators of the qufinite ZXW-calculus~\cite{wang2021qufinite,wang2023qufinitezxw}, which admits wires of different dimensions in one diagram:
+\begin{itemize}
+\item the Z spider and the X spider~\cite{coecke2011interacting,vandewetering2020working,ranchin2014depicting}, with any number of ports and a phase vector;
+\item the W node~\cite{hadzihasanovic2015zw}, with one input and any number of outputs;
+\item the triangle $T$ and its inverse $T^{-1}$~\cite{ng2017universal,vilmart2019triangles};
+\item the Fourier box $F$;
+\item the dimension binder $B$ and the dimension splitter $S$, which join wires of dimensions $s$ and $t$ into one wire of dimension $st$ and split it again~\cite{wang2023qufinitezxw};
+\item the discard $G$~\cite{carette2019mixed}, for mixed states.
+\end{itemize}
+\Cref{ch:diagrams} defines the generators and \cref{ch:semantics} gives their denotations.
+
+A \term{\bbox}~\cite{dixon2009graphical,kissinger2014pattern} marks a subdiagram that is repeated a symbolic number of times, its \term{multiplicity}. A node-scoped \bbox{} repeats a set of nodes with their wires; a port-scoped \bbox{} repeats a set of ports of one node. \bboxes{} nest. They let one diagram stand for a family of diagrams indexed by the system size, such as the $n$-qudit GHZ state. Dimensions are symbolic expressions as well (\cref{ch:algebra}); a single diagram can therefore denote a family over both $n$ and $d$.
+
+\section{What the Engine Does}\label{sec:overview-capabilities}
+
+The engine provides five services on diagrams:
+\begin{enumerate}
+\item \emph{Input and output.} It reads diagrams in three textual forms (a spider-and-wire language, Dirac expressions and graph listings; \cref{ch:language}) and prints them as Dirac expressions and graph listings (\cref{ch:language}) and as drawings in Unicode, ASCII, and matplotlib (\cref{ch:pictorial}).
+\item \emph{Rewriting.} It matches the rules of the calculus against a diagram, across \bbox{} boundaries, and applies them with exact scalars (\cref{ch:rewriting,ch:rules}). The rule library includes the complete axiomatizations of~\cite{poor2023zxw} and~\cite{wang2023qufinitezxw} (\cref{ch:completeness}) and the discard rules of~\cite{carette2019mixed} (\cref{ch:mixed}).
+\item \emph{Semantics.} It contracts a diagram to a tensor, numerically for concrete $n$ and $d$ and symbolically with $d$ kept formal, and evaluates path sums~\cite{amy2018pathsums} (\cref{ch:semantics}).
+\item \emph{Decision and proof.} It decides whether two diagrams are equal as families over every free symbol, by a ladder of decision procedures, and searches for a derivation that proves an equality (\cref{ch:proofs}), including derivations by induction over multiplicities (\cref{ch:kernel}). Its verdicts are \texttt{EQUAL}, \texttt{UNEQUAL}, their uncertified forms \texttt{EQUAL\_UNCERTIFIED} and \texttt{UNEQUAL\_UNCERTIFIED}, and \texttt{UNKNOWN}; an \texttt{UNEQUAL} verdict carries a counterexample.
+\item \emph{Certification.} It records every derivation as a theorem of its proof kernel (\cref{ch:kernel}) and exports proofs and refutations to Lean~4~\cite{demoura2021lean4} over a bundled library built on Mathlib~\cite{mathlib2020} (\cref{ch:lean-core,ch:lean-boxes,ch:lean-pathsum,ch:lean-sym,ch:lean-export-net,ch:lean-export}).
+\end{enumerate}
+
+The decision procedure is sound and incomplete for symbolic $n$ and $d$: an \texttt{EQUAL} or \texttt{UNEQUAL} verdict is correct, and some true equalities end in \texttt{UNKNOWN}. For concrete $n$ and $d$ and algebraic parameters, the complete rule set and exhaustive search (\cref{ch:completeness}) find a derivation of every true equality.
+
+\section{Architecture}\label{sec:overview-architecture}
+
+The Python package \texttt{archytaszx} has five subpackages, layered so that each depends only on the layers before it. \Cref{tab:overview-layers} lists them.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.22\linewidth}X@{}}
+\toprule
+Layer & Subpackage & Contents \\
+\midrule
+A & \module{archytaszx.algebra} & Symbolic dimensions, phases and phase vectors, exact scalars, algebraic numbers, number-field certificates, path sums (\cref{ch:algebra}). \\
+B & \module{archytaszx.diagram} & Ports, nodes and diagrams; the generator registry; \bboxes{}; the scalable sheet notation; validation; structural comparison; mixed diagrams (\cref{ch:diagrams,ch:mixed}). \\
+C & \module{archytaszx.rewrite} & Rules, matchers, the rewrite engine, strategies, the normal-form driver, equality saturation, tactics, sheet rewrites, caches, and exhaustive search (\cref{ch:rewriting,ch:rules,ch:completeness}). \\
+D & \module{archytaszx.semantics} & Denotations, numeric and symbolic contraction, the decision ladder, proof search, induction, certificates, the proof kernel, and the Lean exporters (\cref{ch:semantics,ch:proofs,ch:kernel,ch:lean-export-net,ch:lean-export}). \\
+E & \module{archytaszx.repl} & The parser, printer, commands, interactive shell, drawings, and the Python embedding (\cref{ch:shell,ch:language,ch:python-api,ch:pictorial}). \\
+\bottomrule
+\end{tabularx}
+\caption{The layers of the \texttt{archytaszx} package.}
+\label{tab:overview-layers}
+\end{table}
+
+Two further parts of the repository are specified here. The Lean project in \file{archytaszx/lean} defines the tensor-network semantics of diagrams, the rules as Lean lemmas, and the verified normalizers that exported proofs call (\cref{ch:lean-core,ch:lean-boxes,ch:lean-pathsum,ch:lean-sym}). The benchmark suite in \file{benchmarks/} measures the engine and rival tools on a catalogue of quantum algorithms (\cref{ch:bench-pipeline,ch:bench-tools}). The module \module{archytaszx.trace} records timed sections of engine work (\cref{ch:development}).
+
+\Cref{fig:overview-flow} shows the path of a proof through the layers.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=5mm and 9mm, box/.style={draw,rounded corners=2pt,align=center,font=\small,minimum height=8mm,inner sep=3pt}, >={Stealth[length=2mm]}]
+\node[box] (txt) {Text input\\(language, Dirac, listing)};
+\node[box,right=of txt] (dia) {Diagram\\with \bboxes{}};
+\node[box,right=of dia] (dec) {Decision ladder\\and proof search};
+\node[box,below=of dec] (ker) {Proof-kernel\\theorem};
+\node[box,left=of ker] (lean) {Lean~4 file};
+\node[box,left=of lean] (chk) {Lean kernel\\check};
+\node[box,above=of dec] (out) {Verdict, derivation,\\counterexample};
+\draw[->] (txt) -- node[above,font=\scriptsize]{parse} (dia);
+\draw[->] (dia) -- node[above,font=\scriptsize]{decide} (dec);
+\draw[->] (dec) -- (out);
+\draw[->] (dec) -- node[right,font=\scriptsize]{certify} (ker);
+\draw[->] (ker) -- node[above,font=\scriptsize]{export} (lean);
+\draw[->] (lean) -- node[above,font=\scriptsize]{\texttt{lake}} (chk);
+\end{tikzpicture}
+\caption{The path from text input to a Lean-certified verdict.}
+\label{fig:overview-flow}
+\end{figure}
+
+\section{Trust}\label{sec:overview-trust}
+
+The engine is untrusted. Its search procedures, matchers and decision procedures may contain errors without making a certified result wrong, because every certified result is rechecked twice: first by the proof kernel, whose theorems are built only by its inference rules (\cref{ch:kernel}), and then by the Lean kernel, which checks the exported theorem against the bundled library (\cref{ch:lean-export-net,ch:lean-export}). The trust base of a Lean-certified result is the Lean kernel, Mathlib, and the definitions of the bundled library that the exported theorem statement mentions; \cref{ch:lean-core} lists them. Verdicts that the exporters do not cover remain uncertified; \cref{ch:lean-export-net,ch:lean-export} state the covered classes exactly.
+
+\section{A Complete Session}\label{sec:overview-session}
+
+The file \file{examples/copy_induction.azx} states that an X state copied by a Z spider into $n$ outputs equals $n$ X states scaled by $d^{(1-n)/2}$, for every $n$ and every $d$:
+
+\begin{lstlisting}[style=azx]
+@copies =
+    count n
+    repeat n: X(0 -> 1)
+    scalar d^((1-n)/2)
+
+load
+    count n
+    X(0 -> 1) -> z = Z(1 -> 1)
+    repeat n: z.out0
+
+prove against @copies
+certificate emit induction
+certificate kernel
+\end{lstlisting}
+
+The first block names the right-hand side \azx!@copies!: $n$ copies of the phaseless X state, times a scalar. The \azx!load! block makes the left-hand side the current diagram: an X state wired into a Z spider whose output port is repeated $n$ times by a port-scoped \bbox{}. \azx!prove against @copies! searches for a derivation; the two \azx!certificate! commands print the derivation and the proof-kernel theorem. Running \code!archytaszx copy_induction.azx! prints (long lines shortened):
+
+\begin{lstlisting}[style=grammar]
+named @copies
+loaded dsl input
+sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k1)} |k1>^{n}
+prove: proved: proved by induction on n from 0 in 3 step(s) after search exhausted
+  after 1 layer(s): 2 state(s), 2 expanded, 0 application(s), 0 pruned,
+  0 failure(s); base and step check by replay and the hypothesis;
+  no oracle mismatch in 16 sample(s)
+...
+Proof by induction on n.
+  Base case (n = 0).
+        sum_{k2,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k2)}
+      = sqrt(d)                                  (by state_copy at n0, n2)
+  Inductive step. Assume the claim at n = k; at n = k + 1:
+    ...                                    (by port_box_unfusion at n2)
+    ...                                    (by state_copy at n0, n3)
+    replacing it by the induction hypothesis, the other side follows:
+    ...
+QED  (checked by replay)
+kernel: theorem ... for all n
+  16 inferences; rules: state_copy, port_box_unfusion
+\end{lstlisting}
+
+The proof is by induction on the multiplicity $n$: the base case $n=0$ follows by the rule \azx!state_copy!; the inductive step unfuses one copy out of the \bbox{} by \azx!port_box_unfusion!, copies the X state through it by \azx!state_copy!, and closes by the induction hypothesis. The added line \azx!certificate lean copy_induction.lean! writes the Lean~4 theorem to a file and checks it with the bundled library; \file{examples/copy_induction.lean} is that output.
+
+\section{How to Read This Manual}\label{sec:overview-reading}
+
+\Cref{ch:install,ch:shell,ch:language,ch:python-api} serve users: installation, the command-line shell, the input language and the engine commands, and the Python interface. \Cref{ch:algebra,ch:diagrams,ch:rewriting,ch:rules,ch:mixed,ch:completeness,ch:semantics,ch:proofs,ch:kernel,ch:pictorial} specify the engine layer by layer. \Cref{ch:lean-core,ch:lean-boxes,ch:lean-pathsum,ch:lean-sym} specify the Lean library and \cref{ch:lean-export-net,ch:lean-export} the exporters that target it. \Cref{ch:bench-pipeline,ch:bench-tools} specify the benchmark suite, and \cref{ch:development} the tests, continuous integration and the build of this manual. The appendices collect the engine's numeric parameters (\cref{app:params}), its rule sets (\cref{app:rules}), its exception classes (\cref{app:errors}) and a glossary (\cref{app:glossary}).
+
+\paragraph{Conventions.} Diagrams flow from bottom (inputs) to top (outputs). Code in the engine language is set as \azx!prove against @copies!, Python as \py!decide_equal!, Lean as \lean!theorem!, and file paths as \file{archytaszx/lean}. A module path such as \module{archytaszx.rewrite.engine} names a Python module of the package; every module appears in the index. ``Must,'' ``never,'' and ``always'' state rules the code enforces.

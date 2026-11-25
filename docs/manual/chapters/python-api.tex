@@ -1,0 +1,357 @@
+\chapter{The Python Interface}\label{ch:python-api}
+
+This chapter specifies the Python embedding of the engine, \module{archytaszx.repl.embed}: the default program \py!azx!, the classes \py!Program!, \py!Piece!, \py!Sym!, and \py!Result!, and the module functions for mixed diagrams. It then maps the public engine API across the package and closes with worked examples. The embedding builds diagrams with Python operators, compiles them to the DSL of \cref{ch:language}, and runs engine commands through one shell (\cref{ch:shell}) per program; every result it reports is the engine's own.
+
+\section{Entry Points}\label{sec:python-api-entry}
+
+The top-level package exports four names lazily: \py!archytaszx.azx!, \py!archytaszx.Program!, \py!archytaszx.Piece!, and \py!archytaszx.Sym! are loaded from \module{archytaszx.repl.embed} on first access; any other missing attribute of \py!archytaszx! raises \code!AttributeError("module 'archytaszx' has no attribute 'X'")!. The module also exports \py!Result!, \py!AzxError!, \py!Port!, and the functions \py!conj!, \py!double!, \py!purify!, \py!is_pure!, and \py!denote_mixed!.
+
+\begin{lstlisting}[style=python]
+from archytaszx import azx                 # the default program
+n = azx.count("n")
+data = (azx.F ^ 4 | azx.X(0, 1)) ** n      # n data qudits, F^4 on |0>
+target = azx.X(2, 1) | azx.F ^ 3 | azx.X(0, 1, phase="-k/d")
+circuit = data @ target * azx.d ** (-n / 2)
+azx.decide(circuit, goal)                  # an engine decision, as a Result
+azx.lean("dj.lean")                        # export the latest proof to Lean 4
+azx("rules spider_fusion")                 # any engine command; returns its text
+\end{lstlisting}
+
+\begin{signature}
+\py!class AzxError(Exception)!: a piece that cannot be built or compiled, an argument of the wrong kind, or a failed name assignment.
+\end{signature}
+
+\section{Symbolic Expressions}\label{sec:python-api-sym}
+
+\begin{signature}
+\py!class Sym(text: object, prec: int = 4)!; slots \py!text: str!, \py!prec: int!.
+\end{signature}
+
+A \py!Sym! is the text of an expression of \cref{ch:language} together with its precedence: 4 for an atom, 3 for a power, 2 for a product, 1 for a sum. Operators build new text; nothing is evaluated.
+
+\begin{definition}[Conversion to Sym]\label{def:python-api-sym}
+\py!_sym(v)! converts a value: a \py!Sym! is itself; a Boolean raises \code!AzxError("not an expression: v")!; an integer $v$ is \py!Sym(v)! with precedence 4 when $v\ge0$ and 2 otherwise; a \py!Fraction! has precedence 4 when it is a non-negative integer and 2 otherwise (printed by \py!str!, as \code!p/q!); a nonblank string, stripped, has precedence 4 when it is an identifier or all digits and 1 otherwise; anything else raises \py!AzxError!.
+\end{definition}
+
+\begin{algorithm}[Binary operators]\label{alg:python-api-sym-op}
+\leavevmode
+For \code!+! (precedence 1), \code!-! (1), \code!*! (2), \code!/! (2), and \code!**! (3, written \code!^!), with operands $a$ and $b$ (swapped for the reflected operator \code!__radd__! and so on; the other operand converted by \cref{def:python-api-sym}; a \py!Piece! operand returns \py!NotImplemented!):
+\begin{enumerate}
+\item The left text is bare when $a$'s precedence is at least the operator's, plus one for \code!^!; otherwise it is parenthesized.
+\item The right text is bare when $b$'s precedence exceeds the operator's, or equals it for \code!+! and \code!*!; otherwise it is parenthesized.
+\item The result's text is \code!L op R! with spaces for precedence 1 and \code!LopR! without spaces otherwise; its precedence is the operator's.
+\end{enumerate}
+Negation gives \code!-T! (precedence 2) when the operand's precedence is at least 2 and \code!-(T)! otherwise.
+\end{algorithm}
+
+For example, with \code!n = azx.count("n")!: \py!-n/2! is \code!-n/2!, \py!(n+1)*2! is \code!(n + 1)*2!, \py!2-(n-1)! is \code!2 - (n - 1)!, and \py!azx.d ** (-n / 2)! is \code!d^(-n/2)!. Python evaluates \py!n**2**3! as \py!n**8!, giving \code!n^8!. \py!str(s)! is the text; \py!repr(s)! is \code!<azx sym TEXT>!.
+
+\section{Pieces}\label{sec:python-api-piece}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Piece!:\\
+\quad \py!program: Program!, \py!nodes: tuple[_Node, ...] = ()!, \py!wires: tuple[tuple[Port, Port], ...] = ()!,\\
+\quad \py!boxes: tuple[tuple[str, int | None], ...] = ()!, \py!owner: tuple[int | None, ...] = ()!,\\
+\quad \py!ins: tuple[Port, ...] = ()!, \py!outs: tuple[Port, ...] = ()!, \py!scalar: tuple[str, ...] = ()!\\
+\py!Port = tuple[int, int]!: a node index and a port index.\\
+\py!@dataclass(frozen=True, slots=True) class _Node!: \py!text: str!, \py!nin: int!, \py!nout: int!, \py!fans: tuple[tuple[str, int, str], ...] = ()!, \py!wire: bool = False!.
+\end{signature}
+
+A \py!Piece! is an immutable diagram fragment of one program. Its fields are: the nodes, each the DSL text after \code!NAME = ! with its input and output counts, its port-scoped \bboxes{} as \py!(side, index, multiplicity)! with side \code!"in"! or \code!"out"!, and whether it is a bare wire; the wires, each from an output port to an input port; the node-scoped \bboxes{} as \py!(multiplicity text, parent box index or None)!; for each node, the index of its innermost node-scoped box or \py!None!; the free inputs and outputs in order; and the scalar factors as expression texts. Pieces compare by value.
+
+\subsection{Combinators}
+
+\begin{itemize}
+\item \py!a | b!, \emph{application}: \py!b! first, then \py!a!. $b$'s leading outputs feed $a$'s leading inputs, as many as both have: $k=\min(|a.\text{ins}|,|b.\text{outs}|)$. The result's nodes are $b$'s then $a$'s; its inputs are $b$'s inputs followed by $a$'s unfed inputs, its outputs $a$'s outputs followed by $b$'s unfed outputs. This is the Dirac order: \py!azx.F | azx.Z(0, 1)! is $F\ket{+}$.
+\item \py!a @ b!, \emph{tensor product}: $a$ above $b$; nodes, wires, boxes, boundary, and scalars of $a$ followed by those of $b$.
+\item \py!p ** k!, \emph{tensor power}: for an integer $k\ge0$, $k$ copies side by side (the empty piece for $k=0$; a negative $k$ raises \code!a tensor power must be >= 0!); for any other $k$, converted to a \py!Sym!, one new node-scoped \bbox{} of multiplicity $k$ around the whole piece: every outermost box of the piece gets it as parent and every node without a box gets it as owner.
+\item \py!p ^ k!, \emph{series power}: $k\ge1$ copies in series, \py!p | (p | (... | p))!; anything but an integer $\ge1$ raises \code!a series power must be an int >= 1!.
+\item \py!p * x!, \py!x * p!: the scalar factor \py!_sym(x).text! appended; \py!p / x! is \py!p * (1 / _sym(x))!. A \py!Piece! factor returns \py!NotImplemented!.
+\end{itemize}
+Pieces of different programs refuse to combine under \code!|! (\code!pieces of different programs!).
+
+\begin{algorithm}[Wiring across boxes]\label{alg:python-api-apply}
+\leavevmode
+In \py!a | b!, for each fed pair (source output $s$ of $b$, destination input $t$ of $a$), after $b$ and $a$ are placed side by side:
+\begin{enumerate}
+\item If either port is in a port-scoped \bbox{}, raise \code+a !-box leg cannot be wired here; use azx(...) with the DSL+.
+\item Repeat: let $L$ and $R$ be the box chains of the two ports' nodes (innermost first, through the parents). If $L=R$, stop.
+\item If the chains differ in length, the shorter is a suffix of the longer, and the node of the shorter chain is a Z or X spider (its text starts with \code!Z(! or \code!X(!), stop: the spider outside feeds every copy.
+\item Otherwise compare the chains from the outside in; if their lengths differ or the first differing pair of boxes has different multiplicity texts, raise \code+a wire crosses a !-box boundary; repeat the whole chain instead+. Else merge the two boxes (the second into the first) and repeat.
+\end{enumerate}
+\end{algorithm}
+
+Box merging lets \py!(A ** n) | (B ** n)! become one box of multiplicity $n$ over both pieces: the chain of copies is repeated as a whole.
+
+\subsection{Compilation}
+
+\begin{algorithm}[Splicing bare wires]\label{alg:python-api-compiled}
+\leavevmode
+\py!_compiled()! removes each bare-wire node unless its one port pair is both a free input and a free output. For the first such node: let $s$ be the output wired into it and $t$ the input it feeds. With both, wire $s$ to $t$; with only $s$, $s$ takes the wire's place in the outputs; with only $t$, $t$ takes its place in the inputs; with neither, its boundary entries are dropped. Remove the node, renumber the later nodes, and repeat until none is left. A remaining bare wire compiles as \code!Z(1 -> 1)!.
+\end{algorithm}
+
+\begin{algorithm}[DSL text of a piece]\label{alg:python-api-dsl}
+\leavevmode
+\py!Piece.dsl()! compiles the spliced piece:
+\begin{enumerate}
+\item The used names are every identifier of the node texts, box multiplicities, and scalar factors, and every symbol the program declared. The stem is \code!v!, prefixed by \code!_! until no used name matches the stem, optionally followed by \code!b! or \code!f!, followed by digits. Node $i$ is named \code!STEMi!, box $j$ \code!STEMbj!, the $k$-th port box \code!STEMfk!.
+\item The \term{counts} are the identifiers of the node-scoped and port-scoped multiplicities, in order without repeats, less the reserved words \code!I!, \code!E!, \code!pi!, \code!exp!, \code!sqrt!, \code!k!; when nonempty, the line \code!count a, b = 3! (a value when the program bound one). The \code!let! line lists, sorted, every other used name that the program bound to a value (generator words before \code!(! excluded).
+\item One line \code!NAME = TEXT! per node.
+\item One \code!wire! line listing every wire as \code!vA.outI -- vB.inJ!.
+\item One \code!box vbJ x M nodes ...[ in vbP]! line per node-scoped box that owns at least one node; one \code!box vfK x M ports vI.SIDEJ[ in vbP]! line per port box, inside the node's innermost box.
+\item \code!inputs ...! and \code!outputs ...! (each possibly empty), then \code!scalar (S1) * (S2) * ...! when there are factors.
+\end{enumerate}
+Trailing blanks are removed from each line.
+\end{algorithm}
+
+\begin{signature}
+\py!Piece.dsl() -> str!, \py!Piece.diagram() -> Diagram!, \code!Piece.draw(style="unicode") -> str!, \py!Piece._repr_png_() -> bytes!
+\end{signature}
+\py!diagram()! is \py!parse_dsl(self.dsl())! (\cref{ch:language}), so node ids follow the order in which nodes happen, and numerals are abstracted on entry. \py!draw(style)! draws the diagram in the style \code!matplot!, \code!unicode!, or \code!ascii! (\cref{ch:pictorial}). \py!_repr_png_()! renders the matplotlib drawing black on white, for notebook display. \py!str(p)! is the Unicode Dirac rendering of the diagram (DIRAC mode, \cref{ch:language}); \py!repr(p)! is \code!<azx piece: I -> O, N nodes>!.
+
+\section{Programs}\label{sec:python-api-program}
+
+\begin{signature}
+\py!class Program(*, unicode: bool = True)!\\
+\py!azx = Program()!: the default program.
+\end{signature}
+A program owns one \py!Shell! (\cref{ch:shell}) with the given Unicode flag and the default Dirac mode, the declared symbols, their bound values, and the pieces stored by name. Programs are independent.
+
+\subsection{Running commands}
+
+\py!program(source) -> str! splits \texttt{source} into logical lines by the script rules of \cref{ch:shell} (a trailing backslash continues, an indented line continues the line above), runs each with \py!Shell.run_line!, and returns the nonempty outputs joined by newlines. Shell commands such as \azx!raw! work as in the shell.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Result!: \py!text: str!, \py!ok: bool!, \py!decision: Decision | None = None!, \py!outcome: object | None = None!.
+\end{signature}
+A \py!Result! holds a command's printed text, its success, the engine \py!Decision! behind a \azx!decide! (\cref{ch:proofs}), and the engine result of a comparison command (the payload of its pair record: a \py!Decision!, \py!ProofOutcome!, \py!InductionResult!, or the check text). Properties: \py!verdict! and \py!method! are the decision's verdict and method values (\code!"equal"!, \code!"normal_form"!, \ldots) or \py!None!; \py!restriction!, \py!family!, and \py!family_holds! read those attributes of the outcome (\py!None!, \py!None!, false when absent). \py!bool(r)! is \py!r.ok!, \py!str(r)! the text, \py!repr(r)! \code!<azx result: FIRST LINE>!.
+
+\paragraph{Diagram arguments.} A command method takes a \py!Piece!, a \py!Diagram!, DSL text, or \code!@NAME!. A piece is sent as its DSL text and a diagram as its graph listing, each on a new line after the command word; a string starting with \code!@! is sent as it is; any other string on a new line. Anything else raises \code!AzxError("not a diagram: ...")!.
+
+\begin{signature}
+\py!load(piece) -> Result!\\
+\py!decide(left, right=None, *, where=None, family_first=True, enumerate_residual=False) -> Result!\\
+\py!prove(left, right=None, *, exhaustive=False, algebraic=False, where=None, family_first=True) -> Result!\\
+\py!induct(left, right=None, *, on=None, where=None, family_first=True, **values) -> Result!\\
+\py!check(left, right, **values) -> Result!\\
+\py!lean(path=None) -> Result!, \py!kernel() -> Result!
+\end{signature}
+
+\begin{algorithm}[A comparison from Python]\label{alg:python-api-pair}
+\leavevmode
+For a command word $c$ (with its options) and the arguments \texttt{left}, \texttt{right}, \texttt{where}, \texttt{family\_first}:
+\begin{enumerate}
+\item Run \azx!load! with \texttt{left}; if it fails, return its result.
+\item The clause tail is empty for \texttt{where} \py!None! or blank; for a string, \code! for TEXT!; for a mapping, \code! for NAME VALUE, ...! from its items (for example \code!{"n": ">= 2"}! gives \code! for n >= 2!); \code! only for ...! when \texttt{family\_first} is false. Another type raises \py!AzxError!; a non-Boolean \texttt{family\_first} raises \py!AzxError!.
+\item Without \texttt{right}, run \code!c TAIL!: the start diagram against the current one, which are the same diagram just loaded.
+\item With \texttt{right}: unless it is \code!@NAME!, run \code!@azx_target = SOURCE!, defining \code!@azx_target!; then run \code!c against TARGET TAIL!.
+\item The result's text is the last command's output; its \texttt{ok} is that outcome's; its decision and outcome come from the outcome's payload.
+\end{enumerate}
+\end{algorithm}
+
+\py!load(piece)! runs \azx!load!. \py!decide! runs \azx!decide!, with the session's \texttt{tgateenum} flag set to \texttt{enumerate\_residual} for the call and restored afterwards (a non-Boolean raises \py!AzxError!). \py!prove! runs \azx!prove!, \azx!prove exhaustive!, or, with \texttt{algebraic}, \azx!prove exhaustive algebraic!. \py!induct! runs \code!induct [on SYMBOL] NAME=VALUE ...!. \py!check! runs \code!check NAME=VALUE ...! against the right side. \py!lean(path)! runs \azx!certificate lean [path]! and \py!kernel()! \azx!certificate kernel!.
+
+\subsection{Symbols}
+
+\begin{signature}
+\py!count(name: str, value: int | None = None) -> Sym!\\
+\code!dim(name: str = "d", value: int | None = None) -> Sym!\\
+\py!d: Sym! (property)
+\end{signature}
+\py!count! and \py!dim! declare a symbol of the program and return it as a \py!Sym!; a value binds it, and \py!dsl()! then writes \code!count n = 3! or \code!let d = 2!, so that the value is the instance the engine shows and \azx!induct! uses as its witness, while proofs stay symbolic. A name that is not an identifier or is a reserved word (\code!I!, \code!E!, \code!pi!, \code!exp!, \code!sqrt!, \code!k!) raises \code!AzxError("not a symbol name: 'X'")!. \py!d! is the default dimension \code!d! (\cref{ch:language}), not declared.
+
+\subsection{Generators}
+
+\Cref{tab:python-api-generators} lists the methods and properties that build one-node pieces. A leg count may be a symbol: then the side has one port inside a port-scoped \bbox{} of that multiplicity. A dimension \texttt{dim} of \py!None! leaves the DSL default dimension.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.38\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Member & DSL text & Ports \\
+\midrule
+\texttt{Z(m=0, n=1, *, phase=None, weight=None, dim=None)} & \texttt{Z(m -> n[, D]) SUFFIX} & $m$ in, $n$ out \\
+\texttt{X(m=0, n=1, *, phase=None, dim=None)} & \texttt{X(m -> n[, D]) SUFFIX} & $m$ in, $n$ out \\
+\texttt{W(m=1, n=2, *, dim=None)} & \texttt{W(m -> n[, D])} & $m$ in, $n$ out \\
+\texttt{fourier(dim=None)}, \texttt{F} & \texttt{F} or \texttt{F(D)} & 1, 1 \\
+\texttt{triangle(dim=None, *, inverse=False)}, \texttt{T}, \texttt{Ti} & \texttt{T}, \texttt{Ti}, or with \texttt{(D)} & 1, 1 \\
+\texttt{B(s, t)} & \texttt{B(s, t)} & 2 in, 1 out \\
+\texttt{S(s, t)} & \texttt{S(s, t)} & 1 in, 2 out \\
+\texttt{node(gen, ins, outs, *, phase=None, weight=None)} & \texttt{GEN(in: [...], out: [...]) SUFFIX} & per list \\
+\texttt{id} & a bare wire & 1, 1 \\
+\texttt{swap} & two bare wires, outputs crossed & 2, 2 \\
+\texttt{scalar(value)} & no node; one scalar factor & 0, 0 \\
+\bottomrule
+\end{tabularx}
+\caption{Generators of a program.}
+\label{tab:python-api-generators}
+\end{table}
+
+The phase and weight arguments become a suffix: \py!None! gives none; the integer \py!0! as a phase gives \code! phase 0!; a mapping gives \code! phase{i: e, ...}! (\code!weight! likewise), each value converted to a \py!Sym!; any other value $e$ gives the rule \code! phase{k: e}!, the expression at every index $k$. For example \code!azx.X(0, 1, phase="-k/d")! compiles to \code!X(0 -> 1) phase{k: -k/d}!, and \code!azx.node("Z", [d], [d, 2], weight={1: "1/2"})! to \code!Z(in: [d], out: [d, 2]) weight{1: 1/2}!. A negative leg count raises \code!a leg count must be >= 0!.
+
+\subsection{Mixed pieces}
+
+\begin{itemize}
+\item \py!discard(dim=None)!: \code!G(1 -> 0, D)!, the discard effect, $D$ the default \code!d! when omitted.
+\item \py!maxmixed(dim=None)!: \code!G(0 -> 1, D)! with the scalar factor \code!(D)^(-1/2)!, the maximally mixed state.
+\item \py!dephase(dim=None)!: \py!(id @ discard(dim)) | Z(1, 2, dim=dim)!.
+\item \py!measure_x(dim=None)!: \py!(id @ discard(dim)) | X(1, 2, dim=dim)!.
+\item \py!ptrace(piece, *positions)!: the piece with its outputs at the 0-based positions discarded, by applying a layer of \py!discard()! and \py!id! pieces; an empty or out-of-range position set raises \code!positions [...] outside 0..K!.
+\end{itemize}
+Note that \py!ptrace! counts positions from 0, while the Dirac \code!ptrace[...]! counts from 1.
+
+\subsection{Names}
+
+Assigning a piece or DSL text to an attribute, \py!azx.ghz = piece!, runs \code!@ghz = SOURCE! and remembers the value; a failed definition raises \py!AzxError! with the shell's output, a value of another type raises \code!AzxError("azx.NAME takes a piece or DSL text")!, and a name starting with \code!_! raises \py!AttributeError!. Reading \py!azx.ghz! returns the stored value; an unknown name raises \py!AttributeError!. The engine sees the diagram as \code!@ghz! in every later command.
+
+\subsection{Module functions}
+
+\begin{signature}
+\py!conj(value: Piece | Diagram) -> Diagram!\\
+\py!double(value: Piece | Diagram) -> Diagram!\\
+\py!purify(value: Piece | Diagram) -> tuple[Diagram, tuple[int, ...]]!\\
+\py!is_pure(value: Piece | Diagram) -> bool!\\
+\py!denote_mixed(value: Piece | Diagram, **values: int) -> object!
+\end{signature}
+Each converts a piece by \py!diagram()! (any other non-diagram raises \py!AzxError!) and calls \module{archytaszx.diagram.mixed} (\cref{ch:mixed}): the entrywise complex conjugate; the doubled pure diagram, outputs plain then conjugate, inputs plain then conjugate; the purification and the boundary-output positions of its environment; whether the diagram has no discard. \py!denote_mixed! instantiates the diagram at the given values (when any) and returns its CPM tensor $T[o,o',i,i']$ (\cref{ch:semantics}), a numeric oracle only.
+
+\section{Import Map}\label{sec:python-api-map}
+
+\Cref{tab:python-api-map} lists, per module, the public names an engine user needs. Every module raises its own error hierarchy (\code!XError!, with \code!XGrammarError! for malformed arguments and \code!XDomainError! for values outside the domain). The chapters given specify each module completely.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.33\linewidth}X@{}}
+\toprule
+Module & Principal public names \\
+\midrule
+\endhead
+\bottomrule
+\caption{Import map of the public engine API.}\label{tab:python-api-map}
+\endlastfoot
+\texttt{archytaszx} & \texttt{azx}, \texttt{Program}, \texttt{Piece}, \texttt{Sym} (lazy) \\
+\multicolumn{2}{@{}l}{\emph{Algebra} (\cref{ch:algebra})} \\
+\texttt{algebra.dimension} & \texttt{Dim}, \texttt{solve}, \texttt{unify\_all}, \texttt{format\_count}, \texttt{DimensionError} \\
+\texttt{algebra.phase} & \texttt{Phase}, \texttt{PhaseVector}, \texttt{PairPhase}, \texttt{INDEX}, \texttt{INDEX2}, \texttt{PhaseError} \\
+\texttt{algebra.scalar} & \texttt{Scalar}, \texttt{cyclotomic\_trig}, \texttt{ScalarError} \\
+\texttt{algebra.algebraic}, \texttt{algebra.numfield} & \texttt{canonical}, \texttt{algebraic\_numbers}; \texttt{FieldCertificate}, \texttt{certificate}, \texttt{check} \\
+\texttt{algebra.pathsum} & \texttt{PathSum}, \texttt{QuditPathSum}, \texttt{canonical}, \texttt{canonical\_qudit}, \texttt{gauss\_sum} \\
+\multicolumn{2}{@{}l}{\emph{Diagrams} (\cref{ch:diagrams,ch:mixed})} \\
+\texttt{diagram.graph} & \texttt{Diagram}, \texttt{Node}, \texttt{PortRef}, \texttt{Wire}, \texttt{Direction}, \texttt{GraphError} \\
+\texttt{diagram.generators} & \texttt{REGISTRY}, \texttt{GeneratorType}, \texttt{Z\_SPIDER}, \texttt{X\_SPIDER}, \texttt{W\_NODE}, \texttt{FOURIER\_BOX}, \texttt{TRIANGLE}, \texttt{TRIANGLE\_INVERSE}, \texttt{DIM\_BINDER}, \texttt{DIM\_SPLITTER}, \texttt{DISCARD} \\
+\texttt{diagram.bangbox} & \texttt{Mult}, \texttt{BangBox}, \texttt{instantiate\_symbol}, \texttt{peel\_one}, \texttt{expand\_concrete\_boxes}, \texttt{free\_mult\_symbols} \\
+\texttt{diagram.validate} & \texttt{validate}, \texttt{validate\_or\_raise}, \texttt{ValidationReport}, \texttt{IssueKind} \\
+\texttt{diagram.compare} & \texttt{compare\_structure}, \texttt{isomorphic}, \texttt{canonical\_form} \\
+\texttt{diagram.scalable} & \texttt{ScalableDiagram}, \texttt{to\_scalable}, \texttt{from\_scalable}, \texttt{strip} \\
+\texttt{diagram.mixed} & \texttt{is\_pure}, \texttt{double}, \texttt{purify}, \texttt{conj}, \texttt{discard}, \texttt{dephase}, \texttt{partial\_trace}, \texttt{channel} \\
+\multicolumn{2}{@{}l}{\emph{Rewriting} (\cref{ch:rewriting,ch:rules})} \\
+\texttt{rewrite.rules\_library} & \texttt{RULES}, \texttt{lookup\_rule} \\
+\texttt{rewrite.rule} & \texttt{Rule}, \texttt{Match}, \texttt{Pattern}, \texttt{RewriteError} \\
+\texttt{rewrite.engine} & \texttt{apply}, \texttt{RewriteResult}, \texttt{RewriteStep}, \texttt{apply\_until\_fixpoint}, \texttt{DEFAULT\_GUARD} \\
+\texttt{rewrite.normal\_form} & \texttt{normal\_form}, \texttt{NormalForm}, \texttt{same\_normal\_form} \\
+\texttt{rewrite.egraph} & \texttt{EGraph}, \texttt{SaturationLimits}, \texttt{DEFAULT\_LIMITS}, \texttt{simplify} \\
+\texttt{rewrite.tactics}, \texttt{rewrite.exhaustive} & \texttt{search}, \texttt{SearchLimits}, \texttt{DEFAULT\_SEARCH\_LIMITS}; \texttt{exhaustive\_search} \\
+\texttt{rewrite.sheet} & \texttt{dissolve}, \texttt{split\_scale}, \texttt{join\_scales}, \texttt{enclose}, \texttt{kill\_scale}, \texttt{fuse\_sheet} \\
+\multicolumn{2}{@{}l}{\emph{Semantics and proofs} (\cref{ch:semantics,ch:proofs,ch:kernel})} \\
+\texttt{semantics.denote} & \texttt{denote}, \texttt{denote\_mixed} \\
+\texttt{semantics.check} & \texttt{compare}, \texttt{instantiate}, \texttt{ComparisonResult}, \texttt{EqualityMode} \\
+\texttt{semantics.decide} & \texttt{decide\_equal}, \texttt{Decision}, \texttt{EqualityVerdict}, \texttt{DecisionMethod}, \texttt{sample\_grid} \\
+\texttt{semantics.prove} & \texttt{prove}, \texttt{prove\_exhaustive}, \texttt{check\_proof}, \texttt{ProofOutcome}, \texttt{ProofCertificate}, \texttt{InductionProof} \\
+\texttt{semantics.induction} & \texttt{prove\_by\_induction}, \texttt{InductionResult}, \texttt{StepDischarge} \\
+\texttt{semantics.certificate} & \texttt{certify}, \texttt{verify}, \texttt{Certificate}, \texttt{Derivation} \\
+\texttt{semantics.restrict} & \texttt{parse\_restriction}, \texttt{Restriction}, \texttt{Clause} \\
+\texttt{semantics.kernel} & \texttt{check}, \texttt{lean}, \texttt{symbolic}, \texttt{Theorem}, \texttt{Refutation}, \texttt{Symbolic}, \texttt{RestrictedProof}, \texttt{FiniteProof} \\
+\texttt{semantics.interop} & \texttt{check\_round\_trip}, \texttt{check\_sheet\_step} \\
+\texttt{semantics.lean\_net} & \texttt{check} (run a Lean file; \cref{ch:install}) \\
+\multicolumn{2}{@{}l}{\emph{Text and display} (\cref{ch:language,ch:shell,ch:pictorial})} \\
+\texttt{repl.parser} & \texttt{parse}, \texttt{parse\_diagram}, \texttt{parse\_dsl}, \texttt{parse\_dirac}, \texttt{parse\_listing}, \texttt{parse\_step}, \texttt{apply\_step}, \texttt{lifted\_bounds} \\
+\texttt{repl.printer} & \texttt{render}, \texttt{render\_dirac}, \texttt{render\_graph}, \texttt{dirac}, \texttt{recognize}, \texttt{NotationMode} \\
+\texttt{repl.commands} & \texttt{Session}, \texttt{run}, \texttt{execute}, \texttt{format\_outcome}, \texttt{detail\_text}, \texttt{proof\_text} \\
+\texttt{repl.shell} & \texttt{Shell}, \texttt{main} \\
+\texttt{repl.zxdraw} & \texttt{View}, \texttt{draw}, \texttt{layout}, \texttt{figure}, \texttt{STYLES} \\
+\texttt{repl.embed} & \texttt{azx}, \texttt{Program}, \texttt{Piece}, \texttt{Sym}, \texttt{Result}, \texttt{conj}, \texttt{double}, \texttt{purify}, \texttt{is\_pure}, \texttt{denote\_mixed} \\
+\texttt{trace} & \texttt{span}, \texttt{traced}, \texttt{tree}, \texttt{reset} (\cref{ch:development}) \\
+\end{xltabular}
+
+All module paths are relative to \texttt{archytaszx}. The engine is usable without the embedding: parse a diagram, then call the semantic functions directly.
+\begin{lstlisting}[style=python]
+from archytaszx.repl.parser import parse_diagram
+from archytaszx.repl.printer import render_dirac
+from archytaszx.semantics.decide import decide_equal
+
+left = parse_diagram("copy[d] ; (copy[d] (x) id[d])")
+right = parse_diagram("Z_{1->3}[d]")
+decision = decide_equal(left, right)
+print(decision.verdict.value, decision.method.value)
+print(render_dirac(right, instance=True))
+\end{lstlisting}
+
+\section{Worked Examples}\label{sec:python-api-examples}
+
+\subsection{GHZ preparation for every n and d}
+
+The script \file{examples/ghz_proof.py} proves that a Fourier transform on a control qudit followed by $n$ CNOTs prepares the GHZ state $d^{-1/2}\sum_k\ket{k}\ket{k}^{\otimes n}$~\cite{ghz1989beyond}, for every $n$ and every qudit dimension $d$:
+\begin{lstlisting}[style=python]
+from archytaszx import azx
+
+n, d = azx.count("n"), azx.d
+
+ghz = (azx.id @ azx.Z(1, n)) | azx.Z(0, 2)
+ghz *= d ** "-1/2"
+
+t = azx.X(2, 1) | (azx.id @ azx.X(0, 1))
+diagram = (azx.id @ t**n) | azx.Z(1, 2) | azx.F | azx.X(0, 1)
+diagram *= d ** "-1/2"
+
+print(azx.decide(diagram, ghz).verdict)
+print(azx.lean("ghz.lean"))
+\end{lstlisting}
+The target \py!ghz! is a Z state with two outputs, the second feeding a Z spider whose output is fanned $n$ times (a port-scoped \bbox{}). The CNOT target \py!t! is an X spider fed by a fresh X state; \py!t**n! repeats it in a node-scoped \bbox{}, and its free input is fed by output~1 of the copy spider, which is outside the box: by \cref{alg:python-api-apply} a spider outside a box feeds every copy. \py!diagram.dsl()! is
+\begin{lstlisting}[style=azx]
+count n
+v0 = X(0 -> 1)
+v1 = F
+v2 = Z(1 -> 2)
+v3 = X(0 -> 1)
+v4 = X(2 -> 1)
+wire v3.out0 -- v4.in1, v1.out0 -- v2.in0, v0.out0 -- v1.in0, v2.out1 -- v4.in0
+box vb0 x n nodes v3, v4
+inputs
+outputs v2.out0, v4.out0
+scalar (d^(-1/2))
+\end{lstlisting}
+and \py!ghz.dsl()! is
+\begin{lstlisting}[style=azx]
+count n
+v0 = Z(0 -> 2)
+v1 = Z(1 -> 1)
+wire v0.out1 -- v1.in0
+box vf0 x n ports v1.out0
+inputs
+outputs v0.out0, v1.out0
+scalar (d^(-1/2))
+\end{lstlisting}
+The decision prints \code!equal!: its text is
+\begin{lstlisting}[style=grammar]
+decide: equal by normal_form: normal forms agree; no oracle mismatch in 16 sample(s)
+proof: re-checkable; certificate kernel / certificate lean
+\end{lstlisting}
+and \py!azx.lean(...)! writes the Lean~4 proof~\cite{demoura2021lean4} of the equality to the file and returns the shell's report (\cref{ch:language}).
+
+\subsection{Mixed diagrams}
+
+The script \file{examples/mixed/mixed_api.py} decides mixed equalities~\cite{carette2019mixed,selinger2007cpm}: partial traces of the Bell and GHZ states, idempotence of dephasing, Fourier-basis measurement of $\ket{0}$, and causality of the qudit CX.
+\begin{lstlisting}[style=python]
+from archytaszx import azx
+d = azx.d
+bell = azx.Z(0, 2) * d ** "-1/2"
+print(azx.decide(azx.ptrace(bell, 1), azx.maxmixed()).verdict)      # equal
+print(azx.decide(azx.dephase() | azx.dephase(), azx.dephase()).verdict)
+cx = (azx.id @ azx.X(2, 1)) | (azx.Z(1, 2) @ azx.id)
+cx *= d ** "1/2"
+grounds = azx.discard() @ azx.discard()
+print(azx.decide(grounds | cx, grounds).verdict)                    # causality
+\end{lstlisting}
+\py!azx.ptrace(bell, 1)! discards the second output of the Bell state; the maximally mixed state is \code!G(0 -> 1, d)! times $d^{-1/2}$. DSL text works wherever a piece does: \code!azx.decide(TELEPORTATION, "i = Z(1 -> 1)")! decides a teleportation channel, written in the DSL, against the identity.
+
+\subsection{The terminal course}
+
+\file{examples/tutorial.py} is an interactive course in twelve chapters (welcome, qudits and notation, wires and boxes, the Z spider, the Fourier box and the X spider, rewriting, checking and deciding, the W node and the triangle, qufinite wires of different dimensions, and three chapters on \bboxes{}: families, deciding families, induction). Each chapter runs in a fresh \py!Program!, shows Python with \py!show(piece)! (the Dirac form and the Unicode drawing) and engine commands with \py!P(command)!, and between steps accepts engine commands or \code!py CODE! from the reader. Its options are \texttt{--chapter N}, \texttt{--menu}, and \texttt{--no-pause}.

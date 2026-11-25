@@ -1,0 +1,1207 @@
+\chapter{Benchmark Tools and Rival Drivers}\label{ch:bench-tools}
+
+This chapter specifies the tool layer of the benchmark suite: the package \module{benchmarks.tools}, its driver scripts under \file{benchmarks/tools/drivers/}, and the installer \file{benchmarks/tools/setup_rivals.sh}. A \term{tool adapter} is one Python module per tool. The benchmark worker (\cref{ch:bench-pipeline}) imports the adapter of the job's tool in a fresh process, asks it whether it supports the job's instance, and calls its \py!run! function, which returns the fields of one run record. The ArchytasZX adapter runs the engine in the worker's own process. Every other adapter, a \term{rival adapter}, prepares the instance for its tool in the worker (untimed by the tool's clock, held to the preparation CPU limit), then calls the tool in a separate process in the tool's own environment: a \term{driver} script under the tool's Python interpreter, or the tool's own binary. The driver prints one JSON line; the adapter maps it to a verdict and an outcome.
+
+The chapter covers, in order: the adapter interface, verdicts, outcomes, and claims (\cref{sec:bench-tools-interface}); the preparation shared by the rival adapters, from the expansion of the benchmark circuit IR to Qiskit circuits, OpenQASM text, specification tensors, and the driver calls (\cref{sec:bench-tools-prep}); the dense reference evaluator (\cref{sec:bench-tools-dense}); the ArchytasZX adapter (\cref{sec:bench-tools-azx}); every rival adapter with its driver (\cref{sec:bench-tools-pyzx} to \cref{sec:bench-tools-published}); and the installer (\cref{sec:bench-tools-setup}). The runner, the job and point schedule, the circuit IR, the subject catalogue, the stages of an engine run, the classifier of outcomes and causes, and the result files belong to \cref{ch:bench-pipeline}; this chapter names their entry points where the tools call them.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  blk/.style={draw,rounded corners=2pt,align=center,font=\footnotesize,inner sep=4pt,minimum height=8mm},
+  arr/.style={-{Stealth[length=2mm]},line width=0.5pt}]
+\node[blk] (job) at (0,0) {job JSON\\(equation, tool,\\point, config)};
+\node[blk] (wk) at (3.4,0) {worker\\\texttt{benchmarks.worker}};
+\node[blk] (ad) at (7.0,0) {adapter\\\texttt{tools.<name>.run}};
+\node[blk] (prep) at (7.0,-2.1) {preparation\\(IR, QASM, tensor,\\graph, payload)};
+\node[blk] (drv) at (11.0,-2.1) {driver or binary\\in \texttt{.venvs/<env>}};
+\node[blk] (fin) at (11.0,0) {\texttt{rival.finish}\\run record};
+\draw[arr] (job) -- (wk);
+\draw[arr] (wk) -- node[above,font=\scriptsize]{\texttt{run}} (ad);
+\draw[arr] (ad) -- (prep);
+\draw[arr] (prep) -- node[above,font=\scriptsize]{payload} (drv);
+\draw[arr] (drv) -- node[right,font=\scriptsize]{one JSON line} (fin);
+\draw[arr] (fin) -- (ad);
+\end{tikzpicture}
+\caption{The path of one rival run. Preparation runs in the worker under the preparation CPU timer; the driver runs in a child process under its own CPU and wall limits.}
+\label{fig:bench-tools-path}
+\end{figure}
+
+\section{The Tool Interface}\label{sec:bench-tools-interface}
+
+\subsection{The registry}
+
+\begin{signature}
+\py!NAMES: tuple[str, ...]! $=$ (\code!archytaszx!, \code!pyzx!, \code!quizx!, \code!qcec!, \code!feynman!, \code!dizx!, \code!qiskit!, \code!cirq!, \code!autoq_para!, \code!tket!, \code!quantomatic!, \code!published_proofs!).\\
+\py!adapter(name: str) -> module!\\
+\py!HARNESS_IMPORTS: tuple[str, ...]! $=$ (\code!numpy!, \code!sympy!, \code!qiskit!, \code!qiskit.qasm2!, \code!qiskit.circuit.library!).\\
+\py!preflight(names: list[str]) -> list[str]!
+\end{signature}
+
+\module{benchmarks.tools} holds the registry. \py!adapter(name)! raises \py!KeyError("unknown tool 'name'")! when \py!name! is not in \py!NAMES!, and otherwise returns \py!importlib.import_module("benchmarks.tools." + name)!; Python's module cache makes the second call return the same module object. The order of \py!NAMES! is the order of the default \code!tools.enabled! list of \file{benchmarks/config.toml}.
+
+\begin{algorithm}[Preflight]\label{alg:bench-tools-preflight}
+\py!preflight(names)! returns a list of problem strings; the runner refuses to start when it is not empty (\cref{ch:bench-pipeline}).
+\begin{enumerate}
+\item For each module $m$ of \py!HARNESS_IMPORTS!, import $m$ in the calling process; on any exception $e$ append \code!harness: import !$m$\code!: !\textit{type}\code!: !$e$.
+\item For each name $t$ of \py!names!, in order: let $a$ be its adapter, \py!env! its attribute \py!ENV! (\py!None! when absent) and \py!probe! its attribute \py!PROBE! (\py!()! when absent). The reason \py!why! is \py!a.installed()! when the adapter defines \py!installed!, else \py!rival.installed(env)! when \py!env! is set, else \py!None!.
+\item When \py!why! is set, append $t$\code!: !\py!why! and go to the next name.
+\item When \py!probe! is empty or \py!env! is \py!None!, go to the next name.
+\item Run \py![python(env), "-I", "-c", "import " + ", ".join(probe)]! with captured text output, a timeout of $300$\,s, and no exit-status check. On a nonzero exit status append $t$\code!: benchmarks/.venvs/!\py!env!\code!: ! followed by the last line of the child's standard error (\code!exit !$s$ when it is empty). On \py!OSError! or a timeout append the same prefix followed by the exception's type and message.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{The adapter protocol}\label{sec:bench-tools-protocol}
+
+An adapter is a module. The worker and the runner read the attributes of \cref{tab:bench-tools-protocol} with \py!getattr!, so every attribute except \py!supports! and \py!run! is optional.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.67\linewidth}@{}}
+\caption{Attributes of a tool adapter.}\label{tab:bench-tools-protocol}\\
+\toprule
+Attribute & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Attribute & Meaning \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\py!supports(inst, point)! & \py!None! when the tool can run the instance, else the reason as a string. The runner calls it once per unit with \py!point=None!; a reason ends the unit as unsupported with the code \py!outcomes.unsupported_code(reason)!. \\
+\py!run(inst, job)! & One run at \py!job["point"]!; returns the run record's fields (\cref{sec:bench-tools-record}). Exceptions propagate to the worker, which maps them by \py!worker.failure! (\cref{sec:bench-tools-failures}). \\
+\py!ENV! & The name of the tool's environment directory under \py!rival.VENVS!. \\
+\py!PACKAGE! & The distribution name whose version \py!rival.version! records. \\
+\py!PROBE! & Modules the preflight imports in \py!ENV!'s interpreter. \\
+\py!DIMENSIONS! & The dimensions $d$ the tool runs; the runner restricts the point domain to them, and a unit whose restricted domain is empty is unsupported with the reason \code!qubits only (d = 2)! when \py!DIMENSIONS == (2,)!, else \code!dimensions !\py!DIMENSIONS!\code! only!. \\
+\py!installed()! & \py!None! when the tool is built, else the reason; preferred by the preflight over \py!rival.installed(ENV)!. \\
+\py!rederive(rec)! & The logged record re-judged from its stored fields; used by \module{benchmarks.reclassify}. \\
+\py!CHECK_ONCE!, \py!stated(inst, cfg)!, \py!symbolic_covered(subject)! & A tool that checks one point per unit ($K=1$): \py!stated! returns that point, \py!symbolic_covered! says whether the symbolic run stands for every point. Only \module{benchmarks.tools.published_proofs} sets \py!CHECK_ONCE = True!. \\
+\end{longtable}
+
+\Cref{tab:bench-tools-attrs} lists the values each adapter defines.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.15\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.07\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}@{}}
+\caption{Adapter attributes by tool. A dash marks an attribute the adapter does not define.}\label{tab:bench-tools-attrs}\\
+\toprule
+Tool & \texttt{ENV} & \texttt{PACKAGE} & \texttt{PROBE} & \texttt{DIM.} & other \\
+\midrule
+\endfirsthead
+\toprule
+Tool & \texttt{ENV} & \texttt{PACKAGE} & \texttt{PROBE} & \texttt{DIM.} & other \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+archytaszx & -- & -- & -- & -- & -- \\
+pyzx & pyzx & pyzx & pyzx, numpy & (2,) & -- \\
+quizx & quizx & quizx & quizx & (2,) & -- \\
+qcec & qcec & mqt.qcec & mqt.core.ir, mqt.qcec & (2,) & -- \\
+feynman & feynman & -- & -- & (2,) & \texttt{installed} \\
+dizx & dizx & -- & dizx, dizx.simplify & -- & -- \\
+qiskit & qiskit & qiskit & qiskit.qasm2, qiskit.quantum\_info, numpy & (2,) & \texttt{rederive} \\
+cirq & cirq & cirq-core & cirq, numpy & -- & \texttt{rederive} \\
+autoq\_para & autoq & -- & -- & (2,) & \texttt{installed} \\
+tket & tket & pytket & pytket.passes, pytket.qasm & (2,) & -- \\
+quantomatic & quantomatic & -- & -- & (2,) & \texttt{installed} \\
+published\_\allowbreak proofs & -- & -- & -- & (2,) & \texttt{installed}, \texttt{rederive}, \texttt{CHECK\_\allowbreak ONCE}, \texttt{stated}, \texttt{symbolic\_\allowbreak covered} \\
+\end{longtable}
+
+\subsection{Points and claims}\label{sec:bench-tools-claims}
+
+\begin{signature}
+\py!common.point(job: dict) -> tuple[int | None, int | None]!
+\end{signature}
+
+A job carries \py!job["point"]!, either \py!None! (the \term{symbolic run}) or a pair \py![n, d]! (a \term{concrete point}; $n$ is \py!None! for a subject without a size parameter). \py!common.point(job)! returns \py!(None, None)! for the symbolic run and \py!(job["point"][0], job["point"][1])! otherwise.
+
+Every run makes one of three \term{claim kinds}:
+\begin{enumerate}
+\item A \term{symbolic claim}: the symbolic run of ArchytasZX states the equation for every $n$ and every $d$ of the subject's domain at once, with \bboxes{} of multiplicity $n$ and symbolic dimension $d$ where the subject has them. Only ArchytasZX and the published proofs (\cref{sec:bench-tools-published}) run it; every other adapter returns the unsupported record \code!no symbolic n or d! (AutoQ and Quantomatic give their own messages, \cref{sec:bench-tools-autoq,sec:bench-tools-quantomatic}).
+\item A \term{family claim at a point}: an ArchytasZX run at a concrete point whose script keeps $n$ or $d$ symbolic decides the whole family along those axes. The classifier reads these \term{free axes} from the run record by \py!outcomes.free_axes! (\cref{ch:bench-pipeline}): $n$ is free unless the point has no $n$, the equation form is \code!unrolled!, or the subject has no size parameter; $d$ is free unless the subject has no general $d$ or the generated script is literal (\code!literal! of the generate stage).
+\item A \term{point claim}: the claim holds at the point alone. Every rival run makes a point claim (\py!free_axes! returns \py!()! for any tool but ArchytasZX). An ArchytasZX run makes one when its script's \azx!decide! line carries point clauses (\code!d = !$d$ for a symbolic $d$, \code!n = !$n$ for a boxed circuit's count); the generate stage records this as \py!point_claim = True!, and \py!free_axes! then returns \py!()!.
+\end{enumerate}
+
+\subsection{Verdicts and outcomes}\label{sec:bench-tools-outcomes}
+
+\begin{signature}
+\py!common.expected(inst) -> str!\\
+\py!common.outcome(inst, status: str, verdict: str | None) -> str!\\
+\py!common.verdict_outcome(truth: bool, status: str, verdict: str | None) -> str!
+\end{signature}
+
+An instance is an S equation (\py!inst.truth! true) or an F equation (\py!inst.truth! false; \cref{ch:bench-pipeline}). \py!expected(inst)! is \code!equal! for an S equation and \code!unequal! for an F equation. A tool's \term{verdict} is one of \code!equal!, \code!unequal!, \code!equal_uncertified!, \code!unequal_uncertified!, \code!unknown!, or \py!None! (no verdict). \py!outcome(inst, status, verdict)! is \py!verdict_outcome(bool(inst.truth), status, verdict)!.
+
+\begin{definition}[Outcome of a verdict]\label{def:bench-tools-outcome}
+Let $w$ be \code!equal! when \py!truth! holds and \code!unequal! otherwise. Then \py!verdict_outcome(truth, status, verdict)! is, by the first case that applies:
+\begin{enumerate}
+\item \py!status! itself when \py!status != "ok"! (\code!timeout!, \code!oom!, \code!error!, or another stage status);
+\item \code!ok! when \py!verdict == w!;
+\item \code!uncertified! when \py!verdict == w + "_uncertified"!;
+\item \code!wrong! when \py!verdict! is \code!equal! or \code!unequal! (the opposite certified verdict);
+\item \code!wrong (uncertified)! when \py!verdict! is \code!equal_uncertified! or \code!unequal_uncertified!;
+\item \code!unknown! otherwise (including \py!None!).
+\end{enumerate}
+\py!outcomes.is_wrong(o)! holds exactly for \code!wrong! and \code!wrong (uncertified)!.
+\end{definition}
+
+The rival tools give only \code!equal!, \code!unequal!, \code!unknown!, or \py!None!; they never give an uncertified verdict, so a rival's correct verdict is the outcome \code!ok!. The outcome a run record leaves the adapter with is the \term{raw outcome}; the classifier (\cref{ch:bench-pipeline}) then sets the final \code!outcome!, \code!stage!, \code!cause!, and \code!cause_message! from the record's fields. The classifier treats two groups of tools differently when an F equation breaks only the scalar: \py!outcomes.EXACT_TOOLS! $=$ (\code!archytaszx!, \code!pyzx!, \code!quizx!, \code!cirq!, \code!qiskit!) compare scalars exactly, and \py!outcomes.UP_TO_SCALAR_TOOLS! $=$ (\code!qcec!, \code!dizx!, \code!feynman!, \code!autoq_para!, \code!quantomatic!) compare up to a nonzero scalar or a global phase. \py!outcomes.FLOAT_SIMS! $=$ (\code!qiskit!, \code!cirq!) are the floating-point simulators; an F run of either whose measured gap \code!max_rel_diff! lies below \py!outcomes.BREAK_FLOOR! $=10^{-6}$ becomes \code!invalid_point!.
+
+\begin{signature}
+\py!common.FLOAT_ATOL = 1e-8!\\
+\py!common.rederive_float(rec: dict) -> dict!
+\end{signature}
+
+\py!rederive_float(rec)! re-judges a logged Qiskit or Cirq record. Let \py!check = rec["stages"]["check"]! (an empty mapping when absent) and \py!diff = check.get("max_rel_diff")!. When \py!diff! is \py!None!, or \py!check["status"] != "ok"!, or \py!rec["verdict"]! is neither \code!equal! nor \code!unequal!, the record is returned unchanged. Otherwise the verdict is \code!equal! when \py!float(diff) <= FLOAT_ATOL! and \code!unequal! otherwise, and the function returns a copy of \py!rec! with \code!verdict!, \code!outcome! (\py!verdict_outcome(bool(rec["truth"]), "ok", verdict)!), and \code!wrong! replaced. The constant equals \py!ATOL! of \file{drivers/sim.py} (\cref{sec:bench-tools-sim}).
+
+\subsection{Unsupported instances}\label{sec:bench-tools-unsupported}
+
+\begin{signature}
+\py!common.unsupported(reason: str) -> dict!\\
+\py!rival.Unsupported(Exception)!
+\end{signature}
+
+\py!unsupported(reason)! returns \py!{"outcome": "unsupported", "detail": reason, "unsupported_code": outcomes.unsupported_code(reason)}!. \py!rival.Unsupported! is the exception the preparation code raises when the tool cannot run the instance; its message is the reason. Every rival adapter catches it around its preparation and returns \py!unsupported(str(exc))!; an \py!Unsupported! that escapes the adapter becomes the same record in the worker.
+
+\py!outcomes.unsupported_code(message)! strips a leading \code!<dotted name>Unsupported: ! prefix, then returns the key of \py!outcomes.UNSUPPORTED! whose message fragment is a substring of the text, choosing the longest fragment when several match, and \code!other! when none does. \Cref{tab:bench-tools-unsupported} lists the codes the tool layer produces, with the message fragment each matches.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.45\linewidth}>{\raggedright\arraybackslash}p{0.2\linewidth}@{}}
+\caption{Unsupported codes raised by the tool layer.}\label{tab:bench-tools-unsupported}\\
+\toprule
+Code & Message fragment & Raised by \\
+\midrule
+\endfirsthead
+\toprule
+Code & Message fragment & Raised by \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{symbolic\_point} & no symbolic n or d & most rivals \\
+\texttt{qubits\_only} & qubits only & d = 2 rivals \\
+\texttt{odd\_prime\_only} & odd prime d only & DiZX \\
+\texttt{fixed\_dimension} & fixed dimension & \texttt{qubit\_ir} \\
+\texttt{channel} & measurement or discard (a channel, not a pure map) & \texttt{qubit\_ir}, Cirq \\
+\texttt{wire\_dim\_not\_d} & a wire of dimension other than d & \texttt{qubit\_ir} \\
+\texttt{mixed\_wire\_dims} & wires of mixed dimensions & Cirq \\
+\texttt{gate\_unsupported} & gate\textvisiblespace & \texttt{qiskit\_circuit} \\
+\texttt{scalar\_modulus} & a circuit scalar of modulus other than 1 & \texttt{qiskit\_circuit} \\
+\texttt{circuit\_scalar} & a circuit scalar & DiZX \\
+\texttt{spec\_mixed} & a mixed specification & \texttt{spec\_tensor} \\
+\texttt{spec\_axes} & the specification has more than & \texttt{spec\_tensor} \\
+\texttt{spec\_too\_large} & the specification tensor is too large & \texttt{spec\_tensor} \\
+\texttt{spec\_generator} & generator\textvisiblespace & \texttt{spec\_pyzx}, Quantomatic \\
+\texttt{spec\_weighted} & a weighted spider & \texttt{spec\_pyzx}, Quantomatic \\
+\texttt{spec\_no\_wires} & the specification has no wires & \texttt{reference\_circuit} \\
+\texttt{spec\_zero\_state} & the specification is the zero state & \texttt{reference\_circuit} \\
+\texttt{spec\_isometry} & the specification is an isometry, not a unitary & \texttt{reference\_circuit} \\
+\texttt{spec\_not\_unitary} & the specification is not unitary & \texttt{reference\_circuit} \\
+\texttt{no\_reference} & no gate-level reference circuit for this equation & Feynman, DiZX \\
+\texttt{gate\_set} & not expressible in the gate set & \texttt{transpiled} \\
+\texttt{tensor\_axes} & \textvisiblespace tensor axes: above numpy's & Cirq \\
+\texttt{einsum\_subscripts} & -qudit gate: above numpy.einsum's & Cirq \\
+\texttt{too\_large\_to\_simulate} & : too large to simulate & Qiskit, Cirq \\
+\texttt{post\_selected} & post-selected wires & QCEC, Feynman \\
+\texttt{phase\_not\_pi4} & a phase that is not a multiple of pi/4 & Feynman \\
+\texttt{not\_clifford\_t} & \textvisiblespace outside Clifford+T & Feynman \\
+\texttt{not\_dizx\_clifford} & \textvisiblespace is not a DiZX Clifford gate & DiZX \\
+\texttt{width\_mismatch} & circuit and reference differ in width & Feynman, DiZX \\
+\texttt{autoq\_amplitude} & an amplitude outside sqrt2 powers and eighth turns & AutoQ \\
+\texttt{states\_only} & only states (every wire initialized, none post-selected) & AutoQ \\
+\texttt{zero\_state} & the zero state & AutoQ \\
+\texttt{no\_public\_release} & symbolic n needs AutoQ-Para, which has no public release & AutoQ \\
+\texttt{quantomatic\_bang\_boxes} & symbolic n through Quantomatic's own !-boxes is not built & Quantomatic \\
+\texttt{mixed\_diagram} & a mixed diagram & Quantomatic \\
+\texttt{hadamard\_arity} & a hadamard vertex of arity other than 2 & \texttt{rule\_side\_dsl} \\
+\texttt{published\_once} & published proofs are checked once, at their stated size & published proofs \\
+\texttt{stated\_outside} & the published proof's stated size lies outside the domain & runner \\
+\texttt{proof\_file\_missing} & \textvisiblespace proof file\textvisiblespace & published proofs \\
+\texttt{not\_installed} & not installed & every \texttt{installed} \\
+\texttt{qubit\_cap} & Requested too many qubits from package & classifier, from a tool's error text \\
+\end{longtable}
+
+Three messages have no code of their own and map to \code!other!: \code!an angle integer of !$b$\code! bits (QuiZX reads 64-bit signed integers)!, \code!the circuit (!$i$\code! inputs, !$o$\code! outputs) and the reference (!$i'$\code! inputs, !$o'$\code! outputs) differ in boundary!, and \code!no wires!. The message \code!circuit and reference differ in width or inputs! matches \code!width_mismatch!.
+
+\subsection{Failures outside the adapter}\label{sec:bench-tools-failures}
+
+The worker calls \py!adapter.run(inst, job)! inside a \code!try!. For a rival it first announces the stage \code!prepare! and arms the preparation CPU timer with \code!stages.prepare_timeout_seconds! (default \code!stages.timeout_seconds!). An exception $e$ that escapes \py!run! becomes \py!worker.failure(tool, e)!:
+\begin{enumerate}
+\item a \py!translate.Unsupported! or \py!rival.Unsupported!: \py!common.unsupported(str(e))!;
+\item a \py!MemoryError!: \py!{"outcome": "oom", "killed_in": "prepare", "detail": msg}!;
+\item any exception from ArchytasZX: \py!{"outcome": "error", "detail": msg}!;
+\item a \py!rival.SpecBound!: \py!{"outcome": "harness_error", "reason": "spec bound: " + str(e), "harness_cause": "spec_bound", "detail": msg}!;
+\item any other exception from a rival: \py!{"outcome": "harness_error", "reason": "prepare: " + msg, "detail": msg}!;
+\end{enumerate}
+where \py!msg! is the last line of \py!traceback.format_exception_only(e)!, cut to 500 characters. A preparation that exhausts its CPU budget becomes \py!{"outcome": "timeout", "killed_in": "prepare", "limit": "prepare_cpu", "reason": "prepare: CPU limit"}!. A rival's preparation failure is a harness error, not the tool's failure, because the tool itself never ran.
+
+\subsection{The run record of a rival}\label{sec:bench-tools-record}
+
+\begin{signature}
+\py!rival.finish(inst, res: dict, prep_cpu: float, versions: dict) -> dict!
+\end{signature}
+
+\py!finish! builds the record of a rival run from the driver result \py!res! (\cref{sec:bench-tools-calls}). Let \py!verdict = res.get("verdict")! and \py!stage! be \py!res! without the key \code!verdict!, with \code!cpu! and \code!wall! defaulted to $0.0$. The record is
+\begin{lstlisting}[style=python]
+{"expected": common.expected(inst),
+ "verdict": verdict,
+ "outcome": common.outcome(inst, res["status"], verdict),
+ "wrong": is_wrong(common.outcome(inst, res["status"], verdict)),
+ "stages": {"prepare": {"status": "ok", "cpu": prep_cpu, "wall": prep_cpu},
+            "check": stage},
+ "tool_version": versions}
+\end{lstlisting}
+The preparation stage records the same value as CPU and wall time: the CPU seconds of the worker process (\py!time.process_time()!) spent on preparation. The check stage holds every field of the driver result: \code!status!, \code!cpu!, \code!wall!, \code!peak_mb!, and the tool's own fields. Several adapters then add a \code!b3! field with the sizes of the tool's reduced form (the B3 measure of \cref{ch:bench-pipeline}).
+
+\section{Shared Rival Preparation}\label{sec:bench-tools-prep}
+
+\module{benchmarks.tools.common} and \module{benchmarks.tools.rival} hold the preparation every rival adapter shares: the expansion of a circuit's registers and loops into single wires, the translation of the expanded qubit circuit into a Qiskit~\cite{javadi2024qiskit} circuit and OpenQASM~2 text~\cite{cross2017openqasm}, the specification as a dense tensor or a PyZX graph, and the calls of drivers and binaries under resource limits. Preparation runs in the worker under the harness's Python, which needs NumPy~\cite{harris2020numpy}, SymPy~\cite{meurer2017sympy}, and Qiskit (the \code![benchmarks]! extra, \cref{sec:bench-tools-setup}).
+
+\subsection{Environment layout}\label{sec:bench-tools-layout}
+
+\begin{signature}
+\py!VENVS: Path! $=$ \code!$BENCH_VENVS! when set and nonempty, else \file{benchmarks/.venvs} (relative to the package).\\
+\py!DRIVERS: Path! $=$ \file{benchmarks/tools/drivers}.\\
+\py!python(env: str) -> Path! $=$ \py!VENVS / env / "bin" / "python"!.\\
+\py!binary(env: str, name: str) -> Path! $=$ \py!VENVS / env / "bin" / name!.\\
+\py!installed(env: str) -> str | None!\\
+\py!version(env: str, package: str) -> str | None!
+\end{signature}
+
+Each Python tool has its own virtual environment \file{VENVS/<env>}, created by \file{setup_rivals.sh} with Python 3.12 (\cref{sec:bench-tools-setup}); each compiled tool has its binary in \file{VENVS/<env>/bin}. \Cref{tab:bench-tools-layout} lists the layout. \py!installed(env)! returns \py!None! when \py!python(env)! exists and \code!environment benchmarks/.venvs/!\py!env!\code! not installed! otherwise; the message names the default location even when \code!BENCH_VENVS! moves it. \py!version(env, package)! runs \py!python(env) -c "import importlib.metadata as m; print(m.version('package'))"! with a 60\,s timeout and returns the stripped standard output, or \py!None! when it is empty, the process cannot start, or it times out.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.38\linewidth}>{\raggedright\arraybackslash}p{0.56\linewidth}@{}}
+\caption{Files under \texttt{VENVS} that the adapters read.}\label{tab:bench-tools-layout}\\
+\toprule
+Path under \texttt{VENVS} & Content \\
+\midrule
+\endfirsthead
+\toprule
+Path under \texttt{VENVS} & Content \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\file{pyzx/bin/python} & PyZX 0.10.8 and NumPy \\
+\file{quizx/bin/python} & QuiZX 0.4.0 and NumPy \\
+\file{qcec/bin/python} & MQT QCEC 3.11.0 (with MQT Core) and NumPy \\
+\file{qiskit/bin/python} & Qiskit 2.6.2 and NumPy \\
+\file{cirq/bin/python} & cirq-core 1.7.0 and NumPy \\
+\file{tket/bin/python} & pytket 2.18.5 and NumPy \\
+\file{dizx/bin/python} & DiZX's dependencies; the source tree \file{src/dizx} on a \file{.pth} file \\
+\file{feynman/bin/feynver} & Feynman's equivalence checker \\
+\file{autoq/bin/autoq} & the AutoQ command-line tool \\
+\file{quantomatic/quanto.jar}, \file{quantomatic/red_green.rules} & the Quantomatic assembly with the benchmark driver, and the red\_green rule set \\
+\file{jdk8/bin/java} & Temurin JDK 8 \\
+\file{src/}, \file{logs/} & cloned sources, build trees, and logs \\
+\end{longtable}
+
+The Coq projects of the published proofs live outside \code!VENVS!, under \code!BENCH_COQ_HOME! (\cref{sec:bench-tools-published}).
+
+\subsection{Register and loop expansion}\label{sec:bench-tools-expand}
+
+The benchmark circuit IR (\cref{ch:bench-pipeline}) names wires and \term{registers}; a register is a name bound to a count ($n$ or an integer) or to a pair (outer, inner) of counts, and a gate naming a register acts on every copy. The IR has loop gates \py!Chain!, \py!Tree!, \py!Pairs!, \py!Neighbours!, \py!LowerMCX!, and \py!IndexedMCX!. A rival needs a flat circuit: single wires, plain gates, inputs and outputs in one order. \py!common.expand! produces it.
+
+\begin{signature}
+\py!common.expand(c: ir.Circuit, n: int) -> ir.Circuit!\\
+\py!common.concrete_circuit(inst, n: int | None, d: int) -> ir.Circuit!
+\end{signature}
+
+\py!concrete_circuit(inst, n, d)! is \py!expand(subject.circuit_at(inst, n, d, expand=True), n if n is not None else 0)!: the instance's circuit at the point with amounts evaluated, then expanded.
+
+\begin{definition}[Copies]\label{def:bench-tools-copies}
+Let \py!count(q)! and \py!inner(q)! be the outer and inner counts of $q$ evaluated by SymPy at $n$. A register $q$ with an inner count has \term{rows} \py!rows[q][m] = [q_m_0, ..., q_m_{inner-1}]! for $m<$\py!count(q)!. The \term{copies} of a wire $q$ are:
+\begin{itemize}
+\item \py![q]! when $q$ is a single wire (\py!c.count(q) is None!);
+\item the rows of $q$ concatenated in order when $q$ has an inner count;
+\item \py![q_0, ..., q_{count(q)-1}]! otherwise.
+\end{itemize}
+The names are the strings \code!q_i! and \code!q_m_j!, with the decimal values substituted.
+\end{definition}
+
+\begin{definition}[Copy-major layout]\label{def:bench-tools-layout}
+\py!_layout(c, order, copies)! expands a wire order: it scans \py!order!; a single wire is emitted as itself; a maximal run of consecutive registers whose count expressions print the same (\py!str(c.registers[q])!) is emitted \term{copy-major}: for $i=0,1,\ldots$ up to the copy count of the run's first register, the $i$-th copy of each register of the run in run order.
+\end{definition}
+
+\begin{algorithm}[Expansion]\label{alg:bench-tools-expand}
+\py!expand(c, n)! walks \py!c.gates! once, keeping a gate list $G$, a map \py!leaves! (tree parent to its leaf wires), a map \py!alias! (a carry wire that ended inside a chain to the register copy that took its place), and a map \py!tree_dims! (dimensions of fresh tree wires). Every count expression is evaluated by \py!int(sympify(e).subs(n, n))!.
+\begin{enumerate}
+\item \textbf{Chain.} For $g=$\py!Chain(count, body, carries, index, reverse, through)!: let \py!row_carry! map each carry that is itself a register to its partner register. For $m$ in $0,\ldots,$count$-1$ (descending when \py!reverse!), with index values \py!{index: m}! when \py!index! is set:
+  \begin{enumerate}
+  \item For each body gate $h$: substitute the index values (\py!ir.at_index!). A \py!Neighbours! body gate emits \py!CZ(own[j], own[j+1], s)! for $j=0,\ldots,|$own$|-2$, where \py!own! is row $m$ of its register (or its copies when it has no rows). Otherwise let the \term{wide} wires be the wires of $h$ that have rows or are row carries, and the \term{plain} substitution map every other register wire of $h$ to its copy $m$. When there are wide wires, emit one renamed copy of $h$ for each position $j$ of the first wide wire's row, mapping each wide wire to element $j$ of its row; otherwise emit one renamed copy. Every substitution also maps aliased wires to their alias. When $h$ is a \py!Post! or \py!Discard!, mark its wire as \term{ended} for this copy.
+  \item For each \py!(carry, reg)! pair: a row carry emits \py!Swap(a, b)! for each pair of the carry's copies and row $m$ of \py!reg!; an ended carry sets \py!alias[carry] = copies[reg][m]! (no gate); any other carry emits \py!Swap(alias.get(carry, carry), copies[reg][m])!.
+  \end{enumerate}
+\item \textbf{Tree.} For $g=$\py!Tree(count, body, parent, children, level, position)!: let $D$ be the evaluated depth, $b=|$children$|$, and \py!local! the wires of the body other than \py!parent!. Feed \py!feed[(1, 0)] = parent!. For level $L=1,\ldots,D$ and position $P=0,\ldots,b^{L-1}-1$: substitute \py!parent! by \py!feed[(L, P)]! and each local wire $w$ by the fresh name \code!parent_w_L_P! (recording its dimension as that of \py!parent!), set \py!level! to $L$ and \py!position! to $P$, emit the renamed body, and set \py!feed[(L+1, bP+i)]! to the fresh name of child $i$. Then \py!leaves[parent]! is the list \py!feed[(D+1, P)]! for $P=0,\ldots,b^D-1$.
+\item \textbf{Pairs.} For $g=$\py!Pairs(over, body, index, pair_index)!: for every pair $j<k$ of copies of \py!over!, emit the body with \py!index! $=j$, \py!pair_index! $=k$, and the wire names \code!left! and \code!right! renamed to copies $j$ and $k$.
+\item \textbf{Neighbors.} Emit \py!CZ(own[j], own[j+1], s)! along the copies of \py!over!.
+\item \textbf{IndexedMCX.} For $g=$\py!IndexedMCX(over, cells, t)! with bit copies $x_0,\ldots,x_{r-1}$ and cell copies $c_0,c_1,\ldots$: for each cell index $v$ in order, emit \py!MCX((x_0, ..., x_{r-1}, c_v), t, values)! with \py!values! $=((v\gg0)\,\&\,1,\ldots,(v\gg(r-1))\,\&\,1,\,1)$.
+\item \textbf{LowerMCX.} For $g=$\py!LowerMCX(over, controls, values, reverse)! with copies $o_0,\ldots,o_{r-1}$: for $k$ from $r-1$ down to $0$ (from $0$ up when \py!reverse!), emit \py!MCX((*controls, o_0, ..., o_{k-1}), o_k, (*values, 1, ..., 1))!.
+\item \textbf{Plain gates.} Rename aliased wires. When no wire of the gate is a register, emit it unchanged. Otherwise, for each index $i$ below the copy count of its first register wire, emit the gate with every register wire mapped to its copy $i$ and single wires kept.
+\end{enumerate}
+After the walk: the dimension of every copy is the dimension of its register, plus \py!tree_dims!. A wire order is \term{placed} by replacing each tree parent by its leaves, dropping every wire that is an alias target, and inserting each aliased carry's alias right after it. Let $W$ be the placed copy-major layout of \py!c.wires! and $O$ that of \py!c.output_order()!. When $O\neq W$, the wires closed by a \py!Post! or \py!Discard! are removed from both and the swaps \py!_permute(W', O', dims)! are appended. The result is \py!ir.Circuit(tuple(W), tuple(G), {}, dims, c.scalar)!: no registers, no output order, and the original scalar.
+\end{algorithm}
+
+\begin{signature}
+\py!_permute(slots: list[str], want: list[str], dims: dict) -> list[ir.Gate]!\\
+\py!_rename(g: ir.Gate, sub: dict[str, str]) -> ir.Gate!
+\end{signature}
+
+\py!_permute! returns the swaps after which slot \py!slots[i]! holds the value of wire \py!want[i]!. It keeps \py!at! (slot to the wire value it holds) and \py!holder! (wire value to the slot holding it), both the identity at the start. For each pair (slot, value) in order: let \py!src = holder[value]!; skip when \py!src == slot!; raise \py!ValueError("output order moves value onto a wire of another dimension")! when the printed dimensions of \py!src! and \py!slot! differ; emit \py!Swap(slot, src)! and exchange the two entries of \py!at! and \py!holder!. The number of swaps is at most $|$slots$|-1$.
+
+\py!_rename(g, sub)! replaces, through \py!dataclasses.replace!, every string field named \code!q!, \code!c!, \code!t!, \code!a!, \code!b!, or \code!y! that is a key of \py!sub!, and maps every element of a tuple field named \code!qs!, \code!cs!, or \code!xs! through \py!sub! (unmapped names kept).
+
+\begin{signature}
+\py!common.matches_unrolled(inst, unrolled: ir.Circuit, n: int, d: int) -> bool!
+\end{signature}
+
+\py!matches_unrolled! checks a flat circuit against the instance's boxed circuit. It translates the instance's circuit at $(n,d)$ with values $\{n,d\}$, prefixes \code!dim d = !$d$ and \code!count n = !$n$, and parses it with \py!parse_dsl!; it translates \py!unrolled! with values $\{d\}$ under \code!dim d = !$d$ alone; it returns \py!fused_isomorphic(instantiate(boxed, {"n": n}), instantiate(flat, {}))! (\cref{ch:rewriting}): isomorphism after spider fusion and identity removal reduce both diagrams.
+
+\subsection{The qubit circuit}\label{sec:bench-tools-qubit}
+
+\begin{signature}
+\py!rival.qubit_ir(inst, n: int | None) -> ir.Circuit!\\
+\py!rival._at_n(c: ir.Circuit, n: int | None) -> ir.Circuit!\\
+\py!rival._num(expr, k: int | None = None) -> float!
+\end{signature}
+
+\py!qubit_ir(inst, n)! is the expanded circuit at $d=2$. It raises \py!Unsupported("fixed dimension D")! when the subject has no general $d$ and its fixed dimension $D$ is not $2$; it computes \py!c = common.concrete_circuit(inst, n, 2)!; it raises \py!Unsupported("measurement or discard (a channel, not a pure map)")! when a gate is \py!Measure! or \py!Discard!, and \py!Unsupported("a wire of dimension other than d")! when a wire's dimension prints as neither \code!d! nor \code!2!; it returns \py!_at_n(c, n)!. \py!_at_n(c, n)! substitutes the point's $n$ into every gate by \py!ir.at_index(g, {"n": n})! (amounts of \py!X! and \py!Z!, entries and rules of \py!ZPhase! and \py!XPhase!, and chain bodies); with \py!n is None! it returns \py!c!. \py!_num(expr, k)! evaluates \py!sympify(expr)! at $d=2$ (and the index $k$ when given) to a float by \py!sympy.N!.
+
+\subsection{Translation to Qiskit}\label{sec:bench-tools-qiskit-circuit}
+
+\begin{signature}
+\py!rival.qiskit_circuit(c: ir.Circuit, unit_scalar: bool = True)!\\
+\quad\py!-> tuple[QuantumCircuit, dict[int, int], dict[int, int]]!
+\end{signature}
+
+\py!qiskit_circuit(c)! returns the unitary part of a flat qubit IR circuit as a Qiskit \py!QuantumCircuit! on \py!len(c.wires)! qubits (qubit $i$ is wire $i$), the \term{Init values} $\{i: v\bmod 2\}$, and the \term{Post values} $\{i: v\bmod 2\}$. Init and Post gates are not appended: the drivers plug them in. The circuit's metadata holds \py!{EXACT_RZ: exact}!, where \py!EXACT_RZ = "exact_rz"! and \py!exact! maps each $R_z$ angle the translation wrote to its exact value in turns (or \py!None! when two different exact values gave the same float). A running float \py!extra! collects global phase. Qiskit orders basis states little-endian (qubit $0$ least significant); the IR orders them big-endian (first wire most significant). \py!_little(mat, m)! converts a $2^m\times2^m$ big-endian matrix to Qiskit's order by reshaping it to $2m$ axes and reversing the order of the output axes and of the input axes.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.67\linewidth}@{}}
+\caption{The Qiskit translation of each IR gate at $d=2$ ($\omega=-1$).}\label{tab:bench-tools-qiskit}\\
+\toprule
+IR gate & Qiskit operations \\
+\midrule
+\endfirsthead
+\toprule
+IR gate & Qiskit operations \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\py!Init(q, v)!, \py!Post(q, v)! & none; record $v\bmod2$ \\
+\py!Prepare(qs, vector)! & record Init $0$ on each wire; append \py!StatePreparation(vec / norm(vec))!, the vector reordered to little-endian \\
+\py!Unitary(qs, matrix)! & \py!UnitaryGate(_little(matrix))! \\
+\py!X(q, a)! & \py!x! when $\mathrm{round}(a)$ is odd, else nothing \\
+\py!Z(q, a)! & \py!p(pi * a)! when $|a-\mathrm{round}(a)|>10^{-12}$; else \py!z! when $\mathrm{round}(a)$ is odd \\
+\py!F(q, p)! & \py!h! repeated $p\bmod4$ times \\
+\py!ZPhase(q, ...)! & with $\theta_k$ the turns at $k=0,1$ (rule at $k$, else entry $k$, default $0$): $\mathit{extra}\mathrel{+}=2\pi\theta_0$; \py!p(2 pi (theta1 - theta0))! \\
+\py!XPhase(q, ...)! & as \py!ZPhase! between two \py!h! gates \\
+\py!CX(c, t, s)!, \py!CZ(c, t, s)! & \py!cx!, \py!cz! ($s$ ignored: $\pm1$ agree at $d=2$) \\
+\py!Swap(a, b)! & \py!swap! \\
+\py!MCX(cs, t, values, a)!, \py!MCZ(...)! & when $a$ is odd: the base gate \py!XGate()! or \py!ZGate()! on $t$ when there are no controls, else \py!base.control(len(cs), ctrl_state=s)! on \py!(*cs, t)! with $s$ the control values (default all $1$), each mod 2, in reverse order as a bit string; nothing when $a$ is even \\
+\py!PhaseFn(qs, f)! & the parity network of \cref{alg:bench-tools-parity} \\
+\py!Perm(qs, p)!, \py!Oracle(xs, y, f)! & the dense basis map (\py!dense._op_from!) as \py!UnitaryGate(_little(...))! \\
+any other gate & \py!Unsupported("gate " + type name)! \\
+\end{longtable}
+
+The global phase is set last. With \py!unit_scalar=True! the scalar \py!c.scalar! is evaluated to a complex number $z$; \py!Unsupported("a circuit scalar of modulus other than 1")! is raised when $\bigl||z|-1\bigr|>10^{-12}$; the global phase is $\arg z+\mathit{extra}$. With \py!unit_scalar=False! the global phase is $\arg z+\mathit{extra}$ by \py!scalar_parts(c.scalar)! ($\mathit{extra}$ alone when the scalar is $0$), and the magnitude is left to the caller.
+
+\begin{definition}[Parity decomposition]\label{def:bench-tools-parity}
+Let $f:\{0,1\}^m\to\Q$ be a phase function in turns, so the gate is $\ket{x}\mapsto e^{2\pi i f(x)}\ket{x}$. Write $x_S=\prod_{i\in S}x_i$ and $\oplus_S(x)=\bigoplus_{i\in S}x_i$ for $S\subseteq\{0,\ldots,m-1\}$, encoded as a bit mask. The multilinear coefficients $c_S$ with $f(x)=\sum_S c_S\,x_S$ are the Möbius transform $c_S=\sum_{T\subseteq S}(-1)^{|S|-|T|}f(\mathbb 1_T)$. For a nonempty $S$ with $k=|S|$,
+\[
+  x_S=\frac{1}{2^{k-1}}\sum_{\emptyset\neq T\subseteq S}(-1)^{|T|+1}\,\oplus_T(x),
+\]
+so $f(x)\equiv c_\emptyset+\sum_{T\neq\emptyset}a_T\,\oplus_T(x)\pmod 1$ with $a_T=\sum_{S\supseteq T}(-1)^{|T|+1}c_S/2^{|S|-1}$.
+\end{definition}
+
+\begin{signature}
+\py!rival._parity_terms(g: ir.PhaseFn) -> tuple[Fraction, dict[int, Fraction]]!\\
+\py!rival._turns_mod(c: Fraction) -> Fraction!
+\end{signature}
+
+\py!_turns_mod(c)! is $c\bmod1$ in $(-\tfrac12,\tfrac12]$. \py!_parity_terms(g)! evaluates $f$ at every mask (bit $i$ of the mask is wire $i$), converts each value to an exact \py!Fraction! by \py!sympy.Rational!, applies the in-place Möbius transform (for each bit $i$ and each mask with bit $i$ set, subtract the coefficient of the mask without bit $i$), reduces each $c_S$ with $S\neq\emptyset$ by \py!_turns_mod! and skips zeros, accumulates $a_T$ over the nonempty submasks $T$ of $S$ as in \cref{def:bench-tools-parity}, reduces each $a_T$ by \py!_turns_mod!, and returns $(\texttt{\_turns\_mod}(c_\emptyset), \{T: a_T\})$ with zero terms dropped and masks in ascending order.
+
+\begin{algorithm}[Parity network]\label{alg:bench-tools-parity}
+For a \py!PhaseFn! on wires $w_0,\ldots,w_{m-1}$ with \py!(const, parities) = _parity_terms(g)!:
+\begin{enumerate}
+\item $\mathit{extra}\mathrel{+}=2\pi\cdot\mathrm{const}$.
+\item For each mask $T$ with coefficient $a$, in ascending order: let $\mathit{on}$ be the wires of $T$ in wire order and $\theta=2\pi a$. Record $\mathtt{exact}[\theta]=a$ (or \py!None! when a different $a$ is already recorded for $\theta$). Append \py!cx(w, on[-1])! for each $w$ in $\mathit{on}$ but the last, then \py!rz(theta, on[-1])!, then the same CNOTs in reverse order. Add $\theta/2$ to $\mathit{extra}$.
+\end{enumerate}
+Qiskit's $R_z(\theta)=\operatorname{diag}(e^{-i\theta/2},e^{i\theta/2})$ on the parity qubit gives the phase $e^{2\pi i a\,\oplus_T(x)}$ times $e^{-i\theta/2}$; the added $\theta/2$ cancels the second factor.
+\end{algorithm}
+
+\begin{example}[Controlled-controlled-$Z$]\label{ex:bench-tools-ccz}
+For $f(x)=x_0x_1x_2/2$ turns, \py!_parity_terms! returns the constant $0$ and the coefficients $a_T=+\tfrac18$ for the masks $1,2,4,7$ and $-\tfrac18$ for the masks $3,5,6$: the standard seven-$R_z$ phase polynomial of the CCZ gate. For $f(x)=x_0x_1/2$ (CZ) it returns $\{1:\tfrac14,\,2:\tfrac14,\,3:-\tfrac14\}$.
+\end{example}
+
+\subsection{OpenQASM emission}\label{sec:bench-tools-qasm}
+
+\begin{signature}
+\py!QELIB_BASIS = ["cx", "cz", "h", "x", "z", "s", "sdg", "t", "tdg", "rz", "ccx"]!\\
+\py!rival.transpiled(qc, basis: list[str]) -> QuantumCircuit!\\
+\py!rival.qasm(qc) -> str!\\
+\py!rival.qasm_and_phase(qc) -> tuple[str, float]!\\
+\py!rival.qasm_and_zx_phase(qc) -> tuple[str, float]!
+\end{signature}
+
+\py!transpiled(qc, basis)! is \py!qiskit.transpile(qc, ...)! with \py!basis_gates=basis!, \py!optimization_level=0!, and \py!qubits_initially_zero=False!, the input's metadata merged under the output's; any exception becomes \py!Unsupported! with the message \code!not expressible in the gate set !, the basis list, \code!: !, and the first 120 characters of the exception's text. Optimization level $0$ applies no simplification, and \py!qubits_initially_zero=False! forbids the transpiler from assuming clean ancillas. \py!qasm_and_phase(qc)! transpiles to \py!QELIB_BASIS! and returns \py!_dumps_exact(t)! with \py!float(t.global_phase)!; OpenQASM~2 has no global phase, so the phase travels beside the text. \py!qasm(qc)! is the text alone. \py!qasm_and_zx_phase(qc)! returns the same text with the phase $\phi-\sum\theta/2$ over every \code!rz! gate of the transpiled circuit, for readers (PyZX, QuiZX) that read \code!rz(!$\theta$\code!)! as $\operatorname{diag}(1,e^{i\theta})$.
+
+\begin{signature}
+\py!rival._dumps_exact(t) -> str!\\
+\py!rival.exact_angles(text: str) -> str!\\
+\py!rival.angle_text(a: float) -> str!\\
+\py!rival._pi_fraction(a: float) -> Fraction | None!\\
+\py!rival._pi_text(r: Fraction) -> str!\\
+\py!rival.integers_below(text: str, bits: int, reader: str) -> None!
+\end{signature}
+
+Gate angles leave the harness as exact rational multiples of $\pi$ wherever possible.
+\begin{itemize}
+\item \py!_pi_text(r)! writes $r\pi$: \code!0! for $r=0$; otherwise an optional \code!-!, then \code!pi! when $|p|=1$ or \code!|p|*pi! otherwise, then \code!/q! when $q\neq1$, for $r=p/q$ in lowest terms. Example: $-\tfrac34$ gives \code!-3*pi/4!.
+\item \py!_pi_fraction(a)! finds a convergent of the continued fraction of $r=a/\pi$ (taken exactly from the float by \py!Fraction!): it returns $0$ for $r=0$; it runs the standard recurrence $h_k=m_kh_{k-1}+h_{k-2}$, $k_k=m_kk_{k-1}+k_{k-2}$ with $m_k=\lfloor x\rfloor$, $x\leftarrow1/(x-m_k)$; it returns \py!None! as soon as $|h|\geq2^{63}$ or $k\geq2^{63}$, returns $h/k$ as soon as $|h/k-r|\leq|r|\cdot2^{-50}$, and returns \py!None! when the expansion terminates first.
+\item \py!angle_text(a)! is \py!_pi_text(_pi_fraction(a))!, or, when that is \py!None!, \py!format(Decimal(repr(a)), "f")! (fixed point, no exponent). Examples: $\pi/4\mapsto$\code!pi/4!, $-3\pi/8\mapsto$\code!-3*pi/8!, $0.1\mapsto$\code!5447123*pi/171126416!.
+\item \py!exact_angles(text)! rewrites, on every line that does not start (after leading blanks) with \code!OPENQASM!, \code!include!, \code!qreg!, \code!creg!, or \code!//!, the first parenthesized parameter list: each comma-separated parameter that fully matches a decimal float literal is replaced by \py!angle_text(float(par))!; other parameters stay.
+\item \py!_dumps_exact(t)! writes \py!qasm2.dumps(t)!. When \py!t.metadata[EXACT_RZ]! is empty it returns \py!exact_angles! of the text. Otherwise it pairs every gate line with the next instruction of \py!t.data!, raising \py!RuntimeError! when a line does not start with the instruction's name; an \code!rz! whose float angle is a key of the exact map with a non-\py!None! value $a$ gets the parameter \py!_pi_text(2a)! (the exact angle), and every other line goes through \py!exact_angles!.
+\item \py!integers_below(text, bits, reader)! raises \py!Unsupported("an angle integer of B bits (reader)")! when some parenthesized parameter of \py!text! contains a decimal integer of more than \py!bits! bits; QuiZX's adapter calls it with $63$.
+\end{itemize}
+
+\subsection{The specification}\label{sec:bench-tools-spec}
+
+The right-hand side of an equation, its \term{specification}, is a ZXW diagram written in the engine language (\cref{ch:language}); the script generator places it under the name \azx!@rhs! (\cref{ch:bench-pipeline}). The rivals receive it as a dense tensor, a PyZX graph, or a one-gate reference circuit.
+
+\begin{signature}
+\py!DENSE_CAP = 1 << 24!\quad\py!MAX_AXES = 64!\\
+\py!rival.SpecBound(Exception)!\\
+\py!rival.spec_diagram(inst, n: int | None, d: int) -> Diagram!\\
+\py!rival.spec_tensor(inst, n: int | None, d: int) -> numpy.ndarray!\\
+\py!rival.spec_pyzx(inst, n: int | None) -> dict!\\
+\py!rival.scalar_parts(value) -> list!\\
+\py!rival.reference_circuit(inst, n: int | None, d: int) -> ir.Circuit!\\
+\py!rival.explicit_reference(inst, n: int | None, d: int) -> ir.Circuit!
+\end{signature}
+
+\paragraph{\texttt{spec\_diagram}.} The equation script \py!subject.script(inst, n, d)! is executed line by line up to its \azx!decide! line by \py!stages.diagrams!, inside \py!parser.lifted_bounds()! (the parser's input bounds lifted; \cref{ch:language}). A \py!RuntimeError! from a failing line becomes \py!SpecBound! with the first line of its message cut to 400 characters. The diagram named \code!rhs! is returned instantiated with no assignment (\py!check.instantiate(right, {})!).
+
+\paragraph{\texttt{spec\_tensor}.} The specification's dense tensor by the ArchytasZX oracle, axes ordered outputs then inputs. It raises \py!Unsupported("a mixed specification")! when the diagram is not pure, \py!Unsupported("the specification has more than 64 axes")! when outputs plus inputs exceed \py!MAX_AXES!, and \py!Unsupported("the specification tensor is too large")! when the numeric contraction \py!check.contract(right, max_elements=DENSE_CAP)! raises \py!ContractSizeError! ($2^{24}$ entries; \cref{ch:semantics}).
+
+\paragraph{\texttt{spec\_pyzx}.} The specification at $d=2$ as a PyZX graph description (\cref{fig:bench-tools-pyzx-json}). Each node becomes a vertex: Z and X spiders keep their type and phase; an F node becomes a phase-free Z vertex whose input-side edges are Hadamard edges (at $d=2$ the Fourier box is the Hadamard gate); any other generator raises \py!Unsupported("generator NAME in the specification")!, and a weighted phase raises \py!Unsupported("a weighted spider in the specification")!. The phase is the entry at index $1$ of the phase vector in turns $t$, written as the string of the fraction $2t\bmod2$ (units of $\pi$). An edge has type $2$ (Hadamard) when either end is an F node's input port and type $1$ (simple) otherwise. A boundary vertex \code!B! with phase \code!0! is added for each boundary input (edge type by the same rule) and each boundary output (edge type $1$). The scalar is \py!scalar_parts(right.scalar.to_sympy())!.
+
+\begin{figure}[H]
+\begin{lstlisting}[style=python]
+{"vertices": [["Z", "1/2"], ["X", "0"], ..., ["B", "0"], ...],  # type, phase/pi
+ "edges":    [[a, b, t], ...],          # vertex indices; t = 1 simple, 2 Hadamard
+ "inputs":   [i0, i1, ...],             # boundary vertex indices, input order
+ "outputs":  [o0, o1, ...],
+ "scalar":   [zero, log_abs, arg]}      # scalar_parts of the diagram scalar
+\end{lstlisting}
+\caption{The specification graph format of \texttt{spec\_pyzx}.}\label{fig:bench-tools-pyzx-json}
+\end{figure}
+
+\paragraph{\texttt{scalar\_parts}.} For an exact scalar $v$ (anything SymPy sympifies), \py![True, 0.0, 0.0]! when $v$ is zero, else \py![False, log|v|, arg v]!, each part evaluated by \py!_real! at 30 digits: \py!_real(x)! splits \py!sympy.N(x, 30)! into real and imaginary parts and raises \py!ValueError! when the imaginary part exceeds $10^{-20}\max(1,|\mathrm{re}|)$. Example: $\sqrt2\,i\mapsto$ \py![False, 0.34657..., 1.57079...]!. Keeping $\log|v|$ instead of $|v|$ lets scalars far outside the float range travel to the drivers.
+
+\paragraph{\texttt{reference\_circuit}.} The equation's own reference circuit when it has one, expanded (\py!common.expand(eq.reference(n, d), n or 0)!); otherwise the specification as one dense gate on fresh wires \code!o0!, \code!o1!, \ldots, one per output:
+\begin{enumerate}
+\item no outputs: \py!Unsupported("the specification has no wires")!;
+\item no inputs (a state): the flattened tensor, normalized, as \py!Prepare(wires, pairs)!; a zero vector raises \py!Unsupported("the specification is the zero state")!;
+\item as many inputs as outputs: the $d^{\,o}\times d^{\,o}$ matrix as \py!Unitary(wires, rows)!, after a check $MM^\dagger\approx I$ with absolute tolerance $10^{-8}$ (\py!Unsupported("the specification is not unitary")! otherwise);
+\item other shapes: \py!Unsupported("the specification is an isometry, not a unitary")!.
+\end{enumerate}
+The circuit's scalar is \code!1!, so a state's norm and the phase of its first amplitude are kept but its overall magnitude is not. \py!explicit_reference(inst, n, d)! returns only the equation's own reference circuit, expanded, and raises \py!Unsupported("no gate-level reference circuit for this equation")! when the equation has none.
+
+\subsection{Driver and binary calls}\label{sec:bench-tools-calls}
+
+\begin{signature}
+\py!rival.run_driver(env: str, driver: str, payload: dict, limit: float,!\\
+\quad\py!wall_factor: float = 4.0) -> dict!\\
+\py!rival.run_binary(cmd: list[str], limit: float, wall_factor: float = 4.0,!\\
+\quad\py!lift_memory: bool = False) -> dict!\\
+\py!rival.lift_address_space() -> None!
+\end{signature}
+
+Both calls are wrapped by \py!_rival_call!: before the call it pauses the worker's preparation timer (\py!worker.end_prepare!, which raises \py!PrepareTimeout! when the timer had already expired) and announces the stage \code!rival! (\py!worker.mark!); after the call, also on an exception, it re-arms the timer with the budget left (\py!worker.resume_prepare!). The tool's own run therefore never counts against the preparation budget, and the runner can tell from the last announced stage whether a killed worker was preparing or running the tool. Every adapter passes \code!stages.timeout_seconds! of the configuration (default $3600$) as \py!limit! and keeps the default \py!wall_factor! of $4.0$.
+
+\paragraph{Memory caps of rival children.} Both calls hold the child to the worker's memory cap through \module{benchmarks.memcap} (\cref{ch:bench-pipeline}). \py!memcap.child_cap("rival")! is a \py!memcap.Cap! of \code!BENCH_MEMORY_MB! MiB when that variable is set, and \py!None! otherwise (the worker's own cgroup then holds its children). A cap uses one mechanism: \code!systemd! (the command wrapped in \code!systemd-run --user --scope --quiet --collect -p MemoryMax=MM -p MemorySwapMax=0!), \code!cgroup_v2! (a child cgroup in a delegated cgroup v2 subtree with \code!memory.max!, \code!memory.swap.max! $0$, and \code!memory.oom.group! $1$, joined before \code!exec!; it falls back to \code!watchdog! when the cgroup cannot be made), \code!srun! (a Slurm step with \code!--mem!, only when \code!BENCH_MEMCAP=srun!), or \code!watchdog! (the process tree's \code!RssAnon! polled every $0.25$\,s and the tree killed past the cap). \code!BENCH_MEMCAP! names the mechanism when it is usable; otherwise the first usable of \code!systemd!, \code!cgroup_v2!, \code!watchdog! is chosen. \py!memcap.run(cmd, cap, timeout, preexec, env)! starts the (wrapped) command in a session of its own with captured text output, waits up to \py!timeout! wall seconds (then kills the process group and raises \py!TimeoutExpired!), and returns the completed process with a flag \term{capped}: the watchdog fired, the cgroup's \code!oom_kill! counter rose, or an \code!srun! step exited nonzero with a memory-kill message. Every result of both calls carries \code!memcap!: the cap's mechanism, or, without a child cap, \py!memcap.worker_mechanism()! (\code!BENCH_MEMCAP_WORKER!, default \code!rlimit_as!).
+
+\begin{algorithm}[Driver call]\label{alg:bench-tools-run-driver}
+\py!run_driver(env, driver, payload, limit)!:
+\begin{enumerate}
+\item Write \py!payload! as JSON to a fresh temporary file \py!path! (suffix \code!.json!).
+\item Run \py![python(env), "-I", DRIVERS / (driver + ".py"), path]! by \py!memcap.run! under \py!child_cap("rival")!, with a wall timeout of \py!limit * wall_factor! seconds, the environment of the worker plus \code!OMP_NUM_THREADS=1!, and, in the child before \code!exec!, \py!RLIMIT_CPU! set to soft $c=\max(1,\lfloor\mathit{limit}\rfloor)$ and hard $c+5$. The child also inherits the worker's soft address-space limit.
+\item On the wall timeout return \py!{"status": "timeout", "limit": "wall", "wall": w, "memcap": m}!. Delete \py!path! in every case.
+\item Let \py!peak_mb! be the worker's \py!RUSAGE_CHILDREN! maximum resident set size divided by $1024$, rounded to $0.1$\,MiB: the largest peak of any child the worker has waited for so far.
+\item On a nonzero exit status $s$, or when capped, the status is \code!oom! when capped; else \code!timeout! when $s\in\{-24,152\}$ (\code!SIGXCPU!, directly or as $128+24$); else \code!oom! when $s\in\{-9,137\}$ or \py!allocation_failure(stderr + stdout)!; else \code!error!. Return \py!{"status", "detail": last 2000 characters of stderr, "wall", "peak_mb", "memcap"}!, plus \py!"limit": "cpu"! for a timeout and \py!"kill": "memcap." + m! when capped.
+\item Otherwise return \py!{"status": "ok", "peak_mb": peak_mb, "memcap": m}! merged with the JSON object on the last line of standard output (whose keys win).
+\end{enumerate}
+\end{algorithm}
+
+\py!outcomes.allocation_failure(text)! holds when \py!text! contains any of \code!out of memory!, \code!Heap exhausted!, \code!memory allocation of!, \code!std::bad_alloc!, \code!MemoryError!, \code!OutOfMemoryError!, \code!failed to map segment from shared object!, \code!cannot allocate memory!, \code!Cannot allocate memory!, \code!Memory allocation still failed!, or \code!Unable to allocate!.
+
+\begin{algorithm}[Binary call]\label{alg:bench-tools-run-binary}
+\py!run_binary(cmd, limit, wall_factor, lift_memory)!:
+\begin{enumerate}
+\item Read the worker's \py!RUSAGE_CHILDREN! before the call.
+\item Run \py!cmd! by \py!memcap.run! under \py!child_cap("rival")!, with a wall timeout of \py!limit * wall_factor!, the worker's environment unchanged, and in the child \py!RLIMIT_CPU! (soft $c=\max(1,\lfloor\mathit{limit}\rfloor)$, hard $c+5$) and, with \py!lift_memory!, \py!lift_address_space()!, which raises the soft \py!RLIMIT_AS! to its hard limit. The child cap holds the child either way.
+\item On the wall timeout return \py!{"status": "timeout", "limit": "wall", "wall": w, "memcap": m}!.
+\item Otherwise the result is \py!{"status": "ok", "returncode", "stdout", "stderr", "cpu", "wall", "peak_mb", "memcap"}!, with \code!cpu! the difference of the children's user plus system seconds across the call.
+\item When the exit status is neither $0$ nor $1$, or it is $1$ and the output reports an allocation failure, or the run was capped: the status becomes \code!timeout! (with \py!"limit": "cpu"!) for $-24$ or $152$ when not capped, \code!oom! when capped, for $-9$, $137$, or an allocation failure, and \code!error! otherwise; \code!detail! holds the last 400 characters of standard error (standard output when it is empty), and a capped run gets \py!"kill": "memcap." + m!.
+\end{enumerate}
+Exit status $1$ counts as a completed run because the checkers use it for a negative answer; the adapters read the verdict from the output.
+\end{algorithm}
+
+\paragraph{The memory-cap probe.} \module{benchmarks.tools.memcap_probe} checks the cap mechanisms on a host: \code!python -m benchmarks.tools.memcap_probe [--cap-mb M]! ($M$ default $256$). For each mechanism of \py!memcap.ALL! $=$ (\code!systemd!, \code!cgroup_v2!, \code!srun!, \code!watchdog!) it prints one JSON line \py!{"mechanism", "usable"}!; for a usable mechanism it adds two trials, \code!over! (a Python child touching $2M$ MiB of anonymous memory and holding it $4$\,s) and \code!under! (one touching $M/2$ MiB), each under a $M$ MiB cap with a $120$\,s wall timeout and recorded as \py!{"mech", "exit", "oom", "wall", "stderr": last 200 characters}! (\code!oom! true when capped or the exit status is $-9$ or $137$), and \code!enforced!: the over trial was killed as oom and the under trial exited $0$ without oom. A last line \py!{"summary": memcap.describe(), "all_enforced": b}! gives every mechanism's usability and the one chosen. The exit status is $0$ when every usable mechanism enforced the cap and $1$ otherwise.
+
+Drivers measure their own CPU (\py!time.process_time()!) and wall time (\py!time.perf_counter()!) around the tool's work and report them as \code!cpu! and \code!wall!; these values, not the process's total, become the check stage's times. A binary's times are the call's. \Cref{tab:bench-tools-timing} lists what each timer covers.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.2\linewidth}>{\raggedright\arraybackslash}p{0.74\linewidth}@{}}
+\caption{What the check stage's \texttt{cpu} and \texttt{wall} cover.}\label{tab:bench-tools-timing}\\
+\toprule
+Tool & Timed span \\
+\midrule
+\endfirsthead
+\toprule
+Tool & Timed span \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+PyZX, QuiZX & from after the payload is read, through the import of the tool, the reads, the reductions, and the comparison; the last reduction for the B3 size is outside the span \\
+Qiskit, Cirq & from after the specification tensor is loaded, through the tool's import, the simulation, and the comparison \\
+QCEC & the two loads and \code!verify!; the imports and the global-phase probe are outside \\
+DiZX & circuit building, \code!clifford_simp!, and the identity test; the imports are outside \\
+tket & the QASM read and \code!FullPeepholeOptimise!; the imports are outside \\
+Quantomatic & JVM thread CPU of the graph reads, both normalizations, and the match; JVM start and rule loading are outside \\
+Feynman, AutoQ, Coq & the whole process (children's rusage) \\
+\end{longtable}
+
+\section{The Dense Reference Evaluator}\label{sec:bench-tools-dense}
+
+\module{benchmarks.tools.dense} gives the benchmark circuit IR a dense NumPy semantics written from the gate definitions of \module{benchmarks.ir}, independent of ArchytasZX. The test suite uses it to check the translator from IR to engine scripts (\cref{ch:bench-pipeline}); the rival adapters use its gate tensors for the qudit gates of Cirq and for the permutation and oracle gates of the Qiskit translation.
+
+\begin{signature}
+\py!dense.evaluate(c: ir.Circuit, n: int, d: int) -> numpy.ndarray!\\
+\py!dense.gate_tensor(g: ir.Gate, ds: list[int], n: int, d: int) -> numpy.ndarray!\\
+\py!dense._op_from(fn, dims: list[int]) -> numpy.ndarray!
+\end{signature}
+
+\subsection{Gate semantics}
+
+Let $\delta$ be the dimension of the wire a gate acts on, $\omega_\delta=e^{2\pi i/\delta}$, and $\tau(t)=e^{2\pi i\operatorname{Re}t}$ the phase of $t$ turns. Every amount and phase expression is evaluated by \py!_num(expr, n, d, k)!: \py!complex(sympy.N(sympify(expr).subs({n, d, k}), 30))!.
+
+\begin{definition}[Dense gate semantics]\label{def:bench-tools-dense}
+On basis states, with all arithmetic on basis values modulo the dimension of the wire it lands on:
+\begin{align*}
+X^a&:\ \ket{j}\mapsto\ket{j+a},\ a=\operatorname{round}(\operatorname{Re}a), &
+Z^a&:\ \ket{k}\mapsto e^{2\pi i\operatorname{Re}(ak)/\delta}\ket{k},\\
+F^p&=\Phi^{\,p\bmod4},\ \Phi_{jk}=\omega_\delta^{jk}/\sqrt\delta, &
+\mathrm{ZPhase}&=\operatorname{diag}(1,\tau(\theta_1),\ldots,\tau(\theta_{\delta-1})),\\
+\mathrm{XPhase}&=\Phi\,\mathrm{ZPhase}\,\Phi^\dagger, &
+\mathrm{CX}^s&:\ \ket{c,t}\mapsto\ket{c,\,t+sc}\ (\bmod\ \delta_c),\\
+\mathrm{CZ}^s&:\ \ket{c,t}\mapsto e^{2\pi i\,sct/\delta_c}\ket{c,t}, &
+\mathrm{PhaseFn}&:\ \ket{x}\mapsto\tau(f(x))\ket{x},\\
+\mathrm{MCX}&:\ \ket{c,t}\mapsto\ket{c,\,t+a[c=v]}, &
+\mathrm{MCZ}&:\ \ket{c,t}\mapsto e^{2\pi i\,a\,t[c=v]/\delta_t}\ket{c,t},\\
+\mathrm{Perm}&:\ \ket{x}\mapsto\ket{p(\iota(x))\bmod\textstyle\prod\delta}, &
+\mathrm{Oracle}&:\ \ket{x,y}\mapsto\ket{x,\,y+f(x)},
+\end{align*}
+where $\theta_k$ is the rule at $k$ when the gate has a rule and the entry at $k$ (default $0$) otherwise, the entry at $k=0$ is not read, $v$ are the control values (all $1$ by default), $\iota$ is the big-endian joint index (\py!numpy.ravel_multi_index!), $\delta_c$ is the control wire's dimension, and $\delta_t$ the target's. \py!Unitary! is its matrix reshaped to \py!ds + ds!. \py!Init(q, v)! is the basis state $\ket{v\bmod\delta}$, \py!Post(q, v)! the effect $\bra{v\bmod\delta}$, and \py!Prepare(qs, vector)! the given vector reshaped to the wires' dimensions.
+\end{definition}
+
+\py!gate_tensor(g, ds, n, d)! returns the tensor of a unitary gate with axes (outputs, inputs) on wires of dimensions \py!ds!; \py!_op_from(fn, dims)! builds such a tensor from a basis map $x\mapsto(\text{coefficient},y)$ by accumulating the coefficient at index $(y,x)$ for every joint basis state $x$ in \py!numpy.ndindex! order. \py!gate_tensor! raises \py!TypeError! for a gate it does not define (\py!Init!, \py!Post!, \py!Discard!, \py!Measure!, \py!Swap!, \py!Prepare!, and the loop gates).
+
+\subsection{Evaluation}
+
+\begin{algorithm}[Dense evaluation]\label{alg:bench-tools-dense-evaluate}
+\py!evaluate(c, n, d)!:
+\begin{enumerate}
+\item When \py!c.outputs! is set or a gate is a \py!Chain!, \py!Pairs!, \py!Tree!, \py!LowerMCX!, or \py!IndexedMCX!, replace $c$ by \py!common.expand(c, n)! (\cref{alg:bench-tools-expand}).
+\item Lay out the remaining registers copy-major with copy names \code!q[i]! (\py!_expand!, the rule of \cref{def:bench-tools-layout}) and evaluate each copy's dimension at $(n,d)$.
+\item Start a tensor state: a scalar tensor $1$ with an empty label list. For each wire whose first gate is neither \py!Init! nor \py!Prepare! (a wire with no gate included), and each of its copies $e$, append an identity $\delta_e\times\delta_e$ tensor with labels \py!("live", e)! and \py!("in", e)!. The boundary inputs are these copies in layout order.
+\item Apply each gate in order; a gate naming a register acts on every copy, one application per copy index:
+  \begin{itemize}
+  \item \py!Prepare! and \py!Init! append their vector with \py!("live", e)! labels;
+  \item \py!Post! contracts the effect into the live axis of its wire;
+  \item \py!Discard! renames the live axis \py!("live", e)! to \py!("env", j)! with a fresh counter $j$;
+  \item \py!Measure! contracts the copy tensor $\mathrm{cp}[k,k,k]=1$ into the live axis, giving a new live axis and a fresh \py!("env", j)! axis;
+  \item \py!Swap! exchanges the two live labels;
+  \item every other gate contracts its tensor (\py!gate_tensor!, or the single-wire matrix) into the live axes of its wires by \py!numpy.tensordot! and puts the new live axes first.
+  \end{itemize}
+\item Order the axes as the live outputs in layout order, then the environment axes in label order, then the inputs in layout order, and multiply by the circuit scalar at $(n,d)$.
+\item Without environment axes return the tensor $T[O,I]$. Otherwise reshape it to $V[o,e,i]$ (outputs, environment, and inputs each flattened row-major) and return the CPM tensor $T[o,o',i,i']=\sum_eV[o,e,i]\,\overline{V[o',e,i']}$.
+\end{enumerate}
+\end{algorithm}
+
+The CPM tensor is the Choi-style representation of the completely positive map~\cite{selinger2007cpm} the circuit denotes once a wire is discarded or measured.
+
+\section{The ArchytasZX Adapter}\label{sec:bench-tools-azx}
+
+\module{benchmarks.tools.archytaszx} runs the engine on one instance in the worker's process: it generates the equation script, then runs the engine stages \code!decide!, \code!certificate!, \code!lean_export!, and \code!lean_check! of \module{benchmarks.stages} (\cref{ch:bench-pipeline}).
+
+\begin{signature}
+\py!supports(inst, point) -> None!\\
+\py!run(inst, job: dict) -> dict!\\
+\py!_b3(run_: stages.Run) -> dict!
+\end{signature}
+
+\py!supports! returns \py!None! for every instance: a version the translator refuses is reported by \py!run! as unsupported.
+
+\begin{algorithm}[ArchytasZX run]\label{alg:bench-tools-azx-run}
+Let \py!st = job["config"]["stages"]!, \py!limit = float(st["timeout_seconds"])!, and $(n,d)$ the job's point (\py!None! where symbolic). The record starts as \py!{"expected": common.expected(inst), "stages": {}}!. Each stage below is announced by \py!worker.mark! and run by \py!stages.timed(fn, limit)!, which holds it to its own CPU limit and records \code!status!, \code!cpu!, \code!wall!, \code!peak_mb!, and, with tracing on, span trees.
+\begin{enumerate}
+\item \textbf{generate}: inside the trace span \code!generate.script!, \py!sc = subject.script(inst, n, d)!. The stage records \code!script_bytes! (the length of \py!sc.text! in characters), \code!naive_nodes! (\py!sc.nodes!, the node count of the naive translation), \code!literal! (\py!sc.literal!), and \code!point_claim! (\py!sc.point_claim!, \cref{sec:bench-tools-claims}). A \py!translate.Unsupported! raised outside the timer, or a stage status \code!error! whose detail contains \code!Unsupported!, returns \py!common.unsupported(detail)! at once. Any other status other than \code!ok! ends the run with \code!outcome! set to that status.
+\item \textbf{decide}: a fresh session (\py!stages.new_run()!, concrete axioms on) runs every line of the script; the stage records the decision's fields (\code!verdict!, \code!certified!, \code!method!, \code!inner_method!, \code!reason!, \code!rungs!, \code!derivation_steps!, \code!samples!, \code!assumptions!, \code!family_holds!). The record takes \code!verdict!, \code!certified!, \code!outcome! $=$ \py!common.outcome(inst, status, verdict)!, and \code!wrong!.
+\item \textbf{B3 sizes}: when decide's status is \code!ok!, the verdict is \code!equal!, and the instance is an S equation, \code!b3! is \py!size.b3(pair.payload, pair.left, pair.right)! of the session's last \azx!decide! outcome; any exception there sets \code!b3! to \py!{"error": message[:200]}!. \py!_b3! raises \py!RuntimeError("no decision pair")! when that outcome carries no decision pair.
+\item A run is \term{decided} when decide's status is \code!ok! and the verdict is \code!equal!, \code!unequal!, or \code!equal_uncertified!; otherwise the skip reason is \code!no decided verdict!.
+\item \textbf{certificate} (when \code!st.certificate!): on a decided run, \azx!certificate kernel!; when it succeeds, \code!certificate_bytes! is the UTF-8 length of \azx!certificate show!'s text. On an undecided run the stage is \py!stages.not_run(reason)!, that is \py!{"status": "not_run", "detail": reason}!.
+\item In a temporary directory with prefix \code!bench-lean-!, let \code!path! be \file{export.lean}.
+\item \textbf{lean\_export} (when \code!st.lean_export!): with no skip reason, \azx!certificate lean path!; a status other than \code!ok! sets the skip reason \code!no Lean file!. With a skip reason the stage is not run. When \code!st.lean_export! is off, the skip reason becomes \code!lean_export off! unless one is set.
+\item \textbf{lean\_check} (when \code!st.lean_check!): with no skip reason, the Lean runner on \code!path! with CPU limit \py!limit! and memory fraction \code!st.memory_fraction! (default $0.85$), timed without a profiling timer (the Lean runner enforces its own limits; \cref{ch:bench-pipeline}); otherwise not run.
+\end{enumerate}
+The certificate stage does not gate the Lean stages: a failed certificate stage leaves the Lean export to run.
+\end{algorithm}
+
+\section{PyZX and QuiZX}\label{sec:bench-tools-pyzx}
+
+\tool{PyZX}{https://github.com/zxcalc/pyzx}~\cite{kissinger2020pyzx} is a Python library for the ZX calculus~\cite{coecke2011interacting}; its \code!full_reduce! applies the graph-theoretic simplifications of Duncan, Kissinger, Perdrix, and van de Wetering~\cite{duncan2020graph}. \tool{QuiZX}{https://github.com/zxcalc/quizx} is its Rust port with Python bindings; its \code!full_simp! is the corresponding strategy. Both work on qubits only and on concrete diagrams. The two adapters share one function and one driver, \file{drivers/zx.py}.
+
+\begin{signature}
+\py!pyzx.ENV = "pyzx"!, \py!PACKAGE = "pyzx"!, \py!PROBE = ("pyzx", "numpy")!, \py!DIMENSIONS = (2,)!\\
+\py!quizx.ENV = "quizx"!, \py!PACKAGE = "quizx"!, \py!PROBE = ("quizx",)!, \py!DIMENSIONS = (2,)!\\
+\py!pyzx.zx_run(tool: str, env: str, package: str, inst, job) -> dict!
+\end{signature}
+
+Both \py!supports! functions return \py!rival.installed(ENV)! when it is set, \code!qubits only! for a subject with neither a general $d$ nor $d=2$, and \py!None! otherwise. \py!pyzx.run! is \py!zx_run("pyzx", "pyzx", "pyzx", inst, job)!; \py!quizx.run! is \py!zx_run("quizx", "quizx", "quizx", inst, job)!.
+
+\begin{algorithm}[ZX run]\label{alg:bench-tools-zx-run}
+\py!zx_run(tool, env, package, inst, job)!:
+\begin{enumerate}
+\item The symbolic run is unsupported (\code!no symbolic n or d!); $d\neq2$ is unsupported (\code!qubits only (d = 2)!).
+\item Preparation: \py!c = rival.qubit_ir(inst, n)!; \py!rival.qiskit_circuit(c, unit_scalar=False)! gives \py!qc!, \py!inits!, and \py!posts!; \py!text, phase = rival.qasm_and_zx_phase(qc)!; for QuiZX, \py!rival.integers_below(text, 63, ...)!. The payload is
+\begin{lstlisting}[style=python]
+{"tool": tool, "qasm": text, "phase": phase,
+ "circuit_scalar": rival.scalar_parts(c.scalar)[:2],   # [zero, log|scalar|]
+ "inits": {"i": v, ...}, "posts": {"i": v, ...},
+ "wires": len(c.wires), "rhs": rival.spec_pyzx(inst, n)}
+\end{lstlisting}
+\item \py!res = rival.run_driver(env, "zx", payload, limit)!, and the record is \py!rival.finish(inst, res, prep, {package: rival.version(env, package)})!.
+\item When the result has \code!vertices_after!, \code!b3! is \py!{"tool": {"vertices": vertices_after, "edges": edges_after}, "naive": {"vertices": vertices_before}}!.
+\end{enumerate}
+The circuit's global phase travels as \code!phase! and its scalar's magnitude as \code!circuit_scalar!, so the driver compares the full scalar.
+\end{algorithm}
+
+\subsection{The ZX driver}\label{sec:bench-tools-zx-driver}
+
+\file{drivers/zx.py} runs as \code!python -I zx.py PAYLOAD! in the tool's environment. It sets \py!sys.set_int_max_str_digits(0)! and reads the payload.
+
+\paragraph{Reading.} For PyZX the circuit graph is \py!pyzx.Circuit.from_qasm(qasm).to_graph()!, the specification \py!_build(pyzx.Graph(), rhs)!, and the reduction \py!pyzx.full_reduce!. For QuiZX they are \py!quizx.qasm(qasm)!, \py!_build(quizx.VecGraph(), rhs)!, and \py!quizx.full_simp!. \py!_build(g, spec)! adds vertex $k$ of the specification with \py!g.add_vertex(kind, k, k, Fraction(phase))! (qubit and row both $k$; kinds \code!B! $\mapsto0$, \code!Z! $\mapsto1$, \code!X! $\mapsto2$), adds each edge with its type, and sets the inputs and outputs. The Init values are plugged with \py!apply_state! and the Post values with \py!apply_effect!, each given one character per wire: the value, or \code!/! for a wire left open.
+
+\paragraph{Notation.} Let $C$ be the circuit graph so read, $\phi$ the payload's \code!phase!, $\mu=e^{\ell_c}$ the magnitude from \code!circuit_scalar! $[z_c,\ell_c]$, $S$ the specification graph, and $\lambda$ the specification scalar (\code!rhs.scalar!). The equation states $\mu e^{i\phi}\,C=\lambda S$. For graphs $A,B$ with the same boundary, $B^\dagger A$ is \py!A.copy()! composed with \py!B.adjoint()!, then reduced.
+
+\begin{algorithm}[ZX check]\label{alg:bench-tools-zx-check}
+Let $(i_C,o_C)$ be the input and output counts of $C$, $m$ the wire count, and record \code!vertices_before! $=|V(C)|$.
+\begin{enumerate}
+\item When $(i_C,o_C)\neq(m-|\text{inits}|,\,m-|\text{posts}|)$: verdict \code!unknown!, reason \code!the tool read the circuit with another boundary!.
+\item Else, when $(i_C,o_C)$ differs from the counts of $S$: verdict \code!unequal!, reason \code!interface!.
+\item Else, when $i_C=0$ (a state or a scalar), mode \code!inner products!: reduce the closed graphs $\braket{s}{c}=S^\dagger C$, $\braket{c}{c}=C^\dagger C$, and $\braket{s}{s}=S^\dagger S$; each is its graph's scalar when no vertex remains and \py!None! otherwise. Any \py!None! gives \code!unknown! (reason \code!an inner product did not reduce to a scalar!). Otherwise \code!equal_up_to_scalar! is \py!norm_identity!, and the verdict is \code!equal! when \py!states_equal! holds, else \code!unequal!.
+\item Else, mode \code!identity!: reduce $G=S^\dagger C$ and test whether it is a \term{plain-wire identity} (\py!_identity!: as many inputs as outputs, and input $j$'s only neighbor is output $j$ through a simple edge). When it is, reduce $R=S^\dagger S$ and test it; when that holds and $i_C\neq o_C$, reduce $L=C^\dagger C$ and test it.
+  \begin{enumerate}
+  \item $G$ not an identity: \code!unknown!.
+  \item $R$ not an identity or its scalar zero: \code!unknown!, reason \code!spec^dagger . spec did not reduce to a nonzero identity multiple!.
+  \item $L$ computed and not an identity: \code!unknown!, reason \code!circuit^dagger . circuit did not reduce to a multiple of the identity!.
+  \item Otherwise \code!equal_up_to_scalar! is \py!gram_match(sigma, rho, tau)! when $L$ was computed and true otherwise; the verdict is \code!equal! when that holds and \py!map_scalar_match(sigma, rho, payload)! holds, else \code!unequal!. Here $\sigma,\rho,\tau$ are the scalars of $G$, $R$, and $L$.
+  \end{enumerate}
+  The graph whose size is reported becomes $G$.
+\item Record \code!cpu! and \code!wall!; then reduce the reported graph once more (the circuit $C$ in the first three cases, $G$ in the last) and record \code!vertices_after! and \code!edges_after!. Print the JSON object.
+\end{enumerate}
+\end{algorithm}
+
+\begin{proposition}[Scalar tests]\label{prop:bench-tools-zx-scalars}
+Let $c'=\mu e^{i\phi}C$ and $s'=\lambda S$.
+\begin{enumerate}
+\item For states, $\braket{s'}{c'}=\bar\lambda\mu e^{i\phi}\braket{s}{c}$, $\braket{c'}{c'}=\mu^2\braket{c}{c}$, and $\braket{s'}{s'}=|\lambda|^2\braket{s}{s}$; \py!states_equal! tests that the three are equal, which holds exactly when $\lVert c'-s'\rVert^2=0$.
+\item For maps with $S^\dagger S=\rho I$, $\rho\neq0$, and $S^\dagger C=\sigma I$: when $i_C=o_C$, $C=(\sigma/\rho)S$, and \py!map_scalar_match! tests $\sigma\mu e^{i\phi}\bar\lambda=|\lambda|^2\rho$, that is $c'=s'$ for $\lambda\neq0$. When $i_C\neq o_C$, \py!gram_match! additionally tests the Cauchy--Schwarz equality $\tau\rho=|\sigma|^2$ for $C^\dagger C=\tau I$, which makes $C$ proportional to $S$.
+\item \py!norm_identity! tests $|\braket{s}{c}|^2=\braket{c}{c}\braket{s}{s}$, proportionality of the two states without their scalars.
+\end{enumerate}
+\py!map_scalar_match! is false when $\lambda=0$ or the circuit scalar is zero.
+\end{proposition}
+
+\begin{signature}
+\py!LOG_LIMIT = 600.0!\quad\py!LOG_TOL = 1e-9!\quad\py!PHASE_TOL = 1e-6!\\
+\py!scalar_parts(s) -> tuple[bool, float, float]!\\
+\py!_shift(parts, log_add, arg_add, zero_factor=False)!\\
+\py!_same(x, y) -> bool!
+\end{signature}
+
+Every scalar is compared as a triple (zero, $\log|z|$, $\arg z$) so that values beyond the float range compare in log space. \py!scalar_parts(s)! reads a PyZX scalar's stored parts without \code!to_number!: zero gives \py!(True, -inf, 0.0)!; otherwise $\log|z|$ starts at $\tfrac12\,\mathtt{power2}\ln2$ and $\arg z$ at $\pi\cdot\mathtt{phase}$, and the factors \code!floatfactor!, $1+e^{i\pi p}$ for each \code!phasenodes! entry $p$, and $\sum c\,e^{i\pi p}$ over \code!sum_of_phases! (when that mapping is nonempty and the sum is nonzero) each add $\log|f|$ and $\arg f$; a zero factor gives the zero triple. \py!_shift! multiplies a triple by a factor given by its log magnitude and argument (zero when \py!zero_factor!). \py!_same(x, y)! compares two triples: when each is zero or has $|\log|\leq$ \py!LOG_LIMIT!, as complex numbers with $|a-b|\leq10^{-9}\max(1,|a|,|b|)$; otherwise, when either is zero, true only when both are; otherwise $|\Delta\log|\leq$ \py!LOG_TOL! and $|\operatorname{remainder}(\Delta\arg,2\pi)|\leq$ \py!PHASE_TOL!. \py!norm_identity! compares through \code!to_number! when every $|\log|\leq$ \py!LOG_LIMIT! (relative tolerance $10^{-9}$ against $\max(1,|\braket{c}{c}\braket{s}{s}|)$), and otherwise in log space: $|2\ell_{cs}-\ell_{cc}-\ell_{ss}|\leq$ \py!LOG_TOL! and the phase of $\braket{c}{c}\braket{s}{s}$ within \py!PHASE_TOL! of $0$, with zeros compared exactly.
+
+\section{Qiskit and Cirq}\label{sec:bench-tools-qiskit}
+
+\tool{Qiskit}{https://github.com/Qiskit/qiskit}~\cite{javadi2024qiskit} and \tool{Cirq}{https://github.com/quantumlib/Cirq} are circuit frameworks with dense simulators. Their adapters simulate the naive circuit at a concrete point and compare the result with the specification's dense tensor. Simulation is not proof: the verdict depends on a floating-point tolerance, and the size of the point is bounded by memory. Both share the driver \file{drivers/sim.py} and the method \py!rederive = common.rederive_float!.
+
+\subsection{The Qiskit adapter}
+
+\begin{signature}
+\py!ENV = "qiskit"!, \py!PACKAGE = "qiskit"!, \py!PROBE = ("qiskit.qasm2", "qiskit.quantum_info", "numpy")!,\\
+\py!DIMENSIONS = (2,)!, \py!MAX_STATE_QUBITS = 26!, \py!MAX_MAP_QUBITS = 13!
+\end{signature}
+
+\py!supports! is that of PyZX. \py!run(inst, job)!:
+\begin{enumerate}
+\item The symbolic run and $d\neq2$ are unsupported as for PyZX.
+\item \py!c = rival.qubit_ir(inst, n)!; $m$ is the wire count; the run is a \term{state run} when the number of \py!Init! gates equals $m$. A state run with $m>26$ or a map run with $m>13$ is unsupported (\code!m qubits: too large to simulate!).
+\item \py!qc, inits, posts = rival.qiskit_circuit(c)! (the scalar must have modulus $1$); \py!rhs = rival.spec_tensor(inst, n, 2)!, saved with \py!numpy.save! to a temporary \code!.npy! file.
+\item \py!text, phase = rival.qasm_and_phase(qc)!; the payload is \py!{"tool": "qiskit", "qasm": text, "global_phase": phase, "wires": m, "inits", "posts", "rhs": path}!.
+\item \py!rival.run_driver("qiskit", "sim", payload, limit)!, the \code!.npy! file deleted afterwards, and the record \py!rival.finish(..., {"qiskit": version})!.
+\end{enumerate}
+
+\subsection{The Cirq adapter}
+
+\begin{signature}
+\py!ENV = "cirq"!, \py!PACKAGE = "cirq-core"!, \py!PROBE = ("cirq", "numpy")!,\\
+\py!MAX_ENTRIES = 1 << 26!, \py!EINSUM_LETTERS = 52!
+\end{signature}
+
+The Cirq adapter runs qudits of any dimension. \py!supports! returns \py!rival.installed("cirq")!. \py!EINSUM_LETTERS! is the number of subscripts \py!numpy.einsum! names (\code!a!--\code!z!, \code!A!--\code!Z!); Cirq applies each gate with one \code!einsum! over the target tensor's axes and the gate's. \py!run(inst, job)!:
+\begin{enumerate}
+\item The symbolic run is unsupported.
+\item \py!c = common.concrete_circuit(inst, n, d)!. A \py!Measure! or \py!Discard! is unsupported (\code!measurement or discard ...!); a wire whose dimension evaluates to anything but $d$ is unsupported (\code!wires of mixed dimensions!).
+\item With $m$ wires, Init values $v\bmod d$, and Post values $v\bmod d$: the run is a state run when every wire has an Init. Let $a=m$ for a state run and $2m$ otherwise, and $r$ the largest arity of a gate other than \py!Init! and \py!Post!. Unsupported when $a>64$ (\code!a tensor axes: above numpy's 64!), when $a+r>52$ (\code!a tensor axes and an r-qudit gate: above numpy.einsum's 52 subscripts!), and when $d^{\,a}>2^{26}$ (\code!m qudits of dimension d: too large to simulate!).
+\item Every gate but \py!Init! and \py!Post! becomes a $d^k\times d^k$ matrix: \py!Swap! the identity on $d^2$ with its two output axes exchanged, every other gate \py!dense.gate_tensor(g, [d]*k, n or 0, d)! reshaped. The payload lists \py![wire indices, real parts, imaginary parts]! per gate, the scalar \py![re, im]! of \py!c.scalar! at $d$, the Init and Post values, $d$, $m$, and the path of the saved specification tensor.
+\item \py!rival.run_driver("cirq", "sim", payload, limit)! and \py!rival.finish(..., {"cirq-core": version})!.
+\end{enumerate}
+
+\subsection{The simulation driver}\label{sec:bench-tools-sim}
+
+\file{drivers/sim.py} runs as \code!python -I sim.py PAYLOAD!; \py!ATOL = 1e-8!.
+
+\paragraph{Qiskit tensor.} \py!qc = qasm2.loads(qasm)! with \py!qc.global_phase! set to the payload's. For a state run, every wire with Init value $1$ gets an \code!x! prepended (an empty copy of the circuit with phase $0$, the \code!x!, then the circuit composed after it); the result is \py!Statevector(qc).data! reshaped to $[2]^m$ with its axes reversed (big-endian). For a map run, it is \py!Operator(qc).data! reshaped to $[2]^{2m}$ with the output axes reversed and the input axes reversed: the tensor $T[\text{outputs},\text{inputs}]$, first wire first.
+
+\paragraph{Cirq tensor.} The qudits are \py!cirq.LineQid.range(m, dimension=d)! and each gate is \py!cirq.MatrixGate(mat, qid_shape=(d,)*k)! on its qudits. For a state run the initial state is the big-endian index $\sum_i v_id^{\,m-1-i}$ of the Init values, and the tensor is the scalar times \py!cirq.final_state_vector(circuit, initial_state=idx, qubit_order=qs, dtype=complex128)! reshaped to $[d]^m$. For a map run it is the scalar times \py!cirq.unitary(circuit)! (the $d^m$ identity for an empty circuit) reshaped to $[d]^{2m}$.
+
+\begin{algorithm}[Simulation check]\label{alg:bench-tools-sim}
+\begin{enumerate}
+\item Load the specification tensor $B$ from the \code!.npy! file, start the timers, and compute the tool's tensor $A$.
+\item For a map run, index the input axis of every Init wire at its value and the output axis of every Post wire at its value. For a state run, index the output axis of every Post wire.
+\item Flatten both. Different shapes give \code!unequal! with reason \code!shape!.
+\item Otherwise let $s=\max(\max_j|A_j|,\max_j|B_j|)$ and $\epsilon=\mathtt{ATOL}\cdot s$. The verdict is \code!equal! when $|A_j-B_j|\leq\epsilon$ for every $j$ and \code!unequal! otherwise. Let $k=\arg\max_j|B_j|$ and $\lambda=A_k/B_k$ when $|B_k|>\epsilon$, else $0$; \code!equal_up_to_global_phase! holds when $\bigl||\lambda|-1\bigr|\leq\mathtt{ATOL}$ and $|A_j-\lambda B_j|\leq\epsilon$ for every $j$. \code!max_rel_diff! is $\max_j|A_j-B_j|/s$ ($0$ when $s=0$).
+\item Print \code!verdict!, \code!equal_up_to_global_phase!, \code!max_rel_diff!, \code!cpu!, \code!wall! (or \code!verdict! and \code!reason! for a shape mismatch).
+\end{enumerate}
+\end{algorithm}
+
+\section{MQT QCEC}\label{sec:bench-tools-qcec}
+
+\tool{MQT QCEC}{https://github.com/munich-quantum-toolkit/qcec}~\cite{burgholzer2021qcec} checks the equivalence of two qubit circuits with decision diagrams. Its adapter compares the naive circuit with the equation's reference circuit at a concrete point; both pass through OpenQASM~2.
+
+\begin{signature}
+\py!ENV = "qcec"!, \py!PACKAGE = "mqt.qcec"!, \py!PROBE = ("mqt.core.ir", "mqt.qcec")!, \py!DIMENSIONS = (2,)!\\
+\py!_side(c: ir.Circuit) -> tuple[str, list[int]]!\\
+\py!phase_gates(phase: float) -> str!
+\end{signature}
+
+\py!supports! is that of PyZX. \py!phase_gates(phase)! reduces the phase by \py!math.remainder(phase, 2*pi)!, returns the empty string when $|\phi|<10^{-12}$, and otherwise the four lines \code!u1(a) q[0];!, \code!x q[0];!, \code!u1(a) q[0];!, \code!x q[0];! with $a$ written by \code!f"{phase:.20f}"!; their product is $\operatorname{diag}(1,e^{i\phi})X\operatorname{diag}(1,e^{i\phi})X=e^{i\phi}I$. \py!_side(c)! translates one circuit: \py!qc, inits, posts = rival.qiskit_circuit(c)!; post-selected wires are unsupported; an empty copy of \py!qc! with global phase $0$ receives an \code!x! on every wire with Init value $1$; \py!text, phase = rival.qasm_and_phase(prep.compose(qc))!; it returns \py!text.rstrip("\n") + "\n" + phase_gates(phase)! and the sorted Init wires, which become \term{ancillary} wires (initialized to $\ket0$, then flipped where the Init value is $1$).
+
+\py!run(inst, job)!:
+\begin{enumerate}
+\item The symbolic run and $d\neq2$ are unsupported.
+\item \py!c = rival.qubit_ir(inst, n)!, \py!r = rival.reference_circuit(inst, n, 2)! (the equation's reference circuit, else the specification as one dense gate, \cref{sec:bench-tools-spec}); \py!_side! of each.
+\item The boundary of a side is (wires minus ancillary wires, wires). When the two differ, the run is unsupported with \code!the circuit (i inputs, o outputs) and the reference (i' inputs, o' outputs) differ in boundary!.
+\item The payload, with the keys \code!qasm!, \code!ancillary!, \code!reference!, and \code!reference_ancillary! (the two texts and their ancillary lists), goes to \py!rival.run_driver("qcec", "qcec", payload, limit)!, and the record is \py!rival.finish(..., {"mqt.qcec": version})!.
+\end{enumerate}
+
+\subsection{The QCEC driver}
+
+\begin{signature}
+\py!PHASE_TOL = 1e-9!\quad\py!PHASE_SECONDS = 30.0!\\
+\py!global_phase(qasm: str, reference: str) -> float | None!
+\end{signature}
+
+\begin{algorithm}[QCEC check]\label{alg:bench-tools-qcec}
+\begin{enumerate}
+\item Import \py!mqt.core.ir.QuantumComputation! and \py!mqt.qcec.verify!, read the payload, and start the timers.
+\item $A$ and $B$ are \py!QuantumComputation.from_qasm_str! of the two texts.
+\item When the ancillary list is nonempty and equal to the reference's, build a \term{miter}: invert $B$, append its operations to $A$, and let $B$ be the empty computation on $A$'s qubit count.
+\item Mark the listed wires ancillary in each (\py!set_circuit_qubit_ancillary!).
+\item \py!res = verify(A, B, check_partial_equivalence=False, run_simulation_checker=False, run_zx_checker=False)!: full equivalence by the decision-diagram alternating and construction checkers alone.
+\item The lower-cased last component of \py!str(res.equivalence)! maps to the verdict: \code!equivalent! and \code!equivalent_up_to_global_phase! to \code!equal!, \code!not_equivalent! and \code!equivalent_up_to_phase! to \code!unequal!, and \code!probably_not_equivalent! and anything else to \code!unknown!. Stop the timers.
+\item On \code!equivalent_up_to_global_phase!, outside the timed span, \py!global_phase(qasm, reference)! forks a child (\py!multiprocessing! context \code!fork!) that builds $A\cdot B^{-1}$, simulates it on $\ket{0\cdots0}$ with \py!mqt.core.dd!, and sends $\arg\langle0\cdots0|B^{-1}A|0\cdots0\rangle$ when that amplitude's modulus exceeds $0.5$, else \py!None!. The parent waits \py!PHASE_SECONDS!, kills a child still alive, and returns \py!None! on a timeout or an \py!EOFError!. \code!up_to_global_phase_only! is \py!None! when the phase is \py!None!, else whether $|\text{phase}|>$ \py!PHASE_TOL!.
+\item Print \code!verdict!, \code!equivalence!, \code!up_to_global_phase_only!, \code!global_phase!, \code!miter!, \code!cpu!, and \code!wall!.
+\end{enumerate}
+\end{algorithm}
+
+Both sides carry their global phases as gates. An equivalence that QCEC reports only up to a global phase still gives the verdict \code!equal!; the record keeps the measured phase in \code!global_phase! and \code!up_to_global_phase_only!.
+
+\section{Feynman}\label{sec:bench-tools-feynman}
+
+\tool{Feynman}{https://github.com/meamy/feynman} is a Haskell toolkit whose equivalence checker \code!feynver! compares two Clifford+$T$ circuits by path sums~\cite{amy2018pathsums}. Its adapter compares the naive circuit with the equation's own reference circuit; the specification is never used.
+
+\begin{signature}
+\py!ENV = "feynman"!, \py!DIMENSIONS = (2,)!\\
+\py!BASIS = ["h", "x", "z", "s", "sdg", "t", "tdg", "cx", "ccx", "swap", "p"]!\\
+\py!installed() -> str | None!\quad\py!qc_text(c: ir.Circuit) -> str!\quad\py!_interface(c) -> tuple[int, frozenset[int]]!
+\end{signature}
+
+\py!installed()! returns \code!not installed: run benchmarks/tools/setup_rivals.sh haskell! when \file{VENVS/feynman/bin/feynver} is missing. \py!supports! returns that reason, then \code!no gate-level reference circuit for this equation! when the equation has no reference, then \code!qubits only! as for PyZX.
+
+\paragraph{The \texttt{.qc} file.} \py!qc_text(c)! translates a flat qubit circuit: \py!qc, inits, posts = rival.qiskit_circuit(c)!; post-selected wires are unsupported; \py!t = rival.transpiled(qc, BASIS)!. The wires are named \code!q0!, \code!q1!, \ldots; the file is
+\begin{lstlisting}[style=grammar]
+.v q0 q1 ... q(m-1)
+.i <names of the wires without an Init>
+
+BEGIN
+X q<i>                   (one line per wire with Init value 1)
+<one or more lines per transpiled instruction>
+END
+\end{lstlisting}
+Each instruction maps as follows: \code!barrier! is skipped; \code!p(!$\theta$\code!)! with $k=\theta/(\pi/4)$ is unsupported when $|k-\operatorname{round}k|>10^{-9}$ (\code!a phase that is not a multiple of pi/4!) and otherwise writes the gates of $\operatorname{round}(k)\bmod8$ on its qubit: $0\mapsto$ none, $1\mapsto$ \code!T!, $2\mapsto$ \code!P!, $3\mapsto$ \code!P!, \code!T!, $4\mapsto$ \code!Z!, $5\mapsto$ \code!Z!, \code!T!, $6\mapsto$ \code!P*!, $7\mapsto$ \code!T*!; \code!x! writes \code!tof q!; \code!h!, \code!z!, \code!s!, \code!sdg!, \code!t!, \code!tdg!, \code!cx!, \code!ccx!, \code!swap! write \code!H!, \code!Z!, \code!P!, \code!P*!, \code!T!, \code!T*!, \code!cnot!, \code!tof!, \code!swap! followed by the qubit names; any other instruction is unsupported (\code!gate NAME outside Clifford+T!). The global phase is not written. Init wires are ancillas: absent from \code!.i! and flipped by \code!X! where the Init value is $1$.
+
+\paragraph{The run.} The symbolic run is unsupported, and so are a failed \py!supports! and $d\neq2$. \py!ca = rival.qubit_ir(inst, n)! and \py!cb = rival.explicit_reference(inst, n, 2)!; \py!_interface! of each is (wire count, set of wires with an \py!Init! or \py!Prepare!), and different interfaces are unsupported (\code!circuit and reference differ in width or inputs!). The two files \file{a.qc} and \file{b.qc} go to \py!rival.run_binary([feynver, a.qc, b.qc], limit)! in a temporary directory. With status \code!ok!, the verdict is \code!equal! when standard output starts with \code!Equal!, \code!unequal! when it starts with \code!Not equal!, and \code!unknown! otherwise (\code!feynver!'s third answer is \code!Inconclusive!). The record is \py!rival.finish(..., {"feynman": "d2c382a"})!.
+
+\section{DiZX}\label{sec:bench-tools-dizx}
+
+\tool{DiZX}{https://github.com/jvdwetering/dizx}~\cite{dizx} is a qudit version of PyZX; its \code!clifford_simp! simplifies Clifford diagrams at odd prime dimension. The adapter composes the naive circuit with the inverse of the equation's own reference circuit and checks that the simplified graph is the identity.
+
+\begin{signature}
+\py!ENV = "dizx"!, \py!PROBE = ("dizx", "dizx.simplify")!\\
+\py!clifford_ops(c: ir.Circuit, d: int) -> list[list]!
+\end{signature}
+
+\py!supports! returns \py!rival.installed("dizx")!, then \code!no gate-level reference circuit for this equation!, else \py!None!. \py!clifford_ops(c, d)! lists \py![name, wire indices, power]! per gate: \py!Z(q, a)! gives \py![["Z", [q], a]]! and \py!X(q, a)! gives \py![["HAD", [q], 1], ["Z", [q], a], ["HAD", [q], 3]]!, with $a$ evaluated at $d$ and reduced mod $d$ (DiZX's own X gate drops its phase in the graph); \py!F(q, p)! gives \py!["HAD", [q], p % 4]!; \py!CX! and \py!CZ! give \py![name, [c, t], s]!; \py!Swap! gives \py!["SWAP", [a, b], 1]!; every other gate, \py!Init! and \py!Post! included, is unsupported (\code!gate NAME is not a DiZX Clifford gate!).
+
+\py!run(inst, job)!: the symbolic run is unsupported; a failed \py!supports! or a $d$ that is below $3$, even, or not prime (\py!subject.is_prime!) is unsupported (\code!odd prime d only!). \py!a = rival._at_n(common.concrete_circuit(inst, n, d), n)! and \py!b = rival._at_n(rival.explicit_reference(inst, n, d), n)!; different wire counts are unsupported (\code!circuit and reference differ in width!); both are listed by \py!clifford_ops!; a scalar other than the string \code!1! on either side is unsupported (\code!a circuit scalar!). The payload \py!{"d": d, "n": len(a.wires), "a": ops_a, "b": ops_b}! goes to \py!rival.run_driver("dizx", "dizx", payload, limit)!; the record is \py!rival.finish(..., {"dizx": "benchmarks/.venvs/src/dizx"})!.
+
+\subsection{The DiZX driver}
+
+\begin{algorithm}[DiZX check]\label{alg:bench-tools-dizx}
+\begin{enumerate}
+\item Import \py!dizx!, \py!dizx.simplify.clifford_simp!, and \py!dizx.utils.VertexType!; set \py!dizx.settings.dim = d!; start the timers.
+\item Build \py!dizx.Circuit(n, dim=d)!: each op of $a$ in order, then each op of $b$ in reverse order inverted. \py!add(circuit, op, inverse, d)! appends \code!SWAP! once; otherwise, with period $4$ for \code!HAD! and $d$ for the others, it appends the gate \code!name! on the op's wires $k=(\pm\text{power})\bmod\text{period}$ times (minus when inverting).
+\item \py!g = circuit.to_graph()!; record \code!vertices_before!; \py!clifford_simp(g)!.
+\item The \term{chain} from input $i$ walks away from it: at each step the unvisited neighbors must be exactly one vertex $v$; the edge must not be both Hadamard and simple (\code!e.had and e.simple!); a Hadamard edge appends its weight \code!e.had! mod $d$; a boundary $v$ ends the chain with its weight list; otherwise $v$ must be a Z vertex with zero phase and exactly two neighbors. Any violation gives no chain.
+\item Input $i$ meets output $o$ by the identity when the chain from $i$ ends at $o$ with an even number of weights $w_1,\ldots,w_{2r}$, no $w_{2j}=0$, and $\prod_{j=1}^{r}\bigl(-w_{2j-1}\,w_{2j}^{-1}\bigr)\equiv1\pmod d$: each pair of Hadamard edges of weights $(a,b)$ through a phase-free spider maps $x\mapsto-(a/b)\,x$.
+\item The verdict is \code!equal! when the graph has $n$ inputs and $n$ outputs and every input meets its output in order by the identity, and \code!unknown! otherwise. Print \code!verdict!, \code!vertices_before!, \code!vertices_after!, \code!cpu!, and \code!wall!.
+\end{enumerate}
+\end{algorithm}
+
+DiZX never gives \code!unequal!; global phases and scalars are not compared.
+
+\section{AutoQ}\label{sec:bench-tools-autoq}
+
+\tool{AutoQ}{https://github.com/fmlab-iis/AutoQ}~\cite{chen2023autoq} verifies quantum circuits against pre- and postconditions given as sets of states, using tree automata. Its parameterized successor AutoQ-Para~\cite{abdulla2026parameterized} has no public release, so the adapter runs AutoQ 2.0 on concrete states only and the symbolic run is unsupported.
+
+\begin{signature}
+\py!ENV = "autoq"!, \py!DIMENSIONS = (2,)!\\
+\py!BASIS = ["x", "z", "h", "s", "sdg", "t", "tdg", "cx", "cz", "ccx", "swap"]!\\
+\py!installed() -> str | None!\quad\py!_amp(z: complex) -> str!
+\end{signature}
+
+\py!installed()! returns \code!not installed: run benchmarks/tools/setup_rivals.sh autoq! when \file{VENVS/autoq/bin/autoq} is missing; \py!supports! returns it, then \code!qubits only! as for PyZX.
+
+\begin{definition}[AutoQ amplitude]\label{def:bench-tools-amp}
+\py!_amp(z)! writes a nonzero complex $z$ as an \code!.hsl! constant. Let $r=|z|$, $\varphi=\arg z/(2\pi)$, $j=\operatorname{round}(2\log_2r)$, and $k=(\operatorname{round}(8\varphi)\bmod8)/8$ in lowest terms $p/q$. When $|r-2^{j/2}|>10^{-9}$ or $|8\varphi-\operatorname{round}(8\varphi)|>10^{-9}$ the amplitude is unsupported (\code!an amplitude outside sqrt2 powers and eighth turns!). Otherwise the text is \code!ei2pi(p/q)! followed by nothing for $j=0$, \code!*sqrt2^j! for $j>0$, and \code!/sqrt2^(-j)! for $j<0$. Examples: $i/\sqrt2\mapsto$ \code!ei2pi(1/4)/sqrt2^1!; $2\mapsto$ \code!ei2pi(0/1)*sqrt2^2!.
+\end{definition}
+
+\begin{algorithm}[AutoQ run]\label{alg:bench-tools-autoq}
+\begin{enumerate}
+\item The symbolic run is unsupported (\code!symbolic n needs AutoQ-Para, which has no public release!); so are a failed \py!supports! and $d\neq2$.
+\item \py!c = rival.qubit_ir(inst, n)!; no wires is unsupported (\code!no wires!); \py!qc, inits, posts = rival.qiskit_circuit(c)!. Unless every wire has an Init and none a Post, the run is unsupported (\code!only states (every wire initialised, none post-selected)!).
+\item The circuit file is \py!qasm2.dumps(rival.transpiled(qc, BASIS))!, with Qiskit's decimal angles and without the global phase.
+\item The specification state $v$ is \py!rival.spec_tensor(inst, n, 2)! flattened (first wire most significant). Its support is the indices with $|v_i|>10^{-12}$; an empty support is unsupported (\code!the zero state!). With $a_0$ the first supported amplitude, each supported $i$ gives the term \py!_amp(v[i] / a0)! followed by \code!|!$b_i$\code!>!, $b_i$ the $m$-bit binary numeral of $i$.
+\item The precondition file \file{pre.hsl} is \code!Extended Dirac!, a newline, and \code!{|!$x_0x_1\cdots x_{m-1}$\code!>}! with $x_i$ the Init value of wire $i$; the postcondition file \file{post.hsl} is \code!Extended Dirac!, a newline, and \code!{!the terms joined by \code! + !\code!}!.
+\item \py!rival.run_binary([autoq, "ver", pre.hsl, c.qasm, post.hsl], limit)! in a temporary directory. With status \code!ok!, the verdict is \code!equal! when standard output contains \code![OK]!, \code!unequal! when it contains \code![failed]!, and \code!unknown! otherwise. The record is \py!rival.finish(..., {"autoq": "3d92eb3"})!.
+\end{enumerate}
+Writing every amplitude relative to $a_0$ makes the check hold up to a nonzero scalar.
+\end{algorithm}
+
+\section{tket}\label{sec:bench-tools-tket}
+
+\tool{tket}{https://github.com/CQCL/tket}~\cite{sivarajah2021tket} is a circuit compiler. Its adapter measures only the B3 size reduction of \cref{ch:bench-pipeline}: it optimizes the naive circuit and gives no verdict.
+
+\begin{signature}
+\py!ENV = "tket"!, \py!PACKAGE = "pytket"!, \py!PROBE = ("pytket.passes", "pytket.qasm")!, \py!DIMENSIONS = (2,)!
+\end{signature}
+
+\py!supports! is that of PyZX. \py!run(inst, job)!: the symbolic run and $d\neq2$ are unsupported; \py!qc, _, _ = rival.qiskit_circuit(rival.qubit_ir(inst, n))! (Init and Post values dropped); the payload is \py!{"qasm": rival.qasm(qc)}!; \py!res = rival.run_driver("tket", "tket", payload, limit)!. The record is \py!rival.finish(inst, {**res, "verdict": None}, prep, {"pytket": version})! with \code!outcome! replaced by \code!res["status"]! and \py!b3_only = True!; with status \code!ok!, \code!b3! is \py!{"tool": {"gates_after", "two_qubit_after"}, "naive": {"gates": gates_before, "two_qubit": two_qubit_before}}!.
+
+The driver \file{drivers/tket.py} imports \py!FullPeepholeOptimise! and \py!circuit_from_qasm_str!, reads the circuit, records \py!(c.n_gates, c.n_2qb_gates())!, applies \py!FullPeepholeOptimise()!, and prints \code!gates_before!, \code!two_qubit_before!, \code!gates_after!, \code!two_qubit_after!, \code!cpu!, and \code!wall!.
+
+\section{Quantomatic}\label{sec:bench-tools-quantomatic}
+
+\tool{Quantomatic}{https://github.com/Quantomatic/quantomatic}~\cite{kissinger2015quantomatic} is a proof assistant for diagrammatic reasoning written in Scala, with rule sets for ZX theories; its graphs support \bboxes{}~\cite{kissinger2014pattern}. The adapter runs a headless driver, \file{drivers/QuantoBench.scala}, compiled into the Quantomatic assembly jar by the installer: each side of the equation is rewritten to a fixpoint with the size-reducing rules of the \code!red_green! rule set, and the run is \code!equal! when the two normal forms match. Boundary order and scalars are not compared. The symbolic run, which would need Quantomatic's own \bboxes{}, is not built.
+
+\begin{signature}
+\py!ENV = "quantomatic"!, \py!DIMENSIONS = (2,)!, \py!MAX_STEPS = 100_000!\\
+\py!jar() -> Path! $=$ \py!VENVS / "quantomatic" / "quanto.jar"!\\
+\py!rules() -> Path! $=$ \py!VENVS / "quantomatic" / "red_green.rules"!\\
+\py!java() -> str!\quad\py!installed() -> str | None!\\
+\py!angle(t: Fraction) -> dict!\quad\py!qgraph(diagram) -> dict!\\
+\py!rule_side_dsl(graph: dict, keep_boxes: bool, env: dict) -> tuple[str, list[str]]!
+\end{signature}
+
+\py!java()! is \file{VENVS/jdk8/bin/java} when it exists and \code!java! (the one on \code!PATH!) otherwise. \py!installed()! returns \code!not installed: run benchmarks/tools/setup_rivals.sh quantomatic! unless the jar, the rule file, and \file{VENVS/jdk8/bin/java} all exist. \py!supports! returns it, then \code!qubits only! as for PyZX.
+
+\paragraph{Graph format.} \py!angle(t)! writes an angle of $t$ turns in units of $\pi$: with $a=2t\bmod2$, \py!{"pretty": "0"}! for $a=0$, else \py!{"pi": {"num": p, "denom": q}, "pretty": text}! with text \code!\pi! for $a=1$, \code!p/q \pi! for $q\neq1$, and \code!p \pi! otherwise. Example: $\tfrac18$ turn gives \code!{"pi": {"num": 1, "denom": 4}, "pretty": "1/4 \\pi"}!. \py!qgraph(diagram)! instantiates the diagram with no assignment, refuses a mixed diagram (\code!a mixed diagram!), and returns a \code!red_green! graph:
+\begin{lstlisting}[style=python]
+{"wire_vertices": {"i0": {"annotation": {"boundary": True}}, ..., "o0": ...},
+ "node_vertices": {"v<id>": {"data": {"type": "Z" | "X", "value": angle(t)}},
+                   "v<id>": {"data": {"type": "hadamard", "value": ""}}, ...},
+ "undir_edges":   {"e<k>": {"src": "v<a>", "tgt": "v<b>"}, ...,
+                   "bi<k>": {"src": "i<k>", "tgt": "v<node>"}, "bo<k>": ...}}
+\end{lstlisting}
+Each Z or X spider keeps its type and its phase entry at index $1$ in turns; each F node is a \code!hadamard! vertex; any other generator is unsupported (\code!generator NAME!) and a weighted phase is unsupported (\code!a weighted spider!). Wire $k$ of the diagram is edge \code!e!$k$; boundary input $k$ is wire vertex \code!i!$k$ joined by edge \code!bi!$k$ to its node, and boundary output $k$ is \code!o!$k$ joined by \code!bo!$k$.
+
+\paragraph{The run.} The symbolic run is unsupported (\code!symbolic n through Quantomatic's own !-boxes is not built!); so are a failed \py!supports! and $d\neq2$. The two sides are \py!stages.diagrams(subject.script(inst, n, 2).text)!, the loaded circuit and \azx!@rhs! (with the parser's default input bounds). The payload
+\begin{lstlisting}[style=python]
+{"theory": "red_green", "rules": str(rules()), "max_steps": 100000,
+ "lhs": qgraph(left), "rhs": qgraph(right)}
+\end{lstlisting}
+is written to a temporary JSON file, and \py!rival.run_binary([java(), "-Xmx2g", "-Xss64m", "-cp", jar(), "quanto.bench.QuantoBench", path], limit, lift_memory=True)! runs the driver: a $2$\,GiB heap, a $64$\,MiB thread stack, and the soft address-space limit lifted to the hard limit (the JVM reserves address space beyond its heap). With status \code!ok!, the JSON object starting at the first \code!{! of standard output is merged into the result; an output without one, or one that does not parse, replaces the result by \py!{"status": "error", "detail": last 300 characters}!. The record is \py!rival.finish(..., {"quantomatic": "0762b5f"})!, with \code!b3! as for PyZX when \code!vertices_after! is present.
+
+\subsection{The Quantomatic driver}
+
+\begin{algorithm}[Quantomatic check]\label{alg:bench-tools-quanto}
+\code!java -cp quanto.jar quanto.bench.QuantoBench PAYLOAD!:
+\begin{enumerate}
+\item Parse the payload; load the theory by name (\code!Theory.fromFile("red_green")!); read the rule file's \code!rules! object, sort its entries by name, build each rule with \code!Rule.fromJson! and a \code!RuleDesc! of its name, and keep the rules whose left side is larger than their right side, size being vertices plus edges.
+\item Start the timers (thread CPU time from the JVM's thread bean, and \code!System.nanoTime!); read both graphs with \code!Graph.fromJson!.
+\item Normalize each graph: repeat, while some rule changed the graph and fewer than \code!max_steps! steps were taken, a pass over the rules in order that rewrites the first match of the first rule that has one (\code!Matcher.findMatches(rule.lhs, g).headOption!, then \code!Rewriter.rewrite!) and restarts the pass.
+\item The normal forms are the same when they have equal vertex counts and equal edge counts, some match of the first into the second sends every boundary vertex of the pattern to the vertex of the same name, and some match of the second into the first does the same.
+\item Print \code!verdict! (\code!equal! when the same, else \code!unknown!), \code!steps! (both normalizations together), \code!rules! (the number kept), \code!vertices_before! (of the circuit side), \code!vertices_after! and \code!edges_after! (of its normal form), \code!cpu!, and \code!wall!.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Rule sides as engine scripts.} \py!rule_side_dsl(graph, keep_boxes, env)! translates one side of a \code!red_green! rule into an engine-language body at $d=2$ and returns it with the boundary names in the order of its tensor axes (outputs, then inputs). The test suite uses it to check every rule of the shared rule set against the ArchytasZX oracle (\cref{ch:development}).
+\begin{enumerate}
+\item With \py!keep_boxes! false, every vertex inside a \bbox{} (\code!bang_boxes!, \code!contents!) is dropped together with its edges; with it true, \bbox{} contents are kept once.
+\item Edges between two node vertices become wire links between the next free ports of both ends; an edge from a node to a wire vertex binds that boundary to the node's next free port; an edge between two wire vertices becomes a fresh phase-free Z spider \code!bare<k>! with two ports.
+\item A Z or X vertex with no ports contributes the scalar factor $1+e^{2\pi i t}$ for its angle $t$ turns modulo $1$. A \code!hadamard! vertex must have two ports (else \code!a hadamard vertex of arity other than 2!) and becomes \azx!F(literal 2)!, its port $0$ the input \code!in0! and port $1$ the output \code!out0!. Every other vertex becomes \azx!NAME = KIND(0 -> legs, literal 2)!, with \azx!phase{1: t}! when $t\bmod1\neq0$.
+\item Angles in units of $\pi$ (\py!_turns!) sum the constant \code!pi! part and each variable's coefficient times its value in \py!env! (a leading backslash of the name stripped), halved to turns.
+\item The body ends with a \azx!wire! line for the links, an \azx!inputs! line for the boundaries bound to a Hadamard input, an \azx!outputs! line for the others (both in sorted wire-vertex order), and a \azx!scalar! line for the legless factors.
+\end{enumerate}
+
+\section{Published Proofs}\label{sec:bench-tools-published}
+
+\module{benchmarks.tools.published_proofs} re-checks published machine-checked proofs of benchmark subjects with their own proof checker, \tool{Coq}{https://coq.inria.fr}, and reports their checking time, lines, and bytes for the B1 comparison of \cref{ch:bench-pipeline}. The proofs come from SQIR and VOQC~\cite{hietala2021sqir}, VyZX~\cite{lehmann2023vyzx}, and CoqQ~\cite{zhou2023coqq}. The tool checks once per unit ($K=1$): the symbolic run when the proofs cover all of it, else the proof's stated point.
+
+\subsection{Configuration}
+
+\begin{signature}
+\py!COQ_HOME: Path! $=$ \code!$BENCH_COQ_HOME! when set, else \file{~/.cache/archytaszx-bench/coq}.\\
+\py!SRC = COQ_HOME / "src"!\\
+\py!CHECK_ONCE = True!\quad\py!STATED_N = {"repetition_code": 2}!\quad\py!STATED_D = 2!\\
+\py!PROOF_DIMENSIONS = {subject: (2,) for subject in PROOFS}!\quad\py!DIMENSIONS = (2,)!\\
+\py!SWITCH = {"CoqQ": "coqq", "SQIR-2023": "sqir23"}!
+\end{signature}
+
+The Coq tree lives outside the repository under an ASCII path because Coq's dune build rejects non-ASCII paths. \py!PROOFS! maps each covered subject to its proof files, as (project directory under \py!SRC!, path in the project); \cref{tab:bench-tools-proofs} lists it. \py!DIMENSIONS! is the sorted union of \py!PROOF_DIMENSIONS!.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.49\linewidth}@{}}
+\caption{The proof files of \texttt{PROOFS}.}\label{tab:bench-tools-proofs}\\
+\toprule
+Subject & Project & File \\
+\midrule
+\endfirsthead
+\toprule
+Subject & Project & File \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+bernstein\_vazirani & SQIR-2023 & \file{examples/examples/BernsteinVazirani.v} \\
+deutsch & SQIR & \file{examples/examples/Deutsch.v} \\
+deutsch\_jozsa & SQIR-2023 & \file{examples/examples/DeutschJozsa.v} \\
+grover & SQIR-2023 & \file{examples/examples/Grover.v} \\
+ & CoqQ & \file{src/example/coqq_paper/example.v} \\
+phase\_estimation\_digit & SQIR-2023 & \file{examples/examples/QPE.v} \\
+superdense\_coding & SQIR & \file{examples/examples/Superdense.v} \\
+teleportation & SQIR & \file{examples/examples/Teleport.v} \\
+ & VyZX & \file{src/Examples/Teleportation.v} \\
+ghz & SQIR-2023 & \file{examples/ghz/GHZ.v} \\
+simon & SQIR-2023 & \file{examples/examples/Simon.v} \\
+wiesner\_money & SQIR-2023 & \file{examples/examples/Wiesner.v} \\
+qft, phase\_estimation, hhl, hidden\_linear\_function & CoqQ & \file{src/example/coqq_paper/example.v} \\
+repetition\_code & SQIR & \file{examples/error-correction/ThreeQubitCode.v} \\
+shor\_code & SQIR & \file{examples/error-correction/NineQubitCode.v} \\
+bell\_state & VyZX & \file{src/Examples/Bell.v} \\
+qudit\_swap & VyZX & \file{src/Examples/ThreeCNOTs.v} \\
+\end{longtable}
+
+\subsection{Functions}
+
+\begin{signature}
+\py!proof_dimensions(subject_id: str) -> tuple[int, ...]!\\
+\py!stated(inst, cfg: dict) -> points.Point | None!\\
+\py!symbolic_covered(subject) -> bool!\\
+\py!summary(files: list[dict]) -> tuple[str, str, str | None]!\\
+\py!rederive(rec: dict) -> dict!\\
+\py!coqc(project: str = "SQIR") -> Path!\quad\py!installed() -> str | None!\\
+\py!supports(inst, point) -> str | None!\quad\py!_flags(project: Path) -> list[str]!\\
+\py!run(inst, job: dict) -> dict!
+\end{signature}
+
+\begin{itemize}
+\item \py!proof_dimensions(sid)! is \py!PROOF_DIMENSIONS.get(sid, (STATED_D,))!.
+\item \py!stated(inst, cfg)! is \py!points.stated(inst, cfg, STATED_N.get(sid), min(proof_dimensions(sid)))!: the point $(n,d)$ with $n$ dropped for a subject without a size parameter, $n$ from \py!STATED_N! when the proof is for one size, and otherwise the least $n$ of the schedule's domain (a proof for every $n$); \py!None! when the point lies outside the domain (\cref{ch:bench-pipeline}).
+\item \py!symbolic_covered(subject)! holds when the subject has no general $d$, its fixed dimension is one of \py!proof_dimensions!, and it is not in \py!STATED_N!.
+\item \py!summary(files)!: \py!("ok", "equal", None)! when some file is accepted (its \code!accepted! field, or status \code!ok! when the field is missing); else \py!("timeout", "unknown", "stage_cpu")! when every file timed out; else \py!("oom", "unknown", None)! when one ran out of memory; else \py!("error", "unknown", None)!.
+\item \py!rederive(rec)! recomputes a logged record from its check stage's \code!files! by \py!summary!: the check status (and \code!limit!), \code!verdict!, \code!outcome! (\py!verdict_outcome(bool(rec["truth"]), status, verdict)!), and \code!wrong!; a record without files is returned unchanged.
+\item \py!coqc(project)! is \py!COQ_HOME / "opam" / SWITCH.get(project, "bench") / "bin" / "coqc"!: CoqQ checks under switch \code!coqq!, SQIR-2023 under \code!sqir23!, and SQIR and VyZX under \code!bench!.
+\item \py!installed()! returns \code!PROJECT not installed: run benchmarks/tools/setup_rivals.sh coq! for the first project, in sorted order, whose \code!coqc! or source directory is missing.
+\item \py!supports(inst, point)!: \code!no published machine-checked proof of this subject! when the subject is not in \py!PROOFS!; \code!published proofs exist for true equations only (B1)! for an F equation; \code!not installed: run benchmarks/tools/setup_rivals.sh coq! when some \code!coqc! of the subject's projects is missing; \py!None! otherwise.
+\item \py!_flags(project)! reads \file{_CoqProject} and returns, in order, each line \code!-R dir name! or \code!-Q dir name! (exactly three fields) as \code!-R!/\code!-Q!, the directory joined to the project root, and the name, and each line \code!-I dir! (exactly two fields) as \code!-I! and the joined directory.
+\end{itemize}
+
+\begin{algorithm}[Published-proof check]\label{alg:bench-tools-proofs}
+\py!run(inst, job)!:
+\begin{enumerate}
+\item A \py!supports! reason is returned as unsupported. A concrete point other than \py!stated(inst, cfg)! is unsupported (\code!published proofs are checked once, at their stated size!); the symbolic run passes.
+\item For each (project, file) of the subject, in order: a missing file is unsupported (\code!PROJECT proof file FILE missing!); read its bytes; prepend the directory of the project's \code!coqc! to the worker's \code!PATH! (the change stays in the worker's environment); in a temporary directory run \py!rival.run_binary([coqc, *_flags(root), "-o", tmp/STEM.vo, path], limit)!. The file is \term{accepted} when the status is \code!ok! and the exit status is $0$; otherwise the run's \code!detail! becomes the last 300 characters of the result's detail, standard error, or standard output. Record \py!{"project", "file", "lines": count of newlines, "bytes", "cpu", "status", "accepted"}!, and add the file's \code!cpu! and \code!wall! to the totals.
+\item The preparation CPU is the worker's own CPU since the start minus the total checking CPU, clamped at $0$.
+\item \py!status, verdict, limit = summary(files)!; the result holds \code!status!, \code!verdict!, \code!cpu!, \code!wall!, \code!files!, \code!proof_lines! and \code!proof_bytes! (the sums), \code!limit! when set, and \code!detail! when set. The record is \py!rival.finish(..., {project: "pinned in setup_rivals.sh" for each project})!.
+\end{enumerate}
+\end{algorithm}
+
+The runner treats \py!CHECK_ONCE! specially (\cref{ch:bench-pipeline}): it runs the symbolic run when the configuration enables symbolic runs, the instance has a symbolic version, and \py!symbolic_covered! accepts the subject; otherwise it runs \py!stated(inst, cfg)!, and a \py!None! there ends the unit as unsupported (\code!the published proof's stated size lies outside the domain!).
+
+\section{The Installer}\label{sec:bench-tools-setup}
+
+\file{benchmarks/tools/setup_rivals.sh} builds every rival tool at its pinned version under \code!VENVS! and installs the harness extra into the Python that runs the harness.
+\subsection{Usage and variables}
+
+\begin{lstlisting}[style=shell]
+bash benchmarks/tools/setup_rivals.sh \
+  [harness|python|dizx|haskell|autoq|quantomatic|coq|all|fetch [TARGET...]]
+\end{lstlisting}
+
+The script runs under \code!set -euo pipefail!. The default target is \code!all!, which runs \code!harness!, \code!python!, \code!dizx!, \code!haskell!, \code!autoq!, \code!quantomatic!, and \code!coq! in that order. The target \code!fetch! sets \code!FETCH=1! and runs the listed targets (default \code!python dizx haskell autoq quantomatic coq!) in download mode: it fetches every source, wheel, toolchain, and dependency the build targets need and builds nothing. An unknown target, or an unknown fetch target, prints a message to standard error and exits with status $2$. \Cref{tab:bench-tools-env} lists the variables the script reads.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.69\linewidth}@{}}
+\caption{Environment variables of the installer.}\label{tab:bench-tools-env}\\
+\toprule
+Variable & Effect \\
+\midrule
+\endfirsthead
+\toprule
+Variable & Effect \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code!BENCH_VENVS! & the root \code!V! of the environments (default \file{benchmarks/.venvs} beside the script); \file{V/src} and \file{V/logs} are created at start \\
+\code!UV! & the \tool{uv}{https://github.com/astral-sh/uv} executable (default \code!uv!) \\
+\code!BENCH_OFFLINE! & \code!1! makes the build targets use no network: \code!uv! gets \code!--offline! and \code!UV_PYTHON_DOWNLOADS=never!, \code!ghcup! runs \code!--offline --cache!, \code!sbt! runs with \code!set every offline := true!, \code!opam! uses its download cache, clones are not fetched, and every missing download fails with \code!offline: WHAT missing; run the fetch target first! \\
+\code!BENCH_WHEELS! & a wheel directory: \code!uv! installs with \code!--no-index --find-links DIR!; \code!fetch python! downloads into it (required there) \\
+\code!BENCH_PIP! & the pip command of the Python the environments use, for downloads (default \code!python3 -m pip!) \\
+\code!HARNESS_PYTHON! & the Python that receives the harness extra (default \code!python! on \code!PATH!) \\
+\code!CMAKE_PREFIX_PATH! & a Boost location for AutoQ when \file{/usr/include/boost} is absent \\
+\code!BENCH_COQ_HOME! & the Coq root (default \file{~/.cache/archytaszx-bench/coq}) \\
+\end{longtable}
+
+\subsection{Helpers}
+
+\begin{itemize}
+\item \code!need_net WHAT! fails (status $1$) with the offline message when \code!BENCH_OFFLINE=1! and succeeds otherwise.
+\item \code!clone URL DIR COMMIT! clones \code!URL! into \file{V/src/DIR} unless a Git checkout is already there (calling \code!need_net! first), fetches \code!origin! at depth $200$ unless offline (a failure is ignored), and checks out \code!COMMIT!.
+\item \code!uvpip VENV PACKAGE...! runs \code!uv pip install -q! with the wheel and offline flags into \code!VENV! (through \code!VIRTUAL_ENV!).
+\end{itemize}
+
+\subsection{Targets}
+
+\paragraph{\texttt{harness}.} \code!uv pip install -q --python PY -e ROOT[benchmarks]!, with \code!PY! the harness Python and \code!ROOT! the repository. The extra \code!benchmarks! of \file{pyproject.toml} holds \code!qiskit==2.6.2!, \code!numpy!, and \code!matplotlib!.
+
+\paragraph{\texttt{python}.} For each of the six environments of \cref{tab:bench-tools-pins} (pyzx, quizx, qcec, qiskit, cirq, tket): create \file{V/ENV} with \code!uv venv -q -p 3.12! when \file{V/ENV/bin/python} is not executable, then install the pinned package and \code!numpy!. In download mode it instead downloads binary wheels only (\code!--only-binary=:all:!) of \code!numpy!, the DiZX dependencies, and the six pinned packages into \code!BENCH_WHEELS!.
+
+\paragraph{\texttt{dizx}.} Clone DiZX at its pinned commit (download mode stops here). Create \file{V/dizx} with Python 3.12 when missing; install \code!numpy!, \code!matplotlib!, \code!ipython!, \code!ipywidgets!, \code!typing_extensions!, \code!sympy!, and \code!qiskit==2.6.2!; write the line \file{V/src/dizx} to \file{dizx-src.pth} in the environment's \code!purelib! directory, so the source tree, which has no package metadata, is importable.
+
+\paragraph{\texttt{haskell}.} Feynman's \code!feynver! with GHC 9.4.8 and cabal 3.12.1.0 through \tool{GHCup}{https://www.haskell.org/ghcup/}, installed under \file{V/haskell} (\code!GHCUP_INSTALL_BASE_PREFIX!; noninteractive, no Stack, no shell-profile change; \file{V/haskell/.ghcup/bin} first on \code!PATH!).
+\begin{enumerate}
+\item Download mode: fetch the \code!ghcup! binary from \url{https://downloads.haskell.org/~ghcup/x86_64-linux-ghcup} when missing, run \code!ghcup prefetch metadata!, \code!ghcup prefetch ghc 9.4.8!, and \code!ghcup prefetch cabal 3.12.1.0!, clone Feynman, and stop.
+\item Build mode: bootstrap \code!ghcup! from \url{https://get-ghcup.haskell.org} when missing; \code!ghcup install ghc 9.4.8!, \code!ghcup set ghc 9.4.8!, \code!ghcup install cabal 3.12.1.0!, \code!ghcup set cabal 3.12.1.0!; clone Feynman; in its tree run \code!cabal update! (unless offline), then \code!cabal build -w ghc-9.4.8 --constraint="mtl<2.3" exe:feynver!, and copy the binary that \code!cabal list-bin feynver! names to \file{V/feynman/bin/feynver}.
+\end{enumerate}
+
+\paragraph{\texttt{autoq}.} AutoQ 2.0 at its pinned commit, with \tool{Boost}{https://www.boost.org}, the \tool{ANTLR}{https://www.antlr.org} 4 C++ runtime 4.13.2, and \tool{Z3}{https://github.com/Z3Prover/z3}~\cite{demoura2008z3}.
+\begin{enumerate}
+\item Clone AutoQ. When neither \file{/usr/include/antlr4-runtime} nor \file{V/src/antlr4-4.13.2} exists, download and unpack \url{https://github.com/antlr/antlr4/archive/refs/tags/4.13.2.tar.gz} into \file{V/src}.
+\item Compare the host's glibc version (the last field of the first line of \code!ldd --version!) with 2.34 by \code!sort -V!; below 2.34 the host is \term{old}, because AutoQ's bundled \file{libz3.so.4.12} needs glibc 2.34. On an old host in download mode, download the \code!z3-solver==4.12.5.0! wheel (binary, no dependencies) into \file{V/src/z3wheel} when absent. Download mode stops here.
+\item On an old host, extract that wheel into \file{V/z3} (with \code!python3 -m zipfile -e!) when \file{V/z3/z3/lib} is missing, failing when no wheel was downloaded, and pass \code!-DUSE_SYSTEM_Z3=ON -DCMAKE_LIBRARY_PATH=V/z3/z3/lib! to CMake.
+\item Without \file{/usr/include/boost} and without \code!CMAKE_PREFIX_PATH!, print \code!AutoQ needs boost: on Arch sudo pacman -S --needed boost; on a cluster module load boost! and fail.
+\item Without a system ANTLR runtime, build it once: configure \file{V/src/antlr4-4.13.2/runtime/Cpp} into \file{V/src/antlr4-build} (Release, prefix \file{V/antlr4}, library directory \file{lib}, no tests, static only, no demo), build with \code!nproc! jobs, install, and add \file{V/antlr4/lib} to \code!LIBRARY_PATH!; skip the build when \file{V/antlr4/lib/libantlr4-runtime.a} exists.
+\item In the AutoQ tree, delete \file{build}, configure it as a Release build (with the Z3 flags on an old host), build the target \code!autoq! with \code!nproc! jobs, and copy \file{build/cli/autoq} to \file{V/autoq/bin/autoq}.
+\end{enumerate}
+
+\paragraph{\texttt{quantomatic}.} Quantomatic at its pinned commit with the headless driver, built by \tool{sbt}{https://www.scala-sbt.org} on Temurin JDK 8.
+\begin{enumerate}
+\item Clone Quantomatic. Unpack sbt 1.10.7 from \url{https://github.com/sbt/sbt/releases/download/v1.10.7/sbt-1.10.7.tgz} into \code!V! when \file{V/sbt/bin/sbt} is missing; unpack the latest generally available Temurin 8 JDK for x64 Linux (HotSpot, from \url{https://api.adoptium.net/v3/binary/latest/8/ga/linux/x64/jdk/hotspot/normal/eclipse}) into \file{V/jdk8} when \file{V/jdk8/bin/java} is missing. Set \code!JAVA_HOME! to \file{V/jdk8} and put its \file{bin} first on \code!PATH!.
+\item sbt runs as \code!V/sbt/bin/sbt -java-home V/jdk8 -sbt-dir H/sbt -sbt-boot H/boot -ivy H/ivy2 -batch! with \code!H! $=$ \file{V/sbt-home}, in \file{V/src/quantomatic/scala}.
+\item Restore \file{project/plugins.sbt} and \file{build.sbt} from Git; overwrite \file{project/plugins.sbt} with the single line \code!addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.5")!; delete every line of \file{build.sbt} containing \code!appbundle! and rewrite \code!http://! as \code!https://!; copy \file{drivers/QuantoBench.scala} to \file{src/main/scala/quanto/bench/QuantoBench.scala}.
+\item Download mode: unless \file{H/fetched} exists, run \code!sbt update!, then warm the compiler interface with a one-file project in \file{V/src/sbt-warm} (the same \file{project/build.properties}, \code!scalaVersion := "2.12.6"!, and the source \code!object Warm!) by \code!sbt compile!, and create \file{H/fetched}; stop.
+\item Build mode: \code!sbt assembly! (with \code!set every offline := true! when offline); copy \file{target/scala-2.12/Quantomatic.jar} to \file{V/quantomatic/quanto.jar} and \file{V/src/quantomatic/rulesets/red_green/default.rules} to \file{V/quantomatic/red_green.rules}.
+\end{enumerate}
+
+\paragraph{\texttt{coq}.} An \tool{opam}{https://opam.ocaml.org} root at \file{C/opam}, $C$ the Coq root, with three switches, each on \code!ocaml-base-compiler.4.14.2!, and the Coq projects at pinned commits under \file{C/src}. The script exports \code!OPAMROOT=C/opam!, \code!OPAMYES=1!, \code!OPAMCONFIRMLEVEL=unsafe-yes!, and \code!OPAMNODEPEXTS=1! (system libraries such as GMP come from the host), and runs \code!opam init --bare -n --disable-sandboxing! when the root is missing. Every opam command names its switch through \code!OPAMSWITCH!.
+\begin{enumerate}
+\item Helpers: \code!newswitch NAME! creates the switch (\code!opam switch create --no-switch NAME ocaml-base-compiler.4.14.2!) when \file{C/opam/NAME} is missing, from the download cache when offline; \code!coqclone! is \code!clone! under \file{C/src}; \code!repoadd NAME URL! adds an opam repository (failures ignored), or offline selects the root's cached repository \code!NAME! together with the others (\code!opam repo set-repos!); \code!have PKG! tests whether a package is installed; \code!oinst! is \code!opam install! (with \code!--download-only! in download mode); \code!build CMD! runs \code!CMD! except in download mode.
+\item Clone SQIR (twice, at two commits), VyZX, CoqQ, QBricks, and QuantumLib at the commits of \cref{tab:bench-tools-pins}.
+\item Switch \code!bench!: add \code!coq-released! (\url{https://coq.inria.fr/opam/released}); install \code!dune! and \code!coq.8.20.1!; install \code!coq-mathcomp-ssreflect! and \code!coq-interval!; unless installed, pin \code!coq-quantumlib! to \file{C/src/QuantumLib} without installing it, then install it; unless installed, pin and install \code!coq-sqir! and \code!coq-voqc! from \file{C/src/SQIR}; run \code!dune build! in \file{C/src/SQIR} and in \file{C/src/VyZX}; install \code!why3.1.8.0! and \code!alt-ergo.2.6.2! (QBricks' pins) with \code!CC="gcc -std=gnu17 -Wno-error=incompatible-pointer-types"!.
+\item Switch \code!sqir23!: add \code!coq-released!; remove any \code!coq-quantumlib! pin; install \code!dune!, \code!coq.8.16.1!, and \code!coq-quantumlib.1.1.0!; run \code!dune build SQIR examples/examples examples/ghz! in \file{C/src/SQIR-2023}. These are the Bernstein--Vazirani, Deutsch--Jozsa, Grover, QPE, and GHZ proofs, which last build at that commit (2023-04-08).
+\item Switch \code!coqq!: add \code!coq-released! and \code!archive! (\url{git+https://github.com/ocaml/opam-repository-archive}, which holds dune-configurator 3.12.1); install the dependencies of \file{coq-mathcomp-quantum.opam} (CoqQ's own pins: Coq 8.18.0, MathComp 2.2, MathComp Analysis 1.3.1); run \code!make -j nproc! in \file{C/src/CoqQ}.
+\end{enumerate}
+Each switch is set up in its own subshell. The steps that stop the script on failure are the clones, the switch creations, \code!opam env!, the installation of \code!dune! and \code!coq.8.20.1! in \code!bench!, and the installation of \code!dune!, \code!coq.8.16.1!, and \code!coq-quantumlib.1.1.0! in \code!sqir23!; every other step ignores its failure (\code!|| true!), so a partial build leaves the target successful, and the adapter's \py!installed! and the per-file check report what is missing.
+
+\subsection{Pinned versions}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.2\linewidth}>{\raggedright\arraybackslash}p{0.28\linewidth}>{\raggedright\arraybackslash}p{0.46\linewidth}@{}}
+\caption{Every pin of the installer and the version string each adapter records.}\label{tab:bench-tools-pins}\\
+\toprule
+Tool & Source & Pin (recorded \texttt{tool\_version}) \\
+\midrule
+\endfirsthead
+\toprule
+Tool & Source & Pin (recorded \texttt{tool\_version}) \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+PyZX & PyPI \code!pyzx! & 0.10.8 (\code!{"pyzx": installed version}!) \\
+QuiZX & PyPI \code!quizx! & 0.4.0 (\code!{"quizx": ...}!) \\
+MQT QCEC & PyPI \code!mqt.qcec! & 3.11.0 (\code!{"mqt.qcec": ...}!) \\
+Qiskit & PyPI \code!qiskit! & 2.6.2 (\code!{"qiskit": ...}!); also the harness extra and DiZX's environment \\
+Cirq & PyPI \code!cirq-core! & 1.7.0 (\code!{"cirq-core": ...}!) \\
+tket & PyPI \code!pytket! & 2.18.5 (\code!{"pytket": ...}!) \\
+DiZX & \url{https://github.com/jvdwetering/dizx} & \texttt{e387226c99e2fca04c49\allowbreak 72c0757687cf43cdac33} (\code!{"dizx": "benchmarks/.venvs/src/dizx"}!) \\
+Feynman & \url{https://github.com/meamy/feynman} & \texttt{d2c382a2ab43a40a87f1\allowbreak 2f4255645bbb55f704f8}, GHC 9.4.8, cabal 3.12.1.0, \code!mtl<2.3! (\code!{"feynman": "d2c382a"}!) \\
+AutoQ & \url{https://github.com/fmlab-iis/AutoQ} & \texttt{3d92eb355a8850ab19dd\allowbreak 3e7d7f620f138deda955}, ANTLR 4.13.2, \code!z3-solver! 4.12.5.0 on old hosts (\code!{"autoq": "3d92eb3"}!) \\
+Quantomatic & \url{https://github.com/Quantomatic/quantomatic} & \texttt{0762b5fad411f80ea0bb\allowbreak a14b4ad5c801efd7f019}, sbt 1.10.7, sbt-assembly 0.14.5, Scala 2.12, Temurin JDK 8 latest GA (\code!{"quantomatic": "0762b5f"}!) \\
+SQIR & \url{https://github.com/inQWIRE/SQIR} & \texttt{134fb942265091baa3e3\allowbreak 972f78f72da41827351f} on Coq 8.20.1 (switch \code!bench!) \\
+SQIR-2023 & \url{https://github.com/inQWIRE/SQIR} & \texttt{b1a3ef452c95f13a9a3f\allowbreak 79fb26064a21df1570ab} on Coq 8.16.1, QuantumLib 1.1.0 (switch \code!sqir23!) \\
+VyZX & \url{https://github.com/inQWIRE/VyZX} & \texttt{10f8c16741952dbaa2bb\allowbreak 7a73e13767945e696b8f} on Coq 8.20.1 (switch \code!bench!) \\
+QuantumLib & \url{https://github.com/inQWIRE/QuantumLib} & \texttt{0b72c0fa552986c8a6b8\allowbreak 2f4cb56384c99b9de963} (QuantumLib 1.8.0 by the script's comment), switch \code!bench! \\
+CoqQ & \url{https://github.com/coq-quantum/CoqQ} & \texttt{b169ea462b13d20b05e0\allowbreak 3615ad1d56cc8d8f5784}, Coq 8.18.0 by its own opam file (switch \code!coqq!) \\
+QBricks & \url{https://github.com/Qbricks/qbricks.github.io} & \texttt{e00fc97f14fb9fcbc44b\allowbreak bfbc5e5ec3e483f87367}, why3 1.8.0, alt-ergo 2.6.2 \\
+OCaml & opam & \code!ocaml-base-compiler.4.14.2! in every switch \\
+\end{longtable}
+
+The published-proof records carry \code!"pinned in setup_rivals.sh"! for each project. QBricks~\cite{chareton2021qbricks} is cloned and its prover pins are installed, but no entry of \py!PROOFS! names a QBricks file.
+
+\section{Summary of the Rivals}\label{sec:bench-tools-summary}
+
+\Cref{tab:bench-tools-summary} collects, for each tool, what it compares, the points it runs, the verdicts it can give, and how it treats scalars.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.13\linewidth}>{\raggedright\arraybackslash}p{0.3\linewidth}>{\raggedright\arraybackslash}p{0.15\linewidth}>{\raggedright\arraybackslash}p{0.13\linewidth}>{\raggedright\arraybackslash}p{0.19\linewidth}@{}}
+\caption{The tools at a glance.}\label{tab:bench-tools-summary}\\
+\toprule
+Tool & Compares & Points & Verdicts & Scalars \\
+\midrule
+\endfirsthead
+\toprule
+Tool & Compares & Points & Verdicts & Scalars \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+ArchytasZX & circuit script against \azx!@rhs! by the decision procedure & symbolic and concrete, any $d$ & all five & exact \\
+PyZX, QuiZX & QASM circuit against the specification graph by full reduction & concrete, $d=2$ & equal, unequal, unknown & exact (log space) \\
+Qiskit & statevector or operator against the specification tensor & concrete, $d=2$, at most 26 (state) or 13 (map) qubits & equal, unequal & exact within $10^{-8}$ \\
+Cirq & qudit state or unitary against the specification tensor & concrete, any $d$, $d^{\,a}\leq2^{26}$ & equal, unequal & exact within $10^{-8}$ \\
+QCEC & circuit against the reference (own or dense) by decision diagrams & concrete, $d=2$ & equal, unequal, unknown & global phase ignored \\
+Feynman & circuit against its own reference by path sums & concrete, $d=2$ & equal, unequal, unknown & global phase not passed \\
+DiZX & circuit times inverse reference by \code!clifford_simp! & concrete, odd prime $d$ & equal, unknown & not compared \\
+AutoQ & state against the specification state by tree automata & concrete, $d=2$, states & equal, unequal, unknown & up to a nonzero scalar \\
+tket & none (B3 sizes only) & concrete, $d=2$ & none & -- \\
+Quantomatic & normal forms of both sides under \code!red_green! & concrete, $d=2$, pure & equal, unknown & not compared \\
+Published proofs & Coq re-check of the published proof & once: symbolic or stated & equal, unknown & -- \\
+\end{longtable}

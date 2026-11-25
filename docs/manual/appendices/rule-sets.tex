@@ -1,0 +1,143 @@
+\chapter{Rule Sets}\label{app:rules}
+
+\providecommand{\rulescn}[1]{\nolinkurl{#1}}
+
+This appendix lists every rule set the code defines: the order in which each layer tries its rules, the \bbox{} conditions each rule's matcher decides, and the membership of each set. The rules themselves are specified in \cref{ch:rules}; the template rules (\azx!zxw_*!, \azx!qf_*!, \azx!scalar_box! and the converses) in \cref{ch:completeness}; the discard rules in \cref{ch:mixed}. Axiom labels refer to [P1]~\cite{poor2023zxw} (\azx!zxw_*!) and [P2]~\cite{wang2023qufinitezxw} (\azx!qf_*!).
+
+\section{!-Box Conditions}\label{sec:app-rules-boxes}
+
+\Cref{tab:box-conditions} restates the \bbox{} conditions of \cref{ch:rules} (where each is defined exactly). A matcher decides its conditions before it returns a match; a match that fails one is not returned.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Condition & Requirement on a match \\
+\midrule
+O & No matched node lies in a node-scoped \bbox{} or has a port in a port-scoped \bbox{}, and no matched node is wired to a node whose set of node-scoped \bboxes{} differs from its own. \\
+S & All matched nodes have the same innermost node-scoped \bbox{}, or none of them lies in a node-scoped \bbox{}. \\
+E & All matched nodes lie in exactly the same set of node-scoped \bboxes{}. \\
+N & No node-scoped \bbox{} with at least one node consists only of nodes that the rule deletes without replacement. \\
+P & No port of the removed node lies in a port-scoped \bbox{}. \\
+K & Splicing keeps copies paired: every wired neighbor's node-scoped \bboxes{}, less the chain \bboxes{} that have the neighbor's port as a link port, are among the removed node's, and the removed node lies in no node-scoped \bbox{} or some such neighbor has exactly its \bboxes{}; with special cases for a removed node whose own port is a chain link port. \\
+L & Lift: the identity's innermost node-scoped \bbox{} holds only the identity, is not extended and has no child \bbox{}; the identity's free port is a boundary entry; its other port is wired to a Z or X spider with no port in a port-scoped \bbox{}, whose node-scoped \bboxes{} are the identity's less this one and whose innermost node-scoped \bbox{} is this one's parent. The \bbox{} then becomes a port-scoped \bbox{} on that spider port. \\
+T & No matched node lies in a node-scoped \bbox{} or has a port in a port-scoped \bbox{}, and no port of a matched node is wired to a node that does. \\
+U & The spider's port is the whole scope of a port-scoped \bbox{} that has no parent and no child, no other \bbox{} holds that port, and the spider lies in no node-scoped \bbox{}. \\
+\bottomrule
+\end{tabularx}
+\caption{!-Box conditions.}
+\label{tab:box-conditions}
+\end{table}
+
+\paragraph{Apply-time conditions.} Independently of the matchers, \py!apply! (\cref{ch:rewriting}) refuses with \py!RewriteDomainError! a rewrite that removes an extended \bbox{}, consumes a node of a pair, tree or fed \bbox{}, consumes the head of a tree \bbox{}, consumes a left or right port of a pair \bbox{}, introduces a scalar that reads the index of a \bbox{} holding a consumed node, or consumes a link port of a chain \bbox{} without keeping a port of the scope in its place. It also refuses a rewrite that consumes the far end of a chain \bbox{}'s link wire, except when the rule is \azx!identity_removal! or \azx!spider_fusion! and the match consumes no node of that \bbox{} (\py!_FAR_END_RULES = {"identity_removal", "spider_fusion"}!). When the diagram holds an extended \bbox{}, the first-match strategy tries each match in order by applying it and skips a match whose application raises \py!RewriteDomainError!; otherwise it takes the first match.
+
+\section{Normal-Form Rules}\label{sec:app-rules-nf}
+
+The tuple \py!NORMAL_FORM_RULE_NAMES! of \module{archytaszx.rewrite.engine} lists the rules of \py!toward_normal_form! and of \py!normal_form! on a pure diagram, in the order in which the first-match strategy tries them (\cref{tab:nf-rules}). \py!normal_form_rules()! resolves each name through \py!lookup_rule! and skips a name that does not resolve; at the current version every name resolves (\py!missing_normal_form_rule_names()! is empty). Every rule but \azx!scalar_box! and \azx!w_z_effect! removes at least one wire; \azx!scalar_box! removes a node and no wire; \azx!w_z_effect! keeps the wire and node counts and removes one W output; \azx!state_copy!, its twin and \azx!w_zero_copy! add nodes when the copied spider has three or more legs. The triple (wire count, node count, W output count) decreases lexicographically at every step. \azx!bialgebra! and its twin turn two nodes into four and are absent.
+
+\begin{xltabular}{\linewidth}{@{}r>{\raggedright\arraybackslash}p{0.33\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}X@{}}
+\caption{Rules of the normal-form driver, in the order tried.}\label{tab:nf-rules}\\
+\toprule
+& Rule & !-Box & Equation ($L=c\cdot R$) \\
+\midrule
+\endfirsthead
+\toprule
+& Rule & !-Box & Equation ($L=c\cdot R$) \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+1 & \rulescn{identity_removal} & N (waived by L), P, K or L & A phaseless spider with one input and one output is a bare wire. \\
+2 & \rulescn{triangle_inverse_cancellation} & S, N, K & $T$ and $T^{-1}$ in series, either order, are a bare wire. \\
+3 & \rulescn{w_identity} & N, P, K & A W node with one output is a bare wire. \\
+4 & \rulescn{w_fusion} & S, N & A W node fed by an output of a W node is one W node. \\
+5 & \rulescn{connective_inverse} & O & $S$ followed by $B$ is the identity on $st$. \\
+6 & \rulescn{connective_inverse_bind_first} & O & $B$ followed by $S$ is the identity on $s$ and on $t$. \\
+7 & \rulescn{connective_states} & O & Phaseless Z states on both inputs of $B$ are one phaseless Z state; phaseless Z effects on both outputs of $S$ are one phaseless Z effect. \\
+8 & \rulescn{connective_states_swapped} & O & The same with X. \\
+9 & \rulescn{triangle_zero_state} & O & $T$ or $T^{-1}$ fixes the phaseless X state. \\
+10 & \rulescn{triangle_zero_effect} & O & $T$ into a phaseless X effect is a phaseless Z effect, $c=\sqrt d$. \\
+11 & \rulescn{w_zero_effect} & O & An output of $W^{1\to m}$, $m\ge1$, into a phaseless X effect is $W^{1\to m-1}$, $c=\sqrt d$. \\
+12 & \rulescn{w_z_effect} & O & An output of $W^{1\to m}$, $m\ge2$, into a phaseless Z effect is $T$ followed by $W^{1\to m-1}$. \\
+13 & \rulescn{fourier_cancellation} & E & Four $F$ boxes in series are a bare wire (written as an identity spider). \\
+14 & \rulescn{fourier_state_color_change} & S & $F$ on a phaseless Z state is a phaseless X state; $F$ into a phaseless Z effect is a phaseless X effect. \\
+15 & \rulescn{fourier_state_color_change_swapped} & S & The same with the colors exchanged. \\
+16 & \rulescn{spider_fusion} & S & Two spiders of one color joined by a wire are one spider; for X the wire runs from an output to an input. \\
+17 & \rulescn{hopf} & O & Z and X joined by a bare wire and an $F^2$ wire separate, $c=d^{-1}$. \\
+18 & \rulescn{hopf_swapped} & O & The same with X below Z. \\
+19 & \rulescn{state_copy} & O & A phaseless X state into a phaseless $Z^{1\to n}$ is $n$ phaseless X states, $c=d^{(1-n)/2}$. \\
+20 & \rulescn{state_copy_swapped} & O & A phaseless Z state into a phaseless $X^{1\to n}$ is $n$ phaseless Z states, $c=d^{(1-n)/2}$. \\
+21 & \rulescn{w_zero_copy} & O & A phaseless X state into $W^{1\to n}$ is $n$ phaseless X states, $c=d^{(1-n)/2}$. \\
+22 & \rulescn{zx_cap} & O & A phase-free Z state into a phase-free X effect is the empty diagram, $c=\sqrt d$. \\
+23 & \rulescn{zx_cap_swapped} & O & A phase-free X state into a phase-free Z effect is the empty diagram, $c=\sqrt d$. \\
+24 & \rulescn{zxw_ept} & T & Axiom Ept of [P1]: the pink dot state into a Z box effect is the empty diagram, fixed scalar $\sqrt d$. \\
+25 & \rulescn{scalar_box} & T & A Z box with no legs is the scalar $1+a_1+\dots+a_{d-1}$. \\
+\end{xltabular}
+
+\paragraph{Mixed diagrams.} \py!normal_form! on a diagram with a discard uses \py!mixed_normal_form_rules()!: the nine forward discard rules \rulescn{discard_zero}, \rulescn{discard_fourier}, \rulescn{discard_phase}, \rulescn{discard_spider}, \rulescn{discard_cx}, \rulescn{discard_merge}, \rulescn{discard_loop}, \rulescn{discard_binder}, \rulescn{discard_splitter} (\py!DISCARD_AXIOMS!, in this order; \cref{ch:mixed}), then the 25 rules of \cref{tab:nf-rules}.
+
+\paragraph{Tidying sets.} \py!fused_isomorphic! (\module{archytaszx.rewrite.normal_form}) reduces both diagrams with the set (\azx!spider_fusion!, \azx!identity_removal!) before comparing them. The network exporter of \cref{ch:lean-export-net} uses the same two rules, in the order (\azx!identity_removal!, \azx!spider_fusion!), to tidy a derivation. The induction machinery (\module{archytaszx.semantics.induction}, \cref{ch:kernel}) defaults to the one-rule set \py!DEFAULT_RULES = (SPIDER_FUSION,)!.
+
+\section{Saturation and Search Rules}\label{sec:app-rules-saturation}
+
+\py!saturation_rules()! (\module{archytaszx.rewrite.egraph}) is every rule of \py!RULES! with \py!automatic=True!, in registry order: the 28 hand-coded rules and the 20 promoted template rules, 48 rules (\cref{tab:search-order}). It is the default rule set of
+\begin{itemize}
+\item \py!EGraph.saturate! when given no rules, hence of the shell's \azx!saturate! command and of the saturation rung of \py!decide_equal! (\cref{ch:proofs}) when the caller passes no rules;
+\item \py!rewrite_tactics()!, one \py!rule! tactic per rule, in this order;
+\item the bounded search \py!search! and \py!search_for! (\module{archytaszx.rewrite.tactics}), whose default moves are \py!default_moves() = (normalize(), *rewrite_tactics())!: first the fixpoint of the 25 normal-form rules, then one move per saturation rule.
+\end{itemize}
+For a diagram with a discard, \py!mixed_moves()! (used by mixed proof search in \module{archytaszx.semantics.prove}) is the fixpoint of \py!mixed_normal_form_rules()!, named \code!normalize_mixed!, followed by one move per discard rule of \py!MIXED_RULES! (the nine forward rules and the six converses \rulescn{discard_zero_converse}, \rulescn{discard_fourier_converse}, \rulescn{discard_phase_converse}, \rulescn{discard_cx_converse}, \rulescn{discard_binder_converse}, \rulescn{discard_splitter_converse}, in that order) and then one per saturation rule.
+
+\begin{xltabular}{\linewidth}{@{}r>{\raggedright\arraybackslash}p{0.33\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}X@{}}
+\caption{The saturation rules in registry order. Rules marked NF are also in \cref{tab:nf-rules}.}\label{tab:search-order}\label{tab:search-rules}\\
+\toprule
+& Rule & !-Box & Equation or note \\
+\midrule
+\endfirsthead
+\toprule
+& Rule & !-Box & Equation or note \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+1 & \rulescn{spider_fusion} & S & NF 16. \\
+2 & \rulescn{z_fusion_prime_d} & S & \azx!spider_fusion! (either color) at a concrete prime shared dimension. \\
+3 & \rulescn{fourier_cancellation} & E & NF 13. \\
+4 & \rulescn{zx_cap} & O & NF 22. \\
+5 & \rulescn{identity_removal} & N, P, K or L & NF 1. \\
+6 & \rulescn{triangle_inverse_cancellation} & S, N, K & NF 2. \\
+7 & \rulescn{state_copy} & O & NF 19. \\
+8 & \rulescn{hopf} & O & NF 17. \\
+9 & \rulescn{bialgebra} & O & $X^{2\to1}$ into $Z^{1\to2}$ is two $Z^{1\to2}$ crossed into two $X^{2\to1}$, $c=\sqrt d$. \\
+10 & \rulescn{fourier_state_color_change} & S & NF 14. \\
+11 & \rulescn{zx_cap_swapped} & O & NF 23. \\
+12 & \rulescn{state_copy_swapped} & O & NF 20. \\
+13 & \rulescn{hopf_swapped} & O & NF 18. \\
+14 & \rulescn{bialgebra_swapped} & O & The same with the colors exchanged. \\
+15 & \rulescn{fourier_state_color_change_swapped} & S & NF 15. \\
+16 & \rulescn{w_fusion} & S, N & NF 4. \\
+17 & \rulescn{w_identity} & N, P, K & NF 3. \\
+18 & \rulescn{w_zero_copy} & O & NF 21. \\
+19 & \rulescn{triangle_zero_state} & O & NF 9. \\
+20 & \rulescn{triangle_zero_effect} & O & NF 10. \\
+21 & \rulescn{connective_inverse} & O & NF 5. \\
+22 & \rulescn{connective_inverse_bind_first} & O & NF 6. \\
+23 & \rulescn{connective_states} & O & NF 7. \\
+24 & \rulescn{connective_states_swapped} & O & NF 8. \\
+25 & \rulescn{wz_bialgebra} & O & A phaseless $Z^{n\to1}$, $n\ge2$, into $W^{1\to m}$, $m\ge2$, is $n$ copies of $W^{1\to m}$ crossed into $m$ copies of $Z^{n\to1}$. \\
+26 & \rulescn{w_z_effect} & O & NF 12. \\
+27 & \rulescn{w_zero_effect} & O & NF 11. \\
+28 & \rulescn{port_box_unfusion} & U & A spider with one port alone in a port-scoped \bbox{} and at least two other ports is the spider wired to a new phaseless one-input, one-output spider of its color that carries that port. \\
+29 & \rulescn{zxw_ept} & T & NF 24. \\
+30--42 & \rulescn{zxw_k0}, \rulescn{zxw_k2}, \rulescn{zxw_zer}, \rulescn{zxw_ad}, \rulescn{zxw_aso}, \rulescn{zxw_bzw}, \rulescn{zxw_bs0}, \rulescn{zxw_bsj}, \rulescn{zxw_ta}, \rulescn{zxw_hd}, \rulescn{zxw_zv}, \rulescn{zxw_va}, \rulescn{zxw_kz} & T & Axioms K0, K2, Zer, AD, Aso, BZW, Bs0, Bsj, TA, HD, ZV, VA, KZ of [P1], in this order. \\
+43--47 & \rulescn{qf_e}, \rulescn{qf_dzx}, \rulescn{qf_k0}, \rulescn{qf_bzw}, \rulescn{qf_s1} & T & Axioms E, DZX, K0, BZW, S1 of [P2], in this order. \\
+48 & \rulescn{scalar_box} & T & NF 25. \\
+\end{xltabular}
+
+\section{Exhaustive and Algebraic Search}\label{sec:app-rules-exhaustive}
+
+\py!exhaustive_search! and \py!algebraic_search! (\module{archytaszx.rewrite.exhaustive}) default to every rule of \py!RULES!, automatic or not, in registry order: the 28 hand-coded rules followed by the 123 template rules of \cref{ch:rules} (151 rules; the discard rules are not included). Each layer applies, for each frontier diagram in order, every match of every rule in this order, with the extra candidate matches a template pattern generates. A derivation whose last steps use rules that have converses is also found from the goal side; the search's own documentation names \azx!connective_inverse_bind_first! and \azx!port_box_unfusion! as the rules without a converse.
+
+\section{Shell Listings}\label{sec:app-rules-shell}
+
+The shell's \azx!rules! command without an argument prints the 151 names of \py!RULES! in registry order, one per line, and \azx!match! without an argument runs every rule's matcher in that order (\cref{ch:shell}). Both accept only names in \py!RULES!; a discard rule's name is refused there although \py!lookup_rule! resolves it.

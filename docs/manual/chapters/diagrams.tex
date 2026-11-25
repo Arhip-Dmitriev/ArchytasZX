@@ -1,0 +1,1450 @@
+\chapter{Diagrams}\label{ch:diagrams}
+
+This chapter specifies the diagram data model of ArchytasZX: the open graphs every other layer reads and rewrites. Seven modules of the package \module{archytaszx.diagram} implement it.
+\begin{itemize}
+\item \module{archytaszx.diagram.graph}: ports, wires, nodes, and the mutable \py!Diagram! (\cref{sec:diagrams-graph}).
+\item \module{archytaszx.diagram.generators}: the registry of generator types and their leg, phase, and dimension policies (\cref{sec:diagrams-generators}).
+\item \module{archytaszx.diagram.bangbox}: \bboxes{}, their multiplicities, and the operations that instantiate, copy, kill, merge, peel, and split them (\cref{sec:diagrams-bangboxes,sec:diagrams-instantiate,sec:diagrams-boxops}).
+\item \module{archytaszx.diagram.scalable}: the scalable sheet notation and its lossless translation to and from \bboxes{} (\cref{sec:diagrams-scalable}).
+\item \module{archytaszx.diagram.validate}: the well-formedness checks and their typed report (\cref{sec:diagrams-validate}).
+\item \module{archytaszx.diagram.compare}: structural comparison, id for id and up to renaming (\cref{sec:diagrams-compare}).
+\item \module{archytaszx.diagram.mixed}: discard nodes, conjugation, doubling, and purification, specified in \cref{ch:mixed}.
+\end{itemize}
+The diagram layer sits directly above the algebra layer of \cref{ch:algebra}: every port carries a dimension \py!Dim!, every spider an optional phase vector \py!PhaseVector!, and every diagram an exact scalar \py!Scalar!. The layer records shape only. A generator's denotation lives in \module{archytaszx.semantics.denote} (\cref{ch:semantics}), and the rewrite rules that change diagrams live in \cref{ch:rewriting,ch:rules}. The diagrams are those of the ZX calculus~\cite{coecke2011interacting,vandewetering2020working} extended by the W node~\cite{hadzihasanovic2015zw} and the qudit and qufinite generators of the ZXW calculus~\cite{wang2021qufinite,poor2023zxw,wang2023qufinitezxw}; \bboxes{} follow~\cite{dixon2009graphical,kissinger2014pattern,kissinger2015firstorder}, and the scalable notation follows~\cite{carette2019szx,carette2022bangboxes}.
+
+Diagrams flow from bottom to top in every picture of this manual: inputs enter at the bottom and outputs leave at the top.
+
+\section{The Graph Data Model}\label{sec:diagrams-graph}
+
+\subsection{Overview and invariants}
+
+A \term{diagram} is an open graph: a finite set of nodes, a set of wires, each joining two ports, two ordered boundary lists of unwired ports, an exact scalar factor, a parameter environment, and a set of \bboxes{}. Dimension lives on each port individually; there is no per-diagram dimension field. Three rules govern the module.
+
+\begin{enumerate}
+\item \emph{Permissive construction.} Constructors and mutators check only properties of the data structure itself: an index is a non-negative \py!int!, a wire does not join a port to itself, a mutated node exists. Every cross-cutting well-formedness property (dimension agreement, a port wired twice, a boundary entry that is also wired, out-of-range indices, generator policies, the parameter environment, \bbox{} structure) is the responsibility of \py!validate! (\cref{sec:diagrams-validate}), which reports every problem in one pass.
+\item \emph{Cascading node removal.} \py!Diagram.remove_node! also removes every incident wire and every boundary entry on the node. It always succeeds on a present node and leaves the diagram referentially consistent, though not necessarily valid.
+\item \emph{No diagram equality.} \py!Diagram! defines no \py!__eq__!; two diagrams compare by identity. Equality of denotations is the business of the decision procedure (\cref{ch:proofs}); structural equality is \py!compare_structure! and \py!isomorphic! (\cref{sec:diagrams-compare}). The records \py!PortRef!, \py!Port!, \py!Wire!, \py!Node!, and \py!GeneratorType! are value objects: equal by value and hashable.
+\end{enumerate}
+
+Every boundary entry is a port of some node. A bare identity wire, running from a boundary input straight to a boundary output with no node, has no representation; code that needs one inserts a phase-free Z spider with one input and one output.
+
+\subsection{Errors}
+
+\begin{signature}
+\py!class GraphError(Exception)!: base class of the module's errors.\\
+\py!class GraphDomainError(GraphError)!: a value outside the accepted domain: a negative port index, or a wire joining a port to itself.\\
+\py!class GraphGrammarError(GraphError)!: a malformed request: an argument of the wrong type, or an operation on a node id, \bbox{} id, or wire that the diagram does not hold.
+\end{signature}
+
+\subsection{Directions and identifiers}
+
+\begin{signature}
+\py!class Direction(enum.Enum)!: \py!INPUT = "input"!, \py!OUTPUT = "output"!.\\
+\py!NodeId = NewType("NodeId", int)!\\
+\py!BangBoxId = NewType("BangBoxId", int)!
+\end{signature}
+
+A \term{direction} names which of a node's two ordered port lists a port belongs to. A \py!NodeId! is allocated by \py!Diagram.add_node! from a per-diagram counter starting at~$0$; a \py!BangBoxId! is allocated by \py!Diagram.add_bang_box! from a second, independent counter starting at~$0$. Both are plain integers at run time; the distinct types only keep the two id spaces, port indices, and leg counts apart in static checking. Ids are never reused within one diagram: the counters only increase.
+
+\subsection{Port references}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class PortRef!\\
+\quad \py!node_id: NodeId!; \py!direction: Direction!; \py!index: int!
+\end{signature}
+
+A \term{port reference} addresses one port: a node, a side, and a position in that side's list. Construction raises \py!GraphGrammarError! when \py!direction! is not a \py!Direction! or \py!index! is not an \py!int! (a \py!bool! is refused), and \py!GraphDomainError! when \py!index < 0!. The node id is not checked: a reference to an absent node is legal and is reported by validation as \code!UNKNOWN_NODE!.
+
+Equality compares the three fields. The hash is computed once at construction as \py!hash((node_id, direction is Direction.OUTPUT, index))!. The representation is \code!PortRef(node_id=N, direction=input, index=I)!, with the direction printed by its value.
+
+\begin{definition}[Port sort key]\label{def:diagrams-portref-key}
+\py!PortRef.sort_key()! returns \py!(int(node_id), direction.value, index)!, so \code!"input"! sorts before \code!"output"!. The key contains no hash of an enumeration member, whose value depends on \code!PYTHONHASHSEED!. Every algorithm of this chapter that iterates a set of port references or wires and lets the order reach a result, a certificate, or a message sorts by this key or by the wire key of \cref{def:diagrams-wire-key}; ArchytasZX's results are therefore identical across processes.
+\end{definition}
+
+\subsection{Ports}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Port!: \py!dim: Dim!
+\end{signature}
+
+A \term{port} carries its own dimension, a \py!Dim! of \cref{ch:algebra}. Construction raises \py!GraphGrammarError! when \py!dim! is not a \py!Dim!.
+
+\subsection{Wires}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class Wire!: \py!a: PortRef!; \py!b: PortRef!\\
+\quad \py!endpoints() -> frozenset[PortRef]!; \py!sort_key()!
+\end{signature}
+
+A \term{wire} is an unordered pair of port references: \py!Wire(a, b) == Wire(b, a)!. Construction raises \py!GraphDomainError! when \py!a == b!. A wire between two distinct ports of one node (a self-loop) is legal. The hash is the hash of the pair \py!(hash(a), hash(b))! with the smaller hash first, computed once; equality holds when the stored ends agree in either order. For pickling, the state is the list \py![a, b]!, and unpickling recomputes the hash in the receiving process. \py!endpoints()! returns the two ends as a \py!frozenset!.
+
+\begin{definition}[Wire sort key]\label{def:diagrams-wire-key}
+\py!Wire.sort_key()! is the pair of the two port sort keys (\cref{def:diagrams-portref-key}) in ascending order. Two equal wires have the same key whichever end is stored as \py!a!.
+\end{definition}
+
+\subsection{Nodes}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Node!\\
+\quad \py!id: NodeId!; \py!generator_type: GeneratorType!; \py!inputs: tuple[Port, ...]!; \py!outputs: tuple[Port, ...]!; \py!phase: PhaseVector | None = None!\\
+\quad \py!num_inputs -> int!; \py!num_outputs -> int!; \py!legs(direction) -> tuple[Port, ...]!; \py!with_phase(phase) -> Node!
+\end{signature}
+
+A \term{node} is one generator instance: a generator type (\cref{sec:diagrams-generators}), an ordered tuple of input ports, an ordered tuple of output ports, and a phase slot. Construction raises \py!GraphGrammarError! when \py!generator_type! is not a \py!GeneratorType!, when \py!inputs! or \py!outputs! is not a tuple, when a port is not a \py!Port!, or when \py!phase! is neither \py!None! nor a \py!PhaseVector!. Construction does not check the generator's policies. \py!legs(direction)! returns \py!inputs! or \py!outputs! and raises \py!GraphGrammarError! for a non-\py!Direction! argument. \py!with_phase(phase)! returns a new node with every field kept except the phase. Nodes are immutable, so a node handed out by a read-only view never changes under a later mutation of the diagram.
+
+\subsection{The diagram record}
+
+\begin{signature}
+\py!class Diagram! (with \py!__slots__!)\\
+\quad Views: \py!nodes!, \py!wires!, \py!sorted_wires()!, \py!boundary_inputs!, \py!boundary_outputs!, \py!scalar!, \py!parameters!, \py!bang_boxes!, \py!is_pure()!, \py!discards()!, \py!__iter__!.\\
+\quad Mutators: \py!add_node!, \py!advance_ids!, \py!remove_node!, \py!set_phase!, \py!set_port_dims!, \py!add_bang_box!, \py!set_bang_box_extension!, \py!remove_bang_box!, \py!set_bang_box_node_scope!, \py!set_bang_box_sheets!, \py!set_bang_box_port_scope!, \py!set_bang_box_multiplicity!, \py!add_wire!, \py!remove_wire!, \py!set_boundary_inputs!, \py!set_boundary_outputs!, \py!multiply_scalar!, \py!set_scalar!, \py!bind_parameter!, \py!set_parameters!.\\
+\quad Pure functions: \py!resolve_dim!, \py!substitute!, \py!copy!.
+\end{signature}
+
+\Cref{tab:diagrams-state} lists the private state of a diagram. A fresh \py!Diagram()! has no nodes, no wires, empty boundaries, scalar \py!Scalar.one()!, an empty parameter environment, no \bboxes{}, and both id counters at~$0$.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.3\linewidth}X@{}}
+\toprule
+Slot & Type & Content \\
+\midrule
+\py!_nodes! & \py!dict[NodeId, Node]! & every node, keyed by id, in insertion order \\
+\py!_wires! & \py!set[Wire]! & every wire \\
+\py!_wires_view! & \py!frozenset[Wire] | None! & cached snapshot returned by \py!wires! \\
+\py!_wires_order! & \py!tuple[Wire, ...] | None! & cached result of \py!sorted_wires()! \\
+\py!_boundary_inputs! & \py!list[PortRef]! & the ordered boundary inputs \\
+\py!_boundary_outputs! & \py!list[PortRef]! & the ordered boundary outputs \\
+\py!_scalar! & \py!Scalar! & the exact scalar factor \\
+\py!_parameters! & \py!dict[str, int]! & the parameter environment \\
+\py!_next_id! & \py!int! & next fresh node id \\
+\py!_bang_boxes! & \py!dict[BangBoxId, BangBox]! & every \bbox{}, keyed by id \\
+\py!_next_bang_box_id! & \py!int! & next fresh \bbox{} id \\
+\bottomrule
+\end{tabularx}
+\caption{The private state of a \texttt{Diagram}.}
+\label{tab:diagrams-state}
+\end{table}
+
+\paragraph{Read-only views.} \py!nodes! and \py!bang_boxes! return \py!MappingProxyType! views of the live dictionaries; their values are immutable records. \py!boundary_inputs! and \py!boundary_outputs! return fresh tuples. \py!scalar! returns the immutable scalar. \py!parameters! returns a \py!MappingProxyType! of the parameter environment. \py!wires! returns a \py!frozenset! snapshot that is built on first use and kept until the wire set next changes; \py!sorted_wires()! returns the wires sorted by \cref{def:diagrams-wire-key}, also cached until the wire set next changes. Every mutation of the wire set (\py!add_wire!, \py!remove_wire!, \py!remove_node!) clears both caches. Iterating a diagram yields its node ids in insertion order. \py!is_pure()! is true when no node's generator name lies in \py!MIXED_ONLY! (\cref{sec:diagrams-generators}); \py!discards()! returns the ids of the nodes named \code!"G"! in ascending order.
+
+\paragraph{Wire-key cache and incidence index.} The module-level dictionary \py!WIRE_KEYS! maps every wire seen to its sort key (\cref{def:diagrams-wire-key}), computing a missing key on lookup; \py!sorted_wires()! sorts through it and empties it first when it holds more than $2^{18}=262144$ entries. \py!incident_wires(diagram)! returns, for every node id that a wire end names, the wires at that node in wire-key order (a self-loop listed once). The module keeps the last result (\py!incident_state!, a record of the sorted wire tuple, the wires by object identity, the index, the index it was updated from, and the node ids whose entries may differ from it); when the sorted wire tuple is the same object as last time, the record is returned unchanged; when more than a quarter of the wires were added or removed since, or there is no previous record, the index is rebuilt; otherwise only the entries of the nodes touched by the added and removed wires are recomputed. The result is the same in every case.
+
+\paragraph{Pickling.} \py!__getstate__! returns \py!(None, state)!, where \py!state! maps every slot name except \py!_wires_order! to its value; the sorted-wire cache is rebuilt on demand after unpickling.
+
+\subsection{Mutation}
+
+\paragraph{Nodes.}
+\begin{itemize}
+\item \py!add_node(generator_type, input_dims, output_dims, phase=None) -> NodeId! allocates the id \py!NodeId(_next_id)!, increments the counter, and stores \py!Node(id, generator_type, tuple(Port(d) for d in input_dims), tuple(Port(d) for d in output_dims), phase)!. It checks no generator policy, so a caller may build a node before its phase is known.
+\item \py!advance_ids(*, node_id=None, bang_box_id=None)! sets either counter to a given value. It raises \py!GraphGrammarError! when a value is not an \py!int! (or is a \py!bool!) or is below the current counter; it checks both arguments before setting either.
+\item \py!remove_node(node_id)! raises \py!GraphGrammarError! (\code!no such node: N!) for an absent id; otherwise it deletes the node, every wire with an end on it, and every boundary entry on it, keeping the order of the remaining boundary entries. It does not touch \bboxes{}: a \bbox{} scope that names the removed node becomes stale until the caller repairs it.
+\item \py!set_phase(node_id, phase)! replaces the node by \py!node.with_phase(phase)!; \py!GraphGrammarError! for an absent id.
+\item \py!set_port_dims(node_id, inputs, outputs)! replaces every port dimension of a node, keeping generator, phase, and port counts. It raises \py!GraphGrammarError! for an absent id or when a sequence length differs from the node's port count (\code!set_port_dims keeps the port counts!).
+\end{itemize}
+
+\paragraph{Wires.} \py!add_wire(a, b)! adds \py!Wire(a, b)!; it raises \py!GraphDomainError! when \py!a == b! and checks nothing else (not that the nodes exist, that dimensions agree, or that a port is free). Adding a wire that is already present leaves the set unchanged. \py!remove_wire(a, b)! raises \py!GraphGrammarError! when \py!a == b! or when the wire is absent.
+
+\paragraph{Boundaries.} \py!set_boundary_inputs(refs)! and \py!set_boundary_outputs(refs)! replace a boundary list wholesale with \py!list(refs)!; they check neither duplicates, nor wire conflicts, nor directions.
+
+\paragraph{Scalar.} \py!multiply_scalar(factor)! raises \py!GraphGrammarError! when \py!factor! is not a \py!Scalar!; it does nothing when \py!factor.is_one!, and otherwise replaces the scalar by \py!scalar * factor!. \py!set_scalar(scalar)! replaces the scalar, with the same type check.
+
+\paragraph{Bang boxes.} The \bbox{} mutators are specified with the \bbox{} record in \cref{sec:diagrams-box-mutators}.
+
+\subsection{The parameter environment}\label{sec:diagrams-params}
+
+The \term{parameter environment} maps a symbol name to the concrete integer a user supplied for it; the QPL paper calls it the binding~$\rho$. It records pending substitutions: ports keep their symbolic dimension expressions, several names coexist with different values, \py!copy! carries the environment along, and \py!substitute! consumes exactly the entries its mapping names. An empty environment means the input was symbolic.
+
+\begin{itemize}
+\item \py!bind_parameter(name, value)! sets one entry, replacing an existing one. It raises \py!GraphGrammarError! when \py!name! is not a string that is a Python identifier, or when \py!value! is not an \py!int! (a \py!bool! is refused). Whether the name is a symbol of the diagram, in one role, with a value in that role's domain, is checked by validation (\cref{sec:diagrams-validate-params}).
+\item \py!set_parameters(parameters)! replaces the whole environment, checking every entry through \py!bind_parameter!; the new environment keeps the iteration order of the argument.
+\item \py!resolve_dim(dim) -> Dim! substitutes the environment into \py!dim!, restricted to the free symbols of \py!dim! (in sorted order). It returns \py!dim! unchanged when the environment binds none of them, and also when the substitution raises \py!DimensionError! (a bound value outside the symbol's domain, which validation reports).
+\end{itemize}
+
+\subsection{Substitution}
+
+\begin{signature}
+\py!Diagram.substitute(mapping: Mapping[str, int | sympy.Rational | Dim | Phase | Scalar]) -> Diagram!
+\end{signature}
+
+\py!substitute! returns a new diagram with symbols replaced, preserving every node id, the wire set, both boundary lists, both id counters, and every \bbox{} id. It never mutates the receiver and validates nothing.
+
+\begin{algorithm}[Diagram substitution]\label{alg:diagrams-substitute}
+\begin{enumerate}
+\item Split \py!mapping! by the type of each value into a dimension mapping, a phase mapping, and a scalar mapping: a \py!Dim! goes to the dimension mapping only, a \py!Phase! to the phase mapping only, a \py!Scalar! to the scalar mapping only, an \py!int! to all three, and a \py!sympy.Rational! that is not an \py!int! to the phase and scalar mappings. Any other value type raises \py!GraphGrammarError! (\code!substitution value for 'x' must be int, sympy Rational, Dim, Phase, or Scalar, got T!). The split is needed because each of the three \py!substitute! methods of the algebra layer validates every entry it receives, not only those naming one of its free symbols.
+\item For every node, substitute the dimension mapping into each port's \py!Dim! and the phase mapping into the phase vector, if any.
+\item Substitute the scalar mapping into the diagram scalar.
+\item Keep every parameter entry whose name is not a key of \py!mapping!.
+\item For every \bbox{} with a copy scalar, substitute into that copy scalar the entries of the scalar mapping that name one of its free symbols and are not the box's own copy index, level index, or position index (\cref{sec:diagrams-box-kinds}). The \bbox{} multiplicities are not substituted.
+\end{enumerate}
+Errors raised by the algebra layer's \py!substitute! methods propagate unchanged.
+\end{algorithm}
+
+\subsection{Copying}
+
+\py!Diagram.copy()! returns an independent copy that preserves every id: fresh node, wire, boundary, parameter, and \bbox{} containers holding the same immutable elements, the same scalar, the same id counters, and the same wire caches. Because every stored element is immutable, no element is cloned. Every operation of this chapter that returns a new diagram starts from \py!copy()!.
+
+\begin{example}[Building a diagram]\label{ex:diagrams-build}
+The following Python fragment builds the qudit CX of dimension~$3$, a Z spider with one input and two outputs feeding an X spider with two inputs and one output (\cref{fig:diagrams-cx}).
+\begin{lstlisting}[style=python]
+d = Dim.concrete(3)
+D = Diagram()
+c = D.add_node(Z_SPIDER, [d], [d, d])        # NodeId 0
+x = D.add_node(X_SPIDER, [d, d], [d])        # NodeId 1
+D.add_wire(PortRef(c, Direction.OUTPUT, 1), PortRef(x, Direction.INPUT, 0))
+D.set_boundary_inputs([PortRef(c, Direction.INPUT, 0), PortRef(x, Direction.INPUT, 1)])
+D.set_boundary_outputs([PortRef(c, Direction.OUTPUT, 0), PortRef(x, Direction.OUTPUT, 0)])
+\end{lstlisting}
+\end{example}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+\node[zdot] (c) at (0,0) {};
+\node[xdot] (x) at (1,0.8) {};
+\draw[wire] (0,-1) node[below,dimlabel]{in 0} -- (c);
+\draw[wire] (c) -- (0,1.8) node[above,dimlabel]{out 0};
+\draw[wire] (c) to[out=0,in=-110] (x);
+\draw[wire] (1.4,-1) node[below,dimlabel]{in 1} to[out=90,in=-60] (x);
+\draw[wire] (x) -- (1,1.8) node[above,dimlabel]{out 1};
+\node[font=\tiny,left] at (c.west) {0};
+\node[font=\tiny,right] at (x.east) {1};
+\end{tikzpicture}
+\caption{The diagram of \cref{ex:diagrams-build}; node ids beside the nodes, boundary positions at the ends.}
+\label{fig:diagrams-cx}
+\end{figure}
+
+\section{Generators}\label{sec:diagrams-generators}
+
+\subsection{Policies}
+
+A \term{generator type} is a value object that records, for one family of nodes, which leg counts are legal, how the phase slot relates to the leg dimension, and how the leg dimensions relate to one another. It carries no formula; the denotation of each generator is specified in \cref{ch:semantics}. The module answers the question \enquote{is this node's shape legal} and never \enquote{what does this node mean}.
+
+\begin{signature}
+\py!class GeneratorError(Exception)!; \py!class GeneratorDomainError(GeneratorError)!; \py!class GeneratorGrammarError(GeneratorError)!
+\end{signature}
+
+\py!GeneratorDomainError! signals a negative bound or a maximum below its minimum; \py!GeneratorGrammarError! signals a field of the wrong type, an unknown generator name, or a duplicate registration.
+
+\begin{signature}
+\py!class DimensionPolicy(enum.Enum)!: \py!ALL_LEGS_EQUAL = "all_legs_equal"!, \py!PRODUCT_OF_LEGS_EQUAL = "product_of_legs_equal"!, \py!PER_LEG = "per_leg"!\\
+\py!class PhaseSchema(enum.Enum)!: \py!TIED_TO_LEG_DIM = "tied_to_leg_dim"!, \py!PAIR = "pair"!, \py!NONE = "none"!
+\end{signature}
+
+\begin{definition}[Dimension policy]\label{def:diagrams-dim-policy}
+Under \code!ALL_LEGS_EQUAL! every input and output port of a node carries one shared dimension. Under \code!PRODUCT_OF_LEGS_EQUAL! the product of the input dimensions equals the product of the output dimensions, an empty product being \py!Dim.concrete(1)!. Under \texttt{PER\_LEG} each leg carries its own dimension and no equality among the legs is asserted. Validation dispatches on the policy value and never on a generator name.
+\end{definition}
+
+\begin{definition}[Phase schema]\label{def:diagrams-phase-schema}
+Under \code!TIED_TO_LEG_DIM! the node's phase vector, when present, is a vector over the same dimension as the legs. Under \code!PAIR! the phase slot holds a \py!PairPhase! over the two leg dimensions (\cref{ch:algebra}). Under \code!NONE! the generator is phase-free: a node of the type carries \py!phase=None!.
+\end{definition}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class LegPolicy!\\
+\quad \py!min_inputs: int = 0!; \py!max_inputs: int | None = None!; \py!min_outputs: int = 0!; \py!max_outputs: int | None = None!; \py!total_legs: int | None = None!\\
+\quad \py!allows(num_inputs, num_outputs) -> bool!
+\end{signature}
+
+A \term{leg policy} bounds the input and output counts: minima are inclusive lower bounds, a maximum of \py!None! is unbounded, and \py!total_legs!, when set, fixes the number of legs of both directions together. Construction raises \py!GeneratorGrammarError! when a minimum is not an \py!int! (a \py!bool! is refused) or a maximum or the total is neither \py!None! nor an \py!int!, and \py!GeneratorDomainError! when a minimum or the total is negative or a maximum is below its minimum.
+
+\begin{algorithm}[Leg-policy test]\label{alg:diagrams-allows}
+\py!allows(m, n)! returns false when $m<$ \py!min_inputs! or $n<$ \py!min_outputs!, false when \py!total_legs! is set and $m+n\neq$ \py!total_legs!, false when \py!max_inputs! is set and $m>$ \py!max_inputs!, and otherwise true exactly when \py!max_outputs! is \py!None! or $n\le$ \py!max_outputs!.
+\end{algorithm}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class GeneratorType!\\
+\quad \py!name: str!; \py!leg_policy: LegPolicy!; \py!phase_schema: PhaseSchema!; \py!dimension_policy: DimensionPolicy!
+\end{signature}
+
+Construction raises \py!GeneratorGrammarError! when \py!name! is not a non-empty string or a field has the wrong type. Equality and hashing compare all four fields.
+
+\subsection{The registry}
+
+\begin{signature}
+\py!class GeneratorRegistry!\\
+\quad \py!register(generator_type)!; \py!get(name) -> GeneratorType!; \py!is_registered(generator_type) -> bool!; \py!names() -> frozenset[str]!; \py!all_types() -> MappingProxyType[str, GeneratorType]!\\
+\py!REGISTRY: GeneratorRegistry!; \py!MIXED_ONLY: frozenset[str] = frozenset({"G"})!
+\end{signature}
+
+\py!register! raises \py!GeneratorGrammarError! (\code!generator type 'Z' already registered!) on a duplicate name. \py!get! raises \py!GeneratorGrammarError! for an unknown name, with the message \code!unknown generator type 'Q'; registered names: [...]!, the names sorted. \py!is_registered(t)! is true when the registry holds a type under \py!t.name! that is \py!t! or equal to it. \py!all_types()! returns a read-only view of a copy of the name map. The module-level \py!REGISTRY! holds the ten generator types of \cref{tab:diagrams-generators}, registered in the order Z, X, F, T, Ti, W, B, S, G, Zp. \py!MIXED_ONLY! names the generators without a pure denotation: the discard~G alone.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l l l l l X@{}}
+\toprule
+Constant & Name & Inputs & Outputs & Phase & Dimensions \\
+\midrule
+\py!Z_SPIDER! & \code!Z! & $\ge 0$ & $\ge 0$ & tied & all equal \\
+\py!X_SPIDER! & \code!X! & $\ge 0$ & $\ge 0$ & tied & all equal \\
+\py!FOURIER_BOX! & \code!F! & $1$ & $1$ & none & all equal \\
+\py!TRIANGLE! & \code!T! & $1$ & $1$ & none & all equal \\
+\py!TRIANGLE_INVERSE! & \texttt{Ti} & $1$ & $1$ & none & all equal \\
+\py!W_NODE! & \code!W! & $1$ & $\ge 0$ & none & all equal \\
+\py!DIM_BINDER! & \code!B! & $2$ & $1$ & none & product \\
+\py!DIM_SPLITTER! & \code!S! & $1$ & $2$ & none & product \\
+\py!DISCARD! & \code!G! & $\le 1$ & $\le 1$, total legs $1$ & none & all equal \\
+\py!PAIR_PHASE! & \code!Zp! & \multicolumn{2}{l}{total legs $2$} & pair & per leg \\
+\bottomrule
+\end{tabularx}
+\caption{The registered generator types. \enquote{Tied} is \texttt{TIED\_TO\_LEG\_DIM}; \enquote{all equal} is \texttt{ALL\_LEGS\_EQUAL}; \enquote{product} is \texttt{PRODUCT\_OF\_LEGS\_EQUAL}.}
+\label{tab:diagrams-generators}
+\end{table}
+
+\subsection{The generators}
+
+\Cref{fig:diagrams-generators} draws every generator. The matrices below are those of \cref{ch:semantics} at a concrete dimension~$d$, with $\omega_d=e^{2\pi i/d}$; a phase $\alpha$ is measured in turns, so it contributes the factor $e^{2\pi i\alpha}$. They are stated here so that the shape conventions of this chapter have a meaning; \cref{ch:semantics} is authoritative.
+
+\paragraph{Z spider.} A Z spider with $m$ inputs, $n$ outputs, phases $(\alpha_1,\dots,\alpha_{d-1})$, and weights $(w_1,\dots,w_{d-1})$, with the gauge $\alpha_0=0$ and $w_0=1$, denotes
+\[
+Z_{m\to n} \;=\; \sum_{k=0}^{d-1} w_k\, e^{2\pi i\alpha_k}\, \ket{k}^{\otimes n}\bra{k}^{\otimes m}.
+\]
+A missing phase vector is the all-zero vector. A spider with no legs denotes the scalar $\sum_k w_k e^{2\pi i\alpha_k}$; it takes its dimension from its phase vector, so a legless Z spider must carry one.
+
+\paragraph{X spider.} The X spider is the Fourier conjugate of the Z spider:
+\[
+X_{m\to n} \;=\; F^{\otimes n}\circ Z_{m\to n}\circ (F^{\dagger})^{\otimes m},\qquad F_{jk}=\frac{\omega_d^{jk}}{\sqrt d}.
+\]
+Its phase vector is indexed like the Z spider's. In this normalization the phase-free X state with one output is $\sqrt d\,\ket{0}$, and the phase-free X spider with two inputs and one output is $d^{-1/2}$ times the addition map $\ket{a}\ket{b}\mapsto\ket{a+b \bmod d}$.
+
+\paragraph{Fourier box F.} The unitary discrete Fourier transform on one wire, $F_{jk}=\omega_d^{jk}/\sqrt d$; $F^4=\mathrm{id}$ and $\overline F=F^3$.
+
+\paragraph{Triangle T and its inverse Ti.} One input, one output: $T_{\mathrm{out},\mathrm{in}}=1$ exactly when $\mathrm{out}=0$ or $\mathrm{out}=\mathrm{in}$, and $0$ otherwise. \texttt{Ti} is its exact inverse: $1$ when $\mathrm{out}=\mathrm{in}$, $-1$ when $\mathrm{out}=0$ and $\mathrm{in}\ge 1$, and $0$ otherwise.
+
+\paragraph{W node.} One input and any number $n$ of outputs: $\ket{0}\mapsto\ket{0}^{\otimes n}$ and, for $i\neq 0$, $\ket{i}\mapsto\sum_{j=1}^{n}\ket{0}^{\otimes (j-1)}\ket{i}\ket{0}^{\otimes(n-j)}$. With no outputs it is $\bra{0}$; with one output it is the identity.
+
+\paragraph{Dimension binder B and splitter S.} \texttt{B} takes inputs of dimensions $s$ and $t$ to one output of dimension $st$, mapping $\ket{a}\ket{b}$ to $\ket{at+b}$; \texttt{S} is its inverse, from one input of dimension $st$ to outputs of dimensions $s$ and $t$. Both are unitary, $B\circ S=\mathrm{id}$ and $S\circ B=\mathrm{id}$. They are the connectives of the qufinite ZXW calculus~\cite{wang2023qufinitezxw}.
+
+\paragraph{Discard G.} One leg of any dimension, as an input (the trace effect) or as an output (the unnormalized maximally mixed state). It has no pure denotation and is meaningful only through doubling (\cref{ch:mixed}).
+
+\paragraph{Pair phase Zp.} \py!PAIR_PHASE!, named \texttt{Zp}, has exactly two legs in any directions (\py!LegPolicy(total_legs=2)!), dimension policy \code!PER_LEG!, and phase schema \code!PAIR!. With its legs read outputs first, then inputs, of dimensions $D_1$ and $D_2$, and its \py!PairPhase! $f$ (a phase in the two index symbols \py!INDEX! and \py!INDEX2!), its entry at leg values $(x,y)$ is $e^{2\pi i f(x,y)}$: a diagonal two-leg phase.
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{ccccccccc}
+\begin{tikzpicture}[zxd]
+\node[zs] (a) at (0,0) {$\alpha$};
+\draw[wire] (a) -- (-0.4,-0.9); \draw[wire] (a) -- (0.4,-0.9);
+\draw[wire] (a) -- (-0.4,0.9); \draw[wire] (a) -- (0.4,0.9);
+\node[dimlabel] at (0,-0.9) {$\cdots$}; \node[dimlabel] at (0,0.9) {$\cdots$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[xs] (a) at (0,0) {$\alpha$};
+\draw[wire] (a) -- (-0.4,-0.9); \draw[wire] (a) -- (0.4,-0.9);
+\draw[wire] (a) -- (-0.4,0.9); \draw[wire] (a) -- (0.4,0.9);
+\node[dimlabel] at (0,-0.9) {$\cdots$}; \node[dimlabel] at (0,0.9) {$\cdots$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[fbox] (a) at (0,0) {$F$};
+\draw[wire] (a) -- (0,-0.9); \draw[wire] (a) -- (0,0.9);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[tri] (a) at (0,0) {};
+\draw[wire] (a) -- (0,-0.9); \draw[wire] (a) -- (0,0.9);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[trii] (a) at (0,0) {};
+\draw[wire] (a) -- (0,-0.9); \draw[wire] (a) -- (0,0.9);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[wnode] (a) at (0,0) {};
+\draw[wire] (a) -- (0,-0.9);
+\draw[wire] (a.north) -- (-0.4,0.9); \draw[wire] (a.north) -- (0.4,0.9);
+\node[dimlabel] at (0,0.9) {$\cdots$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[bnode] (a) at (0,0) {$B$};
+\draw[wire] ($(a.south)+(-0.2,0)$) -- (-0.2,-0.9) node[below,dimlabel]{$s$};
+\draw[wire] ($(a.south)+(0.2,0)$) -- (0.2,-0.9) node[below,dimlabel]{$t$};
+\draw[wire] (a) -- (0,0.9) node[above,dimlabel]{$st$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[snode] (a) at (0,0) {$S$};
+\draw[wire] (a) -- (0,-0.9) node[below,dimlabel]{$st$};
+\draw[wire] ($(a.north)+(-0.2,0)$) -- (-0.2,0.9) node[above,dimlabel]{$s$};
+\draw[wire] ($(a.north)+(0.2,0)$) -- (0.2,0.9) node[above,dimlabel]{$t$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\draw[wire] (0,-0.9) -- (0,0.2);
+\zxground{0,0.2}
+\begin{scope}[shift={(0.8,0)}]
+\draw[wire] (0,0.9) -- (0,-0.2);
+\begin{scope}[shift={(0,-0.2)},yscale=-1]\zxground{0,0}\end{scope}
+\end{scope}
+\end{tikzpicture}
+\\
+\code!Z! & \code!X! & \code!F! & \code!T! & \texttt{Ti} & \code!W! & \code!B! & \code!S! & \code!G! (effect, state)
+\end{tabular}
+\caption{The generators other than the pair phase Zp. Spiders and the W node take any number of legs in the directions their leg policy admits.}
+\label{fig:diagrams-generators}
+\end{figure}
+
+\section{Bang Boxes}\label{sec:diagrams-bangboxes}
+
+A \term{\bbox{}} marks a part of a diagram that stands for any number of copies~\cite{dixon2009graphical,kissinger2014pattern,kissinger2015firstorder}. Its \term{multiplicity} $\mu_b$ is a non-negative integer expression, possibly symbolic; a diagram with a \bbox{} of symbolic multiplicity is a family of concrete diagrams, one for each value of the multiplicity symbol. ArchytasZX has two kinds of scope, never mixed in one \bbox{}, because they have different mechanics.
+
+\begin{definition}[Node-scoped and port-scoped \bboxes{}]\label{def:diagrams-scopes}
+A \term{node-scoped \bbox{}} has a non-empty set of whole nodes as its scope; instantiating it at $k$ builds $k$ independent copies of those nodes and of the wires among them. A \term{port-scoped \bbox{}} has a non-empty set of ports as its scope; instantiating it at $k$ grows each scoped port into $k$ consecutive legs of the node it is on, and replicates no node. One Z spider whose output port lies in a port-scoped \bbox{} of multiplicity $n$ denotes the whole GHZ family~\cite{ghz1989beyond}.
+\end{definition}
+
+A scoped port of a port-scoped \bbox{} must be a boundary slot of the diagram. A node-scoped \bbox{} may be wired to a node outside it: each such outside port fans out to one leg per copy, so a hub spider wired to a boxed satellite denotes the hub wired to $k$ satellites (\cref{fig:diagrams-scopes}).
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{c@{\qquad}c@{\qquad}c@{\qquad}c}
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-1);
+\draw[wire] (z) -- (0,0.9) coordinate (t);
+\coordinate (tb) at (0,0.5);
+\node[bang,fit=(t)(tb),inner sep=4pt] (bx) {};
+\node[banglabel] at (bx.north east) {$n$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-1);
+\foreach \x in {-0.6,0,0.6} \draw[wire] (z) -- (\x,1);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (h) at (0,0) {};
+\node[xs] (s) at (0,1) {};
+\draw[wire] (h) -- (0,-1); \draw[wire] (h) -- (s); \draw[wire] (s) -- (0,1.9);
+\node[bang,fit=(s),inner sep=4pt] (bx) {};
+\node[banglabel] at (bx.north east) {$n$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (h) at (0,0) {};
+\draw[wire] (h) -- (0,-1);
+\foreach \x/\k in {-0.7/a,0/b,0.7/c} {\node[xs] (s\k) at (\x,1) {}; \draw[wire] (h) -- (s\k); \draw[wire] (s\k) -- (\x,1.9);}
+\end{tikzpicture}
+\\
+port-scoped, $\mu=n$ & at $n=3$ & node-scoped, $\mu=n$ & at $n=3$
+\end{tabular}
+\caption{A port-scoped \bbox{} grows one port (the GHZ family); a node-scoped \bbox{} copies its nodes, and the hub outside it fans out one leg per copy. A dashed frame is a \bbox{}; its label is the multiplicity.}
+\label{fig:diagrams-scopes}
+\end{figure}
+
+\subsection{Errors}
+
+\begin{signature}
+\py!class BangBoxError(Exception)!\\
+\py!class BangBoxDomainError(BangBoxError)!: a negative multiplicity; a count that is symbolic or negative where a concrete non-negative count is required; a multiplicity whose constant term is not a positive integer where a copy is peeled.\\
+\py!class BangBoxGrammarError(BangBoxError)!: a malformed request: wrong type, an empty or mixed scope, an unknown box or symbol, boxes that are not siblings, a structure an operation does not support.
+\end{signature}
+
+\subsection{Multiplicities}
+
+\begin{signature}
+\py!class Mult! (immutable, hashable, \py!__slots__ = ("_expr",)!)\\
+\quad \py!Mult(value: int | str | Mult)!; \py!Mult.concrete(value)!; \py!Mult.symbol(name)!\\
+\quad \py!to_sympy()!; \py!is_concrete!; \py!is_bare_symbol!; \py!bare_symbol_name()!; \py!free_symbols!; \py!to_int()!\\
+\quad \py!substitute(mapping: Mapping[str, int]) -> Mult!; \py!abstract(*, avoid=(), stem="n") -> tuple[Mult, Mapping[str, int]]!\\
+\quad \py!+!, \py!*! (with \py!Mult! or \py!int!), \py!==!, \py!hash!, \py!repr! (\code!Mult(expr)!), \py!str! (the SymPy expression)
+\end{signature}
+
+A \term{multiplicity} is a SymPy~\cite{meurer2017sympy} expression in canonical form. It is deliberately not a \py!Dim!: the dimension grammar rejects sums and floors at~$1$, while a multiplicity needs sums and admits~$0$. A multiplicity symbol is \py!sympy.Symbol(name, integer=True, nonnegative=True, multiplicity=True)!; the inert assumption \code!multiplicity! distinguishes it from a dimension exponent symbol, which carries the same two real assumptions (\cref{sec:diagrams-validate-roles}).
+
+\begin{definition}[Multiplicity grammar]\label{def:diagrams-mult-grammar}
+An expression $e$ is a valid multiplicity when, recursively:
+\begin{enumerate}
+\item $e$ is an integer $\ge 0$; or
+\item $e$ is a symbol whose assumptions include \code!integer! and \code!nonnegative! and whose name is a Python identifier; or
+\item $e$ is a sum whose non-integer terms are valid (integer offsets of any sign are allowed); or
+\item $e$ is a product of valid factors; or
+\item $e$ is a power $b^{x}$ with $b$ an integer $\ge 1$ and $x$ valid.
+\end{enumerate}
+A negative integer raises \py!BangBoxDomainError!; every other violation raises \py!BangBoxGrammarError! naming the grammar.
+\end{definition}
+
+\py!Mult(value)! accepts a non-negative \py!int! (a negative one raises \py!BangBoxDomainError!), a string (a new multiplicity symbol; \py!BangBoxGrammarError! unless it is an identifier), or another \py!Mult! (a copy); a \py!bool! raises \py!BangBoxGrammarError! and any other type \py!TypeError!. \py!concrete! and \py!symbol! are aliases. Arithmetic and substitution build their result with \py!sympy.sympify! and check it against \cref{def:diagrams-mult-grammar}.
+
+\begin{itemize}
+\item \py!is_concrete! is true when the expression has no free symbol; \py!to_int()! returns its value and raises \py!BangBoxDomainError! for a symbolic multiplicity.
+\item \py!is_bare_symbol! is true when the expression is a single symbol; such a box \emph{owns} the name, while a box with a compound multiplicity only \emph{uses} it. \py!bare_symbol_name()! raises \py!BangBoxGrammarError! on any other expression.
+\item \py!free_symbols! is the set of names of the free symbols.
+\item \py!substitute(mapping)! replaces, in sorted name order, each free symbol named in \py!mapping!; names absent from the mapping stay symbolic. A non-\py!int! value raises \py!TypeError!, a negative value \py!BangBoxDomainError!.
+\item \py!abstract! is defined for a concrete multiplicity only (\py!BangBoxDomainError! otherwise). It picks the first name of the sequence \texttt{stem}, \texttt{stem1}, \texttt{stem2}, \ldots{} not in \py!avoid! and returns the new symbol and the read-only binding \py!{name: value}!.
+\item Equality compares the SymPy expressions structurally; the hash is the expression's hash. \py!Mult("n") + 1 == Mult(1) + Mult("n")! holds, \py!Mult("n") + 1 == Mult("n")! does not.
+\end{itemize}
+
+\subsection{The bang-box record}\label{sec:diagrams-box-record}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class BangBox!: the fields of \cref{tab:diagrams-box-fields}.\\
+\quad \py!is_node_scope!, \py!is_extended!, \py!is_pair!, \py!is_tree!, \py!is_fed!\\
+\quad \py!with_node_scope(scope)!, \py!with_port_scope(scope)!, \py!with_multiplicity(m)!
+\end{signature}
+
+\begin{xltabular}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Field & Type, default & Meaning \\
+\midrule
+\endhead
+\py!id! & \py!BangBoxId! & the box's id in its diagram \\
+\py!multiplicity! & \py!Mult! & the copy count $\mu_b$ \\
+\py!node_scope! & \py!frozenset[NodeId]!, empty & the nodes of a node-scoped box \\
+\py!port_scope! & \py!frozenset[PortRef]!, empty & the ports of a port-scoped box \\
+\py!parent! & \py!BangBoxId | None!, \py!None! & the enclosing box \\
+\py!sheets! & \py!bool!, \py!False! & a node-scoped box of a doubled diagram: its boundary slots in the first half of each boundary list belong to the plain sheet, those in the second half to the conjugate sheet (\cref{ch:mixed}) \\
+\py!links! & tuple of \py!(PortRef, PortRef)!, empty & chain links $(p,q)$: copy $m$'s $p$ is wired to copy $m+1$'s $q$ \\
+\py!cyclic! & \py!bool!, \py!False! & the last copy's $p$ ports are wired to the first copy's $q$ ports \\
+\py!index! & \py!str | None!, \py!None! & the copy-index symbol: $m$ in copy $m$, $m=0,\dots,\mu_b-1$ \\
+\py!copy_scalar! & \py!Scalar | None!, \py!None! & a scalar $c(m)$ multiplied in once per copy \\
+\py!pair_of! & \py!BangBoxId | None!, \py!None! & for a pair box: the indexed box over whose copy pairs $(j,k)$, $j<k$, it is instantiated \\
+\py!pair_index! & \py!str | None!, \py!None! & for a pair box: the symbol read as $k$; the parent's index reads $j$ \\
+\py!left_ports! & \py!frozenset[PortRef]!, empty & for a pair box: ports of the parent's scope resolved in copy $j$ \\
+\py!right_ports! & \py!frozenset[PortRef]!, empty & for a pair box: ports of the parent's scope resolved in copy $k$ \\
+\py!tree! & tuple of \py!PortRef!, empty & for a tree box: the child ports $p_1,\dots,p_b$ of one copy; $b$ is the branching \\
+\py!tree_parent! & \py!PortRef | None!, \py!None! & for a tree box: the parent port $q$ of one copy \\
+\py!level! & \py!str | None!, \py!None! & for a tree box: the depth index $L$, $1\le L\le\mu_b$ \\
+\py!position! & \py!str | None!, \py!None! & for a tree box: the position index $P$, $0\le P<b^{L-1}$ \\
+\py!feed! & \py!BangBoxId | None!, \py!None! & for a fed box: the tree box whose $j$-th leaf slot (leaf-major) is wired to copy $j$'s feed port \\
+\py!feed_port! & \py!PortRef | None!, \py!None! & for a fed box: the port of one copy that its leaf slot meets \\
+\py!groups! & tuple of \py!frozenset[NodeId]!, empty & disjoint node sets of the scope whose boundary slots form separate copy-major blocks \\
+\py!align! & \py!BangBoxId | None!, \py!None! & a node-scoped box of the same multiplicity whose copy $j$ is wired to this box's copy $j$ on every wire between the two scopes \\
+\bottomrule
+\caption{The fields of a \texttt{BangBox}.}\label{tab:diagrams-box-fields}
+\end{xltabular}
+
+\begin{definition}[Bang-box invariants]\label{def:diagrams-box-invariants}
+Construction raises \py!BangBoxGrammarError! unless every one of the following holds.
+\begin{enumerate}
+\item \py!multiplicity! is a \py!Mult!; both scopes are frozensets; node-scope entries are \py!int!s; port-scope entries are \py!PortRef!s.
+\item Exactly one of \py!node_scope! and \py!port_scope! is non-empty.
+\item \py!links! is a tuple of pairs of \py!PortRef!s, and no port occurs in two links (nor twice in one).
+\item A cyclic box has at least one link.
+\item Links, an index, and a copy scalar occur on node-scoped boxes only; an index is an identifier; a copy scalar is a \py!Scalar!.
+\item A \term{pair box} (\py!pair_of! set) is node-scoped, has no links, and has a \py!pair_index! that is an identifier. Without \py!pair_of!, \py!pair_index!, \py!left_ports!, and \py!right_ports! are empty.
+\item A \term{tree box} (\py!tree! or \py!tree_parent! set) is node-scoped, has no links, is no pair box, has both a parent port and at least one child port, and all its ports are distinct \py!PortRef!s. Without a tree, \py!level! and \py!position! are \py!None!; when set, both are identifiers.
+\item \py!feed! and \py!feed_port! are both set or both \py!None!. A \term{fed box} is node-scoped and has no links, no pair parent, and no tree ports; its feed port is a \py!PortRef!.
+\item The groups are pairwise disjoint subsets of \py!node_scope!.
+\item An \term{aligned box} (\py!align! set) is node-scoped, is not aligned to itself, and is no pair, tree, or fed box.
+\end{enumerate}
+\end{definition}
+
+The properties classify a box. \py!is_node_scope! is true when \py!node_scope! is non-empty. \py!is_pair!, \py!is_tree!, and \py!is_fed! test \py!pair_of!, \py!tree!, and \py!feed!. \py!is_extended! is true when the box has links, an index, a copy scalar, a pair parent, tree ports, or a feed; a box that is not extended is \term{plain}. Alignment, groups, and \py!sheets! do not make a box extended. The \py!with_*! methods return a copy with one field replaced, through \py!dataclasses.replace!, which re-runs the checks.
+
+\subsection{Box kinds}\label{sec:diagrams-box-kinds}
+
+The fields combine into the kinds of \cref{tab:diagrams-box-kinds}. The engine language of \cref{ch:language} writes each kind; this section fixes their meaning, which \cref{sec:diagrams-instantiate} realizes.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.33\linewidth}X@{}}
+\toprule
+Kind & Fields & Instance at $k$ \\
+\midrule
+port-scoped & \py!port_scope! & each scoped port becomes $k$ consecutive legs \\
+plain node-scoped & \py!node_scope! & $k$ disjoint copies; outside ports fan out \\
+indexed & \py!index!, optionally \py!copy_scalar! & copy $m$ reads the index as $m$ in its phases, dimensions, child multiplicities, and child copy scalars; the copy scalar at $m$ is multiplied in \\
+open chain & \py!links! & copy $m$'s $p$ wired to copy $m+1$'s $q$; head to copy 0's $q$; copy $k-1$'s $p$ to tail; head to tail at $k=0$ \\
+cyclic chain & \py!links!, \py!cyclic! & copy $m$'s $p$ wired to copy $(m+1)\bmod k$'s $q$ \\
+pair & \py!pair_of!, \py!pair_index!, \py!left_ports!, \py!right_ports! & one copy per pair $j<k'$ of the parent's copies, between copy $j$'s left ports and copy $k'$'s right ports \\
+tree & \py!tree!, \py!tree_parent!, \py!level!, \py!position! & a complete $b$-ary tree of depth $k$ \\
+fed & \py!feed!, \py!feed_port! & one copy per leaf of its tree box \\
+grouped & \py!groups! & boundary slots in one copy-major block per group \\
+aligned & \py!align! & copy $j$ of each member wired to copy $j$ of the other members \\
+\bottomrule
+\end{tabularx}
+\caption{Bang-box kinds.}
+\label{tab:diagrams-box-kinds}
+\end{table}
+
+\paragraph{Nesting.} A child's \py!parent! names its enclosing box; parents form a forest. Instantiating a node-scoped box at $k\ge 2$ replicates every child box once per copy, keeping the child's multiplicity symbol unrenamed: the copies still denote one shared, not-yet-supplied count. The unit of instantiation is therefore a symbol, not a box: \py!instantiate_symbol! (\cref{alg:diagrams-instantiate-symbol}) acts on every box carrying the symbol, so a nested family with two indices instantiates to the same diagram in either order.
+
+\paragraph{Chains.} A link $(p,q)$ of a chain names two ports of the scope of opposite direction. Outside the box, the $q$ end of the first copy meets the chain's \term{head} (what $q$ is wired to, or its boundary slot) and the $p$ end of the last copy meets the \term{tail}. When a link's ports lie in a child box of the chain, the chain \term{zips} that child: the child's copies and the boxes the chain's ends are wired to are expanded together, copy~$j$ of each wired to copy~$j$ of the others (\cref{sec:diagrams-zip}).
+
+\paragraph{Trees.} A tree box of branching $b$ and multiplicity $k$ instantiates to the copies $c(L,P)$ for $L=1,\dots,k$ and $P=0,\dots,b^{L-1}-1$: the head (what the parent port $q$ meets) is wired to $c(1,0)$'s $q$, $c(L,P)$'s $i$-th child port to $c(L+1,bP+i)$'s parent port, and the $b^{k}$ child ports of the leaves take the place of the stored child ports' run of boundary slots, leaf-major. A fed box receives the leaves instead (\cref{fig:diagrams-tree}).
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{c@{\qquad\qquad}c}
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-1) node[below,dimlabel]{$q$};
+\draw[wire] (z) -- (-0.4,0.9) node[above,dimlabel]{$p_1$};
+\draw[wire] (z) -- (0.4,0.9) node[above,dimlabel]{$p_2$};
+\node[bang,fit=(z),inner sep=6pt] (bx) {};
+\node[banglabel] at (bx.north east) {$k$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (a) at (0,0) {};
+\node[zs] (b) at (-0.8,0.9) {}; \node[zs] (c) at (0.8,0.9) {};
+\draw[wire] (a) -- (0,-1);
+\draw[wire] (a) -- (b); \draw[wire] (a) -- (c);
+\foreach \n/\x in {b/-0.8,c/0.8} {\draw[wire] (\n) -- (\x-0.3,1.8); \draw[wire] (\n) -- (\x+0.3,1.8);}
+\node[font=\tiny,right] at (a.east) {$c(1,0)$};
+\node[font=\tiny,left] at (b.west) {$c(2,0)$};
+\node[font=\tiny,right] at (c.east) {$c(2,1)$};
+\end{tikzpicture}
+\\
+tree box, $b=2$, $\mu=k$ & at $k=2$: four leaf slots, leaf-major
+\end{tabular}
+\caption{A tree box and its instance at depth~2.}
+\label{fig:diagrams-tree}
+\end{figure}
+
+\paragraph{Groups.} By default the boundary slots of a node-scoped box form one copy-major block at the position of its first slot (\cref{def:diagrams-splice}). With groups, the slots on each group's nodes form a separate block at that group's first slot, and the slots on the remaining nodes form one more block.
+
+\paragraph{Alignment.} An \term{alignment group} is a box that no other box aligns to and that is aligned to none (the root) together with every live box whose \py!align! names the root. The wires between two members' scopes are \term{aligned wires}: at instantiation each becomes one wire per copy $j$, between the two copies~$j$, instead of a fan-out.
+
+\subsection{Bang-box mutators of a diagram}\label{sec:diagrams-box-mutators}
+
+\begin{signature}
+\py!Diagram.add_bang_box(multiplicity, *, node_scope=frozenset(), port_scope=frozenset(), parent=None, sheets=False, links=(), cyclic=False, index=None, copy_scalar=None, pair_of=None, pair_index=None, left_ports=frozenset(), right_ports=frozenset(), tree=(), tree_parent=None, level=None, position=None, feed=None, feed_port=None, groups=(), align=None) -> BangBoxId!
+\end{signature}
+
+\py!add_bang_box! raises \py!GraphGrammarError! when \py!multiplicity! is not a \py!Mult!; otherwise it allocates \py!BangBoxId(_next_bang_box_id)!, increments the counter, and stores a \py!BangBox! with every field (scopes and port sets converted to frozensets, tuples to tuples), whose construction checks \cref{def:diagrams-box-invariants}. It checks nothing against the diagram.
+
+\begin{itemize}
+\item \py!set_bang_box_extension(box_id, **fields)! replaces any of the fields \py!node_scope!, \py!links!, \py!cyclic!, \py!index!, \py!copy_scalar!, \py!pair_of!, \py!pair_index!, \py!left_ports!, \py!right_ports!, \py!tree!, \py!tree_parent!, \py!level!, \py!position!, \py!feed!, \py!feed_port!, \py!groups!, \py!parent!, and \py!align! in one replacement, so intermediate states need not satisfy the invariants. Another field name raises \py!GraphGrammarError! (\code!set_bang_box_extension: unknown fields [...]!).
+\item \py!set_bang_box_node_scope!, \py!set_bang_box_port_scope!, \py!set_bang_box_sheets!, and \py!set_bang_box_multiplicity! replace one field; the last raises \py!GraphGrammarError! for a non-\py!Mult!.
+\item \py!remove_bang_box(box_id)! deletes one box; it does not cascade to child boxes, whose \py!parent! then names an absent box until the caller removes or repairs them.
+\end{itemize}
+Every one of these raises \py!GraphGrammarError! (\code!no such bang box: B!) for an absent id.
+
+\subsection{Structural helpers}
+
+The following functions read a node set $N$ of a diagram; \module{archytaszx.diagram.validate} shares them.
+\begin{itemize}
+\item \py!crossing_wires(diagram, N)!: every wire with exactly one end on a node of $N$.
+\item \py!internal_wires(diagram, N)!: every wire with both ends on nodes of $N$.
+\item \py!boundary_refs_in_scope(diagram, N)!: every boundary entry, input or output, on a node of $N$.
+\item \py!outside_crossings(diagram, N)!: every crossing wire as the pair \py!(inside, outside)!, sorted by the sort key of the outside port.
+\item \py!scope_is_closed(diagram, N)!: true when $N$ meets the rest of the diagram at no wire and holds no boundary slot.
+\end{itemize}
+Crossing and internal status is always derived from the current scope, never cached.
+
+\subsection{Abstraction}
+
+\begin{signature}
+\py!abstract_port_count(diagram, ref, concrete_k, *, stem="n") -> tuple[Diagram, BangBoxId, Mult]!\\
+\py!abstract_subgraph_count(diagram, node_scope, concrete_k, *, parent=None, stem="n") -> tuple[Diagram, BangBoxId, Mult]!
+\end{signature}
+
+Both functions turn a concrete count into a symbol. On a copy of \py!diagram! they mint a fresh multiplicity symbol by \py!Mult(concrete_k).abstract(avoid=..., stem=stem)!, where \py!avoid! is the set of every symbol name already present (the free symbols of every port dimension, every phase vector, the diagram scalar, and every box multiplicity) together with every key of the parameter environment. They add a box over the given scope with that symbol as multiplicity (port-scoped over \py!{ref}! with no parent, or node-scoped over \py!node_scope! with the given parent), bind the symbol to \py!concrete_k! in the parameter environment, and return the copy, the box id, and the symbol. The diagram itself does not change: the copy still denotes the same concrete diagram, now through its parameter environment.
+
+\subsection{Queries}
+
+\begin{itemize}
+\item \py!free_mult_symbols(diagram)!: the free symbols of every box multiplicity, less \py!index_symbols(diagram)!.
+\item \py!index_symbols(diagram)!: every \py!index!, \py!pair_index!, \py!level!, and \py!position! name of every box.
+\item \py!fed_box(diagram, tree_id)!: the box whose \py!feed! is \py!tree_id!, or \py!None!.
+\item \py!aligned_members(diagram, box_id)!: the alignment group of a box: its \py!align! target (the box itself when \py!align! is \py!None!) followed by every box aligned to that root, in id order; just \py![box_id]! when the root is not live.
+\item \py!aligned_wires(diagram)!: every wire between the scopes of two different members of one alignment group, over every live root.
+\item \py!zip_child(diagram, box)! and \py!zip_wires(diagram)!: \cref{sec:diagrams-zip}.
+\item \py!index_owners(diagram, name)!: the ids of the boxes whose multiplicity carries \py!name!, in id order; when there are two or more, the pair boxes of another such box are left out.
+\end{itemize}
+
+\subsection{Boundary arity}\label{sec:diagrams-arity}
+
+\begin{signature}
+\py!boundary_arity(diagram) -> tuple[sympy.Expr, sympy.Expr] | None!
+\end{signature}
+
+\py!boundary_arity! returns the numbers of boundary inputs and outputs that every instance of the family has, as expanded polynomials in the free multiplicities, or \py!None! when some boundary port's covering boxes are not one nesting chain.
+
+\begin{definition}[Slot count]\label{def:diagrams-slot-count}
+For a box $b$ of multiplicity $\mu$ and a boundary port $r$ that $b$ covers, the slot count $\sigma_b(r)$ is
+\begin{enumerate}
+\item $1$ when $r$ is a port of one of $b$'s links or $b$'s tree parent port;
+\item $\mu$ when $b$ has no tree;
+\item $b'^{\,\mu}/b'$ when $b$ is a tree box of branching $b'$ and $r$ is one of its child ports (the leaves' child slots, $b'^{\mu}$ in total, spread over the $b'$ stored child ports);
+\item $(b'^{\,\mu}-1)/(b'-1)$, or $\mu$ when $b'=1$, for any other port of a tree box (one per copy, $\sum_{L=1}^{\mu}b'^{\,L-1}$ copies).
+\end{enumerate}
+\end{definition}
+
+\begin{algorithm}[Boundary arity]\label{alg:diagrams-arity}
+For each boundary list, sum over its entries $r$ the port multiplicity $\pi(r)$, defined as follows, and expand the sum; return \py!None! as soon as one $\pi(r)$ is undefined.
+\begin{enumerate}
+\item Let $C$ be the set of boxes \emph{covering} $r$: those whose node scope holds $r$'s node or whose port scope holds $r$. If $C$ is empty, $\pi(r)=1$.
+\item For each $c\in C$, walk the parent chain from $c$; if it reaches an absent box or repeats, $\pi(r)$ is undefined.
+\item Let $\gamma$ be the longest of these chains. If the set of boxes on $\gamma$ is not $C$, $\pi(r)$ is undefined.
+\item Walk $\gamma$ from the outermost box inward; if a node-scoped box follows a port-scoped one, $\pi(r)$ is undefined.
+\item Otherwise $\pi(r)=\prod_{c\in\gamma}\sigma_c(r)$.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}
+For the port-scoped GHZ box of \cref{fig:diagrams-scopes}, \py!boundary_arity! returns $(1,n)$. For the hub and boxed satellite, the satellite's output slot lies in the box and the hub's input slot in none, so the result is again $(1,n)$.
+\end{example}
+
+\section{Instantiation}\label{sec:diagrams-instantiate}
+
+Instantiation replaces a \bbox{} of concrete multiplicity $k$ by $k$ copies of its contents. Every operation of this section works on a copy of its input diagram and returns the copy; the input never changes. Node ids of copies are always fresh, allocated by \py!add_node!, and box ids of copied child boxes are fresh, allocated by \py!add_bang_box!.
+
+\subsection{Entry points}
+
+\begin{signature}
+\py!instantiate_symbol(diagram, name: str, value: int) -> Diagram!\\
+\py!expand_concrete_boxes(diagram) -> Diagram!\\
+\py!kill(diagram, box_id) -> Diagram!\\
+\py!substitute_count(diagram, name, value: int) -> Diagram!\\
+\py!substitute_index_phases(diagram, name, value: int | Mult) -> Diagram!\\
+\py!_MAX_INSTANTIATE_ROUNDS = 10_000!
+\end{signature}
+
+\begin{algorithm}[Instantiating a symbol]\label{alg:diagrams-instantiate-symbol}
+\py!instantiate_symbol(D, x, v)!:
+\begin{enumerate}
+\item Raise \py!BangBoxDomainError! unless $v$ is a non-negative \py!int! (not a \py!bool!). Copy $D$. Raise \py!BangBoxGrammarError! (\code!no live bang box has multiplicity symbol 'x'!) when no box's multiplicity has the free symbol $x$.
+\item Repeat for at most \py!_MAX_INSTANTIATE_ROUNDS! rounds:
+\begin{enumerate}
+\item Let \emph{carrying} be the boxes whose multiplicity has $x$ free, in id order, and \emph{targets} those of them that are not fed boxes.
+\item If there is no target, substitute $x:=v$ into the multiplicity of every carrying (fed) box and leave the loop.
+\item Otherwise take the first target $b$ and compute $\mu'=\mu_b[x:=v]$. If $\mu'$ is concrete, also substitute $x:=v$ into the multiplicity of every member of $b$'s zip chain (when $b$ belongs to one, \cref{sec:diagrams-zip}) and of every box of $b$'s alignment group (when $b$ is node-scoped).
+\item Set $\mu_b:=\mu'$. If $\mu'$ is concrete, instantiate $b$ at $\mu'$ by \cref{alg:diagrams-instantiate-one}. A compound multiplicity that still carries another symbol keeps its box until that symbol is supplied.
+\end{enumerate}
+\item If the loop ran all its rounds without leaving, raise \py!BangBoxGrammarError! (\code!instantiating 'x' did not settle within 10000 rounds!).
+\item Apply \py!substitute_count(D, x, v)! and remove $x$ from the parameter environment.
+\end{enumerate}
+\end{algorithm}
+
+The diagram is rescanned after every expansion, so the copies that a parent's expansion makes of a child carrying $x$ are reached in turn.
+
+\py!substitute_index_phases(D, x, v)! returns a copy of $D$ with $x:=v$ substituted into every node phase vector that has $x$ free, nodes in id order; a \py!Mult! value is substituted as its SymPy expression. \py!substitute_count(D, x, v)! applies \py!substitute_index_phases!, then substitutes $x:=v$ into the diagram scalar, into every box copy scalar that has $x$ free, and into every port dimension that has $x$ free.
+
+\py!expand_concrete_boxes(D)! repeats, for at most \py!_MAX_INSTANTIATE_ROUNDS! rounds: take the boxes of concrete multiplicity that are neither pair boxes nor fed boxes, in id order; if there is none, return; otherwise instantiate the first at its value by \cref{alg:diagrams-instantiate-one}. Running out of rounds raises \py!BangBoxGrammarError! (\code!expanding concrete bang boxes did not settle within 10000 rounds!).
+
+\begin{algorithm}[Instantiating one box]\label{alg:diagrams-instantiate-one}
+\py!_instantiate_one(D, b, k)! dispatches in this order:
+\begin{enumerate}
+\item A pair box raises \py!BangBoxGrammarError! (\code!pair box B is instantiated with its parent only!); a fed box raises \py!BangBoxGrammarError! (\code!fed box B is instantiated with its tree box only!).
+\item A node-scoped box whose alignment group has two or more members: if some member belongs to a zip chain, expand the first such chain jointly (\cref{alg:diagrams-zipped}); otherwise expand the group jointly (\cref{alg:diagrams-aligned}).
+\item A node-scoped box belonging to a zip chain: expand that chain jointly.
+\item A tree box: \cref{alg:diagrams-tree}.
+\item Any other extended box: \cref{alg:diagrams-extended}.
+\item A plain node-scoped box: \cref{alg:diagrams-node-scope}.
+\item A port-scoped box: \cref{alg:diagrams-port-scope}.
+\end{enumerate}
+\end{algorithm}
+
+\py!kill(D, b)! instantiates one box at multiplicity~$0$ and returns the result: its scope vanishes and, for a node-scoped box, every nested child with it. An absent id raises \py!BangBoxGrammarError!. Killing dispatches like \cref{alg:diagrams-instantiate-one} with $k=0$, with two differences: a node-scoped box in an alignment group of two or more sets every member's multiplicity to~$0$ and expands the group jointly at~$0$, and a pair box is not refused at this level.
+
+\subsection{Growing a port}\label{sec:diagrams-grow}
+
+Both scopes rest on one primitive that replaces a port by $k$ legs.
+
+\begin{definition}[Port remapping]\label{def:diagrams-remap}
+Let a node $v$ be replaced by a node $v'$ whose port $(\delta,i)$ is grown to $k$ legs. An old reference $r$ maps to:
+\begin{enumerate}
+\item $[r]$ when $r$ is not on $v$;
+\item $[(v',\delta_r,i_r)]$ when $\delta_r\ne\delta$, or $\delta_r=\delta$ and $i_r<i$;
+\item $[(v',\delta,i),(v',\delta,i+1),\dots,(v',\delta,i+k-1)]$ when $r=(v,\delta,i)$, the empty list when $k=0$;
+\item $[(v',\delta,i_r+k-1)]$ when $\delta_r=\delta$ and $i_r>i$.
+\end{enumerate}
+\end{definition}
+
+\begin{algorithm}[Regrowing a port]\label{alg:diagrams-regrow}
+\py!_regrow_port(D, r, k, owner_box_id=None)! for an unwired port $r=(v,\delta,i)$ of dimension~$e$:
+\begin{enumerate}
+\item Build the new port-dimension lists of $v$ with entry $i$ of side $\delta$ replaced by $k$ copies of~$e$.
+\item Keep $v$'s phase. When $v$ has no phase, no leg remains, and $v$'s phase schema is \code!TIED_TO_LEG_DIM!, give the new node the zero phase vector over $e$, so that its dimension stays determined.
+\item Add the new node $v'$ (fresh id) with the same generator.
+\item Re-add every wire with an end on $v$, both ends remapped by \cref{def:diagrams-remap} (a self-loop survives); replace every boundary entry on $v$ by its remapped list, in place.
+\item For every other box (in id order, skipping \py!owner_box_id!): replace $v$ by $v'$ in its node scope and its groups; remap its link ports, raising \py!BangBoxGrammarError! (\code!chain box B: link port R grew to N legs!) when a link port maps to other than one port; remap its port scope, and when the port scope becomes empty, remove the box and every box below it and purge their dead symbols (\cref{def:diagrams-purge}).
+\item Remove $v$ and install the new boundary lists. Return $v'$.
+\end{enumerate}
+\end{algorithm}
+
+\py!_grow_port(D, r, k, owner_box_id)! first checks that $r$'s node exists, that $r$'s index is in range, and that $r$ is a boundary slot, raising \py!BangBoxGrammarError! otherwise (the last with \code!port-scope instantiate only supports a scoped port that is a diagram boundary slot; R is wired internally!), and then applies \cref{alg:diagrams-regrow}.
+
+\begin{definition}[Purging a dead symbol]\label{def:diagrams-purge}
+After a box is removed, a symbol name of its multiplicity is \emph{dead} when it is not in \py!free_mult_symbols! of the diagram. A dead name is removed from the parameter environment, so that no binding is left pending against nothing.
+\end{definition}
+
+\begin{algorithm}[Fan-out]\label{alg:diagrams-fanout}
+\py!_fan_out(D, crossings, maps)! rewires each crossing \py!(inside, outside)! of a node-scoped box as one outside leg per copy. Let $k$ be the number of copy maps. Take the crossings in order (sorted by outside port); for each, remove its wire, regrow the outside port to $k$ legs (\cref{alg:diagrams-regrow}), wire copy $j$'s image of the inside port to the outside node's leg at index $(\text{outside index})+j$, and remap the outside ports of the remaining crossings on the same node by \cref{def:diagrams-remap}. With $k=0$ the outside port disappears.
+\end{algorithm}
+
+\subsection{Port-scoped instantiation}
+
+\begin{algorithm}[Port-scoped instantiation]\label{alg:diagrams-port-scope}
+\py!_instantiate_port_scope(D, b, k)!:
+\begin{enumerate}
+\item If $k=0$, gather the ancestors' boundary blocks (\cref{def:diagrams-gather}).
+\item Take the scoped ports in sort-key order. Repeatedly pop the first, grow it to $k$ legs by \py!_grow_port! (with \py!owner_box_id! $=b$), and remap the remaining pending ports on the same node by \cref{def:diagrams-remap}.
+\item Copy every box nested in $b$ under $b$'s parent with fresh ids and identical scopes (\cref{def:diagrams-copy-subtree}), remove the originals, and remove $b$.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Node-scoped instantiation}
+
+\begin{definition}[Boundary splice]\label{def:diagrams-splice}
+Let $\ell$ be a boundary list, $O$ a set of old references, and $m_0,\dots,m_{k-1}$ copy maps. If no entry of $\ell$ lies in $O$, the splice leaves $\ell$ unchanged. Otherwise let $o_1,\dots,o_r$ be the entries of $\ell$ in $O$, in list order, and let $p$ be the position of $o_1$. The splice returns
+\[
+\ell[{<}p]\setminus O \;\cdot\; m_0(o_1)\cdots m_0(o_r)\,m_1(o_1)\cdots m_1(o_r)\cdots m_{k-1}(o_1)\cdots m_{k-1}(o_r) \;\cdot\; \ell[{\ge}p]\setminus O,
+\]
+one contiguous copy-major block at the position of the first old entry. For a box with \py!sheets!, the splice applies separately to the old entries in the first half of $\ell$ and to those in the second half, first half first, each block at its own first entry. For a box with groups, the splice applies once per group (to the old entries on that group's nodes) and once more to the old entries on the other nodes, in that order.
+\end{definition}
+
+The splice is one batch per block, never one splice per reference: splicing references one at a time would interleave copies whenever a scope meets the boundary at more than one slot, and the result would depend on the order in which nested boxes are instantiated. With the batch splice, instantiating an inner symbol first or an outer symbol first gives the same boundary order.
+
+\begin{example}[Copy-major layout]
+A node-scoped box with multiplicity $n$ over a Z spider with one boundary input $a$ and one boundary output $c$, in a diagram with boundary inputs $(a, u)$, instantiates at $n=2$ to boundary inputs $(a_0, a_1, u)$ and outputs $(c_0, c_1)$, where $x_j$ is copy $j$'s image of $x$. A scope with two boundary inputs $a, a'$ gives $(a_0, a'_0, a_1, a'_1)$.
+\end{example}
+
+\begin{definition}[Gathering ancestors]\label{def:diagrams-gather}
+\py!_gather_ancestors(D, b)! walks $b$'s ancestors innermost first and, for each node-scoped ancestor $c$, splices $c$'s boundary references (sorted by key) with the single identity map, under $c$'s sheets and groups. The result is the layout that an expansion of each ancestor at one copy produces; a kill applies it first, so a kill and an expansion at~$0$ order the remaining slots identically.
+\end{definition}
+
+\begin{definition}[Copying a subtree]\label{def:diagrams-copy-subtree}
+\py!_copy_subtree(D, b, m, parent)! adds, for every box nested in $b$ (recursively, children in id order, each child before its own children), a copy whose node scope, port scope, link ports, pair left and right ports, tree ports, feed port, and groups are mapped through the node map $m$, with every other field kept, under the copy of its parent (the top-level children under \py!parent!). Afterwards, every copied box whose \py!align!, \py!pair_of!, or \py!feed! names a box of the copied subtree is redirected to that box's copy.
+\end{definition}
+
+\begin{algorithm}[Node-scoped instantiation]\label{alg:diagrams-node-scope}
+\py!_instantiate_node_scope(D, b, k)! with scope $N$ returns the list of copy maps.
+
+\emph{Case $k=0$.}
+\begin{enumerate}
+\item Gather the ancestors' boundary blocks (\cref{def:diagrams-gather}) and record the multiplicity symbols of every box below $b$.
+\item For each child box (in id order, if still live): drop its alignment with every box outside $b$'s subtree, on both ends, and kill it.
+\item Purge every recorded symbol that is now dead (\cref{def:diagrams-purge}).
+\item If killing the children removed $b$ itself (its scope became empty), return the empty list.
+\item Re-read $N$ from the live box (killing a port-scoped child regrows a node of $N$ under a new id). Fan out every crossing to zero legs (\cref{alg:diagrams-fanout} with no maps), remove every node of $N$ (which also removes its boundary entries), remove $b$, and rescope the other boxes with $N$ removed and nothing added (\cref{def:diagrams-rescope}).
+\end{enumerate}
+
+\emph{Case $k=1$.} Splice the boundary with the identity map (under sheets and groups), so that a scope whose slots are not contiguous orders its boundary as it would at $k\ge 2$; copy every nested box under $b$'s parent with the identity map; remove the nested boxes and $b$. Return the identity map.
+
+\emph{Case $k\ge 2$.}
+\begin{enumerate}
+\item For $j=0,\dots,k-1$ and, within a copy, for the nodes of $N$ in ascending id order, add a copy of the node (same generator, dimensions, and phase); record the map $m_j$.
+\item For each copy, add the image of every internal wire of $N$, in wire-key order.
+\item Fan out every crossing to $k$ legs with the maps $m_0,\dots,m_{k-1}$ (\cref{alg:diagrams-fanout}).
+\item Compute the spliced boundary lists from the boundary references on $N$ (sorted by key) with the maps $m_0,\dots,m_{k-1}$ (\cref{def:diagrams-splice}).
+\item For each map, copy the subtree of $b$ under $b$'s parent (\cref{def:diagrams-copy-subtree}); then remove the original nested boxes and $b$.
+\item Rescope the other boxes with $N$ removed and all copies added (\cref{def:diagrams-rescope}).
+\item Remove the nodes of $N$ and install the spliced boundary lists. Return the maps.
+\end{enumerate}
+\end{algorithm}
+
+\begin{definition}[Rescoping]\label{def:diagrams-rescope}
+\py!_rescope_others(D, removed, added, maps, parent)! updates every live box (in id order) whose node scope meets \py!removed!: the node scope becomes $(\text{scope}\setminus\text{removed})\cup\text{added}$; in every group the removed nodes are replaced by their images under all maps (or by \py!added! when no maps are given); empty groups are dropped. A box whose links have a port in \py!removed! must be the box \py!parent!, have both ports of each such link in \py!removed!, and have maps whenever \py!added! is non-empty; otherwise \py!BangBoxGrammarError! (\code!chain box B: a link port lies in a replicated child box!). Each such link becomes one link per map (no link when \py!added! is empty), and the box stays cyclic only while it has links. A box whose new scope is empty is removed with its whole subtree.
+\end{definition}
+
+\subsection{Chains, indices, and copy scalars}
+
+\begin{definition}[Detaching a port]\label{def:diagrams-detach}
+\py!_detach(D, r, temps)! inserts a phase-free Z spider with one input and one output (the identity, at $r$'s dimension, with the zero phase vector) between $r$ and whatever $r$ met: $r$'s wire partner is rewired to the identity's far leg, or $r$'s boundary slot is replaced by the far leg. It raises \py!BangBoxGrammarError! (\code!chain link port R is neither wired nor a boundary slot!) when $r$ met nothing. It records the identity in \py!temps! and returns the identity's near leg, the one facing $r$, now unwired.
+\end{definition}
+
+\begin{definition}[Dropping identities]\label{def:diagrams-drop}
+\py!_drop_identities(D, temps)! removes each recorded identity, in order: one with both legs unwired is kept (it joins a boundary slot to a boundary slot, a bare wire); otherwise its wires are removed, the two far ends are wired together when both were wired, or the identity's boundary slot is replaced by the far end of its other leg, and the identity is removed.
+\end{definition}
+
+\begin{definition}[Index copy]\label{def:diagrams-index-copy}
+\py!_index_copy(D, b, m, v, new_boxes)! completes copy $m$ of an indexed box at index value $v$. When $b$ has an index $x$: substitute $x:=v$ into the phase vector and every port dimension of each copied node that reads $x$; and for each box of \py!new_boxes! whose scope lies within the copy, substitute $x:=v$ into its multiplicity (expanded) and its copy scalar. When $b$ has a copy scalar $c$, multiply $c[x:=v]$ (or $c$ with no index) into the copy scalar of $b$'s parent when the parent is a live node-scoped box, and into the diagram scalar otherwise.
+\end{definition}
+
+\begin{algorithm}[Extended instantiation]\label{alg:diagrams-extended}
+\py!_instantiate_extended(D, b, k)! for a chain, indexed, or copy-scalar box:
+\begin{enumerate}
+\item Find the zip child $c$ of $b$ (\cref{sec:diagrams-zip}). When there is one, move every boundary slot at an open link port in $c$ onto a boxed identity (\cref{def:diagrams-box-ends}) with last index $k-1$, and record the zip ends.
+\item Detach every link: for a cyclic chain, check that each $p$ is wired to its $q$ (\code!cyclic chain box B: link port P is not wired to Q! otherwise) and remove that wire; for an open chain, detach $q$ and then $p$ (\cref{def:diagrams-detach}), giving per link the head port (facing $q$) and the tail port (facing $p$).
+\item Detach every pair box over $b$ (\cref{alg:diagrams-pairs}).
+\item Strip $b$'s links, cyclic flag, index, and copy scalar, and instantiate it as a plain node-scoped box (\cref{alg:diagrams-node-scope}), giving maps $m_0,\dots,m_{k-1}$.
+\item Place every detached pair box over the copies.
+\item Wire each link $(p,q)$: for a cyclic chain, $m_j(p)$ to $m_{(j+1)\bmod k}(q)$ for every $j$; for an open chain with $k\ge 1$, the head to $m_0(q)$, $m_j(p)$ to $m_{j+1}(q)$ for $j<k-1$, and $m_{k-1}(p)$ to the tail; for an open chain with $k=0$, the head to the tail, after giving the head identity the dimension at index $0$ and the tail identity the dimension at index $-1$ when $b$ has an index.
+\item For every copy $j$ apply the index copy at $v=j$ (\cref{def:diagrams-index-copy}).
+\item Drop the identities (\cref{def:diagrams-drop}).
+\item With a zip child, merge the head boxes, the copies of $c$, and the tail boxes into one box (\cref{def:diagrams-merge-zipped}).
+\end{enumerate}
+\end{algorithm}
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{c@{\qquad\qquad}c}
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {$\alpha_m$};
+\draw[wire] (z) -- (0,-1.1) node[below,dimlabel]{$q$: head};
+\draw[wire] (z) -- (0,1.1) node[above,dimlabel]{$p$: tail};
+\draw[wire] (z) -- (0.9,0) node[right,dimlabel]{out};
+\node[bang,fit=(z),inner sep=7pt] (bx) {};
+\node[banglabel] at (bx.north east) {$n$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (a) at (0,0) {$\alpha_0$};
+\node[zs] (b) at (0,1.1) {$\alpha_1$};
+\node[zs] (c) at (0,2.2) {$\alpha_2$};
+\draw[wire] (a) -- (0,-0.9); \draw[wire] (a) -- (b); \draw[wire] (b) -- (c); \draw[wire] (c) -- (0,3.1);
+\foreach \n in {a,b,c} \draw[wire] (\n) -- ++(0.9,0);
+\end{tikzpicture}
+\\
+open chain, link $(p,q)$, index $m$ & at $n=3$
+\end{tabular}
+\caption{An open chain with an index: copy $m$ reads the index as $m$; consecutive copies are joined from $p$ to $q$.}
+\label{fig:diagrams-chain}
+\end{figure}
+
+\subsection{Pair boxes}
+
+\begin{algorithm}[Pair boxes]\label{alg:diagrams-pairs}
+A pair box $a$ over an indexed box $b$ holds a template placed once per pair of copies $j<k'$ of~$b$.
+\begin{enumerate}
+\item \emph{Detach} (\py!_detach_pair!): record $a$'s nodes (id, generator, dimensions, phase) in id order, its internal wires in key order, and each crossing \py!(inside, outside)! with its side: \code!left! when the outside port is in \py!left_ports!, \code!right! when in \py!right_ports!, and \py!BangBoxGrammarError! otherwise. A pair box with a boundary slot raises \py!BangBoxGrammarError!. Remove the nodes and the box and remove them from the node scopes of $a$'s ancestors.
+\item \emph{Grow} (\py!_grow_pair_ports!), once for all pair boxes of $b$, given the copy maps of $b$: let the pairs be $(j,k')$ for $j<k'$ in lexicographic order. Each parent port is owned by the pair boxes (in detach order) that attach to it, each with its side. For each parent port, in order of (node id, direction value, descending index), and each copy $m$, regrow copy $m$'s image of the port to the sum, over its owners, of the number of pairs in which $m$ is $j$ (left side) or $k'$ (right side), updating the copy map and the legs already grown on the same node; the new legs are dealt to the owners in owner order, each a consecutive run.\par\emph{Place} (\py!_place_pairs!), per pair box, with the legs dealt to it: for each pair $(j,k')$: add a fresh copy of the template's nodes and internal wires; wire each attached inside port to the next unused leg of its parent port in copy $j$ (left) or $k'$ (right); substitute $b$'s index $:=j$ and $a$'s pair index $:=k'$ into the copied phases; add the copied nodes to the scopes of $a$'s ancestors; and multiply in $a$'s copy scalar at $(j,k')$ as in \cref{def:diagrams-index-copy}.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Trees and fed boxes}
+
+\begin{algorithm}[Tree instantiation]\label{alg:diagrams-tree}
+\py!_instantiate_tree(D, b, k)! for a tree box of branching $b'=|\text{tree}|$:
+\begin{enumerate}
+\item Detach the parent port $q$, giving the head.
+\item When no box is fed by $b$, find the stored child ports as one contiguous run of boundary slots in tree order, searching the outputs first and then the inputs, and remove the run; \py!BangBoxGrammarError! (\code!tree box B: its child ports are not one run of boundary slots in order!) otherwise.
+\item List the coordinates $(L,P)$ for $L=1,\dots,k$ and $P=0,\dots,b'^{L-1}-1$, in that order; copy number $i$ is the position of $(L,P)$ in the list.
+\item Strip the tree fields, index, and copy scalar from $b$ and instantiate it as a plain node-scoped box at the number of coordinates.
+\item For $k=0$ the leaves are $[\text{head}]$. Otherwise wire the head to copy $(1,0)$'s $q$, each non-leaf copy $(L,P)$'s $i$-th child port to copy $(L+1,b'P+i)$'s $q$, and take as leaves, for $P=0,\dots,b'^{k-1}-1$ and each stored child port $p$, copy $(k,P)$'s $p$.
+\item Without a fed box, put the leaves in the place of the removed run. With a fed box, instantiate the fed box at one copy per leaf (stripping its feed fields), wire leaf $j$ to copy $j$'s feed port, and apply the index copy at $v=j$ to fed copy~$j$.
+\item For each tree copy $(L,P)$ with number $i$, substitute level $:=L$, position $:=P$, and index $:=i$ into its phases and into the multiplicities of the boxes within it, and multiply in the copy scalar at those values.
+\item Drop the identities.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Aligned and zipped expansion}\label{sec:diagrams-zip}
+
+\begin{algorithm}[Aligned expansion]\label{alg:diagrams-aligned}
+\py!_expand_aligned! on members $M$ and count $k$: raise \py!BangBoxGrammarError! (\code!aligned boxes [...] differ in count!) unless every member has multiplicity $k$. Remove every wire between the scopes of two different members, in wire-key order. Clear each member's alignment and instantiate it (extended or plain, in member order). Re-add each removed wire once per copy $j$, between the two members' copies~$j$.
+\end{algorithm}
+
+\begin{definition}[Zip child and zip ends]\label{def:diagrams-zip}
+For a chain box $b$, the \emph{innermost holder} of a node is the node-scoped box holding it that holds no other holder of it. For each link $(p,q)$ of $b$, let $h_p$ and $h_q$ be the innermost holders of $p$'s and $q$'s nodes. A link \emph{lies in a child} when $h_p$ or $h_q$ is a box other than $b$. The \emph{zip child} of $b$ (\py!zip_child!) is that box when every link that lies in a child has $h_p=h_q$, that box's parent is $b$, and all such links lie in the same child; it is \py!None! when no link lies in a child. Every other configuration raises \py!BangBoxGrammarError!. The \emph{zip ends} (\py!_zip_ends!) of an open chain with zip child $c$ are, for each link with $p$ in $c$ and each of its ports $q$, $p$ that is not an unwired boundary slot, the triple of the port, its wire partner, and the partner's innermost holder; the holder must exist, have $c$'s multiplicity and $b$'s parent, and be no pair, tree, or fed box and have no pair boxes, or \py!BangBoxGrammarError! is raised. A cyclic chain has no zip ends.
+\end{definition}
+
+\py!zip_wires(D)! returns, over every box with links whose scope is live, the wires joining a zip child to its zip ends, and one message per chain whose \py!zip_child! or \py!_zip_ends! raises. \py!_zip_chain(D, b)! is the open chain whose zip child or zip-end holder is $b$, or \py!None!.
+
+\begin{definition}[Boxing boundary ends]\label{def:diagrams-box-ends}
+\py!_box_boundary_ends(D, b, c, last)! acts on an open chain $b$ with zip child $c$: for each link with $p$ in $c$, and for $q$ at index~$0$ and $p$ at index \py!last!, when the port is an unwired boundary slot, detach it, give the identity the port's dimension at that index (when $b$ has an index), wire the port to the identity, and put the identity alone in a new box of $c$'s multiplicity and sheets under $b$'s parent, adding it to every node-scoped ancestor.
+\end{definition}
+
+\begin{definition}[Merging zipped boxes]\label{def:diagrams-merge-zipped}
+\py!_merge_zipped(D, ids)! merges boxes of one multiplicity, parent, and sheets flag into the first (\py!BangBoxGrammarError! otherwise). It refuses pair, tree, and fed boxes, boxes with pair boxes, boxes that feed one of them, members aligned to two different outside roots, and a mix of cyclic and open chains. The merged box has the union scope; groups consisting of each box's groups followed by the rest of its scope as one more group; the concatenated links; the cyclic flag if any box is cyclic; the first index found, every other box's index renamed to it in its nodes' phases and dimensions (\py!BangBoxGrammarError! when a box below reads the old index in its multiplicity or copy scalar); and the product of the copy scalars, renamed alike. The other boxes' subtrees move under the merged box with fresh ids. Boxes aligned to a merged box are re-aligned to the outside root, or to the merged box when there is none.
+\end{definition}
+
+\begin{algorithm}[Zipped expansion]\label{alg:diagrams-zipped}
+\py!_expand_zipped(D, chain, k)!:
+\begin{enumerate}
+\item Close the member set: starting from \py!chain!, for each chain reached, box its boundary ends with last index $\mu-1$ (\cref{def:diagrams-box-ends}) and add its zip child, its zip-end holders, and every box of their alignment groups to the members; every member that belongs to another open zip chain adds that chain.
+\item Collect the zip-end wires of every reached chain and the aligned wires of every member's alignment group, without duplicates.
+\item Raise \py!BangBoxGrammarError! (\code!boxes [...] wired copy to copy differ in count!) unless every member has multiplicity $k$.
+\item Remove those wires, instantiate every member (clearing its alignment), and re-add each wire once per copy $j$ between the two copies~$j$.
+\end{enumerate}
+\end{algorithm}
+
+\section{Copying, Merging, Peeling, and Splitting}\label{sec:diagrams-boxops}
+
+\subsection{Copy and merge}
+
+\begin{signature}
+\py!copy_box(diagram, box_id) -> tuple[Diagram, BangBoxId]!\\
+\py!merge(diagram, box_id_1, box_id_2, *, assume_equal: bool = False) -> Diagram!
+\end{signature}
+
+\py!copy_box! duplicates a plain node-scoped box structurally. It raises \py!BangBoxGrammarError! for an absent box, a port-scoped box (\code!copy_box only supports a node-scope bang box!), an extended box, and an aligned box. On a copy of the diagram it adds one copy of each scope node (ascending id) and of each internal wire, fans every crossing out to two legs with the maps (identity, copy) (\cref{alg:diagrams-fanout}), and appends the image of each boundary reference on the scope (sorted by key) to the end of its boundary list. The new box has a fresh multiplicity symbol, named from the original's bare symbol (or \code!n! when the original is not a bare symbol) by the first of \texttt{stem}, \texttt{stem1}, \ldots{} not among the diagram's symbol names, no parent, and no children; the original's child boxes are not copied, and the new symbol is not bound in the parameter environment. The two boxes are independent: their multiplicities are never unified.
+
+\py!merge! unions two sibling node-scoped boxes. It raises \py!BangBoxGrammarError! for an absent box, a port-scoped box, an extended box, an aligned box, boxes with different parents, scopes that share a node, and different multiplicities unless \py!assume_equal=True!, which asserts the two counts equal. It removes both boxes and adds one new box with the first box's multiplicity, the union scope, the shared parent, and \py!sheets! when both had it. A wire that crossed from one scope into the other becomes internal, because crossing status is derived from the current scope. Child boxes of the two merged boxes keep their \py!parent! fields.
+
+\subsection{Peeling}
+
+\term{Peeling} splits one copy off a box: multiplicity $\mu$ becomes $\mu-1$ beside one bare copy. The peeled copy is laid out after the box's own boundary block, so instantiating the residual box at $k$ reproduces exactly what instantiating the original at $k+1$ produces. Peeling is the step case of induction over a multiplicity (\cref{ch:kernel}).
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class PeelResult!: \py!diagram: Diagram!; \py!copy_node_ids: frozenset[NodeId]!; \py!separable: bool!\\
+\py!peel_one(diagram, box_id, *, last=False, first=False) -> PeelResult!\\
+\py!peel_aligned(diagram, box_id, *, last=False) -> PeelResult!\\
+\py!peel_owners(diagram, name, *, last=frozenset(), partial=False, first=frozenset()) -> PeelResult!\\
+\py!peels_first(box) -> bool!
+\end{signature}
+
+\begin{definition}[Predecessor]\label{def:diagrams-predecessor}
+The predecessor of a multiplicity $\mu$ is $\operatorname{expand}(\mu)-1$, defined when the constant term of $\operatorname{expand}(\mu)$ (SymPy's \py!as_coeff_Add()[0]!) is an integer $\ge 1$; otherwise \py!BangBoxDomainError! (\code!cannot peel a copy off multiplicity M: its constant term is not a positive integer, so it is not known to be at least one!). So $n+1$ peels to $n$, $2n+3$ to $2n+2$, and $n$ cannot be peeled.
+\end{definition}
+
+\py!peels_first(b)! is true when $b$ has links and every link runs from an input port $p$ to an output port $q$; such a chain loses its first copy, not its last.
+
+\begin{algorithm}[Peeling one copy]\label{alg:diagrams-peel-one}
+\py!peel_one(D, b, last, first)!:
+\begin{enumerate}
+\item Copy $D$; raise \py!BangBoxGrammarError! for an absent box. Let \emph{zipped} mean that $b$ is a node-scoped chain with a zip child.
+\item Refuse (\py!BangBoxGrammarError!): \py!last! on a zipped box, a tree box, or a box that is not extended (\code!box B has no last-copy peel!); \py!first! together with \py!last!, or on a zipped box, a tree box, or a box that is not extended (\code!box B has no first-copy peel!); a node-scoped box that belongs to a zip chain, whose parent's links run through a child, or that is zipped while having a parent or pair boxes; an aligned box; a fed box.
+\item Compute the predecessor (\cref{def:diagrams-predecessor}).
+\item Dispatch: a tree box peels its leaf level (\cref{alg:diagrams-peel-tree}); a zipped box peels as below and merges the peeled copy's child box with the boxes at the chain end it now meets; another extended box peels by \cref{alg:diagrams-peel-extended}, passing \py!last! as \py!force_last! and \py!first! as \py!force_first!; a plain node-scoped box adds one concrete copy after its boundary block (\cref{alg:diagrams-peel-node}); a port-scoped box splits its scoped port into its own leg and one bare leg after it.
+\item Set $\mu_b$ to the predecessor.
+\item \py!separable! is true for a node-scoped box. \py!copy_node_ids! is, for a node-scoped box, the set of nodes created by the peel that are in neither $b$'s scope nor the scope of a pair box of $b$; for a port-scoped box it is empty.
+\end{enumerate}
+\end{algorithm}
+
+A port-scoped peel regrows the single scoped port to two legs, keeps the first leg in the box's scope, and leaves the second as a bare boundary slot right after it.
+
+\begin{algorithm}[Peeling a plain node-scoped copy]\label{alg:diagrams-peel-node}
+\py!_peel_node_scope(D, b, first)!: add one copy of the scope nodes (ascending id) and internal wires; with the map list $[\mathrm{id}, m]$ ($[m,\mathrm{id}]$ when \py!first!), fan out every crossing and splice the boundary (\cref{alg:diagrams-fanout,def:diagrams-splice}); copy $b$'s subtree under $b$'s parent with $m$; add the copy's nodes to the scope of every node-scoped ancestor. Return $m$.
+\end{algorithm}
+
+\begin{algorithm}[Peeling an extended box]\label{alg:diagrams-peel-extended}
+\py!_peel_extended! peels from box $b$ the copy at index $\ell$ (the predecessor). It refuses cyclic chains, tree boxes, and pair boxes, and a box with a pair box that has children. Let \emph{first} be true when \py!force_first! is set, or when \py!peels_first(b)! holds and \py!force_last! is not set.
+\begin{enumerate}
+\item Detach the pair boxes and the links; peel a plain copy $m$ (\cref{alg:diagrams-peel-node}), before the block when \emph{first}.
+\item Wire each link: when \emph{first}, head to $m(q)$, $m(p)$ to the residual's $q$, and the residual's $p$ to the tail; otherwise head to the residual's $q$, the residual's $p$ to $m(q)$, and $m(p)$ to the tail.
+\item Apply the index copy to $m$ at index $0$ when \emph{first}, else at $\ell$ (\cref{def:diagrams-index-copy}). When \emph{first} and $b$ has an index, the residual reads its index as $\text{index}+1$ (\py!offset_index! with offset~$1$).
+\item Restore the links, cyclic flag, index, and (shifted) copy scalar on $b$; drop the identities; re-attach every pair box over the residual by \cref{alg:diagrams-peel-pairs}.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Re-attaching pair boxes after a peel]\label{alg:diagrams-peel-pairs}
+Both variants require each pair box to meet distinct parent ports, all on Z or X spiders; otherwise \py!BangBoxGrammarError! (\code!... no peel_one! or \code!... no first-copy peel!). Let $\ell$ be the peeled copy's index.
+\begin{enumerate}
+\item \emph{Last-copy peel} (\py!_peel_pairs!). Grow each left parent port of the residual to two legs and remove the peeled copy's image of it (zero legs). Place one template copy, wired to the residual's ports (first new leg for left ports), in a new pair box over the residual with the original's multiplicity, parent, copy scalar, pair index, and the left and right ports it meets; add its nodes to the pair's ancestors. Place a second template copy in the residual's scope, its left ends on the residual's second left leg and its right ends on the peeled copy's right ports, with the pair index read as $\ell$ in its phases; add its nodes to the residual and its ancestors, and multiply the pair copy scalar at pair index $\ell$ into the residual's copy scalar. This adds the pairs $(j,\ell)$ for every residual copy $j$.
+\item \emph{First-copy peel} (\py!_peel_pairs_first!). A pair box that reads the index or pair index (in a phase or its copy scalar) over an unindexed box is refused. Grow each right parent port of the residual to two legs and remove the peeled copy's image of it. Place one template copy wired to the residual's ports (first new leg for right ports) in a new pair box over the residual, reading its pair index $k$ as $k+1$ and the box index $x$ as $x+1$ in its phases and copy scalar. Place a second template copy in the residual's scope, its left ends on the peeled copy's left ports and its right ends on the residual's second right leg, reading $x$ as $0$ and the pair index as $x+1$; add its nodes to the residual and its ancestors, and multiply the pair copy scalar so read into the residual's copy scalar. This adds the pairs $(0, r+1)$ for every residual copy $r$.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Peeling a tree]\label{alg:diagrams-peel-tree}
+\py!_peel_tree!, given the predecessor $\ell$, acts on a tree box of depth $\ell+1$ and branching $b'$: refuse a box with a parent or children, a box that already feeds one, a box whose index is read by a scope phase or its copy scalar, a scope that meets the rest at a port other than the parent port, and a scope holding boundary slots other than its tree ports. Add one copy of the scope with its internal wires; replace the leaf run by the copy's child ports; in the copy, read the level as $\ell+1$ and the position as a fresh index symbol (named from the position by the first unused name among the diagram's symbols and index symbols); and put the copy in a new box of multiplicity $b'^{\,\ell}$, with that index and the adjusted copy scalar, fed by $b$ through the copy's parent port. The tree box's multiplicity becomes $\ell$.
+\end{algorithm}
+
+\py!peel_aligned(D, b, last)! peels copy $j$ off every member of $b$'s alignment group at once. It refuses a group of one, cyclic, tree, pair, and fed members, members with pair boxes, members with a zip child, and members of different multiplicity. The copy is the first one when some member is a chain, every chain member peels first, and \py!last! is false; otherwise the last. The aligned wires are removed, each member peels (an extended member with \py!force_last! when the group peels last but the member peels first), every member takes the predecessor, and each removed wire is re-added twice: between the residuals and between the peeled copies. Members other than the root are re-aligned to the root; the result is separable, and \py!copy_node_ids! is every new node outside the members' scopes.
+
+\py!peel_owners(D, x, last, partial, first)! peels every box of \py!index_owners(D, x)!, joining the copies. With \py!partial!, only owners whose multiplicity has a positive integer constant term take part. No owner raises \py!BangBoxGrammarError!; one owner is \py!peel_one! (with \py!last! when it is in the set \py!last!, and \py!first! when it is in the set \py!first!). With two or more, an owner nested inside another raises \py!BangBoxGrammarError!; otherwise owners are peeled in id order, a node-scoped owner whose whole alignment group consists of owners by \py!peel_aligned! (once per group; \py!BangBoxGrammarError! (\code!aligned box B has no first-copy peel!) when a member is in \py!first!), every other owner by \py!peel_one! with its \py!last! and \py!first! flags; the copy node sets are united and the result is separable when every part is.
+
+\subsection{Merging and splitting alignment groups}
+
+\begin{signature}
+\py!align_merged(diagram, root) -> Diagram!\\
+\py!chain_merged(diagram, root) -> Diagram!\\
+\py!chain_splitted(diagram, box_id, parts: list[frozenset[NodeId]]) -> Diagram!
+\end{signature}
+
+\py!align_merged! returns a copy in which the alignment group of \py!root! becomes the single box \py!root!. It raises \py!BangBoxGrammarError! when the group has fewer than two members or \py!root! is not its root (\code!box B roots no alignment group!), and when two members carry copy scalars. The merged box has the union of the members' node scopes, no alignment, the one copy scalar (if any), and, when two or more members hold slots of one boundary list, one group per member that holds a slot (in member order) so that each keeps its own copy-major block; otherwise no groups. The other members are removed, and every pair box over one of them is re-pointed to \py!root!.
+
+\py!chain_merged! is \py!align_merged! with the links of all members concatenated in member order on the merged box.
+
+\py!chain_splitted! is the inverse direction: box \py!box_id! keeps its id, its copy scalar, and the first part as node scope, with the links whose two ports lie in that part and no groups; every further part becomes a new box with the same multiplicity, sheets flag, and index, the links lying in that part, and \py!align! set to \py!box_id!. It checks nothing; the proof kernel re-checks every precondition of the corresponding inference (\cref{ch:kernel}).
+
+\subsection{Splitting a power and offsetting an index}
+
+\begin{signature}
+\py!split_power(diagram, box_id) -> tuple[Diagram, tuple[BangBoxId, ...]]!\\
+\py!offset_index(diagram, box_id, by: sympy.Expr) -> Diagram!
+\end{signature}
+
+\py!split_power! splits a box of multiplicity $b'^{\,e+1}$ (after \py!powsimp(expand(.), force=True)!, a power with integer base $b'\ge 2$ whose exponent has a constant term $\ge 1$) and index $v$ into $b'$ boxes of multiplicity $b'^{\,e}$, box $c$ reading $v$ as $v_c+c\,b'^{\,e}$ with $v_0=v$. It refuses an absent box, a box without such a power, and a box that is not a plain node-scoped box (links, a copy scalar, alignment, tree, fed, pair, pair boxes, or another box aligned to it or fed by it), and one with a box below reading the index in its multiplicity. For $c=b'-1,\dots,1$ it peels a plain copy of the scope (with its subtree), names a fresh index $v_c$, substitutes $v:=v_c+c\,b'^{\,e}$ in the copy's phases, puts the copy in a new box of multiplicity $b'^{\,e}$ with index $v_c$ under the original parent, and re-parents the copied children into it. The original box takes multiplicity $b'^{\,e}$. The returned ids are in order $c=0,1,\dots,b'-1$.
+
+\py!offset_index! returns a copy in which box \py!box_id! reads its index $x$ as $x+\textit{by}$: in every scope node's phase vector and port dimensions, in the multiplicity (only for an integer offset; \py!BangBoxGrammarError! otherwise) and copy scalar of every box within the scope, and in its own copy scalar. A box that is absent or has no index raises \py!BangBoxGrammarError! (\code!box B reads no copy index!).
+
+\section{The Scalable Notation}\label{sec:diagrams-scalable}
+
+\subsection{Scales, sheet ports, and bundles}
+
+The module \module{archytaszx.diagram.scalable} gives the SZX reading~\cite{carette2019szx,carette2022bangboxes} of a diagram with \bboxes{}. A \py!ScalableDiagram! replaces each \bbox{} by a \term{scale}: a scaling index with a kind and a multiplicity. Its nodes are scaled generators, its fanned ports are sheets of width $k$, and its boundary entries may be gathered into \term{bundles}, the sheet wires of the notation (\cref{fig:diagrams-sheet}). The translation in each direction preserves node ids, scale ids (which are \bbox{} ids), phases, dimensions, wires, the scalar, and the parameter environment.
+
+\begin{signature}
+\py!class ScalableError(Exception)!; \py!class ScalableGrammarError(ScalableError)!; \py!class ScalableDomainError(ScalableError)!\\
+\py!ScaleId = NewType("ScaleId", int)!\\
+\py!class ScaleKind(enum.Enum)!: \py!COPIES = "copies"!, \py!LEGS = "legs"!
+\end{signature}
+
+\py!ScalableGrammarError! signals a malformed structure (wrong type, unknown id, invalid nesting); \py!ScalableDomainError! signals a value outside the accepted domain, such as a multiplicity that \py!strip! cannot resolve.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Scale!: \py!id: ScaleId!; \py!kind: ScaleKind!; \py!multiplicity: Mult!; \py!parent: ScaleId | None = None!\\
+\py!@dataclass(frozen=True, slots=True) class SheetPort!: \py!dim: Dim!; \py!fan: ScaleId | None = None!\\
+\py!@dataclass(frozen=True, slots=True) class ScaledNode!: \py!id: NodeId!; \py!generator_type: GeneratorType!; \py!inputs: tuple[SheetPort, ...]!; \py!outputs: tuple[SheetPort, ...]!; \py!phase: PhaseVector | None = None!; \py!scale: ScaleId | None = None!\\
+\py!@dataclass(frozen=True, slots=True) class Bundle!: \py!scale: ScaleId!; \py!items: tuple[BoundaryItem, ...]!\\
+\py!BoundaryItem = PortRef | Bundle!
+\end{signature}
+
+A \code!COPIES! scale stands for a node-scoped \bbox{}: every node in it is a scaled generator, $k$ parallel copies. A \code!LEGS! scale stands for a port-scoped \bbox{}: a fanned port gathered into one sheet of width~$k$. \py!ScaledNode.scale! is the innermost \code!COPIES! scale holding the node; \py!SheetPort.fan! is the innermost \code!LEGS! scale covering the port. Each record checks its field types at construction (ids and scale references are non-\py!bool! \py!int!s or \py!None!, dimensions are \py!Dim!s, multiplicities \py!Mult!s, ports \py!SheetPort!s, bundle items \py!PortRef!s or \py!Bundle!s) and raises \py!ScalableGrammarError! otherwise. \py!ScaledNode.legs(direction)! returns the port tuple of a side.
+
+A bundle gathers the boundary items of one \code!COPIES! scale. Its plain wires expand copy-major: copy~$0$ of every item in order, then copy~$1$, and so on, the layout that \cref{def:diagrams-splice} produces. In a valid diagram each \code!COPIES! scale has at most one bundle per side, and the bundles enclosing a boundary reference, from outer to inner, are exactly the \code!COPIES! chain of its node.
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{c@{\qquad\qquad}c}
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-1);
+\draw[line width=2pt] (z) -- (0,1) node[above,dimlabel]{width $n$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs,double] (z) at (0,0) {$\alpha$};
+\draw[line width=2pt] (z) -- (0,-1) node[below,dimlabel]{bundle, width $n$};
+\draw[line width=2pt] (z) -- (0,1) node[above,dimlabel]{bundle, width $n$};
+\end{tikzpicture}
+\\
+\code!LEGS! scale on one output port & \code!COPIES! scale on one node
+\end{tabular}
+\caption{The scalable reading of the two \bbox{} kinds: a thick line is a sheet wire of the given width; a doubled outline is a scaled generator.}
+\label{fig:diagrams-sheet}
+\end{figure}
+
+\subsection{The scalable diagram}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class ScalableDiagram!\\
+\quad \py!nodes: tuple[ScaledNode, ...]!; \py!wires: frozenset[Wire]!; \py!scales: tuple[Scale, ...]!; \py!inputs: tuple[BoundaryItem, ...]!; \py!outputs: tuple[BoundaryItem, ...]!; \py!scalar: Scalar = Scalar.one()!; \py!parameters: Mapping[str, int] = {}!\\
+\quad \py!node(id)!, \py!scale(id)!, \py!chain(scale_id)!, \py!copies_chain(scale_id)!, \py!fan_chain(fan)!, \py!size(scale_id)!, \py!fan_width(fan)!, \py!port(ref)!, \py!width(item)!, \py!wire_width(wire)!, \py!input_type()!, \py!output_type()!, \py!free_mult_symbols()!, \py!renumbered()!
+\end{signature}
+
+Construction normalizes and checks: nodes and scales are sorted by id; the wire set is frozen; the parameters are sorted by name and frozen in a \py!MappingProxyType!; every node is a \py!ScaledNode!, every scale a \py!Scale!, every wire a \py!Wire!, the scalar a \py!Scalar!, every parameter name an identifier with an \py!int! value, every boundary item a \py!PortRef! or \py!Bundle! (a string is not accepted as a sequence of items); node ids and scale ids are unique. A violation raises \py!ScalableGrammarError!. Two scalable diagrams are equal when every field agrees after normalization, and the hash is the hash of the same tuple. The representation lists counts only: \code!ScalableDiagram(nodes=N, wires=W, scales=S, inputs=I, outputs=O)!.
+
+The accessors are defined as follows; an unknown node or scale id raises \py!ScalableGrammarError!.
+\begin{itemize}
+\item \py!chain(s)! is $s$ and its ancestors, innermost first; empty for \py!None!; \py!ScalableGrammarError! for a cyclic parent chain.
+\item \py!copies_chain(s)! is the ids of the \code!COPIES! scales on \py!chain(s)!, outermost first.
+\item \py!fan_chain(f)! is the \code!LEGS! scales from $f$ up to the first non-\code!LEGS! ancestor, outermost first.
+\item \py!size(s)! is the product of the multiplicities of \py!copies_chain(s)!; \py!fan_width(f)! the product of those of \py!fan_chain(f)!; an empty product is \py!Mult(1)!.
+\item \py!port(ref)! is the sheet port a reference names, \py!ScalableGrammarError! when out of range.
+\item \py!width(item)! is the number of plain wires an item stands for: for a reference, the fan width of its port; for a bundle of scale $s$, $\mu_s\cdot\sum_{i}\mathrm{width}(i)$ over its items.
+\item \py!wire_width(w)! is \py!size! of the scale of \py!w.a!'s node; \py!input_type()! and \py!output_type()! are the widths of the top-level items, the SZX type of each boundary.
+\item \py!free_mult_symbols()! is every symbol of every scale multiplicity.
+\item \py!renumbered()! returns a copy whose node ids and scale ids are replaced by their ranks in ascending order, every reference, fan, scale, parent, and bundle rewritten; an unknown id raises \py!ScalableGrammarError!.
+\end{itemize}
+
+\subsection{The builder}
+
+\begin{signature}
+\py!class ScalableBuilder!: \py!add_scale(kind, multiplicity, parent=None) -> ScaleId!; \py!add_node(generator_type, input_dims, output_dims, phase=None, scale=None) -> NodeId!; \py!set_fan(ref, fan)!; \py!add_wire(a, b)!; \py!set_inputs(items)!; \py!set_outputs(items)!; \py!multiply_scalar(s)!; \py!bind_parameter(name, value)!; \py!build(*, check=True) -> ScalableDiagram!
+\end{signature}
+
+The builder allocates scale ids and node ids $0,1,2,\ldots$ separately, in call order. \py!add_scale! converts its multiplicity by \py!Mult(...)!, turning a \py!BangBoxDomainError! into \py!ScalableDomainError! and any other \bbox{} error or \py!TypeError! into \py!ScalableGrammarError!. \py!add_node! adds an unfanned node. \py!set_fan! marks one port as fanned by a scale (\py!ScalableGrammarError! for an absent port). \py!add_wire! turns a \py!GraphError! into \py!ScalableGrammarError!. \py!build()! assembles the diagram and, with \py!check=True!, raises \py!ScalableGrammarError! with every issue of \py!validate_scalable! joined by \code!; ! when there is any.
+
+\subsection{Validation}
+
+\begin{signature}
+\py!validate_scalable(s: ScalableDiagram) -> tuple[str, ...]!
+\end{signature}
+
+\py!validate_scalable! returns every structural problem of $s$ as a message; when there is none, it returns every hard error of \py!validate(from_scalable(s))! (\cref{sec:diagrams-validate}), each prefixed \code!bang-box form: !. Deferred issues are not reported; an empty result means valid. The structural checks run in five groups; the first group that reports anything among the forest and membership groups stops the check, and the last three groups run together.
+
+\begin{enumerate}
+\item \emph{Forest.} Every declared parent exists (\code!scale S declares unknown parent P!); if any does not, stop. Every parent chain is acyclic; if one is not, stop. No \code!COPIES! scale has a \code!LEGS! parent.
+\item \emph{Membership.} A node's scale is a \code!COPIES! scale; a port's fan is a \code!LEGS! scale whose nearest non-\code!LEGS! ancestor is the node's scale (\code!port R fan F lies outside the scale S of its node!).
+\item \emph{Usage.} Every wire end and boundary reference resolves to a port; every port of every node is used exactly once, as a wire end or a boundary entry (\code!R is used N times, not once!); no fanned port is wired (fanned ports lie on the boundary); every wire joins two nodes of the same scale.
+\item \emph{Coverage.} Every \code!COPIES! scale holds a node (directly or through a descendant scale), every \code!LEGS! scale covers a port, and a \code!LEGS! scale under a \code!LEGS! parent covers strictly fewer ports than its parent.
+\item \emph{Placement.} Every bundle names a \code!COPIES! scale and is non-empty; every reference sits in exactly the bundles of its node's \code!COPIES! chain, outer to inner; each scale has at most one bundle per side.
+\end{enumerate}
+
+\subsection{Translation}
+
+\begin{signature}
+\py!to_scalable(diagram: Diagram) -> ScalableDiagram!\\
+\py!from_scalable(s: ScalableDiagram) -> Diagram!\\
+\py!group_boundary(refs, chains: Mapping[NodeId, tuple[ScaleId, ...]]) -> tuple[BoundaryItem, ...]!\\
+\py!is_bundle_normal(diagram) -> bool!
+\end{signature}
+
+\begin{algorithm}[Grouping a boundary]\label{alg:diagrams-group}
+\py!group_boundary(refs, chains)! regroups a flat boundary list into nested bundles, each placed where its first reference is met. Keep a root list and a map of opened bundles. For each reference $r$ in order, descend from the root along \py!chains[r.node_id]! (the \code!COPIES! chain of its node, outer to inner): for each scale on it, open its bundle (appending it to the current list) if it is not open yet, and enter it. Append $r$ to the innermost list reached. Freeze the result into \py!Bundle!s.
+\end{algorithm}
+
+\begin{algorithm}[To the scalable form]\label{alg:diagrams-to-scalable}
+\py!to_scalable(D)!:
+\begin{enumerate}
+\item Raise \py!ScalableGrammarError! for a non-\py!Diagram!. Raise \py!ScalableGrammarError! (\code!cannot translate: ...!) when \py!validate(D)! reports a hard error whose kind name starts with \code!BANGBOX_!, or an \code!UNKNOWN_NODE! or \code!PORT_INDEX_OUT_OF_RANGE! error. Raise \py!ScalableGrammarError! when some box is extended (\code!cannot translate a chain, indexed, pair or copy-scalar box!).
+\item One scale per box, in id order, with the box's id, the kind \code!COPIES! for a node-scoped box and \code!LEGS! for a port-scoped one, the box's multiplicity, and its parent.
+\item Visit the boxes deepest first (depth = length of the parent chain), ties by id; give each node of a node scope, and each port of a port scope, the first box that claims it. So every node's scale and every port's fan is its innermost box.
+\item Build the scaled nodes in id order and check the forest and membership groups of \py!validate_scalable!; any problem raises \py!ScalableGrammarError!. A wire between nodes of different scales raises \py!ScalableGrammarError! (\code!cannot translate: W crosses a node-scope box!).
+\item Group both boundary lists by \cref{alg:diagrams-group} with each node's \code!COPIES! chain, and keep the wires, the scalar, and the parameter environment.
+\end{enumerate}
+The fields \py!sheets!, \py!groups!, and \py!align! of a plain box have no scale counterpart and are not carried.
+\end{algorithm}
+
+\begin{algorithm}[From the scalable form]\label{alg:diagrams-from-scalable}
+\py!from_scalable(s)!: add the nodes to a fresh diagram in ascending id order (so node $i$ of rank $r$ gets \py!NodeId(r)!); give every scale the box id of its rank; for each scale, collect as node scope every node whose scale chain contains it, and as port scope every port whose fan chain contains it when it is a \code!LEGS! scale; add one box per scale in ascending id order with its multiplicity and parent (a \bbox{} error or an unknown parent raises \py!ScalableGrammarError! naming a malformed scale structure); add the wires in wire-key order; set the boundary lists to the depth-first flattening of the items; set the scalar and the parameters.
+\end{algorithm}
+
+\begin{proposition}[Losslessness]\label{prop:diagrams-lossless}
+For a diagram $D$ whose node ids and box ids are $0,1,\dots$ without gaps, whose boxes are plain with no \py!sheets!, groups, or alignment, and that \py!to_scalable! accepts, \py!from_scalable(to_scalable(D))! has the nodes, wires, boxes, scalar, and parameters of $D$, and boundary lists equal to $D$'s exactly when \py!is_bundle_normal(D)! holds. For every scalable diagram $s$ with ids $0,1,\dots$, \py!to_scalable(from_scalable(s)) == s! when $s$ is valid and its bundles are in the grouped form.
+\end{proposition}
+
+\py!is_bundle_normal(D)! is true when the depth-first flattening of \py!to_scalable(D)!'s boundary items equals $D$'s boundary lists, that is, when regrouping the boundary into bundles moves no entry.
+
+\subsection{Wire stripping}
+
+\begin{signature}
+\py!strip(s: ScalableDiagram, assignment: Mapping[str, int] | None = None) -> Diagram!
+\end{signature}
+
+\py!strip! is the wire-stripping functor of SZX: the plain diagram that $s$ denotes once every multiplicity is concrete.
+
+\begin{algorithm}[Strip]\label{alg:diagrams-strip}
+\begin{enumerate}
+\item Raise \py!ScalableGrammarError! for a non-\py!ScalableDiagram! and for any structural issue (the five groups above, without the bang-box validation). Start the environment from \py!s.parameters! and override it with \py!assignment!; a non-string name or a value that is not a non-negative \py!int! raises \py!ScalableDomainError!.
+\item Evaluate a scale's value on first use by substituting the environment into its multiplicity and caching the integer; an unresolved symbol raises \py!ScalableDomainError! (\code!scale S multiplicity M has unresolved symbol(s) [...]!).
+\item For each node in id order, enumerate its copy vectors: the lexicographic list of all index tuples $(i_1,\dots,i_r)$ over its \code!COPIES! chain $(s_1,\dots,s_r)$, $0\le i_j<\mathrm{value}(s_j)$; a zero value gives no vector. Lay out the node's ports: each port $p$ with fan width $w_p$ (the product of the values of its fan chain) occupies $w_p$ consecutive legs on its side, at the offset reached so far. Add one plain node per copy vector, with the laid-out dimensions and the node's phase.
+\item For each wire in wire-key order and each copy vector of its first end's node, wire the single leg of each end in that copy.
+\item Expand each boundary recursively: a reference contributes its legs in the current copy vector; a bundle of scale $s$ contributes, for each copy $c=0,\dots,\mathrm{value}(s)-1$, the expansion of its items in the vector extended by $c$.
+\item Set the scalar of $s$ and the parameters of $s$ less every multiplicity symbol. The result has no \bboxes{}.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}
+For the GHZ diagram of \cref{fig:diagrams-scopes} with the parameter $n\mapsto 3$, \py!to_scalable! gives one \code!LEGS! scale, input type $(1)$, and output type $(n)$. \py!strip(s, {"n": 2})! gives one Z spider with one input and two outputs, both boundary outputs.
+\end{example}
+
+\section{Validation}\label{sec:diagrams-validate}
+\bgroup\sloppy
+
+\subsection{The report}
+
+\begin{signature}
+\py!validate(diagram: Diagram) -> ValidationReport!\\
+\py!validate_or_raise(diagram: Diagram) -> ValidationReport!\\
+\py!class ValidateError(Exception)!; \py!class ValidationFailedError(ValidateError)!: \py!report: ValidationReport!
+\end{signature}
+
+\py!validate! is a pure function from a diagram to a typed report of every well-formedness problem; it never mutates the diagram and never repairs it, and it does not evaluate denotations. \py!validate_or_raise! returns the report when it has no hard error and otherwise raises \py!ValidationFailedError(report)!, whose message is \code!diagram failed validation with N issue(s): M1; M2; ...!, listing the messages of the hard errors.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class ValidationIssue!\\
+\quad \py!kind: IssueKind!; \py!message: str!; \py!node_id: NodeId | None = None!; \py!port_ref: PortRef | None = None!; \py!wire: Wire | None = None!; \py!bang_box_id: BangBoxId | None = None!; \py!deferred: bool = False!\\
+\py!@dataclass(frozen=True, slots=True) class ValidationReport!: \py!issues: tuple[ValidationIssue, ...] = ()!\\
+\quad \py!errors!, \py!deferred!, \py!is_valid!
+\end{signature}
+
+An issue has a machine-readable kind, a human-readable message, the primary offender (a node, a port, a wire, or a box), and a level. \begin{definition}[Issue levels]\label{def:diagrams-levels}
+A \term{hard error} has \py!deferred=False! and fails validation. A \term{deferred issue} has \py!deferred=True!: an assumed constraint that the checks could not decide or that holds only under a binding; it never fails validation. \py!errors! and \py!deferred! filter the issues by level, in report order, and \py!is_valid! is true when there is no hard error.
+\end{definition}
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.46\linewidth}l X@{}}
+\toprule
+Kind (value is the lower-case name) & Level & Condition \\
+\midrule
+\endhead
+\code!UNKNOWN_NODE! & hard & a wire end or boundary entry names an absent node \\
+\code!PORT_INDEX_OUT_OF_RANGE! & hard & a wire end or boundary entry has an index beyond its side \\
+\code!DIMENSION_MISMATCH! & hard & a wire joins dimensions that do not unify \\
+\code!DIMENSION_DEFERRED! & deferred & a dimension equality that unification leaves undecided \\
+\code!DIMENSION_BOUND! & deferred & a dimension equality that holds only under a binding \\
+\code!PORT_WIRED_TWICE! & hard & a port is an end of two or more wires \\
+\code!PORT_WIRED_AND_BOUNDARY! & hard & a boundary entry is also wired \\
+\code!PORT_UNUSED! & hard & a port is neither wired nor on the boundary \\
+\code!DUPLICATE_BOUNDARY_ENTRY! & hard & a port occurs twice across the two boundary lists \\
+\code!BOUNDARY_DIRECTION_MISMATCH! & hard & an output port among the boundary inputs, or an input port among the outputs \\
+\code!LEG_POLICY_VIOLATION! & hard & a node's leg counts violate its leg policy \\
+\code!DIMENSION_POLICY_VIOLATION! & hard & a node's legs violate its dimension policy \\
+\code!PHASE_DIMENSION_MISMATCH! & hard & a tied phase vector is over a dimension other than the legs' \\
+\code!PHASE_NOT_PERMITTED! & hard & a phase-free generator carries a phase \\
+\code!NODE_DIMENSION_UNDETERMINED! & hard & a node has no legs and no phase vector \\
+\code!SYMBOL_ROLE_COLLISION! & hard & one name in two symbol roles \\
+\code!DIMENSION_RESOLUTION_EXHAUSTED! & hard & a node's leg unification ran out of passes \\
+\code!DIMENSION_GLOBALLY_INCONSISTENT! & hard & the diagram's dimension equalities have no common solution \\
+\code!DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED! & hard & the global solve ran out of passes \\
+\code!PARAMETER_UNKNOWN_SYMBOL! & deferred & the environment binds a name no symbol of the diagram carries \\
+\code!PARAMETER_VALUE_OUT_OF_DOMAIN! & hard & a bound value lies outside its role's domain \\
+\code!BANGBOX_SCOPE_UNKNOWN_NODE! & hard & a node scope names an absent node \\
+\code!BANGBOX_PORT_UNKNOWN! & hard & a port scope names an unresolvable port \\
+\code!BANGBOX_PORT_NOT_BOUNDARY! & hard & a scoped port is not a boundary slot \\
+\code!BANGBOX_PORT_FIXED_ARITY! & hard & a scoped port's side cannot take every count \\
+\code!BANGBOX_CROSSING_FIXED_ARITY! & hard & a node wired into a node scope cannot take one leg per copy \\
+\code!BANGBOX_SCOPE_OVERLAP! & hard & two unrelated boxes overlap \\
+\code!BANGBOX_UNKNOWN_PARENT! & hard & a declared parent does not exist \\
+\code!BANGBOX_PARENT_CYCLE! & hard & a parent chain repeats \\
+\code!BANGBOX_NESTING_MISMATCH! & hard & a child is not strictly finer than its parent \\
+\code!BANGBOX_LINK_INADMISSIBLE! & hard & a chain link, tree, feed, zip, or alignment is malformed \\
+\code!BANGBOX_INDEX_OUT_OF_SCOPE! & hard & an index symbol is read outside every box binding it \\
+\bottomrule
+\caption{Issue kinds, in declaration order of \texttt{IssueKind}.}\label{tab:diagrams-issues}
+\end{xltabular}
+
+\subsection{Order of the passes}
+
+\py!validate! runs the passes below in this order and concatenates their issues; the order is observable, since \module{archytaszx.rewrite.engine} selects the first issue of a kind. Every pass whose append order is observable iterates a snapshot sorted by \cref{def:diagrams-portref-key,def:diagrams-wire-key}, never a set directly.
+\begin{enumerate}
+\item wire dimensions (\cref{sec:diagrams-validate-wires});
+\item port usage (\cref{sec:diagrams-validate-usage});
+\item generator policy, per node in insertion order (\cref{sec:diagrams-validate-policy});
+\item \bbox{} scopes, crossings, links, alignment, and nesting (\cref{sec:diagrams-validate-boxes});
+\item symbol-role collisions and the parameter environment (\cref{sec:diagrams-validate-roles,sec:diagrams-validate-params});
+\item global dimension consistency (\cref{sec:diagrams-validate-global}).
+\end{enumerate}
+
+Dimension checks use the unification results of \cref{ch:algebra}: \py!Dim.unify! returns \code!SUCCESS!, possibly with bindings of symbols to values, \code!DEFERRED!, or \code!FAILURE!; \py!unify_all! resolves a whole list by a monotone fixpoint of bindings and reports residual pairs, declined bindings, and whether its budget of $32$ passes ran out; \py!solve! does the same for a list of pairs, with the same budget.
+
+\subsection{Wire dimensions}\label{sec:diagrams-validate-wires}
+
+For each wire in key order:
+\begin{enumerate}
+\item If an end does not resolve, resolve both ends, appending \code!UNKNOWN_NODE! or \code!PORT_INDEX_OUT_OF_RANGE! for each end that fails, and continue.
+\item If the two dimensions are equal, continue.
+\item Resolve both through the parameter environment (\py!resolve_dim!). If that changes either and the resolved pair fails to unify, append \code!DIMENSION_MISMATCH! (\code!wire W joins A and B, which the parameter environment resolves to A' and B'!) and continue.
+\item Unify the unresolved pair: \code!FAILURE! gives \code!DIMENSION_MISMATCH! (\code!wire W joins mismatched dimensions A and B!); \code!DEFERRED! gives \code!DIMENSION_DEFERRED! (\code!wire W assumes A == B (deferred, not yet decided)!); a success with bindings gives \code!DIMENSION_BOUND!, its message listing \code!x := v! for every binding in name order.
+\end{enumerate}
+
+\subsection{Port usage}\label{sec:diagrams-validate-usage}
+
+Every port of every node must be exactly one of: an end of exactly one wire, or an entry of the matching boundary list.
+\begin{enumerate}
+\item For each port that is an end of two or more wires, in key order: \code!PORT_WIRED_TWICE! (\code!R is wired N times!).
+\item For each distinct boundary entry, in order of first appearance (inputs, then outputs): \code!DUPLICATE_BOUNDARY_ENTRY! when it occurs more than once across both lists, then \code!PORT_WIRED_AND_BOUNDARY! when it is also wired.
+\item \code!BOUNDARY_DIRECTION_MISMATCH! for each boundary input that is not an input port, then for each boundary output that is not an output port.
+\item Resolve each distinct boundary entry once, inputs first: \code!UNKNOWN_NODE! or \code!PORT_INDEX_OUT_OF_RANGE! on failure.
+\item For every node not implicated in an \code!UNKNOWN_NODE! or \code!PORT_INDEX_OUT_OF_RANGE! issue so far, every port that is neither wired, nor on the boundary, nor a \emph{fed port} gives \code!PORT_UNUSED! (\code!R is neither wired nor present on the boundary!). The fed ports are, for every fed box whose tree box exists, its feed port and the tree's child ports: instantiation wires them.
+\end{enumerate}
+
+\subsection{Generator policy}\label{sec:diagrams-validate-policy}
+
+For each node, in insertion order:
+\begin{enumerate}
+\item A node with no legs and no phase vector gives \code!NODE_DIMENSION_UNDETERMINED!. With this check, a valid diagram has only denotable nodes, which the rewrite engine relies on.
+\item A leg count that the leg policy does not allow (\cref{alg:diagrams-allows}) gives \code!LEG_POLICY_VIOLATION! (\code!node N (Z) has M inputs / K outputs, violating its leg policy!).
+\item Under \code!PRODUCT_OF_LEGS_EQUAL!, unify the product of the input dimensions with the product of the output dimensions: \code!FAILURE! gives \code!DIMENSION_POLICY_VIOLATION!, \code!DEFERRED! gives \code!DIMENSION_DEFERRED!, bindings give \code!DIMENSION_BOUND!. The leg-agreement check is skipped.
+\item Under \code!ALL_LEGS_EQUAL!, for a node with legs, run \py!unify_all! over all its port dimensions (inputs, then outputs): \code!FAILURE! gives \code!DIMENSION_POLICY_VIOLATION!; an exhausted budget gives the hard \code!DIMENSION_RESOLUTION_EXHAUSTED!; otherwise bindings or declined bindings give one \code!DIMENSION_BOUND! listing both, and each residual pair gives its own \code!DIMENSION_DEFERRED!.
+\item A phase vector on a generator of schema \code!NONE! gives \code!PHASE_NOT_PERMITTED!. Under \code!PAIR!, a phase that is not a \py!PairPhase! whose two dimensions equal the leg dimensions (outputs first, then inputs) gives \code!PHASE_DIMENSION_MISMATCH! (\code!node N (Zp) needs a pair phase over its leg dimensions [...], got P!). Under \code!TIED_TO_LEG_DIM!, when the leg unification neither failed nor ran out, compare the phase vector's dimension with the first leg's dimension, both with the unification's bindings substituted; when they differ, unify them: \code!FAILURE! gives \code!PHASE_DIMENSION_MISMATCH!, \code!DEFERRED! gives \code!DIMENSION_DEFERRED!, bindings give \code!DIMENSION_BOUND!. A binding found here is not fed back into the legs' check.
+\end{enumerate}
+
+\subsection{Bang-box checks}\label{sec:diagrams-validate-boxes}
+
+\paragraph{Scopes.} For each box in id order: every node of its node scope must exist (\texttt{BANGBOX\_SCOPE\_UNKNOWN\_NODE}); every port of its port scope, in key order, must resolve (\texttt{BANGBOX\_PORT\_UNKNOWN}), must be a boundary slot (\texttt{BANGBOX\_PORT\_NOT\_BOUNDARY}), and must lie on a side with no maximum whose minimum does not exceed one less than the current leg count (\texttt{BANGBOX\_PORT\_FIXED\_ARITY}), so that every count from one below the current count upward is a legal leg count.
+
+\paragraph{Crossings.} For each box with a live node scope, count the crossing wires per outside node and side, skipping a crossing whose inside port is a link port, tree port, tree parent port, or feed port of the box, whose outside node lies in a pair box over the box or in another member of its alignment group, that belongs to a pair box, or that is a zip wire (\cref{def:diagrams-zip}). For each outside node and side in order of (node id, direction value), the side must have no maximum and a minimum at most the current leg count less the count; otherwise \texttt{BANGBOX\_CROSSING\_FIXED\_ARITY}.
+
+\paragraph{Links.} When the diagram has boxes:
+\begin{enumerate}
+\item Each message of \py!zip_wires! gives a \code!BANGBOX_LINK_INADMISSIBLE!.
+\item For each box and each link $(p,q)$: both ports must resolve, both nodes must be in the scope, and the link must be an admissible wire: the two ports of opposite directions, and $q$'s dimension equal to $p$'s or, read in the next copy (the index $x$ replaced by $x+1$), equal to $p$'s. A cyclic chain's $p$ must be wired to its $q$. In an open chain each link port must be wired to a node outside the scope or be a boundary slot.
+\item A tree box's parent and child ports must be ports of its scope of one dimension, the child ports facing the other way from the parent port; the parent port must be wired outside the scope or be a boundary slot. When a box is fed by the tree, no child port may be wired or a boundary slot; otherwise the child ports must be one run of boundary slots in tree order.
+\item A fed box must name a tree box; neither may be nested; the tree may feed no other box; the fed box's multiplicity must equal $b'^{\mu}$ for the tree's branching $b'$ and multiplicity $\mu$ (difference simplifying to $0$); its feed port must be an unwired, non-boundary port of its scope with the direction and dimension of the tree's parent port.
+\item An index, level, or position name of a box may be read in a node's phase vector only inside the scope of some box binding that name or inside a pair box over such a box; otherwise \code!BANGBOX_INDEX_OUT_OF_SCOPE!.
+\end{enumerate}
+Every other violation of this paragraph gives \code!BANGBOX_LINK_INADMISSIBLE!.
+
+\paragraph{Alignment.} An aligned box must name a live node-scoped box that is aligned to none, has the same multiplicity, is neither its ancestor nor its descendant, and whose ancestors are all ancestors of the aligned box; otherwise \texttt{BANGBOX\_LINK\_INADMISSIBLE}.
+
+\paragraph{Nesting.} Boxes reported by the scope, port, or crossing checks are excluded. For each remaining box, walk its parent chain: a parent absent from the diagram gives \texttt{BANGBOX\_UNKNOWN\_PARENT}, a repeated box \texttt{BANGBOX\_PARENT\_CYCLE}. For each box with a well-formed chain and a non-excluded parent, the child must be strictly finer than its parent (\cref{def:diagrams-finer}); otherwise \texttt{BANGBOX\_NESTING\_MISMATCH}. Finally, for each pair of such boxes in id order that neither encloses the other, the two \emph{footprints} (node scope plus the nodes of the port scope) must be disjoint, unless both are port-scoped with disjoint port scopes; otherwise \texttt{BANGBOX\_SCOPE\_OVERLAP}, against the first box.
+
+\begin{definition}[Strictly finer]\label{def:diagrams-finer}
+A box $c$ is strictly finer than its parent $b$ when $c$'s footprint is contained in $b$'s and: for a node-scoped $c$, $b$ is node-scoped and $c$'s footprint is a proper subset of $b$'s; for a port-scoped $c$ under a node-scoped $b$, always; for a port-scoped $c$ under a port-scoped $b$, $c$'s port scope is a proper subset of $b$'s.
+\end{definition}
+
+\subsection{Symbol roles}\label{sec:diagrams-validate-roles}
+
+Each symbol constructor of the algebra layer stamps a distinct assumption signature, from which validation reads the symbol's role.
+
+\begin{definition}[Symbol role]\label{def:diagrams-roles}
+Read the stated assumptions \py!assumptions0! of a SymPy symbol and test in this order: \code!integer! and \code!positive! give \emph{dimension} (\py!Dim.symbol!); \code!integer! and \code!multiplicity! give \emph{multiplicity} (\py!Mult.symbol!); \code!integer! and not \code!positive! give \emph{exponent} (a dimension exponent, \code!integer! and \code!nonnegative!); \code!real! and not \code!integer! give \emph{phase} (\py!Phase.symbol!); \code!complex! and not \code!real! give \emph{scalar} (\py!Scalar.symbol!); anything else has no role.
+\end{definition}
+
+The symbols of a diagram are those of every port dimension, every phase vector's dimension, every phase entry whose value in turns is not a rational number, every phase-vector rule read in turns with the index symbol replaced by~$1$, the diagram scalar, and every box multiplicity. A name that occurs in two or more roles gives \code!SYMBOL_ROLE_COLLISION! (\code!symbol 'x' is used as more than one role in this diagram: [...]!), names in sorted order: substitution is by name, so it would rewrite both symbols at once.
+
+\subsection{The parameter environment}\label{sec:diagrams-validate-params}
+
+For each binding $x:=v$ in name order: a name that no symbol of the diagram carries gives the deferred \code!PARAMETER_UNKNOWN_SYMBOL!; a name in two roles is skipped (already a collision); otherwise $v$ must be at least the role's minimum of \cref{tab:diagrams-role-min}, or \code!PARAMETER_VALUE_OUT_OF_DOMAIN! (\code!... outside the domain of its R role (>= m)!).
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Role & dimension & exponent & multiplicity & phase & scalar \\
+\midrule
+Minimum value & $1$ & $0$ & $0$ & none & none \\
+\bottomrule
+\end{tabular}
+\caption{The lower bound each role imposes on a bound integer value.}
+\label{tab:diagrams-role-min}
+\end{table}
+
+\subsection{Global dimension consistency}\label{sec:diagrams-validate-global}
+
+The last pass is skipped when the report already holds an \code!UNKNOWN_NODE! or \code!PORT_INDEX_OUT_OF_RANGE! issue. It gathers every dimension equality the diagram asserts: one per wire with resolvable ends, in key order; then, per node in id order, the pair (input product, output product) under \code!PRODUCT_OF_LEGS_EQUAL!, no pair under \code!PER_LEG!, or under \code!ALL_LEGS_EQUAL! one pair per two consecutive ports (inputs, then outputs) and, for a tied phase on a node with legs, the pair (phase dimension, first port dimension). If there is none, the pass ends. Otherwise \py!solve! receives the pairs whose two sides differ: \code!FAILURE! gives the hard \code!DIMENSION_GLOBALLY_INCONSISTENT!, an exhausted budget the hard \code!DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED!, and a converged \code!DEFERRED! nothing (each open pair is already reported per wire or per node).
+
+\subsection{Memoization}
+
+\py!validate! is memoized. The key consists of the identities of the node objects, the box objects, and the scalar object, the node ids, the box ids, the wires in iteration order, both boundary lists, and the parameter items; the table also holds the keyed objects, so their identities stay unique while the entry lives. The table holds at most $2^{12}=4096$ reports and is emptied when full before the next entry. Per-object tables of the same kind memoize the per-node policy issues, the node symbol sets, the free symbols of scalars and multiplicities, the role of each symbol, the role table of each symbol set, and the per-node dimension equalities, each with at most $2^{17}=131072$ entries. Below that table, the last wire-port resolution, the last wired-slot table (per node, its wired slots and the ports wired more than once), the last set of \code!PORT_UNUSED! issues, and the last per-node dimension equalities are kept and updated over the nodes and wires that changed since the previous call (through \py!incident_state! and a snapshot of the node map); the issues and their order are those of a full recomputation. The wire-dimension pass and the global gathering read only the wires with an unresolvable end or two differing dimensions, in key order, which gives the same issues. The call runs inside a trace span named \code!input.validate!.
+
+\egroup
+\section{Structural Comparison}\label{sec:diagrams-compare}
+\bgroup\sloppy
+
+The module \module{archytaszx.diagram.compare} compares diagrams as data, not as denotations: id for id, and up to a renaming of node and box ids.
+
+\subsection{Comparison id for id}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class StructuralComparison!: \py!identical: bool!; \py!reason: str!\\
+\py!compare_structure(a: Diagram, b: Diagram) -> StructuralComparison!
+\end{signature}
+
+\py!compare_structure! reports the first difference in a fixed check order, or \py!StructuralComparison(True, "identical")!.
+\begin{enumerate}
+\item The sets of node ids (\code!node ids differ: only in a [...], only in b [...]!).
+\item For each node id in ascending order: generator type, input ports, output ports, then phase vector (\code!node N: phase differs: P vs Q!).
+\item The wire lists sorted by key (\code!wires differ: only in a [...], only in b [...]!).
+\item The sets of box ids.
+\item For each box id in ascending order: multiplicity, node scope, port scope, parent, and then, together, links, cyclic flag, index, copy scalar, pair parent, pair index, left and right ports, tree ports, tree parent, level, position, feed, feed port, alignment, and groups (\code!bang box B: links, index, copy scalar or groups differ: ...!).
+\item Boundary inputs, boundary outputs, scalar, and the parameter items sorted by name.
+\end{enumerate}
+The \py!sheets! flag is not compared.
+
+\subsection{Canonical key}
+
+\begin{signature}
+\py!canonical_key(diagram, *, symmetric_legs=False) -> str!\\
+\py!canonical_form(diagram, *, symmetric_legs=False) -> tuple[str, tuple | None]!\\
+\py!isomorphic(a, b, *, symmetric_legs=False) -> bool!; \py!isomorphism(a, b, *, symmetric_legs=False) -> dict[NodeId, NodeId] | None!
+\end{signature}
+
+\py!canonical_key! is a 32-hexadecimal-digit string that two isomorphic diagrams always share; distinct diagrams may collide, so a matching key is a candidate that \py!isomorphic! decides. It comes from color refinement over the graph's invariants, the one-dimensional Weisfeiler--Leman procedure. A non-\py!Diagram! argument raises \py!TypeError!.
+
+\begin{definition}[Leg symmetry]\label{def:diagrams-leg-symmetry}
+\emph{Symmetric mode} is on when \py!symmetric_legs! is true and no box of the diagram has a port scope. In symmetric mode a leg index of a Z or X spider reads as $-1$ (the legs within one direction are interchangeable), and a leg direction of a Z spider reads as \code!*! (its legs are interchangeable across directions). Otherwise every leg keeps its index and direction.
+\end{definition}
+
+\begin{definition}[Box tag and chain]\label{def:diagrams-box-tag}
+The \emph{tag} of a box is the string \py!repr(multiplicity)! followed, in this order and only when present, by \code!|sheets!, \code!|cyclic! or \code!|chain! (when it has links), \code!|index:x!, \code!|scalar:c!, \code!|pairs:x!, \code!|tree:b:L:P! (branching, level name, position name), \code!|fed!, \code!|aligned!, and \code!|groups:g! (the number of groups). The \emph{chain} of a box is the tuple of the tags of its ancestors, innermost first, cut at an absent or repeated parent.
+\end{definition}
+
+\begin{definition}[Initial color]\label{def:diagrams-initial-colour}
+The initial color of a node is computed from id-independent data only.
+\begin{enumerate}
+\item The \emph{head} is the representation, without its final \code!)!, of the tuple (generator name, input dimension representations, output dimension representations, phase key). In symmetric mode the dimension lists of a Z spider are merged into one sorted input list and an empty output list, and those of an X spider are sorted per side. The phase key is the phase vector's digest; a Z or X spider without a phase but with legs uses the digest of the zero phase vector over its first leg's dimension; otherwise it is \code!None!.
+\item The \emph{boundary entries} are, for each boundary position $i$ on the node, the triple (\code!in:dir:idx! or \code!out:dir:idx!, $i$, $0$), with direction and index read under \cref{def:diagrams-leg-symmetry}.
+\item The \emph{membership entries} are, for each box in id order whose node scope holds the node, (\code!node!, tag, *chain), and for each port of its port scope on the node, (\code!port!, direction, index as a string, tag, *chain).
+\item With no entries, the color is the first 32 hexadecimal digits of the SHA-256 of the UTF-8 text \code!{head}, (), ())!; otherwise of \code!{head}, {E}, {M})!, where $E$ and $M$ are the representations of the sorted entry tuples.
+\end{enumerate}
+\end{definition}
+
+\begin{algorithm}[Joint color refinement]\label{alg:diagrams-refine}
+\py!_refine_jointly(parts)! refines the colors of several diagrams over their disjoint union, so that colors are comparable between them.
+\begin{enumerate}
+\item List all nodes as (part, id), ids ascending within a part. Every wire, in key order, contributes to each of its ends an incidence entry (own direction, own index, other node, other direction, other index), directions and indices read under \cref{def:diagrams-leg-symmetry}.
+\item The initial rank of a node is the rank of its initial color among all distinct initial colors sorted.
+\item Rank the distinct near keys (own direction, own index) and the distinct far keys (other direction, other index) in sorted order. Let $N$ be the number of nodes, $s=\max(\#\text{far keys},1)$, and $t=(N+1)s$. Each incidence entry with near rank $a$, far rank $f$, and other node $o$ packs into the integer $a t + f + \mathrm{rank}(o)\,s$.
+\item Repeat at most $N+1$ rounds: stop when every node has its own class; give every node the signature (its rank, the sorted tuple of its packed entries); rank the distinct signatures in sorted order; stop when the number of classes did not grow; otherwise take the new ranks.
+\item The final color of a node is \code!{initial colour}.{final rank}!.
+\end{enumerate}
+\end{algorithm}
+
+\begin{definition}[Profile]\label{def:diagrams-profile}
+The profile of a diagram under a labeling $\lambda$ of its nodes is the tuple of: the sorted labels; the sorted wires, each the sorted pair of its ends $(\lambda(v),\text{direction},\text{index})$ read under \cref{def:diagrams-leg-symmetry}; the boundary inputs and outputs as ends, in order; the box descriptors sorted by representation; \py!repr(scalar)!; and the parameter items sorted by name. A box descriptor is (tag, chain, sorted scope labels, sorted port-scope ends) followed, when non-empty, by one tuple of: its links as pairs of ends; its left and right ports as sorted (side, label, direction, index); its tree ports as (\code!tree0!, \ldots) with the parent port first; its feed (feed-port end and the tree's sorted scope labels); its alignment (the partner's sorted scope labels); and its groups (each a sorted label tuple).
+\end{definition}
+
+\py!canonical_key(D)! is the first 32 hexadecimal digits of the SHA-256 of \py!repr! of the profile of $D$ under its refined colors. \py!canonical_form(D)! returns that key and, when refinement gives every node its own color, the profile itself (\py!None! otherwise); two diagrams with profiles, compared with the same \py!symmetric_legs!, are isomorphic exactly when their profiles are equal. Both run in trace spans named \code!rewrite.canonical_key!; the caches of box tags, zero-phase digests, node color heads, and placed colors hold at most $2^{16}=65536$ entries each and are emptied when full.
+
+\subsection{Isomorphism}
+
+\begin{algorithm}[Isomorphism]\label{alg:diagrams-iso}
+\py!isomorphism(a, b, symmetric_legs)! returns a node map from $a$ onto $b$, or \py!None!:
+\begin{enumerate}
+\item Raise \py!TypeError! for a non-\py!Diagram!. Return \py!None! when the numbers of nodes, wires, boxes, boundary inputs, or boundary outputs differ, the scalars differ, or the sorted parameter items differ.
+\item Use symmetric mode when it is on for both diagrams. Refine both jointly (\cref{alg:diagrams-refine}). The candidates of a node of $a$ are the nodes of $b$ of the same color, in id order; return \py!None! when some node has none.
+\item Order the nodes of $a$ by (number of candidates, color, id) and search depth-first, with an explicit stack, for an assignment: a candidate is accepted when it is unused, has as many incidence entries as the source, and the multiset of wires from the source to already assigned nodes, carried through the assignment, equals the multiset of wires from the candidate to already used nodes. Exhausting the candidates of the first node returns \py!None!.
+\item With the first complete assignment $m$, return $m$ when the profile of $a$ labeled by $m$ equals the profile of $b$ labeled by its own ids, and \py!None! otherwise.
+\end{enumerate}
+\py!isomorphic! is \py!isomorphism(...) is not None!. Both run in trace spans named \code!rewrite.isomorphism!.
+\end{algorithm}
+\egroup

@@ -1,0 +1,156 @@
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.3\linewidth}r>{\raggedright\arraybackslash}X@{}}
+\caption{The files of the test suite.}\label{tab:dev-tests}\\
+\toprule
+File & Tests & Subject \\
+\midrule
+\endfirsthead
+\toprule
+File & Tests & Subject \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{\_\allowbreak{}bench\_\allowbreak{}subjects\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}bench\_\allowbreak{}suite\_\allowbreak{}script.py} & 7 & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}cache\_\allowbreak{}determinism\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}cross\_\allowbreak{}process\_\allowbreak{}determinism\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}induction\_\allowbreak{}determinism\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}strategy\_\allowbreak{}determinism\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}symbolic\_\allowbreak{}determinism\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{\_\allowbreak{}trust\_\allowbreak{}mutations\_\allowbreak{}script.py} & -- & Standalone script (\cref{sec:dev-scripts,sec:dev-mutations}). \\
+\texttt{dirac\_\allowbreak{}eval.py} & -- & Test-only numeric evaluator of the printer's Dirac AST, and the oracle it is compared with. \\
+\texttt{helpers.py} & -- & Shared test fixtures. \\
+\texttt{test\_\allowbreak{}align\_\allowbreak{}merge.py} & 3 & kernel.align\_merge: aligned boxes merged into one box, instantiation-checked at k = 0..4, tampered merges refused; fca\_boxed equal to its spec by the radix window. \\
+\texttt{test\_\allowbreak{}aligned\_\allowbreak{}box.py} & 3 & Copy-aligned box-to-box wiring (align). \\
+\texttt{test\_\allowbreak{}bangbox.py} & 39 & Unit tests for archytaszx.diagram.bangbox. \\
+\texttt{test\_\allowbreak{}bench\_\allowbreak{}differs.py} & 13 & F pairs of benchmarks.breaks against benchmarks.differs.equal\_at, by dense tensors of both sides at small points. \\
+\texttt{test\_\allowbreak{}bench\_\allowbreak{}lean\_\allowbreak{}light.py} & 3 & Light-import attempt of benchmarks.lean.check: the import rewrite, the fallback to the file as written, and the attempts recorded. \\
+\texttt{test\_\allowbreak{}bench\_\allowbreak{}lean\_\allowbreak{}slots.py} & 10 & Lean slots of benchmarks.lean. \\
+\texttt{test\_\allowbreak{}bench\_\allowbreak{}memcap.py} & 4 & benchmarks.memcap: children over the cap are killed as oom by every usable mechanism, children under it finish, rivals carry the mechanism, a Lean check's record does not depend on it. \\
+\texttt{test\_\allowbreak{}bench\_\allowbreak{}rival.py} & 17 & Circuit conversions of benchmarks.tools.rival against Qiskit operators. \\
+\texttt{test\_\allowbreak{}cache.py} & 94 & Covers \texttt{cache}'s Stage 1 and Stage 2 surface. \\
+\texttt{test\_\allowbreak{}cache\_\allowbreak{}engine\_\allowbreak{}equivalence.py}$^{\ast}$ & 27 & Establishes Phase 12's done-when, "no change in results". \\
+\texttt{test\_\allowbreak{}carry\_\allowbreak{}lemma.py} & 1 & The telescoping carry lemma U decided for every n and d by induction at the chain's last copy. \\
+\texttt{test\_\allowbreak{}certificate.py} & 47 & Unit coverage for \texttt{certificate}. \\
+\texttt{test\_\allowbreak{}chain\_\allowbreak{}order.py} & 11 & Boundary order of a chain box with inputs. \\
+\texttt{test\_\allowbreak{}chain\_\allowbreak{}split.py} & 2 & kernel.chain\_split: a chain box over independent chains split into aligned chain boxes, instantiation-checked at k = 0..4, tampered splits refused. \\
+\texttt{test\_\allowbreak{}check.py} & 27 & Tests for archytaszx.semantics.check. \\
+\texttt{test\_\allowbreak{}columns.py} & 6 & The free column count rung (REMAINING\_BUGS\_SPEC 79.3). \\
+\texttt{test\_\allowbreak{}commands.py}$^{\ast}$ & 145 & Phase 19 commands. \\
+\texttt{test\_\allowbreak{}contract\_\allowbreak{}numeric.py} & 17 & Tests for archytaszx.semantics.contract\_numeric. \\
+\texttt{test\_\allowbreak{}contract\_\allowbreak{}symbolic.py} & 55 & Phase 9. \\
+\texttt{test\_\allowbreak{}cooley\_\allowbreak{}tukey.py} & 5 & The Cooley-Tukey lemma: the shift by one over s*t between B(s, t) and S(s, t) in digit-wise form. \\
+\texttt{test\_\allowbreak{}decide.py} & 94 & The normal-form driver and the \texttt{decide\_equal} ladder, each verdict checked by the oracle. \\
+\texttt{test\_\allowbreak{}denote.py} & 19 & Tests for archytaszx.semantics.denote. \\
+\texttt{test\_\allowbreak{}denote\_\allowbreak{}phase10.py} & 38 & Tests for the Phase 10 denotations. \\
+\texttt{test\_\allowbreak{}diagram\_\allowbreak{}compare.py} & 19 & Covers \texttt{compare} directly. \\
+\texttt{test\_\allowbreak{}diagram\_\allowbreak{}graph.py} & 38 & Tests for archytaszx.diagram.graph. \\
+\texttt{test\_\allowbreak{}digit\_\allowbreak{}poly.py} & 4 & Digit polynomials of phase tables (digit\_poly): fits, refusals, values, and Lean text. \\
+\texttt{test\_\allowbreak{}dimension.py} & 58 & Tests for archytaszx.algebra.dimension. \\
+\texttt{test\_\allowbreak{}dimension\_\allowbreak{}guards.py} & 31 & Establishes DimensionGuard's grammar and three-valued evaluation, and the guarded Z-fusion rule's firing behavior. \\
+\texttt{test\_\allowbreak{}dimension\_\allowbreak{}solve.py} & 19 & Tests for archytaszx.algebra.dimension.solve. \\
+\texttt{test\_\allowbreak{}dimension\_\allowbreak{}unify\_\allowbreak{}phase10.py} & 29 & Tests for the Phase 10 Dim.unify decision procedure and Dim.rewrite. \\
+\texttt{test\_\allowbreak{}docstring\_\allowbreak{}policy.py} & 4 & Enforces the project's docstring budgets across \texttt{archytaszx/}, and bans a set of rationale markers. \\
+\texttt{test\_\allowbreak{}egraph.py} & 56 & Phase 14 e-graph suite. \\
+\texttt{test\_\allowbreak{}engine.py} & 70 & Establishes archytaszx.rewrite.engine.apply. \\
+\texttt{test\_\allowbreak{}first\_\allowbreak{}peel.py} & 8 & First-copy peels of indexed boxes with pair boxes and of out-to-in chains. \\
+\texttt{test\_\allowbreak{}fusion\_\allowbreak{}properties.py}$^{\ast}$ & 16 & Deterministic randomized property harness over spider fusion. \\
+\texttt{test\_\allowbreak{}generators.py} & 15 & Tests for archytaszx.diagram.generators. \\
+\texttt{test\_\allowbreak{}generators\_\allowbreak{}phase10.py} & 12 & Tests for the Phase 10 generator registrations and the PRODUCT\_OF\_LEGS\_EQUAL policy. \\
+\texttt{test\_\allowbreak{}incremental\_\allowbreak{}match.py} & 32 & Establishes the Phase 12 locality hooks and \texttt{IncrementalMatcher}. \\
+\texttt{test\_\allowbreak{}index\_\allowbreak{}dims.py} & 1 & Chains whose link dimensions read the copy index. \\
+\texttt{test\_\allowbreak{}induction.py} & 70 & Phase 8 induction module unit suite. \\
+\texttt{test\_\allowbreak{}interop.py} & 38 & Tests for archytaszx.semantics.interop. \\
+\texttt{test\_\allowbreak{}kernel.py} & 26 & The proof kernel. \\
+\texttt{test\_\allowbreak{}large\_\allowbreak{}phase\_\allowbreak{}rule.py} & 3 & A phase rule over a large concrete dimension parses as a rule, unexpanded. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}bsub.py} & 5 & [HH] on the top digit of a dyadic group with a boundary-only low bit, then [BSub] (Step.bsub, bsub\_sound). \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}chain.py} & 20 & The chain-induction Lean export. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}chainfam.py} & 2 & The closed chain family export: the point instances of teleportation\_chain and repeater\_chain as the family theorem and its corollary at n. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}chainnode.py} & 3 & A chain box against a node box: cyclic\_shift exported through ChainNode.cyclic\_every, no axiom, its point claims the corollary of one size at every point; Lean accepting the family theorem and rejecting a changed copy. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}copyphase.py} & 2 & The copy-index phase export: the point instances of bv\_secret\_pattern as the family theorem of the gadget pair, restated over the linked diagrams, and its corollary at n. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}dyadic\_\allowbreak{}bits.py} & 3 & [Dyadic] with given binary digits (Step.dyadicB, bitsOK over the truncated lift). \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}f2.py}$^{\ast}$ & 7 & Qubit networks proved by the F\_2 term checker of \texttt{ArchytasZX.SymF2}. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}famlink.py} & 3 & Linked family inductions: ghz\_metrology, whose goal's phase reads the box multiplicity, exported with the induction as \texttt{Lnk}$i$\texttt{.P} at F n, no axiom; its point claims as that theorem with its corollary, of one size at every point; Lean accepting the family theorem and rejecting a goal phase changed. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}finite.py} & 2 & Claims with finitely many values: the case split over the instance proofs. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}net.py}$^{\ast}$ & 30 & The tensor-network Lean export. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}pathsum.py} & 31 & The qudit path-sum Lean export over Z\_p. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}peel.py} & 30 & Kernel peel steps exported over linked diagrams (REMAINING\_BUGS\_SPEC 79.16a). \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}periodic.py} & 5 & The periodic Lean export. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}power\_\allowbreak{}split.py} & 9 & Kernel power splits exported over linked diagrams (REMAINING\_BUGS\_SPEC 79.6, 79.6d, 79.6g). \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}qdigits.py} & 4 & Qudit network proofs over digit variables (lean\_qdigits). \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}refute.py}$^{\ast}$ & 21 & Lean refutations. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}regroup.py} & 4 & Kernel regroup layout facts exported through \texttt{regroup\_layout} (REMAINING\_BUGS\_SPEC 79.16b). \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}restrict.py} & 3 & Corollaries of restricted Lean exports. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}sym.py}$^{\ast}$ & 27 & Lean proofs over symbolic dimensions by the verified normalizer of symbolic sums. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}turn.py} & 5 & [Turn]. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}wfuse.py} & 2 & The kernel's w\_fusion step in the network export. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}wnode.py} & 9 & W nodes in the network export. \\
+\texttt{test\_\allowbreak{}lean\_\allowbreak{}wtree.py} & 5 & The w\_state tree families. \\
+\texttt{test\_\allowbreak{}lemma\_\allowbreak{}window.py} & 5 & The boxed incrementer by induction through the lemma window (77.5). \\
+\texttt{test\_\allowbreak{}lemmas.py} & 8 & The stated-lemma library. \\
+\texttt{test\_\allowbreak{}match.py} & 111 & Establishes archytaszx.rewrite.match. \\
+\texttt{test\_\allowbreak{}nested\_\allowbreak{}box\_\allowbreak{}rewrite.py} & 4 & Rewrites inside nested node-scope bang boxes rescope every enclosing box, checked by the validator and by the numeric oracle at several multiplicities and dimensions. \\
+\texttt{test\_\allowbreak{}nested\_\allowbreak{}chain.py} & 20 & Chain links through a child box (REMAINING\_BUGS\_SPEC 72.6). \\
+\texttt{test\_\allowbreak{}normal\_\allowbreak{}form.py} & 34 & Phase 13 normal-form driver suite. \\
+\texttt{test\_\allowbreak{}pair\_\allowbreak{}phase.py} & 4 & The pair-phase generator Zp and PairPhase. \\
+\texttt{test\_\allowbreak{}param\_\allowbreak{}induction.py} & 4 & Parametric induction: the hypothesis taken at a substituted phase parameter, and a phase constant generalized to a parameter. \\
+\texttt{test\_\allowbreak{}parser\_\allowbreak{}dirac.py} & 93 & Phase 18 Form 3. \\
+\texttt{test\_\allowbreak{}parser\_\allowbreak{}dsl.py} & 134 & Phase 18 parser. \\
+\texttt{test\_\allowbreak{}path\_\allowbreak{}sum\_\allowbreak{}rows.py} & 3 & Pivot rows of F\_2 constraints (contract\_symbolic.\_solved\_rows). \\
+\texttt{test\_\allowbreak{}pathsum\_\allowbreak{}mixed.py} & 1 & Mixed path sums on dimensions 2, 3, 6: entries against the dense contraction. \\
+\texttt{test\_\allowbreak{}pathsum\_\allowbreak{}parity.py} & 5 & Canonical forms with unlifted parity terms (an XOR lift past XOR\_LIFT\_TERMS). \\
+\texttt{test\_\allowbreak{}pathsum\_\allowbreak{}sparse.py} & 17 & Sparse phase-vector reads of pathsum\_diagram against the dense table. \\
+\texttt{test\_\allowbreak{}phase.py} & 59 & Tests for archytaszx.algebra.phase. \\
+\texttt{test\_\allowbreak{}phase10\_\allowbreak{}oracle.py}$^{\ast}$ & 13 & Phase 10 done-when. \\
+\texttt{test\_\allowbreak{}phase13\_\allowbreak{}oracle.py}$^{\ast}$ & 7 & Phase 13 done-when. \\
+\texttt{test\_\allowbreak{}phase14\_\allowbreak{}oracle.py}$^{\ast}$ & 12 & Phase 14 done-when. \\
+\texttt{test\_\allowbreak{}phase15\_\allowbreak{}oracle.py}$^{\ast}$ & 25 & Phase 15 done-when. \\
+\texttt{test\_\allowbreak{}phase16\_\allowbreak{}oracle.py}$^{\ast}$ & 7 & Phase 16 done-when. \\
+\texttt{test\_\allowbreak{}phase17\_\allowbreak{}oracle.py}$^{\ast}$ & 30 & Phase 17. \\
+\texttt{test\_\allowbreak{}phase18\_\allowbreak{}oracle.py} & 27 & Phase 18 done-whens. \\
+\texttt{test\_\allowbreak{}phase19\_\allowbreak{}oracle.py} & 42 & Phase 19 test-and-debug items and done-when. \\
+\texttt{test\_\allowbreak{}phase2\_\allowbreak{}oracle.py} & 7 & Phase 2 numeric-oracle stand-in. \\
+\texttt{test\_\allowbreak{}phase3\_\allowbreak{}oracle.py} & 1 & Phase 3 numeric-oracle stand-in for the diagram data model. \\
+\texttt{test\_\allowbreak{}phase4\_\allowbreak{}oracle.py} & 3 & Phase 4 numeric-oracle check. \\
+\texttt{test\_\allowbreak{}phase5\_\allowbreak{}certificate\_\allowbreak{}sweep.py}$^{\ast}$ & 7 & Exhaustive (not random) sweep over \texttt{dimension\_constraints} content. \\
+\texttt{test\_\allowbreak{}phase5\_\allowbreak{}dirac\_\allowbreak{}oracle.py} & 38 & The literal chain \texttt{FULL\_PLAN.md} names for Phase 5's completion condition. \\
+\texttt{test\_\allowbreak{}phase5\_\allowbreak{}exhaustive\_\allowbreak{}oracle.py}$^{\ast}$ & 1 & Exhaustive (not random) spider-fusion oracle sweep. \\
+\texttt{test\_\allowbreak{}phase5\_\allowbreak{}oracle.py} & 46 & Phase 5 numeric-oracle check. \\
+\texttt{test\_\allowbreak{}phase6\_\allowbreak{}oracle.py} & 5 & The literal chain \texttt{FULL\_PLAN.md} names for Phase 6's completion condition. \\
+\texttt{test\_\allowbreak{}phase7\_\allowbreak{}oracle.py} & 19 & Phase 7 numeric-oracle check. \\
+\texttt{test\_\allowbreak{}phase8\_\allowbreak{}oracle.py} & 33 & Phase 8 numeric-oracle check. \\
+\texttt{test\_\allowbreak{}phase9\_\allowbreak{}oracle.py} & 35 & Phase 9 done-when. \\
+\texttt{test\_\allowbreak{}port\_\allowbreak{}box\_\allowbreak{}soundness.py} & 9 & Rules, validation, instantiation and decide\_equal on port-scope bang boxes. \\
+\texttt{test\_\allowbreak{}power\_\allowbreak{}split.py} & 4 & Joint peel of an alignment group and the split of a power box (qram, 77.2). \\
+\texttt{test\_\allowbreak{}printer.py} & 65 & Unit tests for repl/printer.py. \\
+\texttt{test\_\allowbreak{}prove.py} & 44 & Phase 15 proving suite. \\
+\texttt{test\_\allowbreak{}radix\_\allowbreak{}lemmas.py} & 3 & The radix chain lemmas: pair rows through B and S chains, the top digit split off a chain. \\
+\texttt{test\_\allowbreak{}resum\_\allowbreak{}orbits.py} & 6 & Character-orbit resummation in the symbolic comparison (check.\_resummed). \\
+\texttt{test\_\allowbreak{}rule.py} & 40 & Establishes the Rule/BuildResult/SideCondition value objects and their validation. \\
+\texttt{test\_\allowbreak{}rules\_\allowbreak{}library.py} & 39 & Establishes archytaszx.rewrite.rules\_library.spider\_fusion\_builder's merge and scalar behavior. \\
+\texttt{test\_\allowbreak{}rules\_\allowbreak{}library\_\allowbreak{}phase11.py} & 37 & Establishes the six Phase 11 rules. \\
+\texttt{test\_\allowbreak{}rules\_\allowbreak{}library\_\allowbreak{}swapped.py} & 6 & The color-swapped rule twins. \\
+\texttt{test\_\allowbreak{}rules\_\allowbreak{}zxw.py} & 16 & The W, triangle and dimension-connective rules, each checked against the numeric oracle. \\
+\texttt{test\_\allowbreak{}scalable.py} & 39 & Tests for archytaszx.diagram.scalable. \\
+\texttt{test\_\allowbreak{}scalar.py} & 64 & Tests for archytaszx.algebra.scalar. \\
+\texttt{test\_\allowbreak{}scalar\_\allowbreak{}integer\_\allowbreak{}phase.py} & 3 & Checks \texttt{simplify}'s reduction of exponentials over integer-assumed symbols. \\
+\texttt{test\_\allowbreak{}scalar\_\allowbreak{}polynomial.py} & 13 & Checks the integer-polynomial paths of ModDelta, \_reduce\_mod, \_linear\_form and \_integer\_slope against sympy expansion. \\
+\texttt{test\_\allowbreak{}semantics\_\allowbreak{}nested\_\allowbreak{}boxes.py} & 15 & Concrete and nested bang boxes through instantiate, contraction, peeling and induction, checked against hand-built box-free expansions. \\
+\texttt{test\_\allowbreak{}sheet.py}$^{\ast}$ & 46 & Tests for archytaszx.rewrite.sheet. \\
+\texttt{test\_\allowbreak{}shell.py} & 61 & Unit tests for \texttt{shell}. \\
+\texttt{test\_\allowbreak{}strategy.py} & 32 & Establishes the strategy layer. \\
+\texttt{test\_\allowbreak{}symbolic\_\allowbreak{}dimension\_\allowbreak{}sweep.py}$^{\ast}$ & 3 & Permanent regression guard. \\
+\texttt{test\_\allowbreak{}tactics.py} & 73 & Phase 15 tactic suite. \\
+\texttt{test\_\allowbreak{}three\_\allowbreak{}node\_\allowbreak{}oracle\_\allowbreak{}sweep.py}$^{\ast}$ & 1 & Permanent regression guard. \\
+\texttt{test\_\allowbreak{}three\_\allowbreak{}parallel\_\allowbreak{}wire\_\allowbreak{}arm.py} & 1 & Permanent regression guard. \\
+\texttt{test\_\allowbreak{}tree\_\allowbreak{}w\_\allowbreak{}fusion.py} & 1 & Tree window with W fusion through the fed box. \\
+\texttt{test\_\allowbreak{}tree\_\allowbreak{}window.py} & 2 & Kernel induction over a tree box against a leg port-boxed 2\^\{\}n times. \\
+\texttt{test\_\allowbreak{}unify\_\allowbreak{}all.py} & 16 & Tests for archytaszx.algebra.dimension.unify\_all. \\
+\texttt{test\_\allowbreak{}validate.py} & 57 & Tests for archytaszx.diagram.validate. \\
+\texttt{test\_\allowbreak{}validate\_\allowbreak{}phase10.py} & 11 & Tests for archytaszx.diagram.validate's Phase 10 additions. \\
+\texttt{test\_\allowbreak{}value\_\allowbreak{}count.py} & 8 & Boxed qram over a free value count N (79.5), aligned boxes in a cut (79.8), the spec step exposed by inserted identities (79.10), the per-copy lemma (79.7) and qram EQUAL over the value count. \\
+\texttt{test\_\allowbreak{}variable\_\allowbreak{}rank.py} & 11 & Symbolic contraction of families whose boundary grows with a multiplicity. \\
+\texttt{test\_\allowbreak{}zx\_\allowbreak{}cap\_\allowbreak{}bangbox.py} & 4 & Checks \texttt{ZX\_CAP} against node-scope bang boxes, at several multiplicities and dimensions. \\
+\texttt{test\_\allowbreak{}zxdraw.py} & 3 & Tests for \texttt{zxdraw} on engine diagrams. \\
+\texttt{trust\_\allowbreak{}helpers.py} & -- & Script helpers of the trust-mutation test. \\
+\end{xltabular}

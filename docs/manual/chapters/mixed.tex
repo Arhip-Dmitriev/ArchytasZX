@@ -1,0 +1,411 @@
+\chapter{Mixed States}\label{ch:mixed}
+
+This chapter specifies how ArchytasZX represents and reasons about mixed states and channels. A \term{mixed diagram} is a diagram (\cref{ch:diagrams}) that may contain discard nodes~G~\cite{carette2019mixed}. Its meaning is a completely positive map, given by Selinger's CPM construction~\cite{selinger2007cpm}: the diagram is doubled into a pure diagram whose denotation is the Choi form of the map. Two modules implement the chapter.
+\begin{itemize}
+\item \module{archytaszx.diagram.mixed}: purity tests, conjugation, doubling, purification, channels, and the standard CPM constructions (\cref{sec:mixed-records,sec:mixed-conj,sec:mixed-double,sec:mixed-purify,sec:mixed-standard}).
+\item \module{archytaszx.rewrite.rules_discard}: the discard rules, which rewrite mixed diagrams without doubling them (\cref{sec:mixed-rules}).
+\end{itemize}
+The decision procedure decides mixed equalities on doubled diagrams (\cref{ch:proofs}); the template-rule machinery that the discard rules use is specified in \cref{ch:rules,ch:rewriting}.
+
+\section{Mixed Diagrams}\label{sec:mixed-records}
+
+\subsection{The discard}
+
+The discard \py!DISCARD! (name \code!G!) has one leg of any dimension $d$, in either direction, no phase, and no pure denotation (\cref{ch:diagrams}); \py!MIXED_ONLY = frozenset({"G"})!. As an effect (one input) it is the trace $\rho\mapsto\operatorname{tr}\rho$; as a state (one output) it is the unnormalized maximally mixed state $\mathrm{id}_d$. A diagram without G is \term{pure}, and its CPM is $\rho\mapsto D\rho D^\dagger$.
+
+\begin{signature}
+\py!is_pure(diagram) -> bool!: no node's generator name lies in \py!MIXED_ONLY!.\\
+\py!discards(diagram) -> tuple[NodeId, ...]!: the ids of the \code!G! nodes, ascending.
+\end{signature}
+\py!Diagram.is_pure()! and \py!Diagram.discards()! compute the same values.
+
+\begin{definition}[Meaning of a mixed diagram]\label{def:mixed-meaning}
+Let $D$ be a mixed diagram with $n$ outputs and $m$ inputs, and let $T$ be the tensor of \py!double(D)! (\cref{alg:mixed-double}) with axes $(o,o',i,i')$: the outputs of $D$, the outputs of $\overline D$, the inputs of $D$, the inputs of $\overline D$. Then $D$ denotes the completely positive map
+\[
+\rho\;\longmapsto\;\sum_{i,i'} T[o,o',i,i']\,\rho[i,i'],
+\]
+whose Choi form is $T$. Two mixed diagrams are equal when their doublings are equal. For a pure $D$, $T[o,o',i,i']=D[o,i]\,\overline{D[o',i']}$ and the map is $\rho\mapsto D\rho D^\dagger$. A pure scalar $c$ of a diagram contributes $|c|^2$ to the map; in particular a global phase has no effect.
+\end{definition}
+
+\subsection{Errors and records}
+
+\begin{signature}
+\py!class MixedError(Exception)!\\
+\py!class MixedDomainError(MixedError)!: a G leg that is neither wired nor on the boundary; an output position out of range; a pair, tree, or fed \bbox{} in a diagram to be doubled; boundary counts that do not compose.\\
+\py!class Sheet(enum.Enum)!: \py!PLAIN = "plain"!, \py!CONJUGATE = "conjugate"!, \py!DISCARD = "discard"!\\
+\py!@dataclass(frozen=True, slots=True) class Origin!: \py!sheet: Sheet!; \py!node: NodeId!\\
+\py!@dataclass(frozen=True, slots=True) class Doubled!: \py!diagram: Diagram!; \py!origin: Mapping[NodeId, Origin]!\\
+\py!@dataclass(frozen=True, slots=True) class Purified!: \py!diagram: Diagram!; \py!env: tuple[int, ...]!; \py!origin: Mapping[NodeId, NodeId]!
+\end{signature}
+
+Every doubled or purified node keeps a map back to the node of $D$ it came from. An \py!Origin! names the sheet (the plain copy, the conjugate copy, or a node added for a discard) and the source node. Iterating a \py!Purified! yields \py!(diagram, env)!, so \py!channel(*purify(D))! is legal.
+
+\section{Conjugation}\label{sec:mixed-conj}
+
+The \term{conjugate} $\overline D$ of a diagram has as matrix the entrywise complex conjugate of $D$'s. The generators T, Ti, W, B, S, and G have real matrices and are unchanged; the scalar $c$ becomes $\bar c$; a Z spider negates its phases and conjugates its weights; an X spider does the same at the reflected index $-k \bmod d$, because $\overline{F}=F^{\dagger}$ and $F^\dagger=F\circ P$ with $P\ket{k}=\ket{-k\bmod d}$; and F becomes $F^3$.
+
+\begin{signature}
+\py!conj_phase_vector(phase: PhaseVector, *, reflected: bool) -> PhaseVector!\\
+\py!conj_node_phase(node: Node) -> PhaseVector | None!\\
+\py!conj_with_origin(diagram) -> tuple[Diagram, dict[NodeId, NodeId]]!\\
+\py!conj(diagram) -> Diagram!
+\end{signature}
+
+Below, \py!INDEX! is the index symbol of phase-vector rules (\cref{ch:algebra}) and $\delta_d(j)$ is \py!ModDelta(j, d)!, the indicator of $j\equiv 0\pmod d$.
+
+\begin{algorithm}[Conjugating a phase vector]\label{alg:mixed-conj-phase}
+\py!conj_phase_vector(phase, reflected)! over dimension $d$ returns a vector with \py!expand=False!:
+\begin{enumerate}
+\item Not reflected (the Z spider): every stored entry $p_k\mapsto -p_k$, the rule $r\mapsto -r$, every stored weight $w_k\mapsto\overline{w_k}$, the weight rule $\omega\mapsto\overline\omega$.
+\item Reflected, $d$ concrete: entry $p_k$ moves to key $(d-k)\bmod d$ as $-p_k$; weight $w_k$ moves to key $(d-k)\bmod d$ as $\overline{w_k}$; the rule becomes $-R(r)$ and the weight rule $\overline{R(\omega)}$, where $R(e)=\operatorname{expand}\bigl((1-\delta_d(\mathrm{INDEX}))\cdot e[\mathrm{INDEX}:=d-\mathrm{INDEX}]\bigr)$.
+\item Reflected, $d$ symbolic: the result has no stored entries or weights. With the gauge $g=1-\delta_d(\mathrm{INDEX})$, the rule is $\operatorname{expand}(g\cdot\tau)$ with
+\[
+\tau = -r[\mathrm{INDEX}:=d-\mathrm{INDEX}] - \sum_k \delta_d(\mathrm{INDEX}+k)\,p_k,
+\]
+or no rule when $\tau=0$ (a missing rule counts as $0$). For a weighted vector, with $\beta=\omega$ (or $1$ without a weight rule), the weight rule is
+\[
+\overline{\operatorname{expand}\bigl(g\cdot\sigma + \delta_d(\mathrm{INDEX})\bigr)},\quad\text{where}
+\]
+\[
+\sigma=\beta[\mathrm{INDEX}:=d-\mathrm{INDEX}] + \sum_k \delta_d(\mathrm{INDEX}+k)\,\bigl(w_k-\beta[\mathrm{INDEX}:=k]\bigr).
+\]
+\end{enumerate}
+\end{algorithm}
+
+\py!conj_node_phase(node)! returns \py!None! for a phase-free node, the unreflected conjugate for a Z spider, the reflected conjugate for an X spider, and the node's own phase for any other generator.
+
+\begin{algorithm}[Conjugating a diagram]\label{alg:mixed-conj}
+\py!conj_with_origin(D)! works on a copy of $D$, with every node its own origin, and visits the nodes of $D$ in ascending id order:
+\begin{enumerate}
+\item A Z or X spider gets the phase \py!conj_node_phase(node)!.
+\item An F box $f$ of dimension $e$ becomes a chain of three F boxes: add F boxes $f_2$ and $f_3$ of dimension $e$; move whatever $f$'s output met (a wire end or a boundary slot) onto $f_3$'s output; wire $f$'s output to $f_2$'s input and $f_2$'s output to $f_3$'s input. The origin of $f_2$ and $f_3$ is $f$. Add $f_2$ and $f_3$ to the innermost node-scoped \bbox{} holding $f$ and to every box enclosing it, and move every chain link port, tree port, and pair left or right port at $f$'s output onto $f_3$'s output.
+\item Every other node is unchanged.
+\end{enumerate}
+Finally the scalar becomes its conjugate. \py!conj(D)! returns the diagram alone.
+\end{algorithm}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+\node[fbox] (a) at (0,0) {$F$};
+\draw[wire] (a) -- (0,-0.8); \draw[wire] (a) -- (0,0.8);
+\node at (1,0) {$\mapsto$};
+\node[fbox] (b) at (2,-0.7) {$F$}; \node[fbox] (c) at (2,0) {$F$}; \node[fbox] (d) at (2,0.7) {$F$};
+\draw[wire] (b) -- (2,-1.4); \draw[wire] (b) -- (c); \draw[wire] (c) -- (d); \draw[wire] (d) -- (2,1.4);
+\end{tikzpicture}
+\caption{Conjugation of the Fourier box: $\overline F=F^3$; the original box stays at the bottom.}
+\label{fig:mixed-conj-f}
+\end{figure}
+
+\section{Doubling}\label{sec:mixed-double}
+
+\begin{signature}
+\py!double_with_origin(diagram) -> Doubled!\\
+\py!double(diagram) -> Diagram!
+\end{signature}
+
+\begin{algorithm}[Doubling]\label{alg:mixed-double}
+\py!double_with_origin(D)!:
+\begin{enumerate}
+\item Compute $\overline D$ and its origin map by \cref{alg:mixed-conj}. Let $\Gamma$ be the G nodes of $D$.
+\item Into a fresh diagram, copy every node of $D$ outside $\Gamma$ (ascending id, sheet \code!PLAIN!) with the wires among them (key order), giving the map $\iota_0$; then every node of $\overline D$ outside $\Gamma$ (sheet \code!CONJUGATE!, origin through the conjugation's origin map), giving $\iota_1$.
+\item For each $g\in\Gamma$ in ascending order, unless already handled, with its leg $\ell$ (its input when it has one, else its output) of dimension $e$:
+\begin{enumerate}
+\item If $\ell$ is wired to a port $\pi$ of a node outside $\Gamma$, let $\pi'$ be the partner of $\ell$ in $\overline D$ (the same port, or the moved output of a conjugated F). If $g$ lies in no node-scoped box, wire $\iota_0(\pi)$ to $\iota_1(\pi')$. Otherwise add a phase-free Z spider with two inputs of dimension $e$ (sheet \code!DISCARD!, origin $g$), wire $\iota_0(\pi)$ to its input~0 and $\iota_1(\pi')$ to its input~1, and record it as $g$'s replacement.
+\item If $\ell$ is wired to another G node $g'$, mark $g'$ handled and add a Z spider with no legs and the zero phase vector over $e$ (the scalar $e$), recorded as $g$'s replacement.
+\item If $\ell$ is a boundary slot, add a phase-free Z spider with two legs of dimension $e$ in $\ell$'s direction (the cup or cap), recorded as $g$'s replacement; in the plain sheet's boundary $\ell$ stands for its leg~0, in the conjugate sheet's for its leg~1.
+\item Otherwise raise \py!MixedDomainError! (\code!discard G has a leg that is neither wired nor open!).
+\end{enumerate}
+\item The boundary outputs are the outputs of $D$ mapped through the plain sheet followed by the outputs of $\overline D$ mapped through the conjugate sheet; the boundary inputs likewise.
+\item The scalar is $c\,\bar c$ for $D$'s scalar $c$; the parameter environment is $D$'s.
+\item Copy the \bboxes{} (\cref{alg:mixed-copy-boxes}) from $\overline D$ with the maps $(\iota_0,\iota_1)$, the replacements as extra scope nodes, and the link sources $(D,\overline D)$; then set \py!sheets! on every node-scoped box.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Copying \bboxes{} onto a doubled or assembled diagram]\label{alg:mixed-copy-boxes}
+\py!_copy_boxes(source, target, maps, extra, link_sources=None)! visits the boxes of \py!source! by (depth, id), parents first. A pair, tree, or fed box raises \py!MixedDomainError! (\code!bang box B: a pair, tree or fed box has no doubling!).
+\begin{enumerate}
+\item A node-scoped box becomes one box over the images of its nodes under every map, plus the extra nodes recorded for any of its nodes; its links are, for every map and its link source (the box of that id in that source diagram), the images of the links whose two ports are mapped; its copy scalar $c$ becomes $c\,\bar c$ when there are two or more maps; multiplicity, parent (the copy of the source parent), cyclic flag, and index are kept.
+\item A port-scoped box becomes one box per map over the images of its ports (none when no port is mapped), each with the source box's multiplicity; its parent is the image of the source parent under the same map when that parent is port-scoped, and the copy of the source parent otherwise.
+\end{enumerate}
+The fields \py!groups!, \py!align!, and \py!sheets! of the source boxes are not carried.
+\end{algorithm}
+
+With \py!sheets! set, a node-scoped box's boundary slots in the first half of each boundary list (the plain sheet) and those in the second half (the conjugate sheet) form one copy-major block each at instantiation (\cref{ch:diagrams}), so instantiating the doubled diagram gives the doubling of the instantiated diagram.
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{c@{\qquad\qquad}c}
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-1);
+\draw[wire] (z) -- (-0.4,1);
+\draw[wire] (z) -- (0.4,0.7); \zxground{0.4,0.7}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (a) at (0,0) {}; \node[zs] (b) at (1.4,0) {};
+\draw[wire] (a) -- (0,-1); \draw[wire] (b) -- (1.4,-1);
+\draw[wire] (a) -- (-0.4,1); \draw[wire] (b) -- (1.0,1);
+\draw[wire] (a) to[out=60,in=120] (b);
+\end{tikzpicture}
+\\
+\py!dephase(d)! & its doubling: plain sheet left, conjugate sheet right
+\end{tabular}
+\caption{Doubling: the two copies of a discarded leg join into one wire.}
+\label{fig:mixed-double}
+\end{figure}
+
+\begin{example}
+\py!double(dephase(3))! has two Z spiders with one input and two outputs (nodes $0$ and $1$, sheets \code!PLAIN! and \code!CONJUGATE!, both with origin node~$0$), one wire joining their outputs~$1$, boundary inputs $(0.\mathrm{in}_0, 1.\mathrm{in}_0)$, boundary outputs $(0.\mathrm{out}_0, 1.\mathrm{out}_0)$, and scalar~$1$. \py!double(maximally_mixed("d"))! is one phase-free Z spider with two outputs and scalar $1/d$: the map $\rho\mapsto\mathrm{id}_d/d$.
+\end{example}
+
+\section{Purification and Channels}\label{sec:mixed-purify}
+
+\begin{signature}
+\py!purify(diagram) -> Purified!\\
+\py!channel(diagram, env: Iterable[int]) -> Diagram!\\
+\py!partial_trace(diagram, legs: Iterable[int]) -> Diagram!
+\end{signature}
+
+\py!purify! builds the Stinespring form of a mixed diagram: a pure diagram whose extra outputs, the \term{environment}, are discarded by \py!channel!. Its contract is that \py!channel(*purify(D))! denotes the same CPM as $D$.
+
+\begin{algorithm}[Purification]\label{alg:mixed-purify}
+\begin{enumerate}
+\item Copy every node of $D$ outside its G nodes $\Gamma$ (ascending id) with the wires among them, giving $\iota$; the environment list starts empty.
+\item For each $g\in\Gamma$ in ascending order, unless already handled, with leg $\ell$ of dimension $e$:
+\begin{enumerate}
+\item $\ell$ wired to an output port $\pi$ outside $\Gamma$ and $g$ in no node-scoped box: append $\iota(\pi)$ to the environment.
+\item $\ell$ wired to an output port $\pi$ outside $\Gamma$ and $g$ boxed: add a phase-free Z spider with one input and one output (an identity), wire $\iota(\pi)$ to its input, and append its output to the environment.
+\item $\ell$ wired to an input port $\pi$ outside $\Gamma$: add a phase-free Z spider with two outputs (a cup), wire its output~0 to $\iota(\pi)$, and append its output~1.
+\item $\ell$ wired to another G node: mark it handled, add a cup, and append both its outputs.
+\item $\ell$ on the boundary outputs (a G state): add a cup, let its output~0 take $\ell$'s boundary slot, and append its output~1.
+\item $\ell$ on the boundary inputs (a G effect): add an identity Z spider, let its input take $\ell$'s slot, and append its output.
+\item Otherwise raise \py!MixedDomainError! (\code!discard G has a leg that is neither wired nor open!).
+\end{enumerate}
+Every added spider has origin $g$ and joins the scopes of $g$'s boxes.
+\item The boundary outputs are $D$'s outputs mapped through $\iota$ (with replaced slots) followed by the environment; the inputs are $D$'s inputs mapped; the scalar and parameters are $D$'s; the \bboxes{} are copied by \cref{alg:mixed-copy-boxes} with the single map $\iota$.
+\item \py!env! is the tuple of positions of the environment in the boundary outputs, $(n, n+1, \dots)$ for $n$ the number of $D$'s outputs.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}
+For \py!dephase(3)!, the G's leg meets output~1 of the Z spider and the G lies in no box, so case (a) applies: \py!purify! returns one Z spider with one input and two outputs, boundary outputs $(0.\mathrm{out}_0, 0.\mathrm{out}_1)$, \py!env == (1,)!, and origin $\{0\mapsto 0\}$. \py!channel(*purify(dephase(3)))! caps output~1 with a new G and is \py!dephase(3)! again up to node ids. For \py!discard(d)!, case (f) applies: the result is an identity Z spider from the boundary input to the single environment output.
+\end{example}
+
+\py!channel(D, env)! discards the boundary outputs at the given positions: on a copy, for each position in ascending order of the distinct values, add a G with one input of that port's dimension, wire the output port to it, and add the G to the innermost node-scoped box holding the port's node and every box enclosing it; then remove those positions from the boundary outputs. A position outside $0,\dots,n-1$ raises \py!MixedDomainError! (\code!output position p out of range 0..n-1!) before anything changes. \py!partial_trace(D, legs)! is \py!channel(D, legs)!.
+
+\section{Standard Constructions}\label{sec:mixed-standard}
+
+Each construction takes a dimension as a \py!Dim!, an \py!int! (concrete), or a \py!str! (a dimension symbol) and returns a fresh diagram (\cref{fig:mixed-standard}).
+
+\begin{itemize}
+\item \py!discard(d)!: one G with one input, which is the boundary input; the trace.
+\item \py!maximally_mixed(d)!: one G with one output, which is the boundary output, and pure scalar $d^{-1/2}$ (\py!Scalar.dim_power(d, -1, 2)!); the CPM state $\mathrm{id}_d/d$.
+\item \py!dephase(d)!: a phase-free Z spider with one input and two outputs, output~1 wired to a G, input~0 and output~0 on the boundary; the map $\rho\mapsto\sum_k\bra{k}\rho\ket{k}\,\ket{k}\bra{k}$. \py!measure_z(d)! is \py!dephase(d)!: the computational-basis measurement with the outcome forgotten.
+\item \py!measure_x(d)!: the same shape with an X spider; the Fourier-basis measurement $F\circ\mathrm{dephase}\circ F^\dagger$.
+\item \py!outcome(k, d)!: an X spider with one input and no outputs whose phase vector has the rule $\mathrm{INDEX}\cdot k/d$ turns (\py!expand=True!), and scalar $d^{-1/2}$; it is the pure effect $\bra{k}$, since the engine's X effect with these phases is $\sqrt d\bra{k}$. A string $k$ becomes \py!sympy.Symbol(k, integer=True)!. Closed against a state through doubling, it gives the Born probability of outcome $k$.
+\item \py!compose(first, second)!: \py!second! after \py!first!. It raises \py!MixedDomainError! (\code!cannot compose: N output(s) against M input(s)!) when the counts differ; otherwise it copies both diagrams (first, then second), wires the outputs of the first to the inputs of the second in order, takes the first's inputs and the second's outputs, the product of the scalars, the union of the parameter environments (the second's values win), and the \bboxes{} of both (\cref{alg:mixed-copy-boxes}, one map each).
+\item \py!tensor(*parts)!: the parallel composition, with the boundaries concatenated in order, the product of the scalars, the parameter environments merged in order, and the \bboxes{} of every part.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{ccccc}
+\begin{tikzpicture}[zxd]
+\draw[wire] (0,-0.8) -- (0,0.3); \zxground{0,0.3}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\draw[wire] (0,0.8) -- (0,-0.3);
+\begin{scope}[shift={(0,-0.3)},yscale=-1]\zxground{0,0}\end{scope}
+\node[right,font=\scriptsize] at (0.2,0) {$d^{-1/2}$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-0.9); \draw[wire] (z) -- (-0.35,0.9);
+\draw[wire] (z) -- (0.35,0.6); \zxground{0.35,0.6}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[xs] (z) at (0,0) {};
+\draw[wire] (z) -- (0,-0.9); \draw[wire] (z) -- (-0.35,0.9);
+\draw[wire] (z) -- (0.35,0.6); \zxground{0.35,0.6}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[xs] (x) at (0,0) {$K_k$};
+\draw[wire] (x) -- (0,-0.9);
+\node[right,font=\scriptsize] at (0.35,0) {$d^{-1/2}$};
+\end{tikzpicture}
+\\
+\py!discard! & \py!maximally_mixed! & \py!dephase! & \py!measure_x! & \py!outcome!
+\end{tabular}
+\caption{The standard constructions; $K_k$ is the phase vector $(jk/d)_j$ in turns.}
+\label{fig:mixed-standard}
+\end{figure}
+
+\begin{sloppypar}\noindent The module's public names (\py!__all__!) are \py!DISCARD!, \py!Doubled!, \py!MixedDomainError!, \py!MixedError!, \py!Origin!, \py!Purified!, \py!Sheet!, \py!channel!, \py!compose!, \py!conj!, \py!conj_node_phase!, \py!conj_phase_vector!, \py!conj_with_origin!, \py!dephase!, \py!discard!, \py!discards!, \py!double!, \py!double_with_origin!, \py!is_pure!, \py!maximally_mixed!, \py!measure_x!, \py!measure_z!, \py!outcome!, \py!partial_trace!, \py!purify!, and \py!tensor!.\end{sloppypar}
+
+\section{Discard Rules}\label{sec:mixed-rules}
+
+\subsection{Source and conventions}
+
+Carette, Jeandel, Perdrix, and Vilmart~\cite{carette2019mixed} make a complete pure graphical language complete for mixed states by adding one equation $G\circ V=G$ for each isometry $V$ of a spanning set; for the qubit ZX calculus they take the set $\{e^{i\alpha}, \ket 0, H, R_Z(\alpha), \mathrm{CNot}\}$. The module \module{archytaszx.rewrite.rules_discard} states these equations for the qudit analogues: $H$ is F; $\ket 0$ is the phase-free X state in the normalization of~\cite{poor2023zxw}; $R_Z(\alpha)$ is the Z spider with one input, one output, and phase $\alpha$; CNot is the Z spider with one input and two outputs followed by the X spider with two inputs and one output. It adds the Z spider with one input and $n\ge 1$ outputs, the connectives B and S of~\cite{wang2023qufinitezxw}, the closed discard pair, and the derived merge of two discarded legs of one Z spider. The global phase equation $e^{i\alpha}=1$ is not a rule: it is the mixed scalar convention, under which a mixed diagram's scalar is compared by modulus.
+
+Every rule is a \py!TemplateAxiom! (\cref{ch:rules}): an equation $\mathrm{left}=\mathrm{right}\cdot c$ between two small templates, matched up to the symmetry of each generator's legs (every leg of a Z spider is interchangeable in either direction, as is the one leg of a G; an X spider's inputs among themselves and its outputs among themselves; F, B, and S port for port). Every matched node lies outside every \bbox{}, and every matched leg carries the anchor's dimension. Every rule reports the template side conditions \code!template_matches!, \code!parameters_match!, \code!same_dimension!, \code!outside_every_bang_box!, and \code!right_side_defined!, plus its own conditions. A template node marked pink is an X spider in the normalization of~\cite{poor2023zxw}, $d^{(m+n)/2-1}$ times the engine's X spider with $m+n$ legs; the scalar a rewrite multiplies into the diagram is the rule's stated scalar times the ratio of the two sides' pink normalizations. The \emph{effective scalar} below is that product. It is a pure scalar $c$: it multiplies the CPM by $|c|^2$.
+
+In the pictures, the left side is drawn left of the equals sign; a label on a terminal wire names the terminal; $\alpha$ is the matched phase vector (\py!Var("a")!).
+
+\subsection{The forward rules}
+
+\Cref{tab:mixed-rules} summarizes the nine forward rules, in the order of \py!DISCARD_AXIOMS!; \cref{fig:mixed-rules} draws them.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.17\linewidth}>{\raggedright\arraybackslash}p{0.2\linewidth}X@{}}
+\toprule
+Rule & Effective scalar & Conditions & Matching \\
+\midrule
+\py!discard_zero! & $d^{1/2}$ & none & a phase-free pink X state wired to a G \\
+\py!discard_fourier! & $1$ & none & F whose output meets a G; terminal \code!in! \\
+\py!discard_phase! & $1$ & \code!unit_modulus! & Z with one input and one output, phase $\alpha$, output to a G; terminal \code!in! \\
+\py!discard_spider! & $1$ & \code!unit_modulus!; quantifier $n$ & Z with $n+1$ legs, $n$ of them to G's; terminal \code!in! \\
+\py!discard_cx! & $d^{-1/2}$ & none & Z (1 to 2) and pink X (2 to 1), both outputs to G's; terminals \code!ctl!, \code!tgt! \\
+\py!discard_merge! & $1$ & none & Z with phase $\alpha$, two legs to G's, any further legs (open) \\
+\py!discard_loop! & $d^{1/2}$ & none & two G's wired to each other \\
+\py!discard_binder! & $1$ & concrete only; quantifiers $s,t$ & B ($s,t\to st$) whose output meets a G \\
+\py!discard_splitter! & $1$ & concrete only; quantifiers $s,t$ & S ($st\to s,t$), both outputs to G's \\
+\bottomrule
+\end{tabularx}
+\caption{The forward discard rules.}
+\label{tab:mixed-rules}
+\end{table}
+
+\paragraph{\texttt{discard\_zero}.} Left: a phase-free pink X spider with no input and one output, wired to a G; no terminals. Right: the empty template. The pink state is $\ket0$, so the equation is $G\circ\ket0=1$; the engine's X state is $\sqrt d\ket0$, hence the effective scalar $d^{1/2}$ (CPM factor $d$, the trace of $d\ket0\bra0$).
+
+\paragraph{\texttt{discard\_fourier}.} Left: F with its output wired to a G, terminal \code!in! at F's input. Right: a G on \code!in!. F is unitary.
+
+\paragraph{\texttt{discard\_phase}.} Left: a Z spider with one input and one output and phase $\alpha$, its output wired to a G, terminal \code!in!. Right: a G on \code!in!. Condition \code!unit_modulus! (\enquote{the spider carries phases only, no weights}): the matched vector is not weighted, so the spider is unitary.
+
+\paragraph{\texttt{discard\_spider}.} Left, for $n\ge 1$: a Z spider with one input and $n$ outputs and phase $\alpha$, each output wired to its own G, terminal \code!in! at the input. Right: a G on \code!in!. The arity enumerator applies only at a G anchor whose leg meets a Z spider with $\ell\ge 2$ legs, and yields $n=\ell-1$; by leg symmetry any one leg of the spider can be the terminal. Condition \code!unit_modulus!. The unweighted Z spider with one input is an isometry, $\ket k\mapsto e^{2\pi i\alpha_k}\ket{k\cdots k}$.
+
+\paragraph{\texttt{discard\_cx}.} Left: a Z spider $c$ with one input and two outputs and a pink X spider $x$ with two inputs and one output; $c$'s output~0 to a G, $c$'s output~1 to $x$'s input~0, $x$'s output to a G; terminals \code!ctl! ($c$'s input) and \code!tgt! ($x$'s input~1). Right: a G on \code!ctl! and a G on \code!tgt!. The pink X spider with three legs has normalization $d^{1/2}$, so the effective scalar is $d^{-1/2}$: the engine's X spider with two inputs is $d^{-1/2}$ times the addition map, and the left side is $d^{-1/2}$ times the qudit CX followed by two discards.
+
+\paragraph{\texttt{discard\_merge}.} Left: an open Z spider with phase $\alpha$ and two legs, each wired to its own G; the host spider may carry any further legs. Right: a Z spider with one leg wired to a G and phase $\alpha$, or no phase when $\alpha$ is the zero vector; it receives the open node's further legs. Derived from \code!discard_spider! by unfusing a phase-free Z spider with one input and two outputs onto the two discarded legs. No weight condition: on both sides the doubled legs force equal indices.
+
+\paragraph{\texttt{discard\_loop}.} Left: two G's whose legs are wired to each other. Right: the empty template, with stated scalar $d^{1/2}$ (\py!Scalar.dim_power(d, 1, 2)!): the trace of the identity, CPM factor $d$.
+
+\paragraph{\texttt{discard\_binder}.} Concrete only. Left, for concrete $s,t$: B with inputs of dimensions $s,t$ and output $st$, its output wired to a G of dimension $st$; terminals \code!a! and \code!b! at B's two inputs. Right: a G of dimension $s$ on \code!a! and a G of dimension $t$ on \code!b!. The enumerator applies at a G anchor whose leg meets a B node whose two input dimensions, resolved through the parameter environment, are concrete, and yields them. B is unitary.
+
+\paragraph{\texttt{discard\_splitter}.} Concrete only. Left: S with input $st$ and outputs $s,t$, each output wired to a G of its dimension, terminal \code!in!. Right: a G of dimension $st$ on \code!in!. The enumerator reads the two output dimensions of the S node the anchor meets, when concrete.
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{c@{\qquad}c@{\qquad}c}
+\begin{tikzpicture}[zxd]
+\node[xs] (x) at (0,0) {}; \draw[wire] (x) -- (0,0.6); \zxground{0,0.6}
+\node at (0.8,0.3) {$=$}; \node at (1.6,0.3) {$\sqrt d$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[fbox] (f) at (0,0) {$F$}; \draw[wire] (f) -- (0,-0.8); \draw[wire] (f) -- (0,0.6); \zxground{0,0.6}
+\node at (0.7,0) {$=$};
+\draw[wire] (1.3,-0.8) -- (1.3,0.2); \zxground{1.3,0.2}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {$\alpha$}; \draw[wire] (z) -- (0,-0.8); \draw[wire] (z) -- (0,0.7); \zxground{0,0.7}
+\node at (0.7,0) {$=$};
+\draw[wire] (1.3,-0.8) -- (1.3,0.2); \zxground{1.3,0.2}
+\end{tikzpicture}
+\\
+\texttt{discard\_zero} & \texttt{discard\_fourier} & \texttt{discard\_phase}
+\\[2ex]
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {$\alpha$}; \draw[wire] (z) -- (0,-0.8);
+\draw[wire] (z) -- (-0.5,0.6); \zxground{-0.5,0.6}
+\draw[wire] (z) -- (0.5,0.6); \zxground{0.5,0.6}
+\node[dimlabel] at (0,0.7) {$n$};
+\node at (1.1,0) {$=$};
+\draw[wire] (1.7,-0.8) -- (1.7,0.2); \zxground{1.7,0.2}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zdot] (c) at (0,0) {}; \node[xdot] (x) at (0.7,0.5) {};
+\draw[wire] (c) -- (0,-0.8); \draw[wire] (c) -- (0,0.7); \zxground{0,0.7}
+\draw[wire] (c) -- (x); \draw[wire] (0.9,-0.8) -- (x); \draw[wire] (x) -- (0.7,1.1); \zxground{0.7,1.1}
+\node at (1.4,0.2) {$=$}; \node at (1.95,0.2) {$\tfrac{1}{\sqrt d}$};
+\draw[wire] (2.5,-0.8) -- (2.5,0.2); \zxground{2.5,0.2}
+\draw[wire] (3.0,-0.8) -- (3.0,0.2); \zxground{3.0,0.2}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {$\alpha$}; \draw[wire] (z) -- (0,-0.8); \node[dimlabel] at (0.3,-0.7) {$\cdots$};
+\draw[wire] (z) -- (-0.4,0.6); \zxground{-0.4,0.6}
+\draw[wire] (z) -- (0.4,0.6); \zxground{0.4,0.6}
+\node at (1.0,0) {$=$};
+\node[zs] (y) at (1.8,0) {$\alpha$}; \draw[wire] (y) -- (1.8,-0.8); \node[dimlabel] at (2.1,-0.7) {$\cdots$};
+\draw[wire] (y) -- (1.8,0.6); \zxground{1.8,0.6}
+\end{tikzpicture}
+\\
+\texttt{discard\_spider} & \texttt{discard\_cx} & \texttt{discard\_merge}
+\\[2ex]
+\begin{tikzpicture}[zxd]
+\draw[wire] (0,0) -- (0,0.4); \zxground{0,0.4}
+\begin{scope}[shift={(0,0)},yscale=-1]\zxground{0,0}\end{scope}
+\node at (0.6,0.2) {$=$}; \node at (1.1,0.2) {$\sqrt d$};
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[bnode] (b) at (0,0) {$B$};
+\draw[wire] ($(b.south)+(-0.2,0)$) -- (-0.2,-0.8); \draw[wire] ($(b.south)+(0.2,0)$) -- (0.2,-0.8);
+\draw[wire] (b) -- (0,0.7); \zxground{0,0.7}
+\node at (0.8,0) {$=$};
+\draw[wire] (1.4,-0.8) -- (1.4,0.2); \zxground{1.4,0.2}
+\draw[wire] (1.9,-0.8) -- (1.9,0.2); \zxground{1.9,0.2}
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[snode] (s) at (0,0) {$S$};
+\draw[wire] (s) -- (0,-0.8);
+\draw[wire] ($(s.north)+(-0.2,0)$) -- (-0.2,0.6); \zxground{-0.2,0.6}
+\draw[wire] ($(s.north)+(0.2,0)$) -- (0.2,0.6); \zxground{0.2,0.6}
+\node at (0.8,0) {$=$};
+\draw[wire] (1.4,-0.8) -- (1.4,0.2); \zxground{1.4,0.2}
+\end{tikzpicture}
+\\
+\texttt{discard\_loop} & \texttt{discard\_binder} & \texttt{discard\_splitter}
+\end{tabular}
+\caption{The forward discard rules, drawn in engine normalization with their effective scalars on the right side. The X spiders of \texttt{discard\_zero} and \texttt{discard\_cx} are the template's pink nodes.}
+\label{fig:mixed-rules}
+\end{figure}
+
+\subsection{The converse rules}
+
+\py!DISCARD_CONVERSES! holds six rules that read a spanning-set equation from right to left, inserting an isometry before a discard. A converse matches the right side, builds the left side, and has the inverse stated scalar (\py!TemplateAxiom.converse!); the pink ratio inverts with the sides, so its effective scalar is the inverse of the forward rule's.
+\begin{itemize}
+\item \py!discard_zero_converse! (effective scalar $d^{-1/2}$): its matched side is empty, so it matches once per distinct node dimension of the diagram (\cref{ch:rules}) and adds a pink X state wired to a G.
+\item \py!discard_fourier_converse!: inserts F before a G.
+\item \py!discard_phase_converse!: inserts a Z spider with one input and one output before a G. Its phase \code!a! is a free variable of the converse (\py!converse_free!), defaulting to the zero phase vector; \code!apply ... with a=VALUE! supplies another value, which the condition \code!unit_modulus! then checks.
+\item \py!discard_cx_converse! (effective scalar $d^{1/2}$): replaces two G's by the qudit CX followed by two G's.
+\item \py!discard_binder_converse! (concrete only): replaces a G of dimension $s$ and a G of dimension $t$ by B followed by a G of dimension $st$. Its enumerator yields, at a G anchor of concrete dimension $s$, one arity $(s,t)$ for each distinct concrete dimension $t$ of a G in the diagram, ascending.
+\item \py!discard_splitter_converse! (concrete only): replaces a G of dimension $N$ by S followed by two G's. Its enumerator yields, at a G anchor of concrete dimension $N$, every $(s,t)$ with $s\ge 2$, $t\ge 2$, and $st=N$, by ascending $s$.
+\end{itemize}
+The rules \code!discard_spider!, \code!discard_merge!, and \code!discard_loop! have no converse.
+
+\subsection{Registration and use}
+
+\begin{signature}
+\py!DISCARD_AXIOMS: tuple[TemplateAxiom, ...]!; \py!DISCARD_CONVERSES: tuple[TemplateAxiom, ...]!\\
+\py!MIXED_RULES: Mapping[str, Rule]!
+\end{signature}
+
+\py!MIXED_RULES! maps the name of each of the fifteen axioms (forward rules first, then converses) to the \py!Rule! that \py!template_rule! builds from it (\cref{ch:rules}). The rules match only diagrams with a discard. They enter the engine at four places:
+\begin{itemize}
+\item \py!mixed_normal_form_rules()! of \module{archytaszx.rewrite.normal_form} is the forward discard rules in the order of \py!DISCARD_AXIOMS! followed by the pure normal-form rules (\cref{ch:rewriting});
+\item \py!mixed_moves()! of \module{archytaszx.rewrite.tactics} is a fixpoint of those rules followed by one rule tactic per rule of \py!MIXED_RULES! and per saturation rule;
+\item \py!lookup_rule(name)! of \module{archytaszx.rewrite.rules_library} falls back to \py!MIXED_RULES! for a name outside the pure rule table;
+\item the proof kernel's \py!rule! inference refuses a step that consumes a G unless the step's rule is in \py!MIXED_RULES! (\code!the pure rule R consumes a discard!; \cref{ch:kernel}).
+\end{itemize}

@@ -1,0 +1,2591 @@
+\chapter{The Benchmark Suite}\label{ch:bench-pipeline}
+
+The package \module{benchmarks} measures ArchytasZX and a set of rival tools on a fixed
+catalogue of quantum circuits, each paired with a specification it must equal. It generates a
+false set of deliberately broken equations, schedules data points in the system size $n$ and the
+dimension $d$, runs every point in a fresh worker process under CPU, wall, and memory limits,
+logs every run as one JSON line, classifies every outcome by a closed list of codes, and writes
+aggregate tables and plots. This chapter specifies the pipeline modules in
+\file{benchmarks/} and the subject catalogue in \file{benchmarks/subjects/}. The rival-tool
+adapters in \file{benchmarks/tools/} are the subject of \cref{ch:bench-tools}; this chapter
+names the adapter interface only where the pipeline calls it.
+
+\section{Architecture}\label{sec:bench-architecture}
+
+\Cref{tab:bench-modules} lists the modules. Data flows in one direction: the configuration
+selects subjects; the subjects yield equations and their scripts; the false set breaks each
+equation once; the runner schedules points, launches workers, and appends records to the log;
+the aggregator and the plotter read only the log, the false set, and the catalogue.
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}l X@{}}
+\caption{Modules of the benchmark suite.}\label{tab:bench-modules}\\
+\toprule
+\normalfont Module & Role\\
+\midrule\endfirsthead
+\toprule
+\normalfont Module & Role\\
+\midrule\endhead
+\bottomrule\endfoot
+\_\_main\_\_.py & Command-line entry point (\cref{sec:bench-cli}).\\
+config.py, config.toml & The configuration, its overrides, and its hash (\cref{sec:bench-config}).\\
+ir.py & The circuit intermediate representation (\cref{sec:bench-ir}).\\
+translate.py & The naive translator from the IR to the engine language (\cref{sec:bench-translate}).\\
+subject.py & Subjects, equations, versions, domains, and the engine script (\cref{sec:bench-subjects}).\\
+sources.py & Source digests that key runs (\cref{sec:bench-sources}).\\
+subjects/ & The subject catalogue and its shared builders (\cref{sec:bench-helpers,sec:bench-catalogue}).\\
+breaks.py & The false set $F$ (\cref{sec:bench-false}).\\
+differs.py & Whether an $F$ pair differs at a point (\cref{sec:bench-differs}).\\
+points.py & The point schedule (\cref{sec:bench-points}).\\
+stages.py & The ArchytasZX stages and their timing (\cref{sec:bench-stages}).\\
+runner.py & Units, phases, resumption, and worker launch (\cref{sec:bench-runner}).\\
+worker.py & One run in a fresh process (\cref{sec:bench-worker}).\\
+log.py & The append-only results log (\cref{sec:bench-log}).\\
+outcomes.py & Outcomes, stages, and cause codes (\cref{sec:bench-outcomes}).\\
+stats.py & Repeat statistics (\cref{sec:bench-stats}).\\
+aggregate.py & Aggregate tables (\cref{sec:bench-aggregate}).\\
+plots.py & Plots (\cref{sec:bench-plots}).\\
+reclassify.py & Reclassification of logged runs (\cref{sec:bench-reclassify}).\\
+size.py & B3 element counts (\cref{sec:bench-size}).\\
+lean.py & The Lean runner (\cref{sec:bench-lean}).\\
+memcap.py & Per-child memory caps (\cref{sec:bench-memcap}).\\
+anc.py & The ancillary-file export (\cref{sec:bench-anc}).\\
+slurm.py & The cluster job array (\cref{sec:bench-slurm}).\\
+\end{xltabular}
+
+\paragraph{Terms.} A \term{subject} is one catalogue file. It declares one or more
+\term{equations}; an equation pairs a circuit with a specification. An \term{instance} is one
+equation at one \term{version}: \code{symbolic} (no concrete $n$ and $d$), \code{concrete} (a
+point $(n,d)$), or \code{restricted} (a symbolic claim cut by restriction clauses). The set $S$
+holds every instance of the selected subjects; the \term{false set} $F$ holds one broken copy of
+each $S$ instance where a break applies. A \term{unit} is one (instance, tool) pair; a
+\term{run} is one execution of a unit at one point and one repeat index.
+
+\section{Command-line interface}\label{sec:bench-cli}
+
+The suite runs as \code{python -m benchmarks ACTION [TARGET] [options]} from the repository
+root. \Cref{tab:bench-actions} lists the actions; \cref{tab:bench-flags} lists the options.
+Every action first resolves the configuration by \py!config.load(path, sets, profile)!
+(\cref{sec:bench-config}).
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}l X@{}}
+\caption{Actions of \texttt{python -m benchmarks}.}\label{tab:bench-actions}\\
+\toprule
+\normalfont Action & Behavior\\
+\midrule\endfirsthead
+\bottomrule\endfoot
+run & \py!runner.run(cfg, (i, n), only)! with the shard \code{i/n} of \code{--shard}
+  (\cref{sec:bench-runner}).\\
+false & \py!breaks.generate(cfg, RESULTS/false_set.json, platform.jobs)!; then prints one line
+  per record: the equation id, the kind (or \code{None}), the label (or \code{None}), the word
+  \code{skipped:}, and the comma-joined kinds tried before it.\\
+aggregate & \py!aggregate.main(cfg)! (\cref{sec:bench-aggregate}).\\
+plot & \py!plots.main(cfg)! (\cref{sec:bench-plots}).\\
+anc & \py!anc.main(cfg, Path(TARGET))!; exits with the message \code{anc needs OUT_DIR}
+  when \code{TARGET} is absent (\cref{sec:bench-anc}).\\
+list & For every selected subject and every one of its $S$ instances, prints the instance id
+  left-justified in 50 columns, a space, the category left-justified in 10 columns, and
+  \code{sym=True} or \code{sym=False} (\py!subject.has_symbolic!).\\
+slurm & \py!slurm.main(cfg, args)! (\cref{sec:bench-slurm}).\\
+\end{xltabular}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}l X@{}}
+\caption{Options of \texttt{python -m benchmarks}.}\label{tab:bench-flags}\\
+\toprule
+\normalfont Option & Meaning\\
+\midrule\endfirsthead
+\bottomrule\endfoot
+TARGET & Optional positional argument; the output directory of \code{anc}, ignored elsewhere.\\
+--config PATH & The TOML file to read instead of \file{benchmarks/config.toml}.\\
+--profile laptop|cluster & Sets \code{platform.profile} after every \code{--set}.\\
+--set KEY=VALUE & One override (\cref{alg:bench-override}); repeatable, applied in order.\\
+--shard I/N & The shard of the units this process runs (default \code{0/1}); \code{run} only.\\
+--only GLOB & A unit-id glob (\code{EQUATION|TOOL}); repeatable; \code{run} only.\\
+\end{xltabular}
+
+Two further entry points exist: \code{python -m benchmarks.worker JOB_JSON_FILE}
+(\cref{sec:bench-worker}) and \code{python -m benchmarks.reclassify}
+(\cref{sec:bench-reclassify}).
+
+\section{Configuration}\label{sec:bench-config}
+
+\subsection{The configuration file}
+
+The file \file{benchmarks/config.toml} defines every value that determines what runs.
+\Cref{tab:bench-config} lists every key with its default. Paths are relative to the repository
+root unless absolute.
+
+{\small
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily\raggedright\arraybackslash}p{0.32\textwidth} >{\ttfamily\raggedright\arraybackslash}p{0.25\textwidth} X@{}}
+\caption{Keys of \texttt{benchmarks/config.toml}.}\label{tab:bench-config}\\
+\toprule
+\normalfont Key & \normalfont Default & Meaning\\
+\midrule\endfirsthead
+\toprule
+\normalfont Key & \normalfont Default & Meaning\\
+\midrule\endhead
+\bottomrule\endfoot
+subjects.catalogue & "benchmarks/subjects" & Directory of subject files.\\
+subjects.include & ["*"] & Subject ids or globs that make up $S$.\\
+subjects.exclude & [] & Subject ids or globs removed from $S$.\\
+subjects.categories & ["algorithm", "code", "protocol", "circuit"] & Categories kept.\\
+false\_set.enabled & true & Whether $F$ is generated and run.\\
+false\_set.kinds & ["*"] & Globs over the break kinds allowed.\\
+false\_set.assignment & "round\_robin" & \code{round_robin} or \code{random} (\cref{alg:bench-order}).\\
+false\_set.seed & 20261106 & Seed of the random assignment and of counterexample candidates.\\
+false\_set.beyond\_N & 32 & The $N$ of the \code{beyond_N} kind.\\
+false\_set.tiny\_k & 3 & \code{tiny_phase} adds $1/d^k$ of a turn.\\
+false\_set.probe\_seconds & 120 & Wall seconds of one counterexample probe.\\
+false\_set.equation\_seconds & 1800 & Wall seconds of all kinds of one equation.\\
+points.K & 16 & Successful data points per (equation, tool).\\
+points.n\_min & 0 & Least $n$ drawn.\\
+points.n\_max & 100\_000\_000 & Greatest $n$ drawn.\\
+points.d\_min & 1 & Least $d$ drawn.\\
+points.d\_max & 2048 & Greatest $d$ drawn.\\
+points.distribution & "log\_uniform" & Read by no module; the draws are log-uniform.\\
+points.seed & 20261106 & Seed of the phase 2 draws.\\
+points.phase2\_extra\_failures & 32 & Cap on failed phase 2 draws per unit.\\
+points.symbolic & true & Whether the symbolic version runs (outside $K$).\\
+stages.decide & true & Read by no module; decide always runs.\\
+stages.certificate & true & Run the proof-kernel certificate stage.\\
+stages.lean\_export & true & Run the Lean export stage.\\
+stages.lean\_check & true & Run the Lean check stage.\\
+stages.timeout\_seconds & 3600 & CPU seconds per stage per run.\\
+stages.wall\_factor & 4 & Wall limit multiplier (\cref{sec:bench-launch}).\\
+stages.memory\_fraction & 0.85 & Share of available memory given to workers.\\
+repeats.cluster.mode & "adaptive" & Repeat rule of the cluster profile.\\
+repeats.cluster.min\_runs & 5 & Least runs per successful point.\\
+repeats.cluster.max\_runs & 30 & Most runs per successful point.\\
+repeats.cluster.confidence & 0.95 & Coverage of the median interval.\\
+repeats.cluster.precision & 0.05 & Allowed relative half-width of the median interval.\\
+repeats.laptop.mode & "fixed" & Repeat rule of the laptop profile.\\
+repeats.laptop.runs & 3 & Runs per successful point.\\
+trace.enabled & true & Runs carry engine timing spans.\\
+trace.overhead\_sample & 0.05 & Share of points also run with tracing off.\\
+tools.enabled & (12 names) & \code{archytaszx}, \code{pyzx}, \code{quizx}, \code{qcec},
+  \code{feynman}, \code{dizx}, \code{qiskit}, \code{cirq}, \code{autoq_para}, \code{tket},
+  \code{quantomatic}, \code{published_proofs}.\\
+platform.profile & "laptop" & \code{laptop} or \code{cluster}.\\
+platform.jobs & "auto" & Concurrent workers; \code{auto} resolves at load.\\
+output.results & "benchmarks/results" & Results directory.\\
+output.plots & "benchmarks/plots" & Plot directory.\\
+slurm.partition & "scavenger" & Slurm partition; any other value is refused.\\
+slurm.array & 32 & Array tasks; each runs one shard.\\
+slurm.cpus\_per\_task & 8 & Cores per task and workers per task.\\
+slurm.mem\_per\_cpu & "4G" & Slurm memory per core.\\
+slurm.time & "7-00:00:00" & Slurm time limit.\\
+slurm.account & "" & Slurm account; empty: no account line.\\
+slurm.venv & "\textasciitilde/.venvs/personal\_lab" & Python environment on the cluster.\\
+slurm.setup & "" & A shell file sourced before the environment; empty: none.\\
+slurm.commit & "" & The commit run; empty: the latest green \code{dev} commit.\\
+\end{xltabular}
+}
+
+The worker also reads \code{stages.prepare_timeout_seconds}, which the file does not define; its
+default is \code{stages.timeout_seconds} (\cref{sec:bench-worker}).
+
+\subsection{Loading and overrides}
+
+\begin{signature}
+\py!load(path: Path | None = None, sets: list[str] | None = None, profile: str | None = None) -> dict!
+\end{signature}
+\noindent reads \code{path} (default \file{benchmarks/config.toml}) with a TOML parser, applies
+every assignment of \code{sets} in order by \py!override!, then sets \code{platform.profile} to
+\code{profile} when given, and finally replaces \code{platform.jobs = "auto"} by
+$\max(1, \lfloor c/2\rfloor)$, where $c$ is the CPU count (2 when unknown).
+
+\begin{algorithm}[\texttt{override}]\label{alg:bench-override}
+Input: the configuration dictionary and one text \code{KEY=VALUE}.
+\begin{enumerate}
+\item Split at the first \code{=}; with no \code{=}, raise \py!ValueError("--set needs key=value, got ...")!.
+\item Strip \code{KEY} and split it at dots into $p_1,\dots,p_m$. Walk $p_1,\dots,p_{m-1}$; when
+  a part is missing or does not name a table, raise \py!KeyError("unknown config section ...")!.
+\item When $p_m$ is not a key of the last table, raise \py!KeyError("unknown config key ...")!.
+  New keys are never created.
+\item The value is the TOML literal \code{v = VALUE} parsed by the TOML parser (integers,
+  floats, booleans, strings in quotes, arrays); when that parse fails, the stripped text itself
+  as a string. Thus \code{--set points.K=4} stores the integer 4 and \code{--set platform.profile=cluster} stores the string \code{"cluster"}.
+\end{enumerate}
+\end{algorithm}
+
+\py!repeats(cfg)! returns \code{cfg["repeats"][cfg["platform"]["profile"]]}.
+\py!path(cfg, section)! returns \code{cfg["output"][section]} as an absolute path, resolved
+against the repository root when relative.
+
+\subsection{The configuration hash}
+
+\begin{definition}[Configuration hash]\label{def:bench-digest}
+\py!digest(cfg)! deep-copies the configuration, removes the five keys \code{platform.jobs},
+\code{output.results}, \code{output.plots}, \code{tools.enabled}, and \code{slurm.commit}
+(the constant \py!UNHASHED!), serializes the rest as JSON with sorted keys, and returns the
+first 12 hexadecimal digits of its SHA-256 hash.
+\end{definition}
+
+The hash keys every run (\cref{sec:bench-log}); changing any hashed value starts a fresh set
+of runs, while changing the worker count, the output paths, the enabled tools, or the commit
+reuses logged runs.
+
+\section{The circuit IR}\label{sec:bench-ir}
+
+\module{benchmarks.ir} defines the circuits of the catalogue as qudit gate lists over named
+wires and registers. All gate classes are frozen dataclasses (value equality, hashable when
+their fields are).
+
+\subsection{Wires, registers, and amounts}
+
+A \term{wire} is a name. A \term{register} is a wire name bound to a \term{count}: an
+integer or a symbol expression such as \code{"n"} or \code{"n + 1"}. A gate that names a
+register acts on every copy of it, the same gate on each. Registers that share a count lie
+together in the boundary order, copy-major. A \term{two-count register} is bound to a pair
+\code{(outer, inner)}; its copies $(m,j)$ lie $m$-major, and it occurs only in a
+\py!Chain! of the outer count, whose copy $m$ acts on row $m$. A wire with no \py!Init! is a
+boundary input; a wire with no \py!Post! or \py!Discard! is a boundary output.
+
+\term{Amounts} (the \code{a} of \py!X!, \py!Z!) and phase rules are integers, fractions, or
+SymPy expressions in \code{d}, \code{n}, and the phase index \code{k}; phases are in
+\term{turns} (a phase $t$ means $e^{2\pi i t}$). Write $\omega = e^{2\pi i/D}$ for a wire of
+dimension $D$.
+
+\subsection{Gates}
+
+\Cref{tab:bench-gates} defines every gate by its fields and its action on the computational
+basis $\ket{k}$, $k\in\Zd{D}$.
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.27\textwidth} X@{}}
+\caption{Gates of the circuit IR.}\label{tab:bench-gates}\\
+\toprule
+\normalfont Gate (fields, defaults) & Action\\
+\midrule\endfirsthead
+\toprule
+\normalfont Gate (fields, defaults) & Action\\
+\midrule\endhead
+\bottomrule\endfoot
+Init(q, v=0) & The basis state $\ket{v}$ on \code{q}.\\
+Post(q, v=0) & The basis effect $\bra{v}$; \code{q} ends.\\
+Discard(q) & Trace out \code{q}; \code{q} ends.\\
+Measure(q) & Computational-basis measurement: \code{q} is dephased and stays open, classical.\\
+X(q, a=1) & Shift $\ket{k}\mapsto\ket{k+a}$.\\
+Z(q, a=1) & Clock $\ket{k}\mapsto\omega^{ak}\ket{k}$.\\
+F(q, p=1) & $F^p$ with $F_{jk} = \omega^{jk}/\sqrt{D}$.\\
+ZPhase(q, entries=\{\}, rule=None) & $\ket{k}\mapsto e^{2\pi i\,\varphi_k}\ket{k}$, $\varphi$
+  from \code{entries} $\{k:\text{turns}\}$ or from \code{rule}, an expression in \code{k}.\\
+XPhase(q, entries, rule) & $F\cdot\mathrm{ZPhase}\cdot F^\dagger$.\\
+CX(c, t, s=1) & $\ket{c,t}\mapsto\ket{c, t+sc}$, $s=\pm1$.\\
+CZ(c, t, s=1) & $\ket{c,t}\mapsto\omega^{sct}\ket{c,t}$, $s=\pm1$.\\
+Swap(a, b) & Exchange two wires.\\
+PhaseFn(qs, f, support=None) & $\ket{x}\mapsto e^{2\pi i f(x)}\ket{x}$ on several wires,
+  $f$ in turns; \code{support} lists the only $x$ where $f$ may be nonzero (\code{None}: any).\\
+MCX(cs, t, values=None, a=1) & $\ket{c,t}\mapsto\ket{c, t + a[c = \text{values}]}$;
+  \code{values=None} means all 1.\\
+MCZ(cs, t, values=None, a=1) & $\ket{c,t}\mapsto\omega^{a t [c=\text{values}]}\ket{c,t}$.\\
+Perm(qs, p) & $\ket{x}\mapsto\ket{p(x)}$ on the joint basis of \code{qs}, first wire most
+  significant; $p:\N\to\N$.\\
+Oracle(xs, y, f) & $\ket{x,y}\mapsto\ket{x, y+f(x)}$, $y$ one wire.\\
+Unitary(qs, matrix) & A dense unitary given as nested lists of \code{[real, imag]} pairs;
+  reference circuits only.\\
+Prepare(qs, vector) & A dense state on initially $\ket{0}$ wires; reference circuits only.\\
+Chain(count, body, carries=(), index=None, reverse=False, through=()) &
+  A loop over \code{count} copies (\cref{sec:bench-ir-loops}).\\
+Tree(count, body, parent, children, level=None, position=None) & A tree of depth
+  \code{count} (\cref{sec:bench-ir-loops}).\\
+Pairs(over, body, index="j", pair\_index="m") & For every pair of copies $j<k$ of register
+  \code{over}, \code{body} on wires \code{"left"} (copy $j$) and \code{"right"} (copy $k$).\\
+LowerMCX(over, controls=(), values=(), reverse=False) & For each copy $k$ of register
+  \code{over} (dimension 2), from the last copy down (up with \code{reverse}), the flip of copy
+  $k$ controlled on every copy $j<k$ at 1 and on the single wires \code{controls} at
+  \code{values}.\\
+IndexedMCX(over, cells, t) & For each value $v=0,\dots,2^n-1$ of register \code{over} ($n$
+  copies, dimension 2, copy $j$ the bit of value $2^j$), in order, the flip of single wire
+  \code{t} controlled on \code{over}${}=v$ and on copy $v$ of register \code{cells}
+  ($2^n$ copies) at 1.\\
+Neighbours(over, s=1) & $\mathrm{CZ}^s$ between copies $j$ and $j+1$ of register
+  \code{over}, for every $j$, in copy order.\\
+\end{xltabular}
+
+\subsection{Loops}\label{sec:bench-ir-loops}
+
+\paragraph{Chain.} Copy $m$ of a \py!Chain! reads its \code{index} symbol as $m$ in amounts and
+phase rules. Its \code{body} acts on copy $m$ of each register of the chain's count and on the
+single wires named in \code{carries}. After each copy, every pair \code{(carry, register)}
+exchanges values: the register's copy keeps the carry's value and the carry continues with the
+register's. Each single wire of \code{through} passes from copy to copy unchanged. With
+\code{reverse} the copies run from $\mathit{count}-1$ down to 0. A carry may itself be a
+register whose count is the inner count of its two-count partner; it then carries one row from
+copy to copy (copy $j$ to copy $j$).
+
+\paragraph{Tree.} Copy $c(L,P)$ of a \py!Tree! ($L = 1,\dots,\mathit{count}$,
+$P < b^{L-1}$, $b$ the number of \code{children}) runs \code{body} on its parent value as wire
+\code{parent} and on fresh local wires; the final values of the \code{children} wires feed
+copies $c(L+1, bP+i)$, $i<b$; the leaves' children take \code{parent}'s place in the boundary,
+leaf-major. Symbols \code{level} and \code{position} read $L$ and $P$.
+
+\subsection{Circuits}
+
+\begin{signature}
+\py!Circuit(wires, gates, registers={}, dims={}, scalar="1", outputs=None)!
+\end{signature}
+\noindent holds the wires in input boundary order, the gates, the registers with their counts,
+per-wire dimensions (an integer or an expression; \py!dim(q)! returns \code{"d"} when absent),
+a global scalar expression, and the output boundary order. \py!count(q)! returns the register
+count (the outer count of a two-count register) or \code{None}; \py!inner(q)! the inner count or
+\code{None}. \py!output_order()! returns \code{wires} when \code{outputs} is \code{None};
+otherwise \code{outputs} restricted to known wires, each omitted wire inserted right after the
+wire that precedes it in \code{wires} (first when it has no predecessor).
+
+The constructor function
+\py!circuit(wires, gates, *, registers=None, dims=None, scalar="1", outputs=None)! raises
+\py!ValueError("<Gate> names undeclared wire(s) [...]")! when a gate names an undeclared wire
+(by \py!gate_wires!), and \py!ValueError("outputs ... is not an order of the wires ...")!
+when \code{outputs} is not a permutation of \code{wires}.
+
+\py!gate_wires(g)! returns the wires a gate names, in argument order: $(c,t)$ for \py!CX!,
+\py!CZ!; $(a,b)$ for \py!Swap!; \code{qs} for \py!PhaseFn!, \py!Perm!, \py!Unitary!,
+\py!Prepare!; $(\mathit{cs},t)$ for \py!MCX!, \py!MCZ!; $(\mathit{xs},y)$ for \py!Oracle!; for
+\py!Chain! the body's wires, then every carry pair's wires, then \code{through}, deduplicated in
+first-seen order; \code{(over,)} for \py!Pairs! and \py!Neighbours!; \code{(parent,)} for
+\py!Tree!; $(\mathit{controls}, \mathit{over})$ for \py!LowerMCX!; $(\mathit{over},
+\mathit{cells}, t)$ for \py!IndexedMCX!; \code{(q,)} otherwise.
+
+\py!at_index(g, values)! returns \code{g} with every symbol of \code{values} replaced by its
+integer in the amounts of \py!X!, \py!Z!, the entries and rule of \py!ZPhase!, \py!XPhase!,
+and recursively in a \py!Chain! body; an amount is replaced only when it mentions one of the
+symbols. \py!unrolled(name, n)! returns the wire names \code{name0}, \dots,
+\texttt{name\{n-1\}}.
+
+\subsection{Abstract grammar}
+
+\begin{lstlisting}[style=grammar,caption={Abstract grammar of the circuit IR.}]
+circuit  ::= Circuit(wires: name*, gates: gate*, registers: {name: count | (count, count)},
+                     dims: {name: expr}, scalar: expr, outputs: name* | None)
+count    ::= int | expr                      expr: SymPy text in d, n (and index symbols)
+amount   ::= int | expr                      phase entries/rules in turns, k the basis index
+gate     ::= Init(name, int) | Post(name, int) | Discard(name) | Measure(name)
+           | X(name, amount) | Z(name, amount) | F(name, int)
+           | ZPhase(name, {int: turns}, rule) | XPhase(name, {int: turns}, rule)
+           | CX(name, name, +1|-1) | CZ(name, name, +1|-1) | Swap(name, name)
+           | PhaseFn(name+, fn, support) | MCX(name+, name, values, int)
+           | MCZ(name+, name, values, int) | Perm(name+, fn) | Oracle(name+, name, fn)
+           | Unitary(name+, matrix) | Prepare(name+, vector)
+           | Chain(count, gate+, (name, name)*, index, bool, name*)
+           | Tree(count, gate+, name, name+, level, position)
+           | Pairs(name, gate+, index, index) | LowerMCX(name, name*, int*, bool)
+           | IndexedMCX(name, name, name) | Neighbours(name, +1|-1)
+\end{lstlisting}
+
+\section{The naive translator}\label{sec:bench-translate}
+
+\module{benchmarks.translate} maps a circuit to an engine-language diagram body (the syntax of
+\cref{ch:language}): one generator group per gate, every node named, every wire explicit, and
+no simplification. The result is the diagram a user would write by hand from the circuit; the
+benchmark measures how the engine reduces it.
+
+\subsection{Contexts and symbol writing}
+
+\begin{signature}
+\py!Context(values: Mapping[str, int] = {}, literal: frozenset[str] = frozenset())!
+\end{signature}
+\noindent binds symbols (\code{d}, \code{n}) to integers; a bound symbol in \code{literal} is
+written as its value. The methods are memoized in one LRU cache of 65\,536 entries keyed on
+(function, sorted literal bindings, type of the expression, expression); unhashable
+expressions bypass the cache.
+\begin{itemize}
+\item \py!dim_token(dim)! returns \code{literal V} when the dimension is an integer, or becomes
+  one after substituting the literal symbols; otherwise the expression as text.
+\item \py!value(expr)! substitutes the literal symbols; a numeric result is passed through
+  \py!sympy.nsimplify!.
+\item \py!concrete(expr)! returns the integer after substitution, or \code{None}.
+\end{itemize}
+
+Expressions are written by \py!str! of the SymPy expression with \code{**} replaced by
+\texttt{\^{}}. A scalar whose rational coefficient $p/q$ has $\max(|p|, q)$ above 160 bits is written
+as prime powers when both $|p|$ and $q$ factor over the primes below 1000:
+\texttt{-(2\^{}3*5)/(3\^{}2)*(rest)}, the minus sign only for $p<0$, the denominator only when not 1,
+the factor \code{*(rest)} only when the non-rational part is not 1; otherwise it is written as
+an ordinary expression. A concrete number of turns is reduced into $[0,1)$; a float is first
+converted to the nearest rational by \py!nsimplify(..., rational=True)!.
+
+\subsection{Gate encodings}
+
+\Cref{tab:bench-encodings} gives the generator group of every gate; $D$ is the wire's
+dimension token, and the scalar column is the factor multiplied into the diagram's scalar.
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.15\textwidth} X >{\raggedright\arraybackslash}p{0.15\textwidth}@{}}
+\caption{Naive encodings of the IR gates.}\label{tab:bench-encodings}\\
+\toprule
+\normalfont Gate & Nodes & Scalar\\
+\midrule\endfirsthead
+\toprule
+\normalfont Gate & Nodes & Scalar\\
+\midrule\endhead
+\bottomrule\endfoot
+Init v & \azx!X(0 -> 1, D) phase{k: -v*k/D}! (the phase omitted when it simplifies to 0) & $D^{-1/2}$\\
+Post v & \azx!X(1 -> 0, D) phase{k: v*k/D}! & $D^{-1/2}$\\
+Discard & \azx!G(1 -> 0, D)! & 1\\
+Measure & \azx!Z(1 -> 2, D)!, \code{out1} wired to a \azx!G(1 -> 0, D)!; the wire continues from \code{out0} & 1\\
+X a & \azx!X(1 -> 1, D) phase{k: -a*k/D}! & 1\\
+Z a & \azx!Z(1 -> 1, D) phase{k: a*k/D}! & 1\\
+F p & $p \bmod 4$ nodes \azx!F(D)! in sequence & 1\\
+ZPhase & \azx!Z(1 -> 1, D)! with the rule (\texttt{phase\{k: ...\}}) or the entries & 1\\
+XPhase & \azx!X(1 -> 1, D)! likewise & 1\\
+Swap & No node; the two current ends exchange & 1\\
+CX s & \azx!Z(1 -> 2, D)! on $c$, \azx!X(2 -> 1, D)! on $t$, $c$'s \code{out1} to $t$'s
+  \code{in1} directly ($s=1$) or through two \azx!F(D)! ($s=-1$) & $D^{1/2}$\\
+CZ s & \azx!Z(1 -> 2, D)! on $c$, \azx!Z(2 -> 1, D)! on $t$, joined through one \azx!F(D)!
+  ($s=1$) or three ($s=-1$) & $D^{1/2}$\\
+PhaseFn & Binders to one port of the product dimension, a $Z$ spider with the phase table,
+  splitters back (\cref{alg:bench-phasefn}) & see text\\
+MCZ, MCX & \py!PhaseFn! on (controls, target) with
+  $f(x) = a\,x_t/D_t$ when the controls equal \code{values}, else 0, with the support
+  $\{(\mathit{values}, t) : t < D_t\}$; \py!MCX! adds $F$ before and $F^3$ after on the
+  target; the target dimension must be concrete & --\\
+Oracle & $F$ on $y$, \py!PhaseFn! $h(x,y) = f(x)\,y/D_y$, $F^3$ on $y$ & --\\
+Perm & The fresh-port encoding (\cref{alg:bench-perm}) & $T^{-1/2}$\\
+Unitary, Prepare & Refused: \code{a dense reference gate has no ZXW translation} & --\\
+\end{xltabular}
+
+A wire never touched by any gate receives one identity \azx!Z(1 -> 1, D)!, which is both its
+input and its output port. \py!CX! and \py!CZ! raise \py!ValueError! when $s\notin\{1,-1\}$ and
+refuse wires of different dimensions. \py!Init! on a wire that has already started raises
+\py!ValueError("Init on wire q after it started")!; using a wire after \py!Post! or \py!Discard!
+raises \py!ValueError("wire q is used after it ended")!.
+
+\begin{algorithm}[Phase table of \texttt{PhaseFn}]\label{alg:bench-phasefn}
+Input: wires $q_1,\dots,q_m$, a function $f$ in turns, an optional support.
+\begin{enumerate}
+\item Let $B$ be the box of the wires (\cref{sec:bench-boxes}). When $B$ exists, every
+  wire $q_i$ that is not boxed receives a fan \azx!Z(1 -> 2, D)! outside the box: the wire
+  continues from \code{out0}, and \code{out1} feeds the table; at the end the table's output
+  for $q_i$ goes into a \azx!Z(1 -> 0, D)! inside the box.
+\item Every dimension must be concrete after substitution; else refuse with \code{a phase table needs literal concrete dimensions}. Let $d_1,\dots,d_m$ be the dimensions and $T=\prod d_i$.
+\item Enumerate the joint indices $x$ in row-major order, first wire most significant (with a
+  support, only its points inside the ranges, sorted by joint index). Each value $f(x)$ must be
+  a rational number of turns (else refuse with \code{a phase table entry is not a rational number of turns}); keep the nonzero values reduced into $[0,1)$.
+\item When the entry $t_0$ at index 0 is nonzero, replace every entry $i\in[1,T)$ by
+  $(t_i - t_0) \bmod 1$, drop zeros, and multiply $e^{2\pi i t_0}$ into the scalar (per copy of
+  $B$).
+\item With $m=1$: one node \azx!Z(1 -> 1, literal T) phase{i: t, ...}!.
+\item Otherwise a chain of binders: \azx!B(literal d1, literal d2)! takes $q_1$ on \code{in0} and
+  $q_2$ on \code{in1}; each further binder \azx!B(literal A, literal di)! takes the previous
+  \code{out0} on \code{in0} and $q_i$ on \code{in1}, $A$ the product so far. Then the spider
+  \azx!Z(1 -> 1, literal T)! with the table, then splitters in reverse order
+  \azx!S(literal A, literal di)!, each giving $q_i$ its \code{out1} and passing \code{out0} on;
+  the last \code{out0} becomes $q_1$.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Fresh-port encoding of \texttt{Perm}]\label{alg:bench-perm}
+Refused on a register (\code{a permutation on a register}) and for symbolic dimensions.
+\begin{enumerate}
+\item With several wires, bind them by binders as in \cref{alg:bench-phasefn} into one port $x$
+  of dimension $T$.
+\item Create $t$ = \azx!Z(0 -> 1, literal T)! and a binder \azx!B(literal T, literal T)! with $t$
+  on \code{in0} and $x$ on \code{in1}.
+\item A spider \azx!Z(1 -> 1, literal T^2)! whose entry at index $t_vT + x_v$ is
+  $-t_v\,p(x_v)/T \bmod 1$ for every nonzero value.
+\item A splitter \azx!S(literal T, literal T)!; \code{out1} into \azx!Z(1 -> 0, literal T)!,
+  \code{out0} into \azx!F(literal T)!; the scalar receives $T^{-1/2}$.
+\item Split $F$'s output back into the wires with \azx!S(literal A, literal di)!, $A$ the
+  product of the dimensions before $q_i$.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Boxes}\label{sec:bench-boxes}
+
+A register's nodes go into one node-scoped \bbox{} per count, named by the count text. A gate
+between a register and a single wire places the single wire's spider outside the \bbox{}, where
+it receives one port per copy. The builder keeps, for each \bbox{}: its count, its node list,
+its name (\code{C0}, \code{C1}, \dots{} in creation order of named \bboxes), its index symbol,
+extra lines, a per-copy scalar list (tree \bboxes{} only), its parent \bbox, and its chain links.
+
+\py!box_of(qs)! decides the \bbox{} of a gate:
+\begin{enumerate}
+\item Inside a chain, the registers of the chain's inner count (the \code{wide} ones) are left
+  out; the other registers must share one count (else refuse with \code{gate across registers of different counts}) equal to the chain's (else \code{a gate in a chain on a register of another count}). A gate on a wide register goes into the inner \bbox; a gate on a boxed wire
+  into the chain's \bbox; otherwise none.
+\item Outside chains, a register already consumed by a chain and not recorded as after it is
+  refused (\code{a chain register used outside its chain}). Gates on registers listed as
+  before or after a chain go into that chain's \bbox{} (refused with \code{a gate before|after a chain on registers of another box} when the wires disagree).
+\item Otherwise the common register count, or \code{None}.
+\end{enumerate}
+
+A factor $v$ placed in a \bbox{} with no per-copy list enters the global scalar as
+$v^{\mu}$, $\mu$ the product of the \bbox's multiplicity and its ancestors'. Before translating,
+the builder scans every \py!Chain! at gate position $i$: each register of the chain (not a row
+carry) already used by an earlier gate is recorded as \emph{before} the chain, with a
+provisional \bbox{} \code{_pre<i>} of the chain's count whose nodes merge into the chain's
+\bbox{} when the chain is translated.
+
+\subsection{Loop encodings}
+
+\paragraph{Chain.} A chain becomes one named \bbox{} over its body's nodes, with its index,
+plus the line \code{chain NAME: p -> q} per carry, linking the carry's end after the exchange
+($p$) to the first port the carry entered in the copy ($q$); a reversed chain writes
+\code{q -> p}. A carry or register with no node in the copy receives an identity
+\azx!Z(1 -> 1, D)!. A carry that ends in the copy takes the register's end, and the register's
+copy then has no output. Gates on a two-count register, or on a row carry, inside the chain go
+into a \bbox{} of the inner count nested in the chain's (named \code{<chain>i}); a row carry's
+link runs through that \bbox, and a row carry receives an identity in its own \bbox{} before and
+after the chain. A chain inside a chain, a chain over a register of another count, a register
+used before its chain (outside the before-scan), a carry that is a register (other than a row
+carry), and a through wire or register that ends inside the chain are refused.
+
+\paragraph{Tree.} A tree becomes a named \bbox{} with a per-copy scalar list and the line
+\code{tree NAME: HEAD <- c1, ..., cb [level L] [position P]}, where \code{HEAD} is the port the
+parent entered first and $c_i$ the final ports of the children. A tree inside a loop or on a
+register, a body naming another circuit wire, a child or parent that ends in the tree, and a
+local wire that neither ends nor is a child are refused. The per-copy factors appear as
+\code{copy scalar NAME: EXPR}, the product simplified by \py!powsimp(force=True)!.
+
+\paragraph{Neighbors.} The register's \bbox{} receives a \azx!Z(2 -> 2, D)! on the wire and one
+$F$ ($s=1$) or three ($s=-1$) feeding its \code{in1}; the line \code{chain NAME: z.out1 -> f.in0} links copy $j$'s \code{out1} to copy $j+1$'s first $F$. The head \azx!X(0 -> 1, D)! and
+tail \azx!Z(1 -> 0, D)! lie in the parent \bbox{}; the scalar receives $D^{1/2}$ per copy and
+$D^{-1/2}$ once.
+
+\paragraph{Pairs.} Allowed only outside chains with exactly one \py!CZ! body between
+\code{left} and \code{right}. The register's \bbox{} (which takes \code{index}) receives
+\azx!Z(2 -> 1, D)! (its \code{in1} the right port) and then \azx!Z(1 -> 2, D)! (its \code{out1}
+the left port); one or three $F$ nodes, outside any \bbox{}, join them. The lines are
+\code{pairs P<i> of NAME index PAIR_INDEX: f...}, \code{left P<i>: PORT}, \code{right P<i>: PORT}, and \texttt{copy scalar P<i>: D\^{}(1/2)}.
+
+\paragraph{LowerMCX ($D=2$).} Per copy $k$ in the register's \bbox{} (index \code{j}): a fan
+\azx!Z(1 -> 2, literal 2)! (before the target; after it with \code{reverse}), the target
+\azx!X(2 -> 1, literal 2)! fed by \azx!Ti! after a $Z$ AND spider \azx!Z(1+c -> 1, literal 2)!
+($c$ controls), scalar $\sqrt2$ per copy; one \azx!T! per single control into the AND, through
+\azx!X(1 -> 1) phase{1: 1/2}! for value 0, the control's fan outside the \bbox. A pair \bbox{}
+(index \code{m}) holds one \azx!T! from copy $j$'s fan port to copy $k$'s AND, so that the AND
+reads $T\ket{0}+\prod x\,\ket{1} = T\ket{\prod x}$.
+
+\paragraph{IndexedMCX ($D=2$).} Per value copy $v$ in the cells' \bbox{} (index \code{v}): a fan
+on the cell, $\ket{v}$ as \azx!X(0 -> 1, literal 2^n) phase{k: -v*k/2^n}! split by a chained
+\azx!S(literal 2, literal 2^j)! in a \bbox{} of $n$ copies (index \code{j}) nested in it and
+aligned to the address \bbox{} (\code{align A with B}); copy $j$ feeds \azx!X(2 -> 1)! of bit
+$j$ with the address fan port, through \azx!X(pi)! and \azx!T! into a $Z$ AND spider with the
+cell's \azx!T!, then \azx!Ti! into one target \azx!X(2 -> 1)! on $t$. The scalar is
+$2^{-n/2}\cdot2^{1/2}$ per value copy and $2^{1/2}$ per bit copy. It requires two registers with
+$2^n$ cells, a single target, dimension 2, and no enclosing loop.
+
+\subsection{Output}
+
+\begin{signature}
+\py!translate(c: Circuit, ctx: Context) -> Translation(body: str, nodes: int, counts: tuple[str, ...])!
+\end{signature}
+
+\begin{algorithm}[\texttt{translate}]\label{alg:bench-translate}
+\begin{enumerate}
+\item Check the layout: in the input order and in the output order, the registers of one count
+  are contiguous; else raise \py!ValueError("registers of count K are not contiguous")!.
+\item Translate every gate in order. Nodes are named \code{g0}, \code{g1}, \dots{} in creation
+  order; a node created in a \bbox{} also joins every ancestor \bbox.
+\item Give every untouched wire its identity node.
+\item Emit, in order: every declaration \code{gK = GEN}; one line \code{wire a -- b, ...} with
+  every wire; per \bbox{} \code{repeat TOKEN[ as NAME][ index I][ in PARENT]: nodes}, then its
+  \code{chain} line, its extra lines, and its \code{copy scalar}; the pair lines; \code{inputs ...} in wire order; \code{outputs ...} in \py!output_order!; \code{scalar EXPR} when the
+  product of every factor and the circuit's scalar (simplified by \py!powsimp(force=True)!)
+  is not 1. The \bbox{} token is \code{literal C} for a digit count, \code{literal V} when every
+  free symbol of the count is literal, else the count expression.
+\item \code{nodes} is the number of declarations; \code{counts} the sorted non-digit register
+  counts.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}
+The Bell circuit \py!circuit(["a","b"], [Init("a"), F("a"), Init("b"), CX("a","b")])! with
+symbolic $d$ translates to
+\begin{lstlisting}[style=azx]
+g0 = X(0 -> 1, d)
+g1 = F(d)
+g2 = X(0 -> 1, d)
+g3 = Z(1 -> 2, d)
+g4 = X(2 -> 1, d)
+wire g0.out0 -- g1.in0, g1.out0 -- g3.in0, g2.out0 -- g4.in0, g3.out1 -- g4.in1
+outputs g3.out0, g4.out0
+scalar 1/sqrt(d)
+\end{lstlisting}
+The factors $d^{-1/2}\cdot d^{-1/2}\cdot d^{1/2}$ combine into $d^{-1/2}$.
+\end{example}
+
+\py!Unsupported! (a subclass of \py!Exception!) signals that a circuit cannot be translated at
+this version; its message is one of the refusal texts above, and \cref{tab:bench-unsupported}
+maps each to a code.
+
+\section{Subjects, equations, and versions}\label{sec:bench-subjects}
+
+\module{benchmarks.subject} defines the declarations of a subject file and builds the engine
+script of one instance at one point.
+
+\subsection{Domains}
+
+\begin{signature}
+\py!Domain(n_min=0, n_max=None, n_step=1, d_min=1, d_max=None, d_condition="any")!
+\end{signature}
+\noindent is the set of points where a claim holds: $n\in[n_{\min}, n_{\max}]$ with
+$(n - n_{\min}) \bmod n_{\mathrm{step}} = 0$, and $d\in[d_{\min}, d_{\max}]$ satisfying the
+condition. \code{None} bounds are open. \py!has_n(n)!, \py!has_d(d)!, and \code{(n, d) in dom}
+test membership. The conditions are those of \py!D_CONDITIONS!: \code{any} ($d\ge1$),
+\code{ge2} ($d\ge2$), \code{prime}, \code{odd}, \code{odd_prime}, \code{even}; \py!is_prime(v)!
+is trial division (false below 2).
+
+\paragraph{Restriction clauses.} A restricted claim adds clauses in the engine's \code{for}
+syntax. Spaces are removed; the first character is the symbol (\code{n} or \code{d}).
+
+\begin{lstlisting}[style=grammar,caption={Restriction clauses.}]
+clause ::= SYM "=" INT              n = v  or  d = v      (pins the value)
+         | SYM ">=" INT             n >= c or  d >= c     (raises the lower bound)
+         | "n" "=" [A ["*"]] "m" ["+" C]                  (n = A*m + C, A defaults to 1)
+\end{lstlisting}
+
+\py!restrict_domain(dom, clause)! returns the cut domain: \code{d = v} sets
+$d_{\min}=d_{\max}=v$; \code{d >= c} raises $d_{\min}$ to $\max(d_{\min}, c)$; \code{n >= c}
+raises $n_{\min}$; \code{n = A*m + C} sets $n_{\mathrm{step}}=A$ and $n_{\min}$ to the least
+$C + jA \ge n_{\min}$; \code{n = v} pins $n$. \py!clause_holds(clause, value)! tests one value:
+$\ge$ by comparison, the progression by $v\ge C$ and $(v-C)\bmod A = 0$, else equality.
+
+\subsection{Specification contexts}
+
+\begin{signature}
+\py!SpecContext(D: str, d: str, n: str, N: str, nv: int | None, dv: int | None)!
+\end{signature}
+\noindent tells a specification writer how to write symbols: \code{D} the node dimension token
+(\code{d} or \code{literal 5}), \code{d} the dimension in phases and scalars, \code{n} the count
+in expressions, \code{N} the \bbox{} multiplicity token, and the integers \code{nv}, \code{dv}
+(\code{None} when symbolic). \py!spec_context(subject, nv, dv, literal_d)! takes $d$ from a fixed
+subject dimension (forcing \code{literal_d}); with \code{literal_d} and a concrete $d$ it gives
+\code{D = "literal dv"}, \code{d = "dv"}, otherwise \code{D = d = "d"}; always
+\code{n = N = "n"}.
+
+\subsection{Equations and subjects}
+
+\begin{signature}
+\py!Equation(key, circuit, specification, form="boxed", reference=None, literal=False, note="")!\\
+\py!Subject(id, name, category, source, size_parameter, dimension, domain, equations,!\\
+\py!        restricted=(), clifford=False, note="")!
+\end{signature}
+
+An equation holds \code{circuit}, a function $(n, d)\mapsto$ \py!Circuit!; \code{specification},
+a function \py!SpecContext! $\mapsto$ diagram body text; an optional \code{reference}, a
+function $(n,d)\mapsto$ \py!Circuit! realizing the specification for tools that read only
+circuits; and \code{literal}, which writes every dimension as a literal. Its \term{form} says how
+$n$ enters the circuit:
+\begin{itemize}
+\item \code{boxed}: $n$ is a register count; the circuit function receives the symbol
+  \code{"n"}, so a symbolic version exists.
+\item \code{unrolled}: the circuit function receives an integer and creates one wire per qudit.
+\item \code{fixed}: the circuit has no $n$.
+\end{itemize}
+
+A subject's \code{category} is one of \code{algorithm}, \code{code}, \code{protocol},
+\code{circuit} (else \py!ValueError!); \code{source} is a bibliography key of the algorithm's
+paper; \code{size_parameter} names what $n$ counts, or \code{None}; \code{dimension} is
+\code{"general"} or a fixed integer; \code{restricted} lists clause tuples, each a restricted
+claim; \code{clifford} marks a Clifford subject. When \code{size_parameter} is \code{None} and
+the domain's $n_{\min}\neq n_{\max}$, the constructor replaces the domain's $n$ range by
+$[0,0]$. \py!general_d! is true when \code{dimension == "general"}.
+
+\subsection{Instances}
+
+\begin{signature}
+\py!Instance(subject, equation, restriction=(), falsified=None)!
+\end{signature}
+\noindent is one equation at one version. Its \py!id! is \code{SUBJECT/EQUATION}, with
+\code{/r<k>} appended for the $k$-th restriction and \code{!} appended for an $F$ instance
+(\code{falsified} an \py!Edit!, \cref{sec:bench-false}). \py!domain! is the subject's domain cut
+by each restriction clause, with $d_{\min}$ raised to the edit's parameter \code{d_min} when the
+edit has one. \py!truth! is true for an $S$ instance.
+
+\py!instances(subjects)! yields, per subject and equation, the unrestricted instance and then one
+per restriction. \py!has_symbolic(inst)! is false for an unrolled equation and otherwise true when
+the subject has a general $d$ or a boxed equation with a size parameter. \py!axes(inst)! returns
+(has size parameter, general $d$). \py!select(subjects, include, exclude, categories)! keeps the
+subjects in the categories whose id matches an include glob and no exclude glob
+(\py!fnmatch!). \py!catalogue(directory)! (cached) imports every \file{*.py} of the directory not
+starting with \code!_!, in sorted order, as module \code{benchmarks_subject_<stem>}, and
+returns their \code{SUBJECT} objects; a subject whose id differs from its file stem raises
+\py!ValueError!.
+
+\subsection{The engine script}
+
+\begin{signature}
+\py!circuit_at(inst, nv, dv, *, expand=False) -> Circuit!\\
+\py!script(inst, nv, dv, *, command="decide") -> Script(text, literal, nodes, point_claim)!
+\end{signature}
+
+\py!circuit_at! calls the equation's circuit function with $d$ = \code{dv}, else \code{"d"} for a
+general subject, always the fixed dimension otherwise; with $n$ = \code{nv} for an unrolled form
+(\code{nv = None} raises \py!Unsupported("the circuit has no general form in n")!), \code{"n"}
+for a boxed form with a size parameter, else \code{None}. With \code{expand} and a concrete $n$,
+register counts and the scalar are evaluated at $n$. The $F$ edit, if any, is applied next;
+with \code{expand} the counts and scalar are then evaluated at $n$ and the fixed $d$.
+
+\begin{algorithm}[\texttt{script}]\label{alg:bench-script}
+\begin{enumerate}
+\item A fixed subject dimension sets \code{dv}. Build the circuit by \py!circuit_at!.
+\item The script is \emph{literal} when the subject's dimension is fixed or the equation sets
+  \code{literal}; a literal script needs a concrete $d$ (else \py!Unsupported("the equation needs a concrete dimension")!).
+\item When not literal, translate with the bound values and no literal symbols; if the
+  translator refuses with a message containing \code{literal} and $d$ is concrete, fall back to
+  literal. A literal translation binds \code{d} as literal.
+\item Build the specification with \py!spec_context(subject, nv, dv, literal)!; an $F$ edit's
+  \py!apply_spec! returns it unchanged.
+\item The header lines are \code{dim d} (with \code{= dv} when concrete) for a general,
+  non-literal subject, and \code{count n} (with \code{= nv}) for a boxed equation with a size
+  parameter.
+\item The point clauses are \code{d = dv} for a general, non-literal subject at a concrete $d$,
+  and \code{n = nv} for a boxed equation with a size parameter at a concrete $n$. A restriction
+  clause on a pinned symbol is dropped when it holds at the pinned value and raises
+  \py!Unsupported("n = v is outside the restriction ...")! otherwise; other clauses are kept.
+\item The text is \code{@rhs =} with the indented header and specification, a blank line,
+  \code{load} with the indented header and circuit body, a blank line, and
+  \code{COMMAND against @rhs[ for CLAUSE, ...]} (kept clauses first, then point clauses), and a
+  final newline. \code{nodes} is the translation's node count; \code{point_claim} is true when
+  point clauses exist.
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}
+\code{bell_register/main} at $(n,d) = (3,5)$:
+\begin{lstlisting}[style=azx]
+@rhs =
+    dim d = 5
+    count n = 3
+    repeat n: Z(0 -> 2, d)
+    scalar d^(-n/2)
+
+load
+    dim d = 5
+    count n = 3
+    g0 = X(0 -> 1, d)
+    g1 = F(d)
+    g2 = X(0 -> 1, d)
+    g3 = Z(1 -> 2, d)
+    g4 = X(2 -> 1, d)
+    wire g0.out0 -- g1.in0, g1.out0 -- g3.in0, g2.out0 -- g4.in0, g3.out1 -- g4.in1
+    repeat n: g0, g1, g2, g3, g4
+    outputs g3.out0, g4.out0
+    scalar d^(-n/2)
+
+decide against @rhs for d = 5, n = 3
+\end{lstlisting}
+The symbolic version has \code{dim d}, \code{count n}, and the bare line \code{decide against @rhs}.
+\end{example}
+
+\subsection{Source digests}\label{sec:bench-sources}
+
+\module{benchmarks.sources} computes what a run key and an aggregate filter compare.
+
+\begin{definition}[Source digest]
+The shared digest (cached per catalogue directory) is the SHA-256 hash, over the files in this
+order, of each file's name (relative to the catalogue, or its bare name) followed by its bytes:
+the helper modules \file{\_*.py} of the catalogue (sorted), every file in a catalogue
+subdirectory outside \file{\_\_pycache\_\_} (sorted), then \file{ir.py}, \file{translate.py},
+\file{subject.py}. \py!source_digest(inst, false=None)! continues a SHA-256 hash seeded with the
+shared digest by the bytes of the subject's file; for an $F$ instance also by the bytes of
+\file{breaks.py} and the JSON (sorted keys) of its $F$ record; it returns the first 10
+hexadecimal digits.
+\end{definition}
+
+\section{Shared builders of the catalogue}\label{sec:bench-helpers}
+
+The modules \file{\_*.py} of \file{benchmarks/subjects/} are not subjects; they provide gates,
+specification writers, and code constructions. \file{\_common.py} only re-exports the IR gates,
+\py!circuit!, \py!unrolled!, and the subject classes.
+
+\subsection{Gates (\texttt{\_gates.py})}
+
+Qubit gates: \py!H(q)! is $F$; \py!P(q, t)! is \py!ZPhase(q, {1: t})!, $\mathrm{diag}(1,
+e^{2\pi i t})$; \py!S!, \py!Sdg!, \py!T!, \py!Tdg! are $P$ at $1/4$, $-1/4$, $1/8$, $-1/8$;
+\py!XP(q, t)! is \py!XPhase(q, {1: t})!; \py!Y(q)! is $[Z, X]$ (the factor $i$ left to the
+caller). Decompositions:
+\begin{itemize}
+\item \py!ccz(a, b, c)!: the 7-$T$ phase polynomial of \citet[Fig.~4.9]{nielsen2010quantum}:
+  CX$(b,c)$, $T^\dagger(c)$, CX$(a,c)$, $T(c)$, CX$(b,c)$, $T^\dagger(c)$, CX$(a,c)$, $T(b)$,
+  $T(c)$, CX$(a,b)$, $T(a)$, $T^\dagger(b)$, CX$(a,b)$.
+\item \py!toffoli(a, b, c)!: $H(c)$, \py!ccz!, $H(c)$. \py!cswap(c, a, b)!: CX$(b,a)$,
+  Toffoli$(c,a,b)$, CX$(b,a)$.
+\item \py!cphase(a, b, t)!: $P(a, t/2)$, $P(b, t/2)$, CX$(a,b)$, $P(b,-t/2)$, CX$(a,b)$.
+\item \py!ry(q, t)!: $e^{i\pi t}R_y(2\pi t)$ as $S^\dagger, H, P(t), H, S$.
+  \py!cry(c, q, t)!: CX, \py!ry(-t/2)!, CX, \py!ry(t/2)!. \py!ch(c, q)!: \py!ry(1/8)!, CX,
+  \py!ry(-1/8)!.
+\item \py!AND_GATES(a, b, t)!: Gidney's 4-$T$ temporary AND~\cite{gidney2018halving}:
+  Init$(t)$, $H(t)$, $T(t)$, CX$(a,t)$, CX$(b,t)$, CX$(t,a)$, CX$(t,b)$, $T^\dagger(a)$,
+  $T^\dagger(b)$, $T(t)$, CX$(t,a)$, CX$(t,b)$, $H(t)$, $S(t)$.
+\item \py!qft(qs, d)!: for each $j$, $F(q_j)$ and for each $k>j$ the \py!PhaseFn! on
+  $(q_k, q_j)$ with $f(x) = x_0x_1/d^{k-j+1}$; then \py!Swap!$(q_j, q_{n-1-j})$ for $j<n/2$.
+\item \py!inverse_gate(g)!: negated amount, $F^{-p \bmod 4}$, negated rule (\code{-(rule)}) or
+  entries, $s\mapsto -s$, \py!Swap! itself, negated \py!PhaseFn!, negated \code{a} of
+  \py!MCX!/\py!MCZ!, negated oracle function; \py!Perm! raises \py!TypeError!, any other gate
+  \py!ValueError!. \py!inverse(gates)! inverts the reversed list.
+\item \py!rename(gates, mapping)! renames the fields \code{q}, \code{c}, \code{t}, \code{y},
+  \code{a}/\code{b} of \py!Swap!, and \code{qs}, \code{cs}, \code{xs}.
+\item \py!dephase_lines(port, name, D)! returns the three DSL lines of a $Z$ copy with one port
+  discarded.
+\end{itemize}
+
+\subsection{Specification writers (\texttt{\_spec.py})}
+
+\py!defining(c, wires, gates, *, registers, dims, scalar)! returns the translation of the
+defining gates under the specification context (literal $d$ exactly when \code{c.D} starts with
+\code{literal}); \py!permutation! and \py!diagonal! wrap one \py!Perm! or \py!PhaseFn!.
+\py!basis_state(c, values)! writes $\ket{v_1\cdots v_m}$ as X states with scalar
+$d^{-m/2}$.
+
+\py!Dsl! accumulates nodes (\code{v0}, \code{v1}, \dots), wires, inputs, outputs, and scalar
+factors; \py!text()! writes declarations, one \code{wire} line, \code{inputs}, \code{outputs},
+and \code{scalar (f1) * (f2) ...}. \py!bind(b, n, d)! joins $n$ ports of dimension $d$ into one
+of $d^n$ (first most significant; one identity spider when $n=1$); \py!split(b, port, n, d)!
+inverts it. \py!register_adder(c, n, d)! writes $\ket{a,b}\mapsto\ket{a, a+b \bmod d^n}$: both
+registers bound, $a$ copied by \azx!Z(1 -> 2)!, added into $b$ by \azx!X(2 -> 1)!, split back,
+scalar $(d^n)^{1/2}$. \py!pauli_gadget(b, ports, letters, turn, D)! appends
+$e^{-2\pi i\,\mathit{turn}\,P}$ for a Pauli string: per wire a $Z$ port in its letter's basis
+($Y$ by $S^\dagger$ phases $3/4$ and $1/4$ around $F$), an $X$ hub, the phase
+$2\,\mathit{turn}$ at index 1 on a \azx!Z(1 -> 0)!, and scalar
+$2^{(m-1)/2}e^{-2\pi i\,\mathit{turn}}$ \cite{cowtan2020phase}.
+
+\subsection{Amy-Maslov-Mosca circuits (\texttt{\_qc.py})}
+
+\file{subjects/amm/} holds ten \file{.qc} circuits of the Amy-Maslov-Mosca
+benchmark~\cite{amy2014polynomial}, copied from \tool{Feynman}{https://github.com/meamy/feynman}
+under its BSD license (\file{amm/LICENSE.md}). \py!read(name)! parses one file: \code{.v} lists
+the wires, \code{.i} the inputs, gate lines lie between \code{BEGIN} and \code{END}. Names that
+start with a digit get the prefix \code{w}. Gates: \code{H}, \code{X}, \code{T}, \code{T*},
+\code{P} ($S$), \code{P*} ($S^\dagger$) on one wire; \code{tof} with 1, 2, or more wires as
+$X$, CX, or MCX; \code{Z} or \code{Zd} with at least two wires as MCZ; anything else raises
+\py!ValueError!. \py!bits(x, k)! and \py!number(bits)! convert integers and most-significant-first
+bit lists.
+
+\py!amm_subject(name, title, fn, note, clean=(), gates=())! builds subject
+\code{amm_<name>} (with \texttt{\^{}} and \code{-} removed from the name) of category
+\code{circuit}, $d = 2$, one fixed equation \code{main}: the circuit is the file's gates after
+$\ket{0}$ on every ancilla (wires outside \code{.i}, and the \code{clean} inputs). The
+specification is either the defining \code{gates} after the same initializations, or, when
+\code{fn} maps input bits to every wire's output bit, the XOR-oracle construction
+\py!_bitwise!: tabulate $\mathit{fn}$ over all inputs; an ancilla $w$ receives
+\py!Oracle(ins, w, fn_w)!; a changed input $w$ receives its image on a fresh wire \code{w_out}
+right after it, then $w$ is cleared by the oracle of its preimage value on the unchanged inputs
+and fresh wires, and post-selected on $\bra{0}$.
+
+\subsection{Qubit stabilizer codes (\texttt{\_stab.py})}
+
+\py!Pauli(x, z, p)! is $i^pX^xZ^z$ on $n$ qubits, stored as supports; equality and hashing use
+$(n, \mathit{xs}, \mathit{zs}, p)$. \py!sign()! is the sign $s$ of the Hermitian operator
+$s\bigotimes P_j$: with $y = |\mathit{xs}\cap\mathit{zs}|$ and $e=(p-y)\bmod4$, $+1$ for $e=0$,
+$-1$ for $e=2$, \py!ValueError! otherwise. \py!pauli(text)! parses \code{[+-]P1...Pn} with
+$p = (2[\text{minus}] + \#Y)\bmod 4$. \py!mul(a, b)! returns $ab$ with
+$p = p_a + p_b + 2|\mathit{zs}_a\cap\mathit{xs}_b|$; \py!commute(a, b)! tests
+$|\mathit{xs}_a\cap\mathit{zs}_b| + |\mathit{zs}_a\cap\mathit{xs}_b|$ even.
+
+\begin{algorithm}[Gottesman standard form, \texttt{standard\_form}]\label{alg:bench-standard}
+Input: independent commuting generator strings~\cite{gottesman1998heisenberg}.
+\begin{enumerate}
+\item Check pairwise commutation (\py!ValueError("generators ... anticommute")!).
+\item X pivots: while some row $i\ge r$ has an $X$ on a qubit at position $\ge r$ of the current
+  qubit order, take the first such row and its least such position, swap the row to $r$ and the
+  qubit to position $r$, multiply every other row with an $X$ there by row $r$, and increment
+  $r$.
+\item Z pivots: for $s = r,\dots,m-1$, likewise with $Z$ (no pivot raises
+  \py!ValueError("dependent generators")!).
+\item The order is (first $r$ X pivots, then $m-r$ Z pivots, then $k=n-m$ carriers). The
+  reference state $b$ has 1 at each Z pivot whose row has sign $-1$.
+\item Per carrier $c$: $\bar X$ has $X$ on $c$ and on the Z pivots whose rows have $Z$ on $c$,
+  and $Z$ on each X pivot $f$ where $[c\in Z_f]$ differs from the parity of those hits in
+  $Z_f$; $\bar Z$ has $Z$ on $c$ and on every X pivot whose row has $X$ on $c$.
+\item Verify that every generator commutes with every logical and that $\bar X_i$ anticommutes
+  with $\bar Z_j$ exactly when $i=j$ (\py!ValueError! otherwise).
+\end{enumerate}
+\end{algorithm}
+
+\py!Code! holds $n$, the reduced and defining generators, the order, $r$, the reference state,
+and the logicals; $m$, $k$, \py!carriers!, and \py!is_css()! (every defining generator X type or
+Z type) derive from them. Data wires are \code{q0}, \dots.
+
+\begin{itemize}
+\item \py!encoder_gates(code)!: \py!Init(q_j, b_j)! on every non-carrier; per logical, CX from
+  its carrier to each other qubit of $\bar X$'s X support; per X pivot $f$ of generator $g$:
+  $F(q_f)$, \py!ZPhase! $\{1: (p \bmod 4)/4\}$ when $p\not\equiv0$, then per other qubit of the
+  support CZ (Z part) and CX (X part) from $q_f$.
+\item \py!projector_spec(code, c)!: $2^{r/2}P_S\bar X^x\ket{b}$. Inputs are $Z$ spiders in
+  carrier order, each copied onto $\bar X$'s X support with phase $(p + 2\sum_{t\in Z}b_t)/4$;
+  each qubit an $X$ spider (phase $1/2$ when $b_j=1$) of its feeds; then per defining generator a
+  parity gadget: a $Z$ port per support qubit in its letter's basis, a hub \azx!X(m -> 0)! with
+  phase $1/2$ for a negative sign. The scalar exponent is $r + \sum(m_j-1) + \sum(|g|-2)$
+  halves. Logical X operators with crossing Z parts raise \py!ValueError!.
+\item \py!css_spec! / \py!css_into!: the phase-free CSS normal form: one $Z$ spider per logical
+  X row (an input) and per defining X stabilizer (a state, \azx!Z(0 -> m)!; a negative one
+  raises \py!ValueError!), one $X$ spider per qubit joined to the rows covering it (phase $1/2$
+  where $b_j=1$), scalar $2^{(\sum(m_j-1) - \#X)/2}$.
+\item \py!syndrome_gates(code, anc)!: per defining generator, Init, $F$, the phase, controlled
+  Z/X parts, $F$ on its ancilla; the ancilla ends in $\ket{s}$ for eigenvalue $(-1)^s$.
+  \py!syndrome(code, e)! is the anticommutation bit vector.
+\item \py!correction_circuit(code, error)!: encode, apply the error ($Y$ as $Z$ then $X$),
+  measure syndromes onto \code{a0}\dots, then for the error and every single-qubit error
+  (\py!single_errors!: qubit-major, letters X, Z, Y) with a nonzero syndrome not seen before,
+  MCX (X, Y) and MCZ (Z, Y) on the ancillas at that syndrome; then the inverse encoder.
+  \py!correction_spec!: carriers as identities, other data qubits in $\ket{b}$, ancillas in the
+  syndrome, scalar $2^{-c/2}$.
+\item \py!logical_phase(code, turns)!: the logical diagonal of a transversal phase gate on a CSS
+  code, the phase of each codeword coset checked constant (\py!ValueError! otherwise).
+  \py!pre_unary(text)! and \py!pre_diagonal(f, k)! write a logical gate before the
+  specification's inputs; \py!Logical(key, physical, pre)! and \py!logical_spec! compose it
+  with \py!css_into! (CSS codes only).
+\item \py!code_subject(id, name, source, generators, *, correct=None, logical=(), note)!: a
+  fixed qubit code subject with equation \code{encoding} (CSS normal form for a CSS code,
+  projector form otherwise), \code{correction} (literal) when \code{correct} names an error,
+  and one literal equation per logical gate; \code{clifford=True}.
+\item \py!code_family(id, name, source, make, size_parameter, domain)!: equation
+  \code{encoding} in unrolled form, the code of \py!make(n)! cached per $n$.
+\item \py!css_generators!, \py!support_rows!, \py!hadamard_conjugate!, \py!pauli_string!
+  (product of single-qubit factors, phases dropped), and \py!independent! (drops a generator in
+  the GF(2) span of the kept ones, by a pivot basis on the binary vector $(x,z)$).
+\end{itemize}
+
+\subsection{Clifford synthesis and contraction (\texttt{\_clifford.py})}
+
+\py!conjugate(p, g)! returns $UpU^\dagger$ for $g\in\{H, S, S^\dagger, X, Z\}$ on qubit $a$ or
+CX$(a,b)$, updating supports and phase (H: swap $x_a,z_a$, $p\mathrel{+}=2x_az_a$; S: $z_a
+\mathrel{\oplus}= x_a$, $p\mathrel{+}=x_a$ ($3x_a$ for $S^\dagger$); X: $p\mathrel{+}=2z_a$; Z:
+$p\mathrel{+}=2x_a$; CX: $x_b\mathrel{\oplus}=x_a$, $z_a\mathrel{\oplus}=z_b$).
+\py!synthesize(images)! reduces the image rows $(P_j, Q_j)$ qubit by qubit to $(X_j, Z_j)$ by
+these conjugations and returns the inverse of the reducing gates ($S\leftrightarrow S^\dagger$);
+a row left unreduced raises \py!ValueError!. \py!ir_gates! maps the result onto named wires.
+\py!contract(gens, u, v)! returns the stabilizer generators of $\bra{\Phi^+}_{uv}\ket{\psi}$:
+the GF(2) kernel combinations commuting with $X_uX_v$ and $Z_uZ_v$, each cleared on $u$ by those
+operators, then restricted to the other qubits (\py!ValueError("legs not cleared")! when $v$
+stays occupied). \py!trivial_on! and \py!restrict! give subgroups trivial on, and restrictions
+to, qubit lists.
+
+\subsection{Qudit codes (\texttt{\_qudit\_codes.py})}
+
+Rows are dense lists or sparse \texttt{\{column: value\}} maps over $\Zd{d}$.
+\py!css_encoder(n, stabs, logicals, carriers)!: for each stabilizer row choose the pivot column
+off the carriers and earlier pivots with entry $\pm1$ and the fewest logical rows touching it,
+normalize the row to $+1$ there, eliminate that column from every other stabilizer and logical
+row; check each logical row is 1 on its carrier; order the logicals so that a logical is ready
+when no other pending logical has a nonzero entry on its carrier (none ready raises
+\py!ValueError("carrier dependencies are cyclic")!); emit Init on non-carriers, carrier fans
+($|a|$ CX of the sign of $a$), then $F$ and a fan from each pivot. \py!css_spec! writes the
+integer CSS normal form $\ket{x}\mapsto d^{-r/2}\sum_s\ket{xL+sS}$: a $Z$ spider per logical row
+(input, carrier order) and per stabilizer row (state), an $X$ spider per qudit, an entry $a$ as
+$|a|$ wires through the antipode $F^2$ when negative, scalar $d^{(\sum(m_j-1) - r)/2}$.
+\py!graph_encoder! and \py!graph_spec! do the same for graph codes
+$\ket{x}\mapsto Z^{xN}\ket{G}$~\cite{schlingemann2001quantum}: $\ket{+}$ on non-carriers, CZ from
+each carrier to its logical set, $F$ on carriers, the graph's CZ edges; specification $Z$
+spiders joined by $F$ edges, scalar $d^{(\#F - n)/2}$.
+
+\subsection{Lattices (\texttt{\_lattice.py})}
+
+\py!Honeycomb(L)! ($L$ a multiple of 3): $2L^2$ sites $A(x,y)=2(xL+y)$, $B=A+1$ (coordinates
+mod $L$); hexagon $(x,y)$ on $A(x,y), B(x,y), A(x,y{+}1), B(x{-}1,y{+}1), A(x{-}1,y{+}1),
+B(x{-}1,y)$, colored $(x-y)\bmod3$; $3L^2$ edges with direction letters Z ($A(x,y)$--$B(x,y)$),
+X ($A(x,y)$--$B(x{-}1,y)$), Y ($A(x,y)$--$B(x,y{-}1)$) and the color of neither bordering
+hexagon. \py!Cubic(L)!: $3L^3$ edge qubits, \py!edge(p, d)! $= 3((xL+y)L+z)+d$, and
+\py!step(p, d, s)!.
+
+\section{The subject catalogue}\label{sec:bench-catalogue}
+
+The catalogue holds 207 subjects: 47 algorithms, 47 codes, 42 protocols, and 71 circuits, with
+231 equations and 234 $S$ instances (three restricted claims). \Cref{tab:bench-catalogue} lists every subject with its equations, its domain in
+$n$ (what $n$ counts in parentheses) and $d$, and the paper of the algorithm, code, or protocol.
+An equation's marks give its form (\code{b} boxed, \code{u} unrolled, \code{f} fixed), \code{L}
+for a literal equation, and \code{R} for an equation with a reference circuit; $\dagger$ marks a
+Clifford subject. Restricted claims follow the equations.
+
+Each subject file states, in its own docstring, the circuit and the specification it is checked
+against. The specification is written from the definition of the algorithm's result, never from
+the circuit: a basis state, a spider normal form, a phase table, a CSS or projector normal form,
+a defining gate, a dense weight table, or a closed-form probability distribution as a weighted
+spider purified and traced (for example \code{chsh_game}: the bit with distribution
+$(\cos^2(\pi/8), \sin^2(\pi/8))$ as \azx!Z(0 -> 1, D) weight{1: sqrt(2) - 1}! dephased, scalar
+$\sqrt{2+\sqrt2}/2$).
+
+{\small
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.2\textwidth}
+  >{\raggedright\arraybackslash}X
+  >{\raggedright\arraybackslash}p{0.16\textwidth}
+  >{\raggedright\arraybackslash}p{0.15\textwidth}
+  >{\raggedright\arraybackslash}p{0.08\textwidth}
+  >{\raggedright\arraybackslash}p{0.07\textwidth}@{}}
+\caption{The subject catalogue.}\label{tab:bench-catalogue}\\
+\toprule
+Subject & Name & Equations & $n$ & $d$ & Source\\
+\midrule\endfirsthead
+\toprule
+Subject & Name & Equations & $n$ & $d$ & Source\\
+\midrule\endhead
+\bottomrule\endfoot
+\multicolumn{6}{@{}l}{\textbf{Category algorithm} (47 subjects)}\\
+\midrule
+\texttt{amplitude\_\allowbreak{}amplification} & Amplitude amplification, exact single round & \texttt{main}\,[f] & -- & $2$ & \cite{brassard2002quantum}\\
+\texttt{amplitude\_\allowbreak{}estimation} & Amplitude estimation & \texttt{main}\,[f] & -- & $2$ & \cite{brassard2002quantum}\\
+\texttt{bernstein\_\allowbreak{}vazirani} & Bernstein-Vazirani & \texttt{main}\,[bR]; restricted: n >= 1; d >= 2 & $n\ge 0$ (register qudits) & $d\ge 1$ & \cite{bernstein1997complexity}\\
+\texttt{bernstein\_\allowbreak{}vazirani\_\allowbreak{}phase} & Bernstein-Vazirani, phase oracle & \texttt{main}\,[bR] & $n\ge 0$ (register qudits) & $d\ge 1$ & \cite{bernstein1997complexity}\\
+\texttt{block\_\allowbreak{}encoding} & Block encoding by LCU & \texttt{main}\,[f] & -- & $2$ & \cite{gilyen2019quantum}\\
+\texttt{bv\_\allowbreak{}secret\_\allowbreak{}pattern} & Bernstein-Vazirani, patterned secret & \texttt{main}\,[bR] & $n\ge 1$ (register qudits) & $d\ge 1$ & \cite{bernstein1997complexity}\\
+\texttt{coined\_\allowbreak{}quantum\_\allowbreak{}walk} & Coined quantum walk on a cycle & \texttt{main}\,[bR] & $n\ge 1$ (position bits) & $2$ & \cite{aharonov1993quantum}\\
+\texttt{cooley\_\allowbreak{}tukey\_\allowbreak{}qft} & Cooley-Tukey mixed-radix QFT & \texttt{main}\,[f] & -- & $6$ & \cite{cleve2000fast}\\
+\texttt{deutsch} & Deutsch's algorithm & \texttt{f00}\,[f], \texttt{f01}\,[f], \texttt{f10}\,[f], \texttt{f11}\,[f] & -- & $d\ge 1$ & \cite{deutsch1985quantum}\\
+\texttt{deutsch\_\allowbreak{}jozsa} & Deutsch-Jozsa & \texttt{constant}\,[b], \texttt{balanced}\,[b] & $n\ge 0$ (register qudits) & $d\ge 1$ & \cite{deutsch1992rapid}\\
+\texttt{dihedral\_\allowbreak{}qft} & Quantum Fourier transform over the dihedral group D4 & \texttt{main}\,[f] & -- & $2$ & \cite{puschel1999fast}\\
+\texttt{discrete\_\allowbreak{}log} & Shor's discrete logarithm, cyclic group & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{shor1997polynomial}\\
+\texttt{dqc1} & DQC1 trace estimation & \texttt{main}\,[b] & $n\ge 1$ (mixed qubits) & $2$ & \cite{knill1998power}\\
+\texttt{fixed\_\allowbreak{}point\_\allowbreak{}search} & Fixed-point quantum search & \texttt{main}\,[f] & -- & $2$ & \cite{grover2005fixed}\\
+\texttt{forrelation} & Forrelation & \texttt{main}\,[b] & $n\ge 0$ (qudit pairs) & $d\ge 1$ & \cite{aaronson2015forrelation}\\
+\texttt{grover} & Grover search, two qubits & \texttt{main}\,[fR] & -- & $2$ & \cite{grover1996fast}\\
+\texttt{grover\_\allowbreak{}marked} & Grover search, every marked item & \texttt{m00}\,[fR], \texttt{m01}\,[fR], \texttt{m10}\,[fR], \texttt{m11}\,[fR] & -- & $2$ & \cite{grover1996fast}\\
+\texttt{grover\_\allowbreak{}ququart} & Grover search on a ququart & \texttt{main}\,[f] & -- & $4$ & \cite{grover1996fast}\\
+\texttt{grover\_\allowbreak{}rudolph} & Grover-Rudolph state preparation & \texttt{main}\,[f] & -- & $2$ & \cite{grover2002creating}\\
+\texttt{grover\_\allowbreak{}two\_\allowbreak{}marked} & Grover search, two marked items & \texttt{main}\,[f] & -- & $2$ & \cite{boyer1998tight}\\
+\texttt{hadamard\_\allowbreak{}test} & Hadamard test & \texttt{main}\,[f] & -- & $2$ & \cite{aharonov2009polynomial}\\
+\texttt{hhl} & HHL linear-system solver, 2 x 2 & \texttt{main}\,[f] & -- & $2$ & \cite{harrow2009quantum}\\
+\texttt{hidden\_\allowbreak{}linear\_\allowbreak{}function} & Hidden linear function & \texttt{main}\,[f] & -- & $2$ & \cite{bravyi2018quantum}\\
+\texttt{hidden\_\allowbreak{}shift} & Hidden shift, inner-product bent function & \texttt{main}\,[bR] & $n\ge 0$ (qudit pairs) & $d\ge 1$ & \cite{vandam2003quantum}\\
+\texttt{inverse\_\allowbreak{}qft} & Inverse quantum Fourier transform & \texttt{main}\,[uL] & $n\ge 1$ (qudits) & $d\ge 2$ & \cite{nielsen2010quantum}\\
+\texttt{iqp\_\allowbreak{}circuit} & IQP circuit & \texttt{main}\,[b] & $n\ge 1$ (qubits after the first) & $2$ & \cite{shepherd2009temporally}\\
+\texttt{iterative\_\allowbreak{}phase\_\allowbreak{}estimation} & Iterative phase estimation & \texttt{main}\,[f] & -- & $2$ & \cite{kitaev1995quantum}\\
+\texttt{lcu\_\allowbreak{}shift\_\allowbreak{}average} & Linear combination of unitaries, shift average & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{childs2012hamiltonian}\\
+\texttt{legendre\_\allowbreak{}hidden\_\allowbreak{}shift} & Shifted Legendre symbol (van Dam-Hallgren-Ip) & \texttt{main}\,[f] & -- & $2$ & \cite{vandam2006quantum}\\
+\texttt{period\_\allowbreak{}finding} & Period finding & \texttt{main}\,[fL] & -- & $d\ge 2$ & \cite{shor1997polynomial}\\
+\texttt{phase\_\allowbreak{}estimation} & Quantum phase estimation & \texttt{main}\,[uL] & $n\ge 1$ (clock qudits) & $d\ge 2$ & \cite{kitaev1995quantum}\\
+\texttt{phase\_\allowbreak{}estimation\_\allowbreak{}digit} & Phase estimation, one digit & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{kitaev1995quantum}\\
+\texttt{qaoa\_\allowbreak{}maxcut} & QAOA MaxCut on a cycle & \texttt{main}\,[b] & $n\ge 1$ (qubits after the first two) & $2$ & \cite{farhi2014quantum}\\
+\texttt{qft} & Quantum Fourier transform & \texttt{main}\,[uL] & $n\ge 1$ (qudits) & $d\ge 2$ & \cite{nielsen2010quantum}\\
+\texttt{qft\_\allowbreak{}roundtrip} & QFT round trip & \texttt{main}\,[uLR] & $n\ge 1$ (qudits) & $d\ge 2$ & \cite{nielsen2010quantum}\\
+\texttt{qft\_\allowbreak{}zero\_\allowbreak{}state} & QFT of the zero state & \texttt{main}\,[uLR] & $n\ge 1$ (qudits) & $d\ge 2$ & \cite{nielsen2010quantum}\\
+\texttt{quantum\_\allowbreak{}counting} & Quantum counting & \texttt{main}\,[f] & -- & $2$ & \cite{brassard1998quantum}\\
+\texttt{quantum\_\allowbreak{}walk\_\allowbreak{}hypercube} & Quantum walk on the hypercube, perfect state transfer & \texttt{main}\,[b] & $n\ge 0$ (cube dimension) & $2$ & \cite{childs2003exponential}\\
+\texttt{qubitization\_\allowbreak{}chebyshev} & Qubitization, Chebyshev block encoding & \texttt{main}\,[b] & $n\ge 0$ (walk step pairs after the first step) & $2$ & \cite{low2019hamiltonian}\\
+\texttt{semiclassical\_\allowbreak{}qft} & Semiclassical QFT & \texttt{main}\,[uL] & $n\ge 1$ (qudits) & $d\ge 2$ & \cite{griffiths1996semiclassical}\\
+\texttt{shor\_\allowbreak{}factoring} & Shor's algorithm, N = 15 & \texttt{main}\,[f] & -- & $2$ & \cite{shor1997polynomial}\\
+\texttt{simon} & Simon's algorithm & \texttt{main}\,[b] & $n\ge 0$ (register qudits after the first) & $d\ge 1$ & \cite{simon1997power}\\
+\texttt{swap\_\allowbreak{}test} & Swap test & \texttt{main}\,[f] & -- & $2$ & \cite{buhrman2001quantum}\\
+\texttt{swap\_\allowbreak{}test\_\allowbreak{}register} & Swap test on registers & \texttt{main}\,[u] & $n\ge 0$ (qubits per register) & $2$ & \cite{buhrman2001quantum}\\
+\texttt{szegedy\_\allowbreak{}walk} & Szegedy walk, two-state Markov chain & \texttt{main}\,[f] & -- & $2$ & \cite{szegedy2004quantum}\\
+\texttt{trotter\_\allowbreak{}ising} & Trotter step, transverse-field Ising chain & \texttt{main}\,[b] & $n\ge 1$ (qubits after the first) & $2$ & \cite{lloyd1996universal}\\
+\texttt{vqe\_\allowbreak{}ucc} & VQE unitary coupled-cluster ansatz (H2) & \texttt{main}\,[f] & -- & $2$ & \cite{peruzzo2014variational}\\
+\midrule
+\multicolumn{6}{@{}l}{\textbf{Category code} (47 subjects)}\\
+\midrule
+\texttt{bacon\_\allowbreak{}shor\_\allowbreak{}code}${}^{\dagger}$ & Bacon-Shor subsystem code & \texttt{encoding}\,[f] & -- & $2$ & \cite{bacon2006operator}\\
+\texttt{bacon\_\allowbreak{}shor\_\allowbreak{}family}${}^{\dagger}$ & Bacon-Shor code family & \texttt{encoding}\,[u] & $n\ge 2$ (grid side) & $2$ & \cite{bacon2006operator}\\
+\texttt{bit\_\allowbreak{}flip\_\allowbreak{}correction} & Bit-flip code correction & \texttt{errornone}\,[f], \texttt{error0}\,[f], \texttt{error1}\,[f], \texttt{error2}\,[f] & -- & $2$ & \cite{nielsen2010quantum}\\
+\texttt{bivariate\_\allowbreak{}bicycle\_\allowbreak{}code}${}^{\dagger}$ & Bivariate bicycle code & \texttt{encoding}\,[f] & -- & $2$ & \cite{bravyi2024high}\\
+\texttt{color\_\allowbreak{}code}${}^{\dagger}$ & Color code (6.6.6, torus) & \texttt{encoding}\,[f] & -- & $2$ & \cite{bombin2006topological}\\
+\texttt{cube\_\allowbreak{}code}${}^{\dagger}$ & [[8,3,2]] cube code & \texttt{encoding}\,[f], \texttt{transversal\_\allowbreak{}t}\,[fL] & -- & $2$ & \cite{campbell2016smallest}\\
+\texttt{dual\_\allowbreak{}rail\_\allowbreak{}code} & Dual-rail code & \texttt{main}\,[f] & -- & $2$ & \cite{knill2001scheme}\\
+\texttt{ea\_\allowbreak{}code} & Entanglement-assisted [[4,1,3;1]] code & \texttt{encoding}\,[f] & -- & $2$ & \cite{brun2006correcting}\\
+\texttt{five\_\allowbreak{}qubit\_\allowbreak{}code}${}^{\dagger}$ & Five-qubit perfect code & \texttt{encoding}\,[f], \texttt{correction}\,[fL] & -- & $2$ & \cite{laflamme1996perfect}\\
+\texttt{five\_\allowbreak{}qudit\_\allowbreak{}code}${}^{\dagger}$ & Five-qudit code, graph form & \texttt{encoding}\,[f] & -- & $d\ge 1$ & \cite{schlingemann2001quantum}\\
+\texttt{four\_\allowbreak{}qubit\_\allowbreak{}code}${}^{\dagger}$ & [[4,2,2]] error-detecting code & \texttt{encoding}\,[f] & -- & $2$ & \cite{vaidman1996error}\\
+\texttt{golay\_\allowbreak{}code}${}^{\dagger}$ & Quantum Golay [[23,1,7]] code & \texttt{encoding}\,[f] & -- & $2$ & \cite{steane2003overhead}\\
+\texttt{gottesman\_\allowbreak{}code}${}^{\dagger}$ & Gottesman [[8,3,3]] code & \texttt{encoding}\,[f], \texttt{correction}\,[fL] & -- & $2$ & \cite{gottesman1996class}\\
+\texttt{haah\_\allowbreak{}code}${}^{\dagger}$ & Haah's cubic code & \texttt{encoding}\,[f] & -- & $2$ & \cite{haah2011local}\\
+\texttt{happy\_\allowbreak{}code}${}^{\dagger}$ & Holographic pentagon (HaPPY) code & \texttt{encoding}\,[f] & -- & $2$ & \cite{pastawski2015holographic}\\
+\texttt{heavy\_\allowbreak{}hexagon\_\allowbreak{}code}${}^{\dagger}$ & Heavy-hexagon subsystem code & \texttt{encoding}\,[f] & -- & $2$ & \cite{chamberland2020topological}\\
+\texttt{honeycomb\_\allowbreak{}code}${}^{\dagger}$ & Honeycomb Floquet code (instantaneous stabilizer group) & \texttt{encoding}\,[f] & -- & $2$ & \cite{hastings2021dynamically}\\
+\texttt{hypergraph\_\allowbreak{}product\_\allowbreak{}code}${}^{\dagger}$ & Hypergraph product code [[13,1,3]] & \texttt{encoding}\,[f] & -- & $2$ & \cite{tillich2014quantum}\\
+\texttt{iceberg\_\allowbreak{}code}${}^{\dagger}$ & Iceberg [[6,4,2]] code & \texttt{encoding}\,[f] & -- & $2$ & \cite{self2024protecting}\\
+\texttt{iceberg\_\allowbreak{}family}${}^{\dagger}$ & Iceberg code family & \texttt{encoding}\,[u] & $n\ge 2$ (qubit pairs) & $2$ & \cite{self2024protecting}\\
+\texttt{parity\_\allowbreak{}check} & Parity check & \texttt{syndrome}\,[b] & $n\ge 0$ (data qudits) & $d\ge 1$ & \cite{macwilliams1977theory}\\
+\texttt{parity\_\allowbreak{}decoding} & Parity check uncomputation & \texttt{decoding}\,[bR] & $n\ge 0$ (data qudits) & $d\ge 1$ & \cite{macwilliams1977theory}\\
+\texttt{phase\_\allowbreak{}flip\_\allowbreak{}code} & Qudit phase-flip code & \texttt{encoding}\,[b] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{phase\_\allowbreak{}flip\_\allowbreak{}decoding} & Qudit phase-flip code decoding & \texttt{decoding}\,[bR] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{polynomial\_\allowbreak{}code} & Quantum polynomial code & \texttt{main}\,[f] & -- & $5$ & \cite{aharonov1997fault}\\
+\texttt{quantum\_\allowbreak{}hamming\_\allowbreak{}code}${}^{\dagger}$ & Quantum Hamming [[15,7,3]] code & \texttt{encoding}\,[f] & -- & $2$ & \cite{steane1996simple}\\
+\texttt{quantum\_\allowbreak{}hamming\_\allowbreak{}family}${}^{\dagger}$ & Quantum Hamming code family & \texttt{encoding}\,[u] & $n\ge 3$ (check rows) & $2$ & \cite{steane1996simple}\\
+\texttt{qudit\_\allowbreak{}four\_\allowbreak{}code}${}^{\dagger}$ & Qudit [[4,2,2]] code & \texttt{encoding}\,[f] & -- & $d\ge 1$ & \cite{grassl1997codes}\\
+\texttt{qudit\_\allowbreak{}toric\_\allowbreak{}code}${}^{\dagger}$ & Qudit toric code, 2 x 2 torus & \texttt{encoding}\,[f] & -- & $d\ge 1$ & \cite{bullock2007qudit}\\
+\texttt{qudit\_\allowbreak{}toric\_\allowbreak{}family}${}^{\dagger}$ & Qudit toric code family & \texttt{encoding}\,[u] & $n\ge 2$ (torus side) & $d\ge 1$ & \cite{bullock2007qudit}\\
+\texttt{qutrit\_\allowbreak{}code}${}^{\dagger}$ & Qutrit [[3,1,2]] code & \texttt{encoding}\,[f] & -- & $3$ & \cite{cleve1999share}\\
+\texttt{reed\_\allowbreak{}muller\_\allowbreak{}code}${}^{\dagger}$ & Quantum Reed-Muller [[15,1,3]] code & \texttt{encoding}\,[f], \texttt{transversal\_\allowbreak{}t}\,[fL] & -- & $2$ & \cite{knill1996threshold}\\
+\texttt{repetition\_\allowbreak{}code} & Qudit repetition code & \texttt{encoding}\,[bR], \texttt{syndrome}\,[b] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{repetition\_\allowbreak{}decoding} & Qudit repetition code decoding & \texttt{decoding}\,[bR] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{repetition\_\allowbreak{}error\_\allowbreak{}syndrome} & Repetition code error syndrome & \texttt{main}\,[u] & $n\ge 0$ (qudits beyond two) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{rotated\_\allowbreak{}surface\_\allowbreak{}code}${}^{\dagger}$ & Rotated surface code, distance 3 & \texttt{encoding}\,[f], \texttt{correction}\,[fL] & -- & $2$ & \cite{horsman2012surface}\\
+\texttt{shor\_\allowbreak{}code} & Qudit Shor code & \texttt{encoding}\,[f] & -- & $d\ge 1$ & \cite{shor1995scheme}\\
+\texttt{steane\_\allowbreak{}code}${}^{\dagger}$ & Steane [[7,1,3]] code & \texttt{encoding}\,[f], \texttt{correction}\,[fL], \texttt{transversal\_\allowbreak{}h}\,[fL] & -- & $2$ & \cite{steane1996multiple}\\
+\texttt{surface\_\allowbreak{}code\_\allowbreak{}family}${}^{\dagger}$ & Rotated surface code family & \texttt{encoding}\,[u] & $n\ge 3$, step 2 (code distance) & $2$ & \cite{horsman2012surface}\\
+\texttt{tesseract\_\allowbreak{}code}${}^{\dagger}$ & Tesseract [[16,6,4]] code & \texttt{encoding}\,[f] & -- & $2$ & \cite{reichardt2024demonstration}\\
+\texttt{toric\_\allowbreak{}code}${}^{\dagger}$ & Toric code, 2 x 2 torus & \texttt{encoding}\,[f] & -- & $2$ & \cite{kitaev2003fault}\\
+\texttt{toric\_\allowbreak{}code\_\allowbreak{}3d}${}^{\dagger}$ & 3D toric code & \texttt{encoding}\,[f] & -- & $2$ & \cite{castelnovo2008topological}\\
+\texttt{toric\_\allowbreak{}code\_\allowbreak{}family}${}^{\dagger}$ & Toric code family & \texttt{encoding}\,[u] & $n\ge 2$ (torus side) & $2$ & \cite{kitaev2003fault}\\
+\texttt{transversal\_\allowbreak{}cnot} & Transversal CNOT, Steane code & \texttt{main}\,[f] & -- & $2$ & \cite{steane1996multiple}\\
+\texttt{x\_\allowbreak{}cube\_\allowbreak{}code}${}^{\dagger}$ & X-cube fracton code & \texttt{encoding}\,[f] & -- & $2$ & \cite{vijay2016fracton}\\
+\texttt{xy\_\allowbreak{}surface\_\allowbreak{}code}${}^{\dagger}$ & XY surface code, distance 3 & \texttt{encoding}\,[f] & -- & $2$ & \cite{tuckett2018ultrahigh}\\
+\texttt{xzzx\_\allowbreak{}surface\_\allowbreak{}code}${}^{\dagger}$ & XZZX surface code, distance 3 & \texttt{encoding}\,[f] & -- & $2$ & \cite{bonillaataides2021xzzx}\\
+\midrule
+\multicolumn{6}{@{}l}{\textbf{Category protocol} (42 subjects)}\\
+\midrule
+\texttt{b92} & B92 key distribution & \texttt{main}\,[f] & -- & $2$ & \cite{bennett1992quantumb92}\\
+\texttt{bb84} & BB84 key distribution & \texttt{main}\,[f] & -- & $2$ & \cite{bennett1984quantum}\\
+\texttt{bb84\_\allowbreak{}intercept\_\allowbreak{}resend} & BB84 under intercept-resend & \texttt{main}\,[f] & -- & $2$ & \cite{bennett1984quantum}\\
+\texttt{bbm92} & BBM92 key distribution & \texttt{main}\,[f] & -- & $2$ & \cite{bennett1992quantum}\\
+\texttt{blind\_\allowbreak{}computation} & Universal blind quantum computation & \texttt{main}\,[f] & -- & $2$ & \cite{broadbent2009universal}\\
+\texttt{chsh\_\allowbreak{}game} & CHSH game & \texttt{main}\,[f] & -- & $2$ & \cite{clauser1969proposed}\\
+\texttt{dejmps\_\allowbreak{}purification} & DEJMPS entanglement purification & \texttt{main}\,[f] & -- & $2$ & \cite{deutsch1996quantum}\\
+\texttt{dephasing\_\allowbreak{}twirl} & Dephasing twirl & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{e91} & E91 key distribution & \texttt{main}\,[f] & -- & $2$ & \cite{ekert1991quantum}\\
+\texttt{entanglement\_\allowbreak{}purification} & BBPSSW entanglement purification & \texttt{main}\,[f] & -- & $2$ & \cite{bennett1996purification}\\
+\texttt{entanglement\_\allowbreak{}swapping} & Entanglement swapping & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{zukowski1993event}\\
+\texttt{gate\_\allowbreak{}teleportation} & Gate teleportation & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{gottesman1999demonstrating}\\
+\texttt{ghz\_\allowbreak{}fusion} & GHZ fusion & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{browne2005resource}\\
+\texttt{ghz\_\allowbreak{}game} & GHZ game & \texttt{xxx}\,[f], \texttt{xyy}\,[f] & -- & $2$ & \cite{mermin1990quantum}\\
+\texttt{ghz\_\allowbreak{}key\_\allowbreak{}agreement} & GHZ conference key agreement & \texttt{main}\,[b] & $n\ge 0$ (parties after the first) & $d\ge 1$ & \cite{epping2017multi}\\
+\texttt{ghz\_\allowbreak{}metrology} & GHZ phase estimation & \texttt{main}\,[b] & $n\ge 0$ (qubits after the first) & $2$ & \cite{bollinger1996optimal}\\
+\texttt{hbb\_\allowbreak{}secret\_\allowbreak{}sharing} & HBB quantum secret sharing & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{hillery1999quantum}\\
+\texttt{magic\_\allowbreak{}square\_\allowbreak{}game} & Mermin-Peres magic square game & \texttt{r1c3}\,[f], \texttt{r3c1}\,[f], \texttt{r3c3}\,[f] & -- & $2$ & \cite{mermin1990simple}\\
+\texttt{magic\_\allowbreak{}state\_\allowbreak{}distillation} & 15-to-1 magic state distillation & \texttt{main}\,[f] & -- & $2$ & \cite{bravyi2005universal}\\
+\texttt{magic\_\allowbreak{}state\_\allowbreak{}injection} & Magic state injection & \texttt{main}\,[f] & -- & $2$ & \cite{bravyi2005universal}\\
+\texttt{mbqc\_\allowbreak{}cnot} & Measurement-based CNOT & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{raussendorf2003measurement}\\
+\texttt{mbqc\_\allowbreak{}j\_\allowbreak{}gate} & Measurement-based J gate & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{raussendorf2001one}\\
+\texttt{mbqc\_\allowbreak{}wire} & Measurement-based quantum wire & \texttt{main}\,[b] & $n\ge 0$ (cluster qudits) & $d\ge 1$ & \cite{raussendorf2003measurement}\\
+\texttt{mdi\_\allowbreak{}qkd} & Measurement-device-independent key distribution & \texttt{main}\,[f] & -- & $2$ & \cite{lo2012measurement}\\
+\texttt{nonlocal\_\allowbreak{}cnot} & Nonlocal CNOT & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{eisert2000optimal}\\
+\texttt{nonlocal\_\allowbreak{}cz} & Nonlocal CZ & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{eisert2000optimal}\\
+\texttt{one\_\allowbreak{}bit\_\allowbreak{}teleportation} & One-bit teleportation & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{zhou2000methodology}\\
+\texttt{one\_\allowbreak{}time\_\allowbreak{}pad} & Quantum one-time pad & \texttt{correctness}\,[f], \texttt{secrecy}\,[f] & -- & $d\ge 1$ & \cite{ambainis2000private}\\
+\texttt{random\_\allowbreak{}access\_\allowbreak{}code} & Quantum random access code & \texttt{main}\,[f] & -- & $2$ & \cite{ambainis2002dense}\\
+\texttt{randomized\_\allowbreak{}compiling} & Randomized compiling & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{wallman2016noise}\\
+\texttt{remote\_\allowbreak{}state\_\allowbreak{}preparation} & Remote state preparation & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{bennett2001remote}\\
+\texttt{repeater\_\allowbreak{}chain} & Quantum repeater chain & \texttt{main}\,[b] & $n\ge 0$ (swaps) & $d\ge 1$ & \cite{briegel1998quantum}\\
+\texttt{six\_\allowbreak{}state\_\allowbreak{}qkd} & Six-state key distribution & \texttt{main}\,[f] & -- & $2$ & \cite{bruss1998optimal}\\
+\texttt{superdense\_\allowbreak{}coding} & Superdense coding & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{bennett1992communication}\\
+\texttt{superdense\_\allowbreak{}register} & Register superdense coding & \texttt{main}\,[b] & $n\ge 0$ (dit pairs) & $d\ge 1$ & \cite{bennett1992communication}\\
+\texttt{teleportation} & Quantum teleportation & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{bennett1993teleporting}\\
+\texttt{teleportation\_\allowbreak{}chain} & Teleportation chain & \texttt{main}\,[b] & $n\ge 0$ (relays) & $d\ge 1$ & \cite{bennett1993teleporting}\\
+\texttt{teleportation\_\allowbreak{}register} & Register teleportation & \texttt{main}\,[b] & $n\ge 0$ (qudits) & $d\ge 1$ & \cite{bennett1993teleporting}\\
+\texttt{threshold\_\allowbreak{}secret\_\allowbreak{}sharing} & Threshold quantum secret sharing & \texttt{main}\,[f] & -- & $3$ & \cite{cleve1999share}\\
+\texttt{universal\_\allowbreak{}cloner} & Universal quantum cloner & \texttt{main}\,[f] & -- & $2$ & \cite{werner1998optimal}\\
+\texttt{wiesner\_\allowbreak{}money} & Wiesner quantum money & \texttt{main}\,[b] & $n\ge 0$ (qubits) & $2$ & \cite{wiesner1983conjugate}\\
+\texttt{y\_\allowbreak{}state\_\allowbreak{}injection} & Y-state injection & \texttt{main}\,[f] & -- & $2$ & \cite{aliferis2006quantum}\\
+\midrule
+\multicolumn{6}{@{}l}{\textbf{Category circuit} (71 subjects)}\\
+\midrule
+\texttt{amm\_\allowbreak{}barenco\_\allowbreak{}tof\_\allowbreak{}3} & 3-controlled Toffoli, dirty ancillas (Amy-Maslov-Mosca benchmark barenco\_tof\_3) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}barenco\_\allowbreak{}tof\_\allowbreak{}4} & 4-controlled Toffoli, dirty ancillas (Amy-Maslov-Mosca benchmark barenco\_tof\_4) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}barenco\_\allowbreak{}tof\_\allowbreak{}5} & 5-controlled Toffoli, dirty ancillas (Amy-Maslov-Mosca benchmark barenco\_tof\_5) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}gf24\_\allowbreak{}mult} & GF(2\^{}4) multiplier (Amy-Maslov-Mosca benchmark gf2\^{}4\_mult) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}hwb6} & Hidden weighted bit (Amy-Maslov-Mosca benchmark hwb6) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}mod5\_\allowbreak{}4} & Divisibility by five (Amy-Maslov-Mosca benchmark mod5\_4) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}tof\_\allowbreak{}3} & 3-controlled Toffoli, clean ancillas (Amy-Maslov-Mosca benchmark tof\_3) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}tof\_\allowbreak{}4} & 4-controlled Toffoli, clean ancillas (Amy-Maslov-Mosca benchmark tof\_4) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}tof\_\allowbreak{}5} & 5-controlled Toffoli, clean ancillas (Amy-Maslov-Mosca benchmark tof\_5) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{amm\_\allowbreak{}vbe\_\allowbreak{}adder\_\allowbreak{}3} & VBE ripple-carry adder (Amy-Maslov-Mosca benchmark vbe\_adder\_3) & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{bell\_\allowbreak{}basis\_\allowbreak{}change} & Bell basis change & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{bell\_\allowbreak{}register} & Register of Bell pairs & \texttt{main}\,[b] & $n\ge 0$ (pairs) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{bell\_\allowbreak{}stabilizers} & Bell state stabilizers & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{bell\_\allowbreak{}state} & Bell state & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{bridge\_\allowbreak{}gate} & Bridge gate & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{itoko2020optimization}\\
+\texttt{ccz\_\allowbreak{}decomposition} & CCZ Clifford+T decomposition & \texttt{main}\,[fR] & -- & $2$ & \cite{nielsen2010quantum}\\
+\texttt{ccz\_\allowbreak{}t\_\allowbreak{}depth\_\allowbreak{}one} & CCZ with T-depth one & \texttt{main}\,[f] & -- & $2$ & \cite{selinger2013quantum}\\
+\texttt{clifford\_\allowbreak{}relation} & Clifford relation (SH)\^{}3 & \texttt{main}\,[f] & -- & $2$ & \cite{gottesman1998heisenberg}\\
+\texttt{cluster\_\allowbreak{}stabilizer} & Cluster state stabilizer & \texttt{main}\,[bR] & $n\ge 0$ (qudits after the first two) & $d\ge 1$ & \cite{raussendorf2001one}\\
+\texttt{cluster\_\allowbreak{}state} & Linear cluster state & \texttt{main}\,[b] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{raussendorf2001one}\\
+\texttt{cluster\_\allowbreak{}state\_\allowbreak{}2d} & Two-dimensional cluster state & \texttt{main}\,[bR] & $n\ge 1$ (grid side) & $d\ge 1$ & \cite{raussendorf2001one}\\
+\texttt{cnot\_\allowbreak{}from\_\allowbreak{}ms} & CNOT from the Molmer-Sorensen gate & \texttt{main}\,[fR] & -- & $2$ & \cite{maslov2017basic}\\
+\texttt{cnot\_\allowbreak{}reversal} & Controlled-add reversal & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{complete\_\allowbreak{}graph\_\allowbreak{}state} & Complete graph state & \texttt{main}\,[b] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{hein2004multiparty}\\
+\texttt{controlled\_\allowbreak{}phase\_\allowbreak{}decomposition} & Controlled phase decomposition & \texttt{cs}\,[f], \texttt{ct}\,[f] & -- & $2$ & \cite{barenco1995elementary}\\
+\texttt{cuccaro\_\allowbreak{}adder} & Cuccaro ripple-carry adder & \texttt{main}\,[u] & $n\ge 1$ (bits per register) & $2$ & \cite{cuccaro2004new}\\
+\texttt{cx\_\allowbreak{}from\_\allowbreak{}cz} & CX from CZ and Fourier & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{cx\_\allowbreak{}inverse} & Controlled add and its inverse & \texttt{main}\,[bR] & $n\ge 0$ (qudit pairs) & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{cyclic\_\allowbreak{}shift} & Cyclic shift by SWAP chain & \texttt{main}\,[bR] & $n\ge 0$ (wires after the first) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{cz\_\allowbreak{}symmetry} & Controlled-phase symmetry & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{draper\_\allowbreak{}adder} & Draper QFT adder & \texttt{main}\,[uL] & $n\ge 1$ (digits per register) & $d\ge 2$ & \cite{draper2000addition}\\
+\texttt{fermionic\_\allowbreak{}swap} & Fermionic swap & \texttt{main}\,[f] & -- & $2$ & \cite{bravyi2002fermionic}\\
+\texttt{fourier\_\allowbreak{}basis\_\allowbreak{}state} & Fourier basis state & \texttt{main}\,[b] & $n\ge 0$ (qudits) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{fourier\_\allowbreak{}conjugation} & Fourier conjugation of the shift & \texttt{main}\,[bR] & $n\ge 0$ (qudits) & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{fourier\_\allowbreak{}constant\_\allowbreak{}adder} & Fourier constant adder & \texttt{main}\,[uL] & $n\ge 1$ (qudits) & $d\ge 2$ & \cite{draper2000addition}\\
+\texttt{fourier\_\allowbreak{}order\_\allowbreak{}four} & Fourier gate of order four & \texttt{main}\,[bR] & $n\ge 0$ (qudits) & $d\ge 1$ & \cite{wang2023qufinitezxw}\\
+\texttt{fredkin\_\allowbreak{}decomposition} & Fredkin gate decomposition & \texttt{main}\,[fR] & -- & $2$ & \cite{fredkin1982conservative}\\
+\texttt{full\_\allowbreak{}adder} & Reversible full adder & \texttt{main}\,[f] & -- & $2$ & \cite{vedral1996quantum}\\
+\texttt{ghz} & GHZ state & \texttt{main}\,[bR]; restricted: n >= 2 & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{ghz1989beyond}\\
+\texttt{ghz\_\allowbreak{}disentangle} & GHZ disentangling & \texttt{main}\,[bR] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{ghz1989beyond}\\
+\texttt{ghz\_\allowbreak{}log\_\allowbreak{}depth} & GHZ state, logarithmic depth & \texttt{main}\,[b] & $0\le n\le 3$ (tree levels (2\^{}m qudits)) & $d\ge 1$ & \cite{cruz2019efficient}\\
+\texttt{ghz\_\allowbreak{}x\_\allowbreak{}basis} & GHZ state in the Fourier basis & \texttt{main}\,[b] & $n\ge 0$ (qudits after the first) & $d\ge 1$ & \cite{ghz1989beyond}\\
+\texttt{gidney\_\allowbreak{}and} & Temporary logical AND & \texttt{main}\,[f] & -- & $2$ & \cite{gidney2018halving}\\
+\texttt{givens\_\allowbreak{}rotation} & Givens rotation & \texttt{main}\,[f] & -- & $2$ & \cite{kivlichan2018quantum}\\
+\texttt{hadamard\_\allowbreak{}euler} & Euler decomposition of H & \texttt{main}\,[f] & -- & $2$ & \cite{coecke2008interacting}\\
+\texttt{hypergraph\_\allowbreak{}state} & Hypergraph state & \texttt{main}\,[f] & -- & $2$ & \cite{rossi2013quantum}\\
+\texttt{incrementer} & Quantum incrementer & \texttt{main}\,[b] & $n\ge 1$ (bits) & $2$ & \cite{barenco1995elementary}\\
+\texttt{iswap\_\allowbreak{}decomposition} & iSWAP decomposition & \texttt{main}\,[fR] & -- & $2$ & \cite{schuch2003natural}\\
+\texttt{local\_\allowbreak{}complementation} & Local complementation & \texttt{main}\,[f] & -- & $2$ & \cite{vandennest2004graphical}\\
+\texttt{margolus\_\allowbreak{}gate} & Margolus gate & \texttt{main}\,[fR] & -- & $2$ & \cite{barenco1995elementary}\\
+\texttt{measurement\_\allowbreak{}uncomputation} & Measurement-based uncomputation & \texttt{main}\,[f] & -- & $2$ & \cite{gidney2018halving}\\
+\texttt{modular\_\allowbreak{}multiplication} & Modular multiplication by 7 mod 15 & \texttt{main}\,[f] & -- & $2$ & \cite{markov2012constant}\\
+\texttt{multi\_\allowbreak{}controlled\_\allowbreak{}toffoli} & Multi-controlled Toffoli, V-chain & \texttt{main}\,[uR] & $n\ge 2$ (controls) & $2$ & \cite{barenco1995elementary}\\
+\texttt{pauli\_\allowbreak{}gadget} & Pauli exponential synthesis & \texttt{main}\,[f] & -- & $2$ & \cite{cowtan2020phase}\\
+\texttt{pauli\_\allowbreak{}propagation} & Pauli propagation through CX & \texttt{x}\,[fR], \texttt{z}\,[fR] & -- & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{peres\_\allowbreak{}gate} & Peres gate & \texttt{main}\,[fR] & -- & $2$ & \cite{peres1985reversible}\\
+\texttt{phase\_\allowbreak{}kickback} & Phase kickback & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{cleve1998quantum}\\
+\texttt{phase\_\allowbreak{}polynomial\_\allowbreak{}synthesis} & Phase-polynomial synthesis & \texttt{main}\,[f] & -- & $2$ & \cite{amy2014polynomial}\\
+\texttt{plus\_\allowbreak{}state} & Uniform superposition & \texttt{main}\,[b] & $n\ge 0$ (qudits) & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{qram} & Quantum RAM lookup & \texttt{main}\,[bR] & $n\ge 1$ (address bits) & $2$ & \cite{giovannetti2008quantum}\\
+\texttt{qudit\_\allowbreak{}swap} & SWAP from controlled adds & \texttt{main}\,[fR] & -- & $d\ge 1$ & \cite{gottesman1999fault}\\
+\texttt{ring\_\allowbreak{}cluster\_\allowbreak{}state} & Ring cluster state & \texttt{main}\,[b] & $n\ge 1$ (qudits after the first two) & $d\ge 1$ & \cite{raussendorf2001one}\\
+\texttt{sleator\_\allowbreak{}weinfurter\_\allowbreak{}toffoli} & Sleator-Weinfurter Toffoli & \texttt{main}\,[f] & -- & $2$ & \cite{barenco1995elementary}\\
+\texttt{sqrt\_\allowbreak{}swap} & Square root of SWAP & \texttt{main}\,[f] & -- & $2$ & \cite{loss1998quantum}\\
+\texttt{star\_\allowbreak{}graph\_\allowbreak{}ghz} & GHZ from the star graph & \texttt{main}\,[b] & $n\ge 0$ (leaves) & $d\ge 1$ & \cite{hein2004multiparty}\\
+\texttt{star\_\allowbreak{}graph\_\allowbreak{}state} & Star graph state & \texttt{main}\,[b] & $n\ge 0$ (leaves) & $d\ge 1$ & \cite{hein2004multiparty}\\
+\texttt{swap\_\allowbreak{}from\_\allowbreak{}cz} & SWAP from controlled phases & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{nielsen2010quantum}\\
+\texttt{toffoli\_\allowbreak{}decomposition} & Toffoli Clifford+T decomposition & \texttt{main}\,[fR] & -- & $2$ & \cite{nielsen2010quantum}\\
+\texttt{toffoli\_\allowbreak{}temporary\_\allowbreak{}and} & Toffoli via temporary AND & \texttt{main}\,[f] & -- & $2$ & \cite{jones2013low}\\
+\texttt{w\_\allowbreak{}state} & W state preparation & \texttt{main}\,[b] & $0\le n\le 3$ (tree levels (2\^{}m qubits)) & $2$ & \cite{dur2000three}\\
+\texttt{weyl\_\allowbreak{}commutation} & Weyl commutation relation & \texttt{main}\,[f] & -- & $d\ge 1$ & \cite{weyl1927quantenmechanik}\\
+\midrule
+\end{xltabular}
+}
+
+\section{The false set}\label{sec:bench-false}
+
+\module{benchmarks.breaks} builds the false set $F$: for each $S$ instance, at most one broken
+copy whose circuit no longer equals the specification. A \term{break kind} lists candidate edits
+(\term{variants}) of the circuit, each with probe points where it should differ and a record of
+where it stays equal. Generation applies the first variant whose counterexample search finds an
+entry that differs; a kind with no such variant does not apply, and the assignment moves to the
+next kind. No break edits the specification.
+
+\subsection{Edits}
+
+\begin{signature}
+\py!Edit(kind: str, label: str, params: dict)!\\
+\py!  apply(c, inst, nv, dv) -> Circuit!  \qquad \py!apply_spec(spec, inst, nv, dv, ctx) -> spec!
+\end{signature}
+
+\py!apply! dispatches on \code{kind} through the registry \py!EDITS!; \py!KINDS! is its key tuple
+in the order of \cref{tab:bench-kinds}. Helpers: the outputs of a circuit are its wires with no
+\py!Post! or \py!Discard!, its inputs those with no \py!Init! (chain bodies flattened); the
+\emph{phase wires} are the open, unmeasured outputs, the single wires first in reverse order,
+then the registers. An edit names a wire by name (\code{wire}), or, on an unrolled equation, by
+\code{role} (\code{phase}, \code{inputs}, \code{all}) and \code{slot} in that list. It names a
+gate by \code{index}, or on an unrolled equation by type, wires, occurrence \code{occ} and total
+\code{of} (\py!NotApplicable! when the count of such gates is not \code{of}).
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.27\textwidth} X@{}}
+\caption{Break kinds, their edits, and their variants (in registry order).}\label{tab:bench-kinds}\\
+\toprule
+\normalfont Kind & Edit and variants\\
+\midrule\endfirsthead
+\toprule
+\normalfont Kind & Edit and variants\\
+\midrule\endhead
+\bottomrule\endfoot
+beyond\_oracle & Appends \py!ZPhase! (or \py!XPhase!) with a rule on a phase wire. General $d$:
+  rule $k(d-1)(d-2)(d-3)(d-4)/d$, probes at the first $n$ and two $d\ge5$, labels
+  \code{Z|X phase on q}. Boxed with size parameter: rule
+  $k\,n(n-1)(n-2)(n-3)/(24d)$, probes at the first $n\ge4$ and two $d\ge2$, labels \code{Z|X n-phase on q}. The rule is an integer at every $k$ inside the oracle grid $d\le4$, $n\le3$;
+  equal-where \texttt{\{grid: oracle\}}.\\
+beyond\_N & Unrolled: $X$ on output $-i$ when $n > N$ ($N$ = \code{false_set.beyond_N}),
+  for every $i\ge1$ whose output $-i$ is a single wire of the subject's dimension at the probe
+  $n$ and the next 3 domain $n$; label \code{X on output -i beyond N}. Boxed: a gadget
+  multiplying by $-1$ when $n \equiv N+1 \pmod{N+2}$ (\cref{alg:bench-gadget}), label
+  \code{sign at n = N + 1 mod N + 2}. Probe at the first $n\ge N+1$; equal-where
+  \texttt{\{n\_max: N\}}. Not for fixed equations.\\
+prime\_only & Appends a rule $(k^d-k)/d$ (Fermat) on each phase wire, $Z$ or $X$; general $d$
+  only; probes at two composite $d\ge4$; equal-where \texttt{\{d\_prime: true, also: [561, 1105, 1729]\}}.\\
+qubit\_only & Appends $F^2$ (the antipode) on each phase wire; general $d$ only; probes at two
+  $d\ge3$; equal-where \texttt{\{d\_max: 2\}}.\\
+coincident\_dims & When the circuit has wires of at least two dimension expressions: a rule
+  $k(D_q - D_o)/D_q$ on each phase wire, $D_o$ the first other dimension; equal-where
+  \texttt{\{dims\_equal: [...]\}}.\\
+scalar\_small\_one & Multiplies the scalar by $1+(d-1)(d-2)(d-3)(d-4)$ (general $d$; probe at
+  one $d\ge5$) or by $1+n(n-1)(n-2)(n-3)$ (boxed; probe at one $n\ge4$).\\
+global\_phase & Multiplies the scalar by $e^{2\pi i/7}$; equal-where
+  \texttt{\{up\_to\_global\_phase: true\}}.\\
+tiny\_phase & Appends \py!ZPhase! $\{1: 1/d^k\}$, $k$ = \code{false_set.tiny_k}, on each phase
+  wire; parameter \code{d_min = 2}; a variant whose counterexample is proportional (a
+  scalar-only break) ends the kind.\\
+leg\_order & Appends \py!Swap! of the first two output registers of one count (label
+  \code{swap a, b per copy}); for a non-boxed equation with at least two single outputs, of the
+  last two outputs (\code{swap last two outputs}).\\
+box\_boundary & Boxed only: multiplies the scalar by $1 + 0^{(n - n_0)}$, $n_0$ the domain's
+  $n_{\min}$; probes at $n_0$; equal-where \texttt{\{n\_gt: n0\}}.\\
+state\_not\_map & Prepends $Z$ on each unmeasured input; equal-where \texttt{\{input\_zero: q\}}.\\
+single\_entry & When every output is a single wire: appends a \py!PhaseFn! over the unmeasured
+  single outputs with phase $1/2$ where every output is 1 (support that point only); parameter
+  \code{d_min = 2}. A product dimension above 18 decimal digits (the engine loader's numeral
+  bound) raises \py!TableUnsupported!, a subclass of both \py!NotApplicable! and
+  \py!Unsupported!.\\
+wrong\_phase & Per top-level gate $X$, $Z$, \py!ZPhase!, \py!XPhase!, CX, CZ: $a\mapsto a+1$;
+  rule $\mapsto$ rule $+k/(3d)$; the least entry key (1 when none) $\mapsto$ entry $+1/3$;
+  $s\mapsto -s$.\\
+missing\_gate & Drops one top-level gate other than Init, Post, Discard, Measure, Swap, last
+  first; refused when the interface changes.\\
+extra\_gate & Appends $X$ on each phase wire.\\
+swapped\_control\_target & Exchanges control and target of one top-level CX.\\
+off\_by\_one\_n & Size parameter and non-fixed form: unrolled, the circuit at $n+1$; boxed,
+  every register count $c\mapsto c+1$ and every Chain or Tree whose count is a register count or
+  \code{n} likewise.\\
+wrong\_dimension & General $d$: per wire touched only by single-wire gates, its dimension
+  $D\mapsto D+1$.\\
+\end{xltabular}
+
+Unless stated otherwise, a variant probes the \emph{small points}: the first three domain $n$
+from $n_{\min}$ (within 40 steps) and the first two domain $d\ge2$ (at most 64), all pairs, $d$
+outer; its equal-where record is empty. Candidate $d$ lists stop at $\min(d_{\max}, 64)$;
+candidate $n$ lists scan at most 200 values. The probe circuit is built at the first domain $n$
+and $d$ (the first domain $d\ge2$, else $\ge1$).
+
+\begin{algorithm}[Boxed \texttt{beyond\_N} gadget]\label{alg:bench-gadget}
+With every register count concrete and $n$ known, the edit multiplies the scalar by $-1$ exactly
+when $n \bmod (N+2) = N+1$. Otherwise it adds a register \code{_cnt} of count \code{n} (after the
+last register of count \code{n}, or last when none) and a single wire \code{_acc} at the end, both
+of dimension $M = N+2$, and appends Init$(\_cnt, 1)$, Init$(\_acc, 0)$, CX$(\_cnt, \_acc)$,
+\py!ZPhase(_acc, {N+1: 1/2})!, CX$^{-1}(\_cnt,\_acc)$, Post$(\_acc,0)$, Post$(\_cnt,1)$. The
+accumulator holds $n \bmod M$ after the fan, so the gadget's value is
+\py!gadget_value(params, n)! $=-1$ iff $n\equiv N+1 \pmod M$, else 1.
+\end{algorithm}
+
+On an unrolled equation, \py!variants! rewrites each wire variant to (role, slot), and each
+gate variant of \code{wrong_phase}, \code{missing_gate}, \code{swapped_control_target} to
+(type, wires, occurrence, total), keeping it only when the next 3 domain $n$ have the same total
+of such gates; its label becomes \code{[drop |reverse ]NAME OCC of TOTAL on WIRES}.
+
+\subsection{Counterexample search}
+
+\begin{definition}[Counterexample]
+A \py!Witness! records the point $(n,d)$, the output and input indices \code{outs}, \code{ins}
+(of the doubled diagram for a mixed equation), the two values \code{left} and \code{right} as
+\code{[real, imag]}, or an \code{interface} text when the boundaries differ; \code{method}
+(\code{entry} or \code{factored}); and \code{proportional} (whether the two tensors differ by
+one scalar; \code{None} when no dense check ran). It serializes to a JSON object with exactly
+these nine keys.
+\end{definition}
+
+Constants: tolerance \py!TOL! $=10^{-8}$; dense limit \py!DENSE_LIMIT! $=2^{18}$ tensor entries.
+
+\begin{algorithm}[\texttt{differing\_entry}]\label{alg:bench-differing}
+Input: the two loaded diagrams (circuit, specification) of the broken instance at $(n,d)$.
+\begin{enumerate}
+\item Instantiate both; when either is mixed, double both (\cref{ch:mixed}).
+\item When the boundary dimensions differ, return an interface counterexample
+  \code{left [lo]->[li], right [ro]->[ri]} with \code{proportional = False}.
+\item When the tensor has at most $2^{18}$ entries: contract both densely; when the largest
+  entrywise gap is at most $10^{-8}$ return none, else return the argmax entry with
+  \code{proportional} by \py!proportional(a, b)! (both nonzero and $a = \lambda b$ within
+  \py!TOL!, $\lambda$ read at $b$'s largest entry).
+\item Otherwise evaluate candidate index tuples: for fill values 0, 1, $-1$ (mod each
+  dimension), the tuples (fill, fill), (fill, 0), (0, fill); then 24 uniform random tuples from
+  the seeded generator; duplicates skipped. A diagram whose largest node arity is at most 12 is
+  evaluated by plugging basis effects $X$ states and contracting numerically (\py!plugged!),
+  otherwise by symbolic contraction at the bound values. Return the first tuple whose values
+  differ by more than \py!TOL!.
+\end{enumerate}
+\end{algorithm}
+
+The boxed \code{beyond_N} kind uses the \emph{factored} search instead: with $g$ the gadget
+value ($|g|^2$ when mixed; $g=1$ means no counterexample), find a nonzero specification entry $e$
+among the extrapolated tuples and then the candidates, and return \code{left} $=ge$,
+\code{right} $=e$, method \code{factored}, \code{proportional = True}. The extrapolated tuples
+take the first nonzero dense entries at the two smallest $n\ge1$ below the target, find a block
+of $b>0$ indices that repeats once per copy in both, and repeat it $n$ times.
+
+\py!dense_differs(left, right)! decides whether two loaded diagrams differ: \code{True} on a
+boundary mismatch ignoring dimension-1 ports, \code{None} above the dense limit, else whether the
+largest entrywise gap exceeds \py!TOL!.
+
+\subsection{Generation}
+
+\begin{algorithm}[Kind order]\label{alg:bench-order}
+The allowed kinds are the registry kinds matching a glob of \code{false_set.kinds}, in
+registry order. For the $i$-th $S$ instance, with \code{round_robin} the order is the rotation
+starting at $i \bmod |\mathit{kinds}|$; with \code{random} it is a shuffle by a generator seeded
+with the first 8 bytes (big-endian) of SHA-256(\code{"SEED|EQUATION"}).
+\end{algorithm}
+
+\begin{algorithm}[\texttt{generate\_one}]
+\begin{enumerate}
+\item Seed the candidate generator with the first 8 bytes of SHA-256(\code{"SEED|EQUATION"}).
+  Set the deadline \code{equation_seconds} ahead (none when not positive).
+\item For each kind in order, try its variants in order (\py!try_kind!): for each probe point,
+  run the search under a wall limit of $\min(\mathit{probe\_seconds}, \text{time left})$ (a
+  \code{SIGALRM} interval timer); a probe that overruns or raises is skipped (a
+  \code{ContractSizeError} or \py!MemoryError! marks the equation as overflowing); passing the
+  deadline aborts the equation. A counterexample ends the search, except that a proportional
+  \code{tiny_phase} counterexample ends that kind without a record.
+\item On success return the $F$ record annotated (\py!annotate!) plus \code{skipped}, the kinds
+  tried before. On abort return \texttt{\{equation, kind: null, skipped, reason: "time budget"\}};
+  when no kind applies, \texttt{\{equation, kind: null, skipped\}}, plus \code{reason: "oracle size"} for an overflowing equation.
+\end{enumerate}
+\end{algorithm}
+
+An $F$ record (\py!FalseEquation.to_dict!) has the keys \code{equation} (the $S$ id),
+\code{kind}, \code{label}, \code{params}, \code{witness}, \code{equal_where}, and after
+annotation \code{differs_at} and \code{skipped}.
+
+\py!generate(cfg, path, jobs)! returns the records of \code{path} when its fingerprint matches;
+otherwise it generates every record in a process pool of \code{jobs} processes (chunk size 1),
+writes \texttt{\{"fingerprint", "records"\}} (JSON, indent 1) to the temporary file
+\code{false_set.<task>.<pid>.tmp} (task from \code{SLURM_ARRAY_TASK_ID}, else \code{local}), and
+renames it over \code{path}. \py!load(cfg, path)! returns the records only when the file exists,
+parses, and carries the current fingerprint.
+
+\begin{definition}[False-set fingerprint]
+The first 16 hexadecimal digits of SHA-256 over: the JSON (sorted keys) of the \code{subjects}
+and \code{false_set} sections; then, for every \file{*.py} of the catalogue directory (sorted,
+helpers included), its name and bytes; then the bytes of \file{ir.py}, \file{translate.py},
+\file{breaks.py}, \file{subject.py}.
+\end{definition}
+
+\subsection{The differs table}
+
+\py!table_grid(inst)! lists the domain points with $d\le 4$ (only the fixed $d$ for a fixed
+subject) and $n\le4$ ($n\le12$ at a fixed $d$), $d$ outer. \py!differs_table(broken, seconds)!
+returns rows \code{[n, d, differs]} at the grid points the dense check settles, each within
+\code{seconds}; the line of a $d$ stops at its first unsettled $n$. \py!annotate(rec, insts, seconds)! adds \code{differs_at}. When the counterexample is not a doubling interface mismatch
+(\cref{def:bench-doubling}), its own point is appended as differing when absent; when it is one,
+the counterexample is replaced by a dense \py!differing_entry! at the first differing table
+point (kept when none succeeds). \py!tabled(records, seconds, jobs)! annotates, in a process
+pool, every record with a kind and no \code{differs_at}; an unknown equation or a raising check
+yields an empty table. \py!annotate_file(src, dst, cfg, jobs)! writes an annotated copy.
+
+\py!oracle_grid(inst)! lists the points with $d\le4$ and $n\le3$, $n$ outer.
+
+\subsection{Record validation}
+
+\py!mismatch(rec, inst)! returns \code{None} when the record's (label, params) is among today's
+variants of its kind on the $S$ instance (computed with the record's own $N$ and $k$, cached), or
+when a positional record still names the same thing (\py!_positional_ok!: a fixed
+\code{swap last two outputs} whose $i, j$ are the last two output positions; or an unrolled gate
+index that is a raw variant of the probe circuit with the same type, wires, and occurrence at the
+next 3 domain $n$). Otherwise it returns \code{KIND edit 'LABEL' PARAMS is not a variant of the FORM form of ID}. \py!false_instance(rec, insts)! returns the $F$ instance.
+
+\section{Where an $F$ pair differs}\label{sec:bench-differs}
+
+\module{benchmarks.differs} decides, by exact integer arithmetic, whether the $F$ pair of a
+record differs at a point. A pair that is equal at a point measures nothing there; the schedule
+avoids such points and the classifier marks runs at them.
+
+\begin{definition}[Doubling mismatch]\label{def:bench-doubling}
+An interface text \code{left [lo]->[li], right [ro]->[ri]} is a doubling mismatch when the
+multiset of one side's dimensions is the other's taken twice, on both outputs and inputs.
+\end{definition}
+
+\begin{algorithm}[\texttt{equal\_at(false, n, d)}]\label{alg:bench-equal-at}
+Returns \code{True} (equal), \code{False} (differs), or \code{None} (only a doubling
+counterexample speaks).
+\begin{enumerate}
+\item No record (an $S$ equation): \code{False}. A record with a kind and no \code{differs_at}
+  key raises \py!ValueError!. A symbolic point ($d$ \code{None}): \code{False}.
+\item A tabled point: the negation of its table value.
+\item \code{beyond_oracle}, \code{prime_only}, \code{coincident_dims} with a rule: equal iff the
+  phase is an integer at every $k<d$: for the Fermat rule, iff $k^d\equiv k\pmod d$ for every
+  $k<d$; otherwise the rule must be $k\cdot r(n,d)$ with $r$ free of $k$ (else not equal), and
+  equal iff the numerator of $r$ is divisible by its nonzero denominator.
+\item \code{scalar_small_one}, \code{box_boundary} with a factor: equal iff factor $-1$ is 0 at
+  $(n,d)$ ($n$ read as 0 when absent).
+\item \code{beyond_N}: unrolled, equal iff $n\le N$ or $d=1$; boxed, equal iff
+  $n\bmod(N+2)\ne N+1$.
+\item \code{qubit_only}: equal iff $d\le2$.
+\item The table's lines (\cref{alg:bench-table-equal}) show it equal: \code{True}.
+\item A gate kind (\code{wrong_phase}, \code{missing_gate}, \code{swapped_control_target}):
+  \code{None} when the edited gate differs between the unrolled probe $n$ and the next 3 domain
+  $n$; \code{True} when the gate is trivial at the point (\cref{alg:bench-gate-trivial}).
+\item \code{off_by_one_n}: \code{False}.
+\item A doubling counterexample of method \code{entry}: \code{None}. Otherwise \code{False}.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Table lines]\label{alg:bench-table-equal}
+With \code{TAIL} $=3$ and \code{PERIODS} $=3$, the table shows the pair equal at an untabled
+$(n,d)$ when: no tabled point differs (a no-op edit); or $d=1$ and every tabled $d=1$ point is
+equal; or $n=0$ and every tabled $n=0$ point is equal; or $n$ exceeds the largest tabled $n$ and
+either the last 3 tabled $n$ are equal at every tabled $d$, or the tabled $n$ line of $d$ has a
+least period $p$ (at least 3 checked pairs $v(m) = v(m+p)$, $p\le(\max-\min)/2$) and the tabled
+$m\equiv n \pmod p$ is equal; or $d$ exceeds the largest tabled $d$ and the last 3 tabled $d$ are
+equal at every tabled $n$.
+\end{algorithm}
+
+\begin{algorithm}[Trivial edited gate]\label{alg:bench-gate-trivial}
+The edited gate is looked up in the $S$ instance's circuit built at the probe $n$ and symbolic
+$d$ (by \code{index}, or by type, wires, and occurrence), with the dimension expressions of its
+wires; the lookup is cached per (equation, parameters), and a failed lookup counts as not
+trivial. The dimensions and amounts are evaluated at $(n,d)$ ($n$ read as 0 when absent; a
+non-rational value means not trivial). With sizes $D_i$:
+\begin{itemize}
+\item \code{wrong_phase}: an $X$ or $Z$ on a one-level wire; a \py!ZPhase!/\py!XPhase! on a
+  one-level wire, or, for an entry edit, whose edited level (the least entry key, else 1) is at
+  least $D$; a CX or CZ on two wires of equal size $D$ with $D \mid 2s$.
+\item \code{missing_gate}: an $X^a$ or $Z^a$ with $a$ an integer divisible by $D$; a
+  \py!ZPhase!/\py!XPhase! whose phase is an integer at every level $k<D$ (rule) or at every entry
+  key below $D$ (entries), only for $D\le4096$; a CX, CZ (equal sizes), or $F$ with $D=1$.
+\item \code{swapped_control_target}: a CX with some wire of one level.
+\end{itemize}
+\end{algorithm}
+
+\py!differs(false, n, d)! is \code{equal_at(...) is False}.
+
+\section{The point schedule}\label{sec:bench-points}
+
+\module{benchmarks.points} chooses the points of one unit. A point is $(n, d)$, $n$ \code{None}
+for a subject without a size parameter. Phase 1 is a fixed growing ladder ended by its first
+counted failure; phase 2 draws log-uniform points from the region not dominated by a failed point
+until $K$ successes or a cap on failures.
+
+\subsection{Axes}
+
+\py!axes(inst, cfg, false=None, dims=None) -> Axes! sets the ranges
+\[
+  n\in\bigl[\max(n^{\mathrm{cfg}}_{\min}, n^{\mathrm{dom}}_{\min}),\,
+    \min(n^{\mathrm{cfg}}_{\max}, n^{\mathrm{dom}}_{\max})\bigr],\qquad
+  d\in\bigl[\max(d^{\mathrm{cfg}}_{\min}, d^{\mathrm{dom}}_{\min}),\,
+    \min(d^{\mathrm{cfg}}_{\max}, d^{\mathrm{dom}}_{\max})\bigr],
+\]
+the configured bounds from \code{points}; there is no $n$ axis without a size parameter and the
+$d$ range is the fixed $d$ of a fixed subject. With a tool's dimensions, $d$ narrows to
+$[\min \mathit{dims}, \max\mathit{dims}]$. The axes keep the domain tests and a \code{differs}
+predicate from \cref{sec:bench-differs}; \py!contains(p)! checks the ranges, the domain, and \code{differs}.
+
+\py!stated(inst, cfg, n, d)! maps a published proof's stated size into the domain: $n$ dropped
+without an $n$ axis, \code{None} read as the least domain $n$ of the range; \code{None} when the
+point lies outside.
+
+\subsection{Phase 1: the ladder}
+
+\begin{algorithm}[\texttt{ladder}]\label{alg:bench-ladder}
+For $k = 1,\dots,K$ with $u = k/K$:
+\begin{enumerate}
+\item $n = \lfloor (n_{\max}+1)^u\rfloor - 1$ and $d=\lfloor (d_{\max}+1)^u\rfloor$, with
+  $n_{\max}$, $d_{\max}$ from \code{points}, clamped to the axes' upper bounds and moved up to
+  the least domain value (falling back to the least domain value of the whole range).
+\item Skip the step when no $d$ (or no required $n$) exists.
+\item Make the point distinct (\py!_distinct!): keep it when unused and differing; else raise
+  $n$ through the next domain values (at most 4096); else raise $d$ likewise; else the first
+  unused point of the domain enumeration (at most 10\,000).
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Phase 2: the fill}
+
+\py!seed(base, equation, tool)! is the first 8 bytes (big-endian) of
+SHA-256(\code{"BASE|EQUATION|TOOL"}). \py!Phase2.of(ax, cfg, equation, tool)! creates a generator
+with that seed and \code{points.seed}. \py!draw()! draws $u$ uniform and sets
+$n=\lfloor(n_{\max}+1)^u\rfloor-1$, and $d$ fixed when the $d$ range is one value, else
+$\lfloor(d_{\max}+1)^{u'}\rfloor$; it redraws until \py!contains!, stopping after 200\,000 draws.
+\py!next(failed, used)! returns the next drawn point that is unused and not \term{dominated}
+(at least as large in $n$ and $d$ as some failed point, a missing $n$ comparing as larger), or
+\code{None} when the draws run out.
+
+\py!enumerate_domain(ax, limit, differing=True)! yields domain points, $n$ outer, at most
+\code{limit}; with \code{differing}, only differing points among the first $4096\cdot
+\mathit{limit}$ domain points. \py!domain_size(ax, cap)! counts domain points up to \code{cap}.
+
+\section{Stages and timing spans}\label{sec:bench-stages}
+
+\module{benchmarks.stages} runs the ArchytasZX stages of one run inside the worker process.
+The stage names (\py!STAGES!) are \code{decide}, \code{certificate}, \code{lean_export},
+\code{lean_check}; the adapter adds a preceding \code{generate} stage (script generation) and is
+specified in \cref{ch:bench-tools}.
+
+\begin{signature}
+\py!timed(fn, limit: float | None) -> dict!
+\end{signature}
+\noindent runs \code{fn} under a CPU limit: it installs a \code{SIGPROF} handler, arms the
+profiling interval timer \code{ITIMER_PROF} at \code{limit} seconds, resets the engine trace,
+and records \py!process_time! and \py!perf_counter!. On expiry the handler stores a span snapshot
+(when tracing is on), marks expiry, re-arms the timer at 0.5\,s, and raises
+\py!StageTimeout!, so code that swallows one exception is interrupted again. The result is
+\code{fn}'s fields plus \code{status}: \code{ok}, \code{timeout}, \code{oom} (\py!MemoryError!,
+\code{detail = "MemoryError"}), or \code{error} (\code{detail} the last line of the exception,
+at most 500 characters). A stage that expired is \code{timeout} whatever it returned. It adds
+\code{cpu}, \code{wall}, and \code{peak_mb} (the process's peak resident memory in MiB, one
+decimal); with tracing on, \code{spans} (the span tree), and on a timeout
+\code{spans_at_timeout} and \code{open_span} (the open span path joined by \code{/}).
+
+\paragraph{Spans.} Engine tracing is on when \code{ARCHYTASZX_TRACE=1} at import. A span node is
+a JSON object with \code{name}, \code{cpu}, \code{wall} (seconds, six decimals), \code{calls},
+optional \code{label}, and optional \code{children}; a snapshot marks unfinished nodes with
+\code{"open": true} and their partial times. The open path names each open node as
+\code{name[label]}.
+
+\paragraph{Sessions.} \py!new_run(base="")! creates a fresh shell session with concrete axioms on
+(as the shell starts) and an empty outcome list; \py!execute(run, text)! runs one command line;
+\py!logical_lines(script)! splits a script into the shell's logical lines, dropping lines that are
+empty or comment only. \py!diagrams(script)! executes the lines before the first \code{decide} or
+\code{prove} and returns the current diagram and the name \code{rhs} (a failing line raises
+\py!RuntimeError!).
+
+\paragraph{Stage functions.}
+\begin{itemize}
+\item \py!decide_stage(run, script)!: executes every line; a failing non-decide line raises
+  \py!RuntimeError("LINE: TEXT")!; no decide line raises \py!RuntimeError("the script has no decide line")!. It returns \py!verdict_fields! of the decide outcome: \code{verdict}
+  (\code{equal}, \code{unequal}, \code{equal_uncertified}, \code{unequal_uncertified},
+  \code{unknown}), \code{certified}, \code{method}, \code{inner_method}, \code{reason} (clipped by
+  \py!clip_reason!, \cref{sec:bench-outcomes}), \code{rungs} (\py!stop_codes! of the decision's stops, else \py!rung_codes!
+  of the reason), \code{derivation_steps} (the certificates' step total, else the induction
+  length), \code{samples}, \code{assumptions} (a count), and \code{family_holds}.
+\item \py!certificate_stage(run)!: \code{certificate kernel}; \code{kernel} is \code{rejected}
+  (with \code{detail}, the last 300 characters), \code{theorem} (with \code{inferences}, the
+  theorem's size; \code{inference_kinds}, a count per inference kind over the premise tree; and
+  \code{rules}, the number of axioms used), \code{symbolic}, \code{refutation}, or the payload's
+  class name. \py!certificate_bytes(run)! is the UTF-8 length of \code{certificate show}.
+\item \py!lean_export_stage(run, path)!: \code{certificate lean PATH}; returns
+  \code{lean_semantics} (the first \code{lean: } line not starting \code{lean: wrote}, at most
+  200 characters), \code{lean_bytes}, and \code{lean_lines}; a failure or missing file raises.
+\item \py!lean_check_stage(path, limit, memory_fraction)!: the Lean runner
+  (\cref{sec:bench-lean}); a Lean timeout raises \py!StageTimeout!; a status other than
+  \code{accepted} sets \code{status} to \code{oom} or \code{error} and \code{detail}.
+\item \py!not_run(reason)!: \texttt{\{status: "not\_run", detail: reason\}}.
+\end{itemize}
+
+\section{The runner}\label{sec:bench-runner}
+
+\module{benchmarks.runner} takes every (equation, tool) unit through its symbolic run, the
+phase 1 ladder, and the phase 2 fill. Every run is a fresh worker process under a memory cap,
+and every finished run is appended to the log before the next starts. Units run
+\code{platform.jobs} at a time in a thread pool; the runs of one unit go one after another,
+since each step depends on the outcomes before it.
+
+\subsection{Start-up}
+
+\begin{algorithm}[\texttt{run(cfg, shard, only)}]\label{alg:bench-run}
+\begin{enumerate}
+\item Create the results directory; write the configuration to
+  \file{configs/<hash>.json} (indent 1).
+\item Preflight the enabled tools (\py!tools.preflight!, \cref{ch:bench-tools}); on any problem
+  print \code{benchmarks: preflight failed, not starting:} and one indented line per problem, and
+  exit with status 2.
+\item Record the environment (\cref{tab:bench-environment}) with the calibration and write it to
+  \file{environment/<host>-<job>-<task>-<unix time>.json}; the host is the short host name, the
+  job \code{SLURM_ARRAY_JOB_ID} (else \code{local}), the task \code{SLURM_ARRAY_TASK_ID} (else
+  \code{0}).
+\item Obtain the false set (\cref{alg:bench-falseset}) when enabled.
+\item Build the context: the log index of this configuration hash, the machine record, the
+  calibration median and tag, the per-worker memory cap, the cgroup flag (whether
+  \py!memcap.mechanism()! is \code{systemd}), the git
+  commit and dirty flag, the Lean slots and budget, and the stale units
+  (\cref{alg:bench-stale}).
+\item Build the units (\cref{alg:bench-units}); keep those whose id hashes into this shard
+  ($\text{SHA-256}(\mathit{id})$ as an integer $\bmod N = I$); with \code{--only}, keep those
+  matching a glob.
+\item Print \code{benchmarks: U units, config H, J workers, M MiB each, S Lean slots of B MiB, R runs already logged}.
+\item Install \code{SIGINT} and \code{SIGTERM} handlers that set the stop flag and terminate
+  every live worker. Run the units in the pool; after each, print \code{[k/U] UNIT}; an exception
+  prints \code{unit UNIT: TYPE: MESSAGE} and moves on.
+\item When stopped, print \code{benchmarks: interrupted; finished runs are logged, rerun to resume} and exit with status 130.
+\end{enumerate}
+\end{algorithm}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.2\textwidth} X@{}}
+\caption{The environment record.}\label{tab:bench-environment}\\
+\toprule
+\normalfont Field & Content\\
+\midrule\endfirsthead
+\bottomrule\endfoot
+config, config\_hash & The resolved configuration and its hash.\\
+git\_commit, git\_dirty & \code{git rev-parse HEAD}; whether \code{git status --porcelain --untracked-files=no} prints anything.\\
+machine & \code{node} (host name), \code{cpu_model} (first \code{model name} of
+  \file{/proc/cpuinfo}), \code{governor} (cpu0's scaling governor), \code{mem_total_mb}
+  (\cref{sec:bench-lean}), \code{os}, \code{python}, \code{cpus}.\\
+software & Installed versions of \code{archytaszx}, \code{sympy}, \code{numpy}, \code{matplotlib}
+  (\code{null} when absent).\\
+lean\_toolchain, mathlib & The Lean project's \file{lean-toolchain} text and the Mathlib
+  \code{rev} of \file{lake-manifest.json}.\\
+started & Local time \code{YYYY-MM-DDTHH:MM:SS}.\\
+slurm & Every environment variable whose name starts \code{SLURM_}.\\
+calibration & \texttt{\{script: "GHZ symbolic decide", cpu: [...], median\}}.\\
+\end{xltabular}
+
+\paragraph{Calibration.} The runner executes a pinned script three times, each in a fresh
+Python process, and records the decide stage's CPU seconds; the median is the middle sorted
+value (\code{None} with no time). The script decides, at symbolic $n$ and $d$, the
+\bbox{}ed Bell-pair circuit (an \azx!X! state through $F$, copied by \azx!Z(1 -> 2)! onto an
+\azx!X(2 -> 1)! fed by a second \azx!X! state, the second state and the sum node in
+\azx!repeat n!, scalar \code{1/sqrt(d)}) against \azx!g = Z(0 -> 2, d)! with
+\azx!repeat n: g.out1! and scalar $d^{-1/2}$. Point rows divide stage CPU medians by this
+median (\cref{sec:bench-aggregate}).
+
+\begin{algorithm}[False set of a run]\label{alg:bench-falseset}
+Shard 0 takes an exclusive \code{flock} on \file{false_set.lock} and calls \py!generate!, then
+\py!tabled! with \code{probe_seconds} per point. Every other shard polls \py!load! every 30
+seconds (printing \code{benchmarks: shard I waits for PATH} every 600 seconds) until the file
+holds this configuration's set, then calls \py!tabled!.
+\end{algorithm}
+
+\begin{algorithm}[Units]\label{alg:bench-units}
+For every $S$ instance and every enabled tool known to the adapter registry, a unit
+\py!Unit(equation, tool, None, restricted)!. When the false set is enabled, for every record with
+a kind: when \py!mismatch! returns a reason, print \code{benchmarks: F record refused: REASON}
+and skip it; otherwise one unit per tool on the $F$ instance. A unit's id is
+\code{EQUATION[!]|TOOL}.
+\end{algorithm}
+
+\begin{algorithm}[Stale units]\label{alg:bench-stale}
+A logged unit record is stale, and its unit runs again, when it lacks \code{differs_checked}
+and either (a) its tool is check-once and its \code{K} is not 1, or it has no
+\code{check_phase} and the adapter's \code{symbolic_covered} refuses the subject; or (b) it is
+an $F$ unit with a logged concrete run at a point where the pair does not differ.
+\end{algorithm}
+
+\subsection{The unit schedule}
+
+\py!UnitRun(unit, inst, ctx)! computes the source digest of the instance once. A run's version
+is \code{restricted} for a restricted instance, else \code{symbolic} for the point \code{None},
+else \code{concrete}. \py!run(point, repeat, trace, phase)! returns the logged record of its key
+(\cref{def:bench-key}) when one exists, reclassified when it has no \code{cause}; a logged
+check-once refusal (unsupported code \code{published_once}) runs again. Otherwise it launches a
+worker, builds the run record (\cref{tab:bench-run-record}), classifies it
+(\cref{sec:bench-outcomes}), appends it, and indexes it.
+
+\begin{algorithm}[\texttt{UnitRun.execute}]\label{alg:bench-execute}
+\begin{enumerate}
+\item Skip the unit when its unit key \code{HASH|EQ@SOURCE|unit|TOOL} is logged and not stale.
+\item Ask the adapter \py!supports(inst, None)!. A check-once adapter
+  (\code{CHECK_ONCE}) with support runs \cref{alg:bench-check-once}. A refusal writes the unit
+  record with \code{unsupported}, its code, and \code{successes = 0}.
+\item With \code{points.symbolic} and a symbolic version, run the symbolic point (phase
+  \code{symbolic}); on success run its repeats.
+\item Build the axes with the $F$ record and the adapter's \code{DIMENSIONS}; count the domain up
+  to $K$. With adapter dimensions and an empty domain, write the unit as unsupported with the
+  reason \code{qubits only (d = 2)} (dimensions \code{(2,)}) or \code{dimensions [...] only}.
+\item When the domain has fewer than $K$ points, run every one (phase \code{all}), repeats after
+  successes, and write the unit with \code{domain} and \code{region_exhausted = False}.
+\item Phase 1: for each ladder point run it (phase \code{ladder}); an uncounted failure is
+  skipped; a counted failure is recorded and ends the ladder; a success runs its repeats.
+\item Phase 2, while successes are below $K$: draw the next point (phase \code{random}); none
+  left sets \code{region_exhausted}; a success runs its repeats; an uncounted failure is
+  skipped; a counted failure joins the failed list, and after \code{phase2_extra_failures} of
+  them \code{region_exhausted} is set and the phase ends.
+\item Write the unit record.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Check-once units]\label{alg:bench-check-once}
+A check-once tool (published proofs) makes one check with $K=1$: the symbolic run when
+\code{points.symbolic}, the instance has a symbolic version, and the adapter's
+\code{symbolic_covered} accepts the subject; otherwise the adapter's \py!stated(inst, cfg)!
+point (phase \code{stated}); when that is \code{None}, the unit is unsupported with \code{the published proof's stated size lies outside the domain}. The unit record carries \code{K: 1} and
+\code{check_phase}.
+\end{algorithm}
+
+\begin{algorithm}[Repeats]\label{alg:bench-repeats}
+After a successful repeat 0 at a point: in \code{fixed} mode run repeats $1,\dots,\mathit{runs}-1$.
+In \code{adaptive} mode collect the main CPU of each success (the \code{decide} stage, else
+\code{check}, else the first stage) and run repeats $r=1,2,\dots$ while $r<\mathit{max\_runs}$,
+stopping before a repeat once $r\ge\max(\mathit{min\_runs},1)$, $r\ge$ \py!stats.min_runs!, and
+the sample is precise (\cref{sec:bench-stats}). With tracing on and a positive
+\code{overhead_sample}, a point whose key \code{"EQ|TOOL|POINT"} hashes below the share (first 8
+bytes of SHA-256 over $2^{64}$) also runs repeat 0 with tracing off.
+\end{algorithm}
+
+\subsection{Records}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.2\textwidth} X@{}}
+\caption{Fields the runner writes on every run record.}\label{tab:bench-run-record}\\
+\toprule
+\normalfont Field & Content\\
+\midrule\endfirsthead
+\toprule
+\normalfont Field & Content\\
+\midrule\endhead
+\bottomrule\endfoot
+key & The run key (\cref{def:bench-key}).\\
+config & The configuration hash.\\
+equation & The instance id (with \code{!} for $F$).\\
+source & The source digest.\\
+truth & True for $S$.\\
+kind & The break kind, or \code{null}.\\
+subject, category & Of the subject.\\
+version & \code{symbolic}, \code{concrete}, \code{restricted}.\\
+tool & The tool name.\\
+n, d & The point (\code{null} when symbolic).\\
+repeat, trace & The repeat index; whether tracing was on.\\
+phase & \code{symbolic}, \code{all}, \code{ladder}, \code{random}, \code{stated}.\\
+started, finished & Unix times around the launch.\\
+machine, calibration, git & The machine record; \texttt{\{median, tag\}}; \texttt{\{commit, dirty\}}.\\
+memory\_cap\_mb & The worker memory cap.\\
+(worker fields) & The worker's result, or the kill record (\cref{sec:bench-launch}), plus
+  \code{process_wall}.\\
+outcome, stage, cause, cause\_message & From the classifier; also \code{raw_outcome},
+  \code{tags}, \code{point_invalid}, \code{wrong} where it sets them.\\
+\end{xltabular}
+
+A unit record has \code{key}, \code{config}, \code{unit: true}, \code{equation}, \code{source},
+\code{truth}, \code{subject}, \code{category}, \code{tool}, \code{kind}, \code{restricted},
+\code{K}, \code{differs_checked} (true for $F$ units), and the schedule fields:
+\code{successes}, \code{failures}, \code{skipped}, \code{succeeded} (lists of rows
+\texttt{\{point, outcome, stage, cause, cause\_message, key[, point\_invalid][, phase]\}}, phase 1
+or 2 for ladder and fill rows), \code{symbolic} (the symbolic row), \code{region_exhausted},
+\code{domain} (small domains), \code{unsupported} and \code{unsupported_code}, and for check-once
+units \code{K: 1} and \code{check_phase}.
+
+\subsection{Worker launch and memory caps}\label{sec:bench-launch}
+
+\py!memory_cap_mb(cfg, jobs)! is $\lfloor \mathit{memory\_fraction}\cdot A / \max(1,
+\mathit{jobs})\rfloor$ MiB, $A$ the \code{MemAvailable} of \file{/proc/meminfo}, at most the Slurm
+allocation.
+
+\begin{algorithm}[\texttt{launch(job, ctx)}]
+\begin{enumerate}
+\item The wall limit is $\mathit{timeout\_seconds}\cdot(s+1+[\mathit{lean\_check}])\cdot
+  \mathit{wall\_factor}$, $s$ the number of enabled stages among decide, certificate,
+  lean\_export, lean\_check (the Lean check counts twice: its light and full attempts,
+  \cref{sec:bench-lean}).
+\item Choose the worker's cap mechanism (\py!worker_memcap!): \code{systemd} when the context's
+  cgroup flag is set (\py!memcap.mechanism()! is \code{systemd} at start-up); else
+  \code{cgroup_v2} when the context's \code{memcap} override, or \py!memcap.mechanism()!, is
+  \code{cgroup_v2} and a child cgroup \code{azx-worker-*} of the cap can be made
+  (\cref{sec:bench-memcap}); else \code{rlimit_as}.
+\item Write the job JSON to a temporary file \code{bench-job-*.json}. The command is
+  \code{python -m benchmarks.worker FILE}; under \code{systemd} it runs under
+  \code{systemd-run --user --scope --quiet --collect -p MemoryMax=<cap>M -p MemorySwapMax=0};
+  under \code{cgroup_v2} the child joins its cgroup before exec.
+\item The environment adds \code{OMP_NUM_THREADS=1}, \code{OPENBLAS_NUM_THREADS=1},
+  \code{PYTHONHASHSEED=0}, the repository on \code{PYTHONPATH}, \code{BENCH_MEMORY_MB} (the cap
+  under \code{rlimit_as}, else empty), \code{BENCH_MEMCAP_WORKER} (the mechanism),
+  \code{BENCH_SPAN_FILE} (the job file plus \code{.spans}), and, with a Lean budget,
+  \code{BENCH_LEAN_SLOTS} and \code{BENCH_LEAN_BUDGET_MB}.
+\item Start the process in a new session; a timer kills it at the wall limit (\py!terminate!:
+  \code{SIGTERM} to the process group, \code{SIGKILL} after 5 seconds). After exit, a
+  \code{cgroup_v2} cap reports an oom kill when its cgroup's \code{oom_kill} counter rose; the
+  cgroup is removed.
+\item Read standard output line by line: \code{@@STAGE NAME} sets the current stage,
+  \code{@@RESULT JSON} the result, \code{@@OOMKILL K} the scope's oom-kill rise, \code{@@SPANS JSON} the spans (source \code{sigterm}).
+\item Without a result or spans, read the spans from the side file (source \code{snapshot});
+  remove the job file and side files.
+\item When stopping and no result arrived, raise \py!InterruptedError!. A result receives
+  \code{process_wall} and \code{memcap} (the mechanism) and is returned.
+\item Otherwise classify the kill: \code{timeout} by the stage timer; \code{oom} by exit code
+  $-9$ or 137 (\code{SIGKILL}); \code{oom} by a positive oom-kill rise reported by the worker or
+  by the \code{cgroup_v2} cap (\code{cgroup oom_kill});
+  else \code{error} (\code{exit CODE}). An error with exit 143 or $-15$ under cgroups becomes
+  \code{oom} when the user journal shows an oom-kill failure of scope \code{run-p<pid>-*} since
+  the start (polled every 0.5\,s for up to 3\,s). Return \texttt{\{outcome, killed\_in, exit, kill, detail (the last 400 characters of standard error), process\_wall, memcap[, spans, spans\_source, open\_span]\}}.
+\end{enumerate}
+\end{algorithm}
+
+\section{The worker}\label{sec:bench-worker}
+
+\code{python -m benchmarks.worker JOB_JSON_FILE} executes one run. The job holds
+\code{equation}, \code{false}, \code{tool}, \code{point}, \code{repeat}, \code{trace}, and the
+resolved \code{config}.
+
+\begin{algorithm}[Worker main]
+\begin{enumerate}
+\item Reserve 32\,MiB in a byte array (released before encoding the result); lift the integer
+  string-conversion limit; without \code{BENCH_MEMORY_MB}, read the scope's \code{oom_kill}
+  counter from cgroup v2 \file{memory.events} (\code{None} outside a \file{.scope}); install the
+  \code{SIGTERM} handler.
+\item Set \code{ARCHYTASZX_TRACE} to 1 or 0 from the job. For a traced ArchytasZX run with
+  \code{BENCH_SPAN_FILE}, start a daemon thread that writes \texttt{\{"spans": ...\}} to the side
+  file every 30 seconds (atomically through \file{.tmp}).
+\item With \code{BENCH_MEMORY_MB}, set the soft \code{RLIMIT_AS} to that many MiB.
+\item Rebuild the instance from the configuration and the job (the $F$ instance when
+  \code{false} is set). For a rival, print \code{@@STAGE prepare} and arm a CPU timer of
+  \code{stages.prepare_timeout_seconds} (default \code{timeout_seconds}) over its preparation;
+  the adapter pauses and resumes it around the rival's own call (\py!end_prepare!,
+  \py!resume_prepare!).
+\item Call \py!adapter.run(inst, job)!. An expired preparation yields \texttt{\{outcome: timeout, killed\_in: prepare, limit: prepare\_cpu, reason: "prepare: CPU limit"\}}; an exception
+  yields \py!failure(tool, exc)!.
+\item Print \code{@@RESULT JSON}. When encoding raises \py!MemoryError!, retry without span trees
+  (\code{result_encode: "MemoryError"}), then with only the fields whose JSON is under 4096
+  characters.
+\end{enumerate}
+\end{algorithm}
+
+\py!failure(tool, exc)!: a translator or rival \py!Unsupported! gives the adapter's unsupported
+record; \py!MemoryError! gives \texttt{\{outcome: oom, killed\_in: prepare\}}; any other exception
+in ArchytasZX gives \code{error}; in a rival, \code{harness_error} with \code{reason "spec bound: ..."} and \code{harness_cause: spec_bound} for a refused specification, else \code{reason "prepare: ..."}. The \code{SIGTERM} handler prints \code{@@OOMKILL} with the counter's rise,
+then \code{@@SPANS} with the snapshot, kills the running Lean checks, and exits with
+$128+\mathit{signal}$. \py!mark(stage)! prints \code{@@STAGE stage}.
+
+\section{The results log}\label{sec:bench-log}
+
+\begin{definition}[Run key]\label{def:bench-key}
+\py!key(cfg_hash, equation, version, tool, point, repeat, trace)! is
+\code{HASH|EQUATION|VERSION|TOOL|n=N|d=D|r=R|t=T}, with \code{n=sym|d=sym} for the symbolic
+point and \code{T} 0 or 1. The runner passes \code{EQUATION@SOURCE} as the equation, so an edited
+subject never reuses old runs.
+\end{definition}
+
+\module{benchmarks.log} keeps one file per worker thread,
+\file{results/raw/<host>-<job>-<task>-w<k>.jsonl} (the job from \code{SLURM_ARRAY_JOB_ID}, else
+\code{SLURM_JOB_ID}, else \code{local}; the task from \code{SLURM_ARRAY_TASK_ID}, else 0). Each
+record is one compact JSON line (separators \code{,} and \code{:}, non-JSON values as text),
+appended under a lock, flushed, and \code{fsync}ed; no line is ever edited.
+\py!lines(results)! reads every file in sorted order, stops a file at a line without a final
+newline, skips malformed lines, and yields objects with a \code{key}. \py!index(results, cfg_hash)! keeps the first record of every key (of that hash when given), except that a unit
+record with \code{differs_checked} replaces one without.
+
+\section{Outcomes, stages, and causes}\label{sec:bench-outcomes}
+
+\module{benchmarks.outcomes} gives every run record an \code{outcome}, a \code{stage}, a
+\code{cause}, and a \code{cause_message}. \py!classify! reads only a record's fields, so it
+applies to new and logged records alike.
+
+\subsection{Outcomes and stages}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.22\textwidth} X@{}}
+\caption{Run outcomes (\texttt{OUTCOMES}).}\label{tab:bench-outcome-list}\\
+\toprule
+\normalfont Outcome & Meaning\\
+\midrule\endfirsthead
+\bottomrule\endfoot
+ok & The expected verdict, certified (equal on $S$, unequal on $F$).\\
+uncertified & The expected verdict without a certificate.\\
+wrong & The opposite verdict, certified.\\
+wrong (uncertified) & The opposite verdict, uncertified.\\
+unknown & No verdict.\\
+unsupported & The tool or translator cannot express the instance.\\
+timeout & A CPU or wall limit.\\
+oom & A memory kill or allocation failure.\\
+error & A failure of the tool.\\
+harness\_error & A failure of the harness itself; not scored.\\
+invalid\_point & A verdict at a point where the $F$ pair is equal; not scored.\\
+\end{xltabular}
+
+The verdict outcomes are the first five; the wrong outcomes are \code{wrong} and \code{wrong (uncertified)}; \code{harness_error} and \code{invalid_point} are not scored. The stages are
+\code{generate}, \code{decide}, \code{certificate}, \code{lean_export}, \code{lean_check} (the
+engine stages), \code{prepare}, and \code{rival}. Further constants: the exact tools
+\code{archytaszx}, \code{pyzx}, \code{quizx}, \code{cirq}, \code{qiskit}; the up-to-scalar tools
+\code{qcec}, \code{dizx}, \code{feynman}, \code{autoq_para}, \code{quantomatic}; the scalar kinds
+\code{scalar_small_one}, \code{global_phase}, \code{box_boundary}; the float simulators
+\code{qiskit}, \code{cirq} with \py!BREAK_FLOOR! $=10^{-6}$.
+
+\subsection{Cause codes}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.35\textwidth} X@{}}
+\caption{Cause codes (\texttt{CAUSES}).}\label{tab:bench-causes}\\
+\toprule
+\normalfont Cause & Meaning\\
+\midrule\endfirsthead
+\toprule
+\normalfont Cause & Meaning\\
+\midrule\endhead
+\bottomrule\endfoot
+verdict.<verdict> & The run's verdict.\\
+pair\_equal\_at\_point & The $F$ pair is equal at this point.\\
+break\_below\_float\_tolerance & A float simulator measured the break below \py!BREAK_FLOOR!.\\
+false\_record\_mismatch & The $F$ record's edit is not a variant of the current form.\\
+rival.no\_verdict & The rival returned no verdict.\\
+kill.stage\_timer & The runner's wall timer killed the worker.\\
+kill.sigkill & The worker died of SIGKILL or exit 137.\\
+kill.cgroup\_oom\_kill & The scope's oom\_kill counter rose.\\
+kill.exit & The worker died with another exit code.\\
+limit.stage\_cpu & A stage used up its CPU limit.\\
+limit.generate\_cpu & Script generation used up its CPU limit (timeout).\\
+limit.prepare\_cpu & A rival's preparation used up its CPU limit (timeout).\\
+limit.rival\_cpu, limit.rival\_wall & The rival used up its CPU or wall limit.\\
+memory.error & \py!MemoryError! or a failed allocation in the worker.\\
+memory.rival & The rival was killed for memory or raised \py!MemoryError!.\\
+memory.lean & Lean was killed for memory.\\
+rival.exception & An exception in the rival's library.\\
+rival.exit & The rival's binary or driver exited nonzero.\\
+engine.load\_refused & A load line of the script failed in the engine.\\
+limit.load\_size & The engine's parser refused a load line by a size bound (a power or product
+  too large, a port count above the bound).\\
+engine.exception & An exception in an ArchytasZX stage.\\
+lean.rejected & Lean did not accept the exported file.\\
+harness.prepare & An exception while preparing a rival's input.\\
+harness.spec\_bound & The engine's loader refused a rival's specification script.\\
+harness.driver & An exception in the harness's own driver code.\\
+harness.generate & An exception while generating the ArchytasZX script.\\
+unsupported.<code> & A code of \cref{tab:bench-unsupported}.\\
+unsupported.input\_size & A \py!MemoryError! or memory kill while generating the ArchytasZX
+  script outside the engine's input spans.\\
+unknown.<rung code> & The last rung tried and its stop code (\cref{tab:bench-rungs}).\\
+\end{xltabular}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.3\textwidth} >{\ttfamily}X@{}}
+\caption{Unsupported codes (\texttt{UNSUPPORTED}): code and the message fragment it matches.}\label{tab:bench-unsupported}\\
+\toprule
+\normalfont Code & \normalfont Fragment\\
+\midrule\endfirsthead
+\toprule
+\normalfont Code & \normalfont Fragment\\
+\midrule\endhead
+\bottomrule\endfoot
+register\_count\_mismatch & gate across registers of different counts\\
+phase\_table\_on\_register & a phase table on a register\\
+phase\_table\_dims & a phase table needs literal concrete dimensions\\
+phase\_table\_bound & above the engine loader's bound of\\
+phase\_table\_irrational & a phase table entry is not a rational number of turns\\
+controlled\_mixed\_dims & a controlled gate between wires of different dimensions\\
+multi\_controlled\_dims & a multi-controlled gate needs literal concrete dimensions\\
+oracle\_dims & an oracle needs literal concrete dimensions\\
+dense\_gate\_no\_zxw & a dense reference gate has no ZXW translation\\
+permutation\_on\_register & a permutation on a register\\
+permutation\_dims & a permutation needs literal concrete dimensions\\
+no\_general\_form & the circuit has no general form in n\\
+needs\_concrete\_d & the equation needs a concrete dimension\\
+symbolic\_point & no symbolic n or d\\
+qubits\_only & qubits only\\
+odd\_prime\_only & odd prime d only\\
+fixed\_dimension & fixed dimension\\
+channel & measurement or discard (a channel, not a pure map)\\
+wire\_dim\_not\_d & a wire of dimension other than d\\
+mixed\_wire\_dims & wires of mixed dimensions\\
+gate\_unsupported & "gate "\\
+scalar\_modulus & a circuit scalar of modulus other than 1\\
+circuit\_scalar & a circuit scalar\\
+spec\_mixed & a mixed specification\\
+spec\_axes & the specification has more than\\
+spec\_too\_large & the specification tensor is too large\\
+spec\_generator & "generator "\\
+spec\_weighted & a weighted spider\\
+spec\_no\_wires & the specification has no wires\\
+spec\_zero\_state & the specification is the zero state\\
+spec\_isometry & the specification is an isometry, not a unitary\\
+spec\_not\_unitary & the specification is not unitary\\
+no\_reference & no gate-level reference circuit for this equation\\
+gate\_set & not expressible in the gate set\\
+tensor\_axes & " tensor axes: above numpy's"\\
+einsum\_subscripts & "-qudit gate: above numpy.einsum's"\\
+too\_large\_to\_simulate & ": too large to simulate"\\
+post\_selected & post-selected wires\\
+phase\_not\_pi4 & a phase that is not a multiple of pi/4\\
+not\_clifford\_t & " outside Clifford+T"\\
+not\_dizx\_clifford & " is not a DiZX Clifford gate"\\
+width\_mismatch & circuit and reference differ in width\\
+autoq\_amplitude & an amplitude outside sqrt2 powers and eighth turns\\
+states\_only & only states (every wire initialized, none post-selected)\\
+zero\_state & the zero state\\
+no\_public\_release & symbolic n needs AutoQ-Para, which has no public release\\
+quantomatic\_bang\_boxes & symbolic n through Quantomatic's own !-boxes is not built\\
+mixed\_diagram & a mixed diagram\\
+hadamard\_arity & a hadamard vertex of arity other than 2\\
+published\_once & published proofs are checked once, at their stated size\\
+stated\_outside & the published proof's stated size lies outside the domain\\
+proof\_file\_missing & " proof file "\\
+not\_installed & not installed\\
+qubit\_cap & Requested too many qubits from package\\
+input\_size & the input format is intractable at this size\\
+\end{xltabular}
+
+\py!unsupported_code(message)! strips a leading \code{[dotted.]Unsupported: } and returns the
+code whose fragment occurs in the text, the longest fragment winning; \code{other} when none
+matches.
+
+{\small
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.5\textwidth} >{\ttfamily}X@{}}
+\caption{Rung stop codes (\texttt{RUNGS}) and their patterns, matched at the start of a note.}\label{tab:bench-rungs}\\
+\toprule
+\normalfont Code & \normalfont Pattern (regular expression)\\
+\midrule\endfirsthead
+\toprule
+\normalfont Code & \normalfont Pattern\\
+\midrule\endhead
+\bottomrule\endfoot
+normal\_form.differ & normal forms differ\\
+normal\_form.agree & normal forms agree\\
+oracle.refused & \textbackslash d+ sample\textbackslash(s\textbackslash) refused\\
+oracle.no\_mismatch & no oracle mismatch in \textbackslash d+ sample\\
+oracle.none\_evaluated & no oracle sample evaluated\\
+oracle.mismatch & oracle mismatch at\\
+saturation.iteration\_limit & saturation: .*stopped by iteration\_limit\\
+saturation.enode\_limit & saturation: .*stopped by enode\_limit\\
+saturation.saturated & saturation: .*stopped by saturated\\
+symbolic.declined.box\_meets\_wire & symbolic: symbolic contraction declined:
+  SymbolicContractionUnsupportedError: bang box \textbackslash d+ has symbolic multiplicity
+  \textbackslash w+ and meets the rest\\
+symbolic.declined.scalar\_budget & symbolic: symbolic contraction declined: ScalarBudget\\
+symbolic.declined.other & symbolic: symbolic contraction declined\\
+symbolic.indeterminate.replicated\_factors & symbolic: indeterminate: the replicated fact\\
+symbolic.indeterminate & symbolic: indeterminate\\
+symbolic.entries\_differ & symbolic: entries differ\\
+symbolic.differ & symbolic contractions differ\\
+induction.base\_not\_proved & induction: base case \textbackslash S+ not proved\\
+induction.step\_not\_discharged & induction: step case over \textbackslash w+ not proved: no discharge\\
+induction\_reversed.base\_not\_proved & reversed: base case\\
+induction\_reversed.step\_not\_discharged & reversed: step c\\
+refutation.recheck\_failed & uncertified: (?:no Lean refutation \textbackslash((?:residue|numeric)
+  recheck failed|interface recheck failed)\\
+refutation.no\_lean & (?:not reported unequal|uncertified): no Lean refutation\\
+\end{xltabular}
+}
+
+\py!clip_reason(reason)! keeps a decide reason whole up to $4000+12000$ characters; a longer one
+becomes its first 4000 characters, \code{ [... K characters cut ...] }, and its last 12000.
+
+\begin{algorithm}[\texttt{rung\_codes(reason)}]
+Split the reason at \code{"; "}. For each note: strip one prefix \code{doubled, WORD: } (and
+remember it); take the first pattern of \cref{tab:bench-rungs} that matches, else
+\code{RUNG.other} when the note starts with \code{word:}, else skip the note. After an
+\code{induction} or \code{induction_reversed} note, only notes of the rungs induction,
+induction\_reversed, refutation, and reversed are read. A note holding a \py!clip_reason! cut
+mark, and the last note of a reason of 399 or 400 characters without one (records logged when
+reasons were cut at 400), becomes \code{RUNG.truncated}. A remembered prefix gives \code{doubled.CODE}.
+Consecutive duplicates collapse. \py!stop_codes(stops)! maps a decision's (rung, code) stops to
+\code{rung.code}, prefixing \code{doubled.} after the stop \code{("doubled", "doubled")} and
+writing another doubled stop as \code{doubled.CODE}.
+\end{algorithm}
+
+\subsection{The classifier}
+
+\begin{algorithm}[\texttt{classify(rec, false, free, stale)}]\label{alg:bench-classify}
+\begin{enumerate}
+\item A record with \code{killed_in} and no \code{stages} is a kill record
+  (\cref{alg:bench-killed}); its message is prefixed \code{open span PATH; } when a span was open.
+\item An \code{unsupported} outcome: stage \code{generate} (ArchytasZX) or \code{prepare}
+  (rivals), cause \code{unsupported.CODE} (the logged code, else \py!unsupported_code!).
+\item ArchytasZX (\cref{alg:bench-engine-cause}) or a rival (\cref{alg:bench-rival-cause}).
+\item With an $F$ record and a concrete $d$: the run's region is its point plus, for each free
+  axis, every value in $0,\dots,64$ ($d\ge1$). When the record is stale, a verdict outcome becomes
+  \code{invalid_point} with cause \code{false_record_mismatch}; when the pair is provably equal
+  (\py!equal_at! true) on the whole region, a verdict becomes \code{invalid_point} with cause
+  \code{pair_equal_at_point}; when a float simulator's \code{max_rel_diff} is below
+  $10^{-6}$, a verdict becomes \code{invalid_point} with cause
+  \code{break_below_float_tolerance}. Stale or equal-region runs are flagged
+  \code{point_invalid}.
+\item The message is clipped to 300 characters: the tail when it holds a traceback frame, else
+  the head. A scalar-only $F$ record adds the tag \code{global_phase} (the counterexample ratio
+  has modulus 1 within $10^{-9}$, or by kind \code{global_phase}) or \code{scalar_factor} to
+  \code{tags}. A changed outcome keeps the original as \code{raw_outcome}; \code{wrong} is set
+  when present before or when the outcome is wrong.
+\end{enumerate}
+\end{algorithm}
+
+\py!free_axes(inst, rec)! is empty for rivals and for scripts with a point claim; for ArchytasZX
+it holds \code{n} unless $n$ is \code{None}, the form is unrolled, or there is no size parameter,
+and \code{d} unless the subject has a fixed $d$ or the script was literal. A break is scalar-only
+by the counterexample's \code{proportional} flag when set, else by kind (the scalar kinds and the
+boxed \code{beyond_N}).
+
+\begin{algorithm}[Kill records]\label{alg:bench-killed}
+In order: a preparation CPU limit gives (\code{timeout}, \code{prepare},
+\code{limit.prepare_cpu}); a stage-timer kill (or a timeout with no kill source) gives
+\code{timeout} with \code{limit.generate_cpu} in generation outside the engine's \code{input.*}
+spans, else \code{kill.stage_timer}; a memory sign (cgroup kill, \code{SIGKILL}, journal, exit
+$-9$ or 137, an \code{oom} outcome, or an allocation failure text) in generation with an open
+span outside the input spans gives (\code{unsupported}, \code{unsupported.input_size});
+a cgroup or journal oom-kill gives (\code{oom}, \code{kill.cgroup_oom_kill}); \code{SIGKILL} or
+exit $-9$/137 gives (\code{oom}, \code{kill.sigkill}); an \code{oom} outcome or an allocation
+failure text gives (\code{oom}, \code{memory.error}); else (\code{error}, \code{kill.exit}). The
+stage is \code{killed_in} (\code{None} for \code{start}).
+\end{algorithm}
+
+The allocation-failure texts are \code{out of memory}, \code{Heap exhausted}, \code{memory allocation of}, \code{std::bad_alloc}, \code{MemoryError}, \code{OutOfMemoryError}, \code{failed to map segment from shared object}, \code{cannot allocate memory}, \code{Cannot allocate memory},
+\code{Memory allocation still failed}, and \code{Unable to allocate}.
+
+\begin{algorithm}[ArchytasZX causes]\label{alg:bench-engine-cause}
+A verdict outcome has stage \code{decide}: \code{unknown} has cause \code{unknown.} plus the last
+rung code (\code{none} when there is none) and the reason as message; the others
+\code{verdict.<verdict>} with the method as message. Otherwise take the first engine stage whose
+status is neither \code{ok} nor \code{not_run} (none: \code{error}, \code{engine.exception}). A
+timeout gives \code{limit.generate_cpu} in generation outside input spans, else
+\code{limit.stage_cpu}. An oom in generation outside input spans gives (\code{unsupported},
+\code{unsupported.input_size}); another oom gives \code{memory.lean} in lean\_check, else
+\code{memory.error}. A generation error gives (\code{harness_error}, \code{harness.generate}); a
+lean\_check error gives \code{lean.rejected}. A detail matching \code{RuntimeError: ... error: MemoryError} or \code{... Unable to allocate}, or the text \code{error return without exception set} with a peak at least 0.9 of the memory cap (3481 MiB when unrecorded), gives (\code{oom},
+\code{memory.error}). A decide detail \code{RuntimeError: ...(load|@NAME =): error:} gives
+(\code{oom}, \code{limit.load_size}) when it contains \texttt{error: power (...)\^{}(...) is too large}, \code{error: product is too large}, or \code{error: ... leg count above the bound of },
+else (\code{error}, \code{engine.load_refused}); otherwise \code{engine.exception}.
+\end{algorithm}
+
+\begin{algorithm}[Rival causes]\label{alg:bench-rival-cause}
+Without stages: \code{oom} gives (\code{oom}, \code{prepare}, \code{memory.error});
+\code{error} or \code{harness_error} gives \code{memory.error} when the detail's head contains
+\code{MemoryError} or is \code{ImportError}/\code{OSError} with an allocation text, else
+\code{harness.spec_bound} when so marked, else \code{harness.prepare}. With the \code{check}
+stage: a verdict gives stage \code{rival} and \code{verdict.<verdict>}; \code{unknown} gives
+\code{rival.no_verdict}; a timeout gives \code{limit.stage_cpu} or \code{limit.rival_<cpu|wall>}
+by the check's \code{limit} field (\code{wall} when absent and no detail, else \code{cpu}); an
+oom or an allocation error gives \code{memory.rival}, as does the null-return text near the cap;
+\code{Requested too many qubits from package} gives \code{unsupported.qubit_cap}. Otherwise the
+traceback decides (\py!_frame_cause!): a Rust panic or \code{PanicException} gives
+\code{rival.exception}; no frame gives \code{rival.exit}; the deepest frame in
+\file{/tools/drivers/} being one of the helpers \code{number}, \code{_build}, \code{_identity},
+\code{add}, \code{scalar_parts}, \code{norm_identity} gives \code{harness.driver}; the deepest
+frame in the drivers calling none of the rival's names (per tool: \code{pyzx}; \code{quizx};
+\code{mqt}, \code{QuantumComputation}, \code{verify(}; \code{cirq}; \code{qiskit},
+\code{qasm2}, \code{Operator}; \code{pytket}, \code{FullPeepholeOptimise},
+\code{circuit_from_qasm_str}; \code{dizx}, \code{clifford_simp}; else the tool name) gives
+\code{harness.driver}; otherwise \code{rival.exception}. A harness cause makes the outcome
+\code{harness_error}, else \code{error}.
+\end{algorithm}
+
+\py!counted(rec)! is true when the outcome is scored and the run is not flagged
+\code{point_invalid}. \py!reclassify_record(rec, insts, falses)! looks up the instance (an $F$
+id uses its $S$ instance) and the $F$ record, computes the free axes and staleness
+(\py!mismatch!), and calls \py!classify!.
+
+\section{Repeat statistics}\label{sec:bench-stats}
+
+\module{benchmarks.stats} gives the exact distribution-free confidence interval of the median
+by order statistics~\cite{david2003order} and the adaptive stopping rule of the cluster
+profile, a rule of the kind used for rigorous performance measurement~\cite{georges2007statistically}.
+
+\begin{definition}[Median interval]
+For a sample of size $m$, let $j$ be the largest integer in $1,\dots,\lfloor m/2\rfloor$ with
+\[
+  2\,\Pr[\mathrm{Bin}(m, \tfrac12)\le j-1] \;=\; 2^{1-m}\sum_{i=0}^{j-1}\binom{m}{i} \;\le\; 1-c,
+\]
+the search stopping at the first $j$ that fails. The interval is $[x_{(j)}, x_{(m+1-j)}]$ of the
+sorted sample; it covers the population median with probability at least $c$. No $j$ qualifies
+for small $m$ (\py!median_ci_ranks! returns \code{None}).
+\end{definition}
+
+\py!min_runs(c)! is the least $m$ with an interval; at $c=0.95$ it is 6 ($2\cdot2^{-6} =
+0.03125 \le 0.05$). \py!precise(values, c, p)! is true when the half-width is at most $p$ times
+the absolute sample median (when the median is 0, when the half-width is 0). \py!summary(values, c=None)! returns \code{median}, \code{q1}, \code{q3} (linear-interpolated 25th and 75th
+percentiles), \code{min}, \code{max}, \code{n}, the raw \code{values}, and with $c$ the bounds
+\code{ci_lo}, \code{ci_hi} (\code{None} without an interval); an empty sample gives
+\texttt{\{n: 0, values: []\}}.
+
+\section{Aggregates}\label{sec:bench-aggregate}
+
+\py!aggregate.main(cfg)! writes the aggregates of one configuration hash to
+\file{results/aggregate/}, each table as \file{NAME.csv} and \file{NAME.json} (indent 1). A CSV
+has the union of the rows' keys in first-seen order as header, and list or dictionary cells as
+JSON text; an empty table is an empty file.
+
+\begin{algorithm}[\texttt{aggregate.main}]
+\begin{enumerate}
+\item Read the log index of the hash; keep the records whose \code{source} equals today's source
+  digest of their instance (\py!current!: edited or removed subjects drop out).
+\item \py!upgrade! each ArchytasZX record logged before certified verdicts (no
+  \code{certified} field): \code{equal} with a rejected kernel becomes
+  \code{equal_uncertified}; \code{unknown} whose reason contains \code{not reported unequal:}
+  becomes \code{unequal_uncertified}; the outcome is recomputed by the adapter's
+  \py!verdict_outcome! and \code{certified}, \code{wrong} are set.
+\item Classify (\py!classified!): a run record that the journal shows oom-killed
+  (\cref{sec:bench-reclassify}) is reclassified from its raw outcome with
+  \code{journal_oom_kill}; a run record without \code{cause} is reclassified; the $F$ records come
+  from \file{false_set.json} through \py!tabled!.
+\item Drop the runs with outcome \code{invalid_point} or flag \code{point_invalid}.
+\item Write the tables of \cref{tab:bench-aggregates}, then print \code{aggregate: R runs, P points, U units, W wrong verdicts, H harness errors, X runs at points where the F pair is equal (invalid_point, point_invalid) excluded -> DIR} and one line \code{ENGINE WRONG VERDICT[ (uncertified)]: EQ VERSION n=N d=D: VERDICT} per wrong ArchytasZX point.
+\end{enumerate}
+\end{algorithm}
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.16\textwidth} X@{}}
+\caption{Aggregate tables.}\label{tab:bench-aggregates}\\
+\toprule
+\normalfont Table & Rows and columns\\
+\midrule\endfirsthead
+\toprule
+\normalfont Table & Rows and columns\\
+\midrule\endhead
+\bottomrule\endfoot
+points & One row per (equation, version, tool, $n$, $d$); untraced runs are left out when tracing
+  is enabled. Columns from the first repeat: \code{equation}, \code{version}, \code{tool},
+  \code{n}, \code{d}, \code{subject}, \code{category}, \code{truth}, \code{kind},
+  \code{phase}, \code{outcome}, \code{verdict}, \code{wrong}, \code{runs}, \code{unstable} (first
+  run ok but a repeat not ok), \code{noisy} (adaptive and runs $\ge$ \code{max_runs}),
+  \code{node}, \code{cpu_model}, \code{calibration}, \code{detail} (200 characters),
+  \code{reason}, \code{stage}, \code{cause}. Per stage $s\in$ \{generate, decide, certificate,
+  lean\_export, lean\_check, check\} over the successful runs whose stage is ok:
+  \code{s_cpu_<summary key>} (with the median interval in adaptive mode), \code{s_wall_median},
+  \code{s_peak_mb} (maximum), \code{s_status}, \code{s_cpu_scaled} (median over calibration);
+  \code{s_status} from the first run when no run qualifies. \code{run_cpu_*}: the summary of
+  total stage CPU, without values. Size fields \code{decide.derivation_steps},
+  \code{certificate.inferences}, \code{certificate.certificate_bytes},
+  \code{lean_export.lean_lines}, \code{lean_export.lean_bytes}, \code{lean_check.lean_cpu},
+  \code{check.nodes_after}, \code{check.proof_lines}, \code{check.proof_bytes}, and
+  \code{axiom_class}. Sorted by equation, tool, version, $n$, $d$ (\code{None} as $-1$).\\
+units & Per unit record: \code{equation}, \code{tool}, \code{subject}, \code{category},
+  \code{truth}, \code{kind}, \code{K}, \code{successes}, \code{K_reached}
+  (\code{successes == K}), \code{region_exhausted}, \code{unsupported}, \code{frontier} (the
+  failures), \code{n_max_ok} and \code{d_max_ok} (largest ok concrete point).\\
+counts & Points per (\code{category}, \code{version}, \code{tool}, \code{set} S/F, \code{kind},
+  \code{n_bin}, \code{d_bin}), tket excluded: \code{points} (scored), \code{proved} (S ok),
+  \code{refuted} (F ok), \code{wrongly_refuted}, \code{wrongly_accepted}, and one column per
+  other outcome. Bins: $n$ \code{none}, \code{0}, \code{1e<k>} with $k=\lfloor\log_{10}n\rfloor$;
+  $d$ \code{none}, \code{1}, \code{2}, \texttt{<2\^{}(k-1)+1>-<2\^{}k>} with $k=\lceil\log_2 d\rceil$.\\
+causes & Points per (\code{tool}, \code{version}, \code{set}, \code{outcome}, \code{stage},
+  \code{cause}, \code{tags}): \code{points}.\\
+equations & Per (\code{category}, \code{version}, \code{tool}, \code{set}), tket excluded:
+  \code{equations}, \code{settled} (some point ok), \code{wrong} (some point wrong).\\
+breakdown & Per (equation, tool, version, $n$, $d$, category, group, name) over traced ok runs:
+  the medians \code{cpu} and \code{calls}, and \code{mean} $=$ cpu/calls. Groups: \code{rung}
+  (spans \code{decide.*}, \code{saturation.*}), \code{rule} (\code{rewrite.apply} by label),
+  \code{match} (\code{rewrite.match}), \code{inference} (\code{kernel.*}), \code{lean}
+  (\code{lean.*}, plus \code{lean_check:<kind>} from \code{decl_ms}), \code{other}
+  (\code{stage:name}).\\
+b3 & Per repeat-0 traced run with a \code{b3} record holding \code{naive}: \code{equation},
+  \code{tool}, \code{version}, \code{n}, \code{d}, \code{category}, \code{ratio},
+  \code{naive.*}, \code{smallest.*} (\cref{sec:bench-size}).\\
+overhead & Per point with a repeat-0 ok run traced and untraced (positive untraced CPU):
+  \code{traced_cpu}, \code{untraced_cpu}, \code{ratio} of the decide (else check) stage.\\
+calibration & Per environment file: \code{job}, \code{node}, \code{cpu_model}, \code{governor},
+  \code{calibration_median}, \code{calibration_runs}, \code{git_commit}, \code{git_dirty}.\\
+wrong & The point rows with \code{wrong}.\\
+harness\_errors & Per point whose first run is \code{harness_error}: \code{equation},
+  \code{version}, \code{tool}, \code{n}, \code{d}, \code{reason}.\\
+\end{xltabular}
+
+\section{Plots}\label{sec:bench-plots}
+
+\py!plots.main(cfg)! reads the aggregates and writes PNG (300 dpi) and PDF files to
+\code{output.plots} with \tool{Matplotlib}{https://matplotlib.org}~\cite{hunter2007matplotlib}
+(backend Agg; white background; TrueType fonts embedded, type 42; font size 8; light grid
+\texttt{\#e5e5e5}; solid lines of width 1.5; no legend frame). Tool styles take the Okabe-Ito
+hues~\cite{okabe2008color} \texttt{\#0072B2}, \texttt{\#D55E00}, \texttt{\#009E73}, \texttt{\#CC79A7},
+\texttt{\#E69F00}, \texttt{\#56B4E9} (yellow and black left out) in the fixed tool order
+\code{archytaszx}, \code{pyzx}, \code{quizx}, \code{qcec}, \code{feynman}, \code{dizx},
+\code{qiskit}, \code{cirq}, \code{autoq_para}, \code{tket}, \code{quantomatic},
+\code{published_proofs}; tool $k$ has hue $k \bmod 6$ and marker \code{o} for $k<6$, \code{s}
+otherwise (an unknown tool takes the last position). Every $n$ axis plots $n+1$ on a log scale.
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.27\textwidth} X@{}}
+\caption{Plot files.}\label{tab:bench-plots}\\
+\toprule
+\normalfont File & Content\\
+\midrule\endfirsthead
+\bottomrule\endfoot
+time\_<stage>\_in\_<axis> & For stages decide, certificate, lean\_export, lean\_check and axes
+  $n$, $d$: four panels (categories), S points of concrete versions, per tool one faint line per
+  equation (alpha 0.18) and the median over equations in bold with markers; log-log; written
+  only when some panel has data.\\
+time\_3d & ArchytasZX decide CPU against $\log_{10}(n+1)$ and $\log_{10}d$ per category, 3D
+  scatter.\\
+frontier & Per tool, the largest ok $(n+1, d)$ of each S unit; log $n$, log$_2$ $d$.\\
+lean\_sizes & Lean check CPU and Lean lines against $n$ and $d$ (ArchytasZX, S, concrete), one
+  color per category.\\
+b3\_sizes & Smallest diagram total against $n$ and $d$, and the median naive-to-smallest ratio
+  per category.\\
+breakdown\_<group> & For rung, rule, inference: share of traced ArchytasZX CPU per category by
+  the up to six largest keys and \code{other}.\\
+b2\_kinds & Per tool, F points per break kind as stacked bars refuted, wrongly accepted, unknown,
+  other.\\
+proved\_bins & S points proved per $n$ bin and per $d$ bin, per tool.\\
+\end{xltabular}
+
+The run prints \code{plots -> DIR}.
+
+\section{Reclassification}\label{sec:bench-reclassify}
+
+\code{python -m benchmarks.reclassify RAW_DIR FALSE_SET OUT_JSONL [--journal] [--annotate-seconds S] [--jobs J]} (defaults $S=10$, $J=4$) reclassifies logged runs without
+running anything. It refuses an output inside \code{RAW_DIR} and never writes there.
+
+\begin{algorithm}[Reclassification]
+\begin{enumerate}
+\item Read every record of \file{RAW_DIR/*.jsonl} in file order (non-empty lines).
+\item Annotate the $F$ records of \code{FALSE_SET} with \py!tabled! ($S$ seconds per point,
+  $J$ processes).
+\item For every run record: restore \code{raw_outcome} as the outcome; drop \code{stage},
+  \code{cause}, \code{cause_message}, \code{raw_outcome}, \code{point_invalid}; with
+  \code{--journal}, set \code{journal_oom_kill} when \py!journal_oom! holds; apply the adapter's
+  \code{rederive} hook when it has one; classify by \py!reclassify_record!. Unit records pass
+  unchanged, except that the units of check-once tools are recomputed with $K=1$ and
+  \code{successes} 1 when some ok run of the unit exists (a symbolic run counts only when the
+  adapter's \code{symbolic_covered} accepts the subject).
+\item Write every record as one JSON line to \code{OUT_JSONL}; print per tool
+  \code{TOOL: OUTCOME=B->A, ...} for every outcome with a nonzero count before or after, then per
+  tool \code{TOOL units: K_reached=B->A, K_not_reached=B->A} over supported units.
+\end{enumerate}
+\end{algorithm}
+
+\py!journal_oom_times(since=None, scope=None)! runs \code{journalctl --user -o short-unix --no-pager [--since @T] -g "Failed with result 'oom-kill'"} (timeout 60\,s) and returns the sorted
+Unix times of lines containing \code{.scope:} (and \code{scope} when given); empty when
+\code{journalctl} is missing. \py!journal_oom(rec, times)! holds for a kill record with exit 143,
+no kill source (or \code{exit 143}), raw outcome \code{error}, and an oom-kill time in
+$[\mathit{finished} - 10, \mathit{finished} + 2]$ seconds.
+
+\section{B3 size counts}\label{sec:bench-size}
+
+\module{benchmarks.size} counts the elements of a diagram and finds the smallest diagram of a
+decision. For a run whose decide stage returned \code{equal} on an $S$ instance, the ArchytasZX
+adapter stores \texttt{b3 = \{naive, smallest, ratio\}}.
+
+\begin{definition}[Element counts]
+\py!counts(diagram)! returns \code{node_G} for each generator $G\in\{Z, X, W, F, T, Ti, B, S,
+G\}$ (and any other present), \code{nodes}, \code{node_boxes} and \code{port_boxes} (node-scoped
+and port-scoped \bboxes), \code{box_depth} (the deepest parent chain), \code{phases} (phase
+entries, a rule counting once), \code{weights} (weight entries, a weight rule counting once),
+\code{wires}, \code{self_loops} (wires with both ends on one node), \code{inputs},
+\code{outputs}, \code{scalar_size} (SymPy operation count plus 1; the scalar text length when
+that fails), and
+\[
+  \mathit{total} = \mathit{nodes} + \mathit{node\_boxes} + \mathit{port\_boxes} + \mathit{phases}
+  + \mathit{weights} + \mathit{wires}.
+\]
+\end{definition}
+
+\py!diagrams_of(decision, left, right)! yields both sides, both normal forms when present, and
+every diagram of every certificate's derivation: its initial diagram, the diagram after each
+replayed step (stopping at a failing step), its final diagram, and recursively its children's.
+\py!smallest! returns the counts with the least (\code{total}, \code{wires}); diagrams whose
+counting raises are skipped. \py!b3! returns the naive (circuit) counts, the smallest counts, and
+\code{ratio} $=$ naive total over smallest total (\code{None} when zero or absent).
+
+\section{The Lean runner}\label{sec:bench-lean}
+
+\module{benchmarks.lean} checks an exported Lean file with \code{lake env lean FILE} in
+\file{archytaszx/lean} (\cref{ch:lean-export}), at most a fixed number of checks at a time per job,
+each killed when its anonymous memory passes a budget.
+
+\subsection{Memory plan}
+
+Constants: \py!OLEAN_MB! $=5120$ (the memory-mapped \file{.olean} pages of one check, shared),
+\py!LEAN_WORK_MB! $=8192$ (the least budget), \py!WORKER_RESERVE_MB! $=1024$, \py!MAX_SLOTS!
+$=5$, the watch period 0.25\,s.
+
+\py!total_memory_mb()! is \code{MemTotal} in MiB, capped by the Slurm allocation
+(\code{SLURM_MEM_PER_NODE}, else \code{SLURM_MEM_PER_CPU} $\times$ \code{SLURM_CPUS_PER_TASK})
+and by the smallest memory limit of the process's cgroup and its ancestors (v2
+\file{memory.max}, v1 \file{memory.limit_in_bytes}; values $\ge 2^{60}$ mean none).
+
+\begin{definition}[Slots and budget]
+With pool $P = T - 5120 - 1024\max(1, \mathit{jobs})$ MiB, \py!plan(T, jobs, fixed)! gives
+$\mathit{slots} = \max(1, \min(5, \lfloor P/8192\rfloor))$ (or \code{fixed}) and
+$\mathit{budget} = \max(8192, \lfloor P/\mathit{slots}\rfloor)$. \py!slots(jobs)! returns
+\code{BENCH_LEAN_SLOTS} when set, else the plan with \code{jobs} (else \code{BENCH_JOBS}, else 1);
+\py!budget_mb(jobs)! returns \code{BENCH_LEAN_BUDGET_MB} when set, else the plan's budget.
+\end{definition}
+
+A slot is an exclusive non-blocking \code{flock} on
+\file{archytaszx-bench-lean-<scope>-<k>.lock} in \file{/dev/shm} (when writable, else the
+temporary directory), the scope \code{<SLURM_JOB_ID>-<SLURM_ARRAY_TASK_ID>} under Slurm, else
+\code{local}; a check retries every 0.5\,s until a slot is free.
+
+\py!cap_mb(fraction, budget)! is $\min(\lfloor \mathit{fraction}\cdot T\rfloor, \lfloor 5120 +
+\mathit{budget}\rfloor)$ MiB. Every attempt runs under a \py!memcap.Cap! of that size (tag
+\code{lean}, swap allowed) by the chosen mechanism (\cref{sec:bench-memcap}).
+\py!cgroups()! is \py!memcap.systemd_ok()!; \py!scoped(cmd, fraction, budget)! wraps a command
+in a systemd scope of \py!cap_mb! when systemd is usable (the check itself uses the cap).
+
+\subsection{The check}
+
+\begin{algorithm}[\texttt{check(path, timeout, memory\_fraction)}]\label{alg:bench-lean-check}
+\begin{enumerate}
+\item Read the source; record \code{file_bytes}, \code{file_lines}, \code{final_theorem} (the
+  last \code{theorem}/\code{lemma} name, qualified by the enclosing \code{namespace}s),
+  \code{statement_level}, and \code{unproved_declared} (lines starting \code{axiom unproved_}).
+\item When a header line (before the last \code{import} line) is exactly \code{import ArchytasZX}, first make the \emph{light} attempt on the source with that line replaced by
+  \code{import ArchytasZX.Light}. When it is not \code{accepted}, or the final theorem's axioms
+  were not printed, make the \emph{full} attempt on the source as written. The result is the last
+  attempt's, with \code{lean_import} (\code{light} or \code{full}) and \code{lean_attempts}, one
+  entry per attempt with \code{import} and the attempt's \code{lean_status}, \code{lean_cpu},
+  \code{lean_wall}, \code{lean_peak_mb}, \code{lean_peak_anon_mb}, \code{lean_kill},
+  \code{lean_detail} where present.
+\end{enumerate}
+Each attempt:
+\begin{enumerate}
+\item Write the probe copy \file{<stem>_probe.lean}: after the imports, \code{set_option profiler true} and \code{set_option profiler.threshold 0}; before every declaration (theorem, lemma, def,
+  abbrev, instance, example, with its doc comment, attributes, and modifiers),
+  \texttt{\#print "@@DECL KIND NAME"} (\code{_} for an anonymous one); at the end \texttt{\#print "@@DECL end \_"} and \texttt{\#print axioms NAME}.
+\item Create the cap; take a slot; start \code{lake env lean PROBE} (wrapped by the cap) in a
+  new session; before exec, join the cap's cgroup (\code{cgroup_v2}), raise the soft
+  \code{RLIMIT_AS} to the hard limit, and set \code{RLIMIT_CPU} at
+  $\lfloor\mathit{timeout}\rfloor$ (hard $+5$). A watcher polls every 0.25\,s the
+  \code{RssAnon} and the CPU ticks (\code{utime}, \code{stime}, \code{cutime}, \code{cstime} of
+  \file{/proc/PID/stat}) summed over the process tree, keeps their maxima, and kills the group
+  past the budget; a wall timer at \code{timeout} kills it. Afterwards close the cap, release the
+  slot, and remove the probe.
+\item Status, in order: over budget, \code{oom} with \code{lean_kill = budget}; a cap kill
+  (\py!Cap.oom!), \code{oom} with \code{lean_kill = memcap.<mechanism>}; timer kill or
+  \code{SIGXCPU}, \code{timeout}; \code{SIGKILL}, \code{oom}; exit 0 with no \code{error:} in the
+  output, \code{accepted}; an out-of-memory text (\code{out of memory}, \code{std::bad_alloc},
+  \code{Cannot allocate memory}), \code{oom}; else \code{rejected} with the first error line (300
+  characters).
+\item Record \code{lean_budget_mb}, \code{lean_memcap} (the mechanism), \code{lean_cpu} (the
+  larger of the rusage user-plus-system time, \code{lean_cpu_rusage}, and the polled tree CPU,
+  \code{lean_cpu_tree}), \code{lean_wall}, \code{lean_peak_mb} (rusage), \code{lean_peak_anon_mb}
+  (polled), \code{decl_ms}, and \code{axioms} (parsed from \texttt{\#print axioms} when accepted).
+\end{enumerate}
+The result finally receives \code{axiom_class} and \code{unproved} (the count of
+\code{unproved_*} axioms).
+\end{algorithm}
+
+\code{decl_ms} lists, per marker, \texttt{\{kind, name, ms, by\}}: the profiler lines
+\code{CATEGORY took X(ms|s)} after the marker summed in milliseconds, also per category (the text
+before \code{ of }). The axiom class is \code{opaque} when the source lacks \code{import ArchytasZX} or contains \code{namespace ArchytasZX.Opaque}; \code{unknown} with no axiom list;
+\code{clean} when only \code{propext}, \code{Classical.choice}, and \code{Quot.sound} occur;
+\code{unproved} when every other axiom's last component starts \code{unproved_}; else
+\code{other}; for a non-accepted check, the status. The statement level is \code{opaque}
+likewise; \code{source} when the final theorem's statement (from its name to \code{:=}) contains
+a string quote or a word starting \code{elab}, \code{parse}, \code{Src}, \code{src},
+\code{source}; \code{diagram} when it mentions a word starting \code{DEqual}; else
+\code{network}. \py!kill_active()! sends \code{SIGKILL} to every running check's process group.
+The Lean toolchain is \tool{Lean 4}{https://lean-lang.org}~\cite{demoura2021lean4} with
+Mathlib~\cite{mathlib2020}; \code{lake} is found on \code{PATH}, else in
+\file{\textasciitilde/.elan/bin}.
+
+\section{Memory caps}\label{sec:bench-memcap}
+
+\module{benchmarks.memcap} caps the memory of one child process tree by a mechanism chosen at
+run time.
+
+\begin{xltabular}{\textwidth}{@{}>{\ttfamily}p{0.14\textwidth} X@{}}
+\caption{Memory-cap mechanisms (\texttt{ALL}).}\label{tab:bench-memcap}\\
+\toprule
+\normalfont Mechanism & How the child is capped; when it is usable\\
+\midrule\endfirsthead
+\bottomrule\endfoot
+systemd & \code{systemd-run --user --scope --quiet --collect -p MemoryMax=<cap>M [-p MemorySwapMax=0]}; usable when that command with \code{MemoryMax=64M} runs \code{true}
+  (cached).\\
+cgroup\_v2 & A child cgroup \code{azx-<tag>-<pid>-<k>} in a delegated cgroup v2 directory with
+  \file{memory.max} at the cap, \file{memory.swap.max} 0 (unless swap is allowed), and
+  \file{memory.oom.group} 1; the child writes 0 to its \file{cgroup.procs} before exec. The
+  delegated directory (cached) is the first of \code{BENCH_CGROUP_PARENT}, the parent of the
+  process's own cgroup, and that cgroup itself in which a 64\,MiB probe cgroup can be made and
+  \code{true} run inside it.\\
+srun & \code{srun --overlap --quiet -n1 -N1 --mem=<cap>M}; usable inside a Slurm job with
+  \code{srun} on \code{PATH}; chosen only when \code{BENCH_MEMCAP=srun}.\\
+watchdog & A thread polling the tree's \code{RssAnon} every 0.25\,s and killing the tree past
+  the cap; always usable.\\
+\end{xltabular}
+
+\py!mechanism()! returns \code{BENCH_MEMCAP} when it names a usable mechanism, else the first
+usable of \code{systemd}, \code{cgroup_v2}, \code{watchdog}. \py!Cap(limit_mb, mech=None, tag="child", no_swap=True)! creates the cgroup at construction (falling back to \code{watchdog}
+when it cannot); \py!command(cmd)! wraps the command (systemd, srun); \py!preexec()! is the
+cgroup join; \py!watch(pid, kill)! starts the watchdog; \py!oom(code, text)! reports a cap kill:
+the watchdog fired, the cgroup's \code{oom_kill} counter is positive, or under srun a nonzero
+exit whose output matches \code{oom[-_ ]kill}, \code{Exceeded (step|job) memory limit}, or
+\code{out of memory} (case-insensitive); \py!close()! stops the watchdog and removes the cgroup
+(retried for 2\,s). \py!child_cap(tag)! gives a rival child a cap at \code{BENCH_MEMORY_MB}
+(none when unset); \py!run(cmd, cap, timeout)! runs a command to its end under a cap in a
+session of its own, killing the group on timeout and re-raising
+\py!TimeoutExpired!, and returns (the completed process, whether the cap killed it).
+\py!worker_mechanism()! is \code{BENCH_MEMCAP_WORKER}, else \code{rlimit_as};
+\py!describe()! reports each mechanism's usability and the chosen one.
+
+\section{The ancillary export}\label{sec:bench-anc}
+
+\code{python -m benchmarks anc OUT_DIR} copies into \code{OUT_DIR}: the directory
+\file{benchmarks/} without \file{\_\_pycache\_\_}, \file{*.pyc}, \file{.venvs}, \file{results},
+\file{plots}, and \file{slurm}; the subdirectories \file{raw}, \file{aggregate},
+\file{environment}, and \file{configs} of the results directory and its \file{false_set.json},
+under \file{OUT_DIR/results/}; the plot directory as \file{OUT_DIR/plots}; and the file
+\file{docs/BENCHMARKS.txt} into \file{OUT_DIR/docs/}. It prints \code{anc -> DIR}.
+
+\section{The Slurm profile}\label{sec:bench-slurm}
+
+\code{python -m benchmarks slurm [--set k=v ...]} prepares the cluster profile's job array for
+\tool{Slurm}{https://slurm.schedmd.com}~\cite{yoo2003slurm}. It sets the profile to
+\code{cluster}, checks out the commit to run, writes \file{benchmarks/slurm/run.sbatch}, creates
+\file{benchmarks/slurm/logs/}, and prints \code{wrote PATH at SHA; submit with: sbatch benchmarks/slurm/run.sbatch}. Submission is left to the user, from the repository root.
+
+\begin{algorithm}[Commit selection]
+\begin{enumerate}
+\item The target is \code{slurm.commit} when set, else the head SHA of the latest successful run
+  of workflow \file{ci.yml} on branch \code{dev}, from \code{gh run list --branch dev --status success --workflow ci.yml --limit 1 --json headSha -q .[0].headSha} (timeout 60\,s); none
+  exits with \code{slurm: no green dev commit found (gh unavailable?); set slurm.commit=SHA}.
+\item \code{git fetch -q origin dev}; resolve the target (\code{slurm: commit X not in this checkout} on failure).
+\item The checkout is clean when \code{git status --porcelain --untracked-files=no} over every
+  tracked path except \file{benchmarks/results/false_set.json} prints nothing (the pathspec
+  \py!CLEAN_PATHS!); a dirty checkout exits with \code{slurm: checkout has local changes}.
+\item When \code{HEAD} differs, \code{git checkout -q --detach SHA}, verified.
+\end{enumerate}
+\end{algorithm}
+
+The batch file refuses any partition but \code{scavenger} (\py!ValueError!) and reads:
+\begin{lstlisting}[style=shell]
+#!/bin/bash
+#SBATCH --job-name=archytaszx-bench
+#SBATCH --partition=scavenger
+#SBATCH --requeue
+#SBATCH --array=0-<array - 1>
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=<cpus_per_task>
+#SBATCH --hint=nomultithread
+#SBATCH --mem-per-cpu=<mem_per_cpu>
+#SBATCH --time=<time>
+#SBATCH --output=benchmarks/slurm/logs/%A_%a.out
+[#SBATCH --account=<account>]
+set -euo pipefail
+cd "$SLURM_SUBMIT_DIR"
+[ "$(git rev-parse HEAD)" = "<sha>" ] || { echo "checkout is not at <sha>" >&2; exit 1; }
+[ -z "$(git status --porcelain --untracked-files=no -- ':(top)' ':(top,exclude)benchmarks/results/false_set.json')" ] || { echo "dirty checkout" >&2; exit 1; }
+[source <setup>]
+source <venv>/bin/activate
+export PYTHONPATH="$SLURM_SUBMIT_DIR"
+python -m benchmarks run --profile cluster --shard ${SLURM_ARRAY_TASK_ID}/<array> \
+    --set platform.jobs=<cpus_per_task> <the --set options given, shell-quoted>
+\end{lstlisting}
+
+Each array task thus runs one shard with one worker per core on the scavenger partition, is
+requeued on preemption, and resumes from the shared log. The environment variables the suite
+reads are \code{SLURM_ARRAY_JOB_ID}, \code{SLURM_JOB_ID}, \code{SLURM_ARRAY_TASK_ID} (log,
+environment, and false-set temporary file names, Lean slot scope), \code{SLURM_MEM_PER_NODE},
+\code{SLURM_MEM_PER_CPU}, \code{SLURM_CPUS_PER_TASK} (memory caps), \code{SLURM_SUBMIT_DIR}
+(the batch file), every \code{SLURM_*} variable (the environment record), and the suite's own
+\code{BENCH_MEMORY_MB}, \code{BENCH_MEMCAP}, \code{BENCH_MEMCAP_WORKER},
+\code{BENCH_CGROUP_PARENT}, \code{BENCH_SPAN_FILE}, \code{BENCH_LEAN_SLOTS},
+\code{BENCH_LEAN_BUDGET_MB}, \code{BENCH_JOBS}, and \code{ARCHYTASZX_TRACE}.

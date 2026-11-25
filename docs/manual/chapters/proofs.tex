@@ -1,0 +1,1704 @@
+\chapter{Deciding Equality and Proof Search}\label{ch:proofs}
+
+This chapter specifies how ArchytasZX decides whether two diagrams are equal, how it searches for a derivation that proves an equality, and the records that carry the evidence. Six modules of \module{archytaszx.semantics} implement it:
+\begin{itemize}
+\item \module{archytaszx.semantics.check}: the numeric oracle (instantiation, contraction, comparison of tensors) and the exact comparison of symbolic tensors (\cref{sec:proofs-oracle,sec:proofs-symbolic});
+\item \module{archytaszx.semantics.decide}: the sample grid, the oracle rung, and the decision procedure \py!decide_equal!, a ladder of rungs that stops at the first rung that settles the claim (\cref{sec:proofs-sampling,sec:proofs-ladder,sec:proofs-rungs,sec:proofs-certify,sec:proofs-restricted});
+\item \module{archytaszx.semantics.certificate}: replayable step-sequence and induction certificates (\cref{sec:proofs-certificates});
+\item \module{archytaszx.semantics.prove}: goal-directed proof search, its proof certificates and their checker (\cref{sec:proofs-prove});
+\item \module{archytaszx.semantics.certify_decision}: the proof of an \texttt{EQUAL} decision (\cref{sec:proofs-decision-proof});
+\item \module{archytaszx.semantics.lemmas}: the store of stated lemmas and the insertion and copy windows that induction uses (\cref{sec:proofs-lemmas}).
+\end{itemize}
+The proof kernel, its theorem objects, and the induction machinery that discharges step cases (\module{archytaszx.semantics.induction}, \module{archytaszx.semantics.kernel}, \module{archytaszx.semantics.induction_kernel}) are specified in \cref{ch:kernel}; this chapter names their entry points where the ladder calls them. Numeric and symbolic contraction are specified in \cref{ch:semantics}; the normal-form driver, the e-graph and tactics in \cref{ch:rewriting}; the exporters to \tool{Lean~4}{https://lean-lang.org}~\cite{demoura2021lean4} in \cref{ch:lean-export-net,ch:lean-export}. \Cref{app:params} collects every numeric parameter.
+
+\section{Families, Assignments and Verdicts}\label{sec:proofs-overview}
+
+\subsection{Families and symbols}
+
+A diagram of the qufinite ZXW-calculus~\cite{poor2023zxw,wang2023qufinitezxw} with free symbols stands for a \term{family} of concrete diagrams, one for each value of its symbols; symbolic multiplicities of \bboxes{}~\cite{dixon2009graphical,kissinger2014pattern} and symbolic dimensions both index the family. The decision procedure and the prover classify the free symbols of a diagram $D$ into three disjoint roles.
+
+\begin{definition}[Symbol roles]\label{def:proofs-roles}
+Let $D$ be a diagram.
+\begin{enumerate}
+\item The \term{multiplicity symbols} $M(D)$ are the free symbols of the multiplicities of $D$'s \bboxes{}, as returned by \py!free_mult_symbols(D)! (\cref{ch:diagrams}).
+\item The \term{dimension symbols} $\Delta(D)$ are the free symbols of every port dimension and every phase-vector dimension of every node, less $M(D)$.
+\item The \term{other symbols} $O(D)$ are the free symbols of the diagram scalar, of every \bbox{} copy scalar, and of every phase entry, less $M(D)\cup\Delta(D)$ and less the copy-index symbols of indexed \bboxes{} (\py!index_symbols(D)!).
+\end{enumerate}
+For a pair $(L,R)$ the roles are merged: $M=M(L)\cup M(R)$, $\Delta=(\Delta(L)\cup\Delta(R))\setminus M$ and $O=(O(L)\cup O(R))\setminus(M\cup\Delta)$. The private function \py!_free_symbols(diagram)! returns the triple $(\Delta(D),M(D),O(D))$.
+\end{definition}
+
+Each symbol is a \tool{SymPy}{https://www.sympy.org}~\cite{meurer2017sympy} symbol that may carry assumptions (\code!integer!, \code!positive!, \code!nonnegative! and so on). One name can occur as several SymPy symbols with different assumptions; \py!_symbol_table(*diagrams)! groups every free SymPy symbol by its name. It collects the symbols of the diagram scalar, of every \bbox{} multiplicity and copy scalar, of every port dimension, of every phase-vector dimension, of every stored phase entry read in turns, and of a phase-vector rule read in turns with the index symbol \py!INDEX! replaced by~$1$.
+
+\begin{definition}[Assignment]\label{def:proofs-assignment}
+An \term{assignment} is a mapping from symbol names to values of type \py!CheckAssignmentValue!, which is \py!int | sympy.Rational!. A value $v$ \term{meets the assumptions} of a set $\Sigma$ of SymPy symbols when, for every $\sigma\in\Sigma$ and every assumption key $k$ with stated truth value $b$ in \py!sigma.assumptions0!, the property \code!is_k! of \py!sympify(v)! is either undecided (\py!None!) or equal to $b$. An assignment is \term{admissible} for a symbol table $T$ when every value meets the assumptions of $T$ at its name; a value SymPy cannot convert makes the assignment inadmissible.
+\end{definition}
+
+\begin{definition}[Family equality]\label{def:proofs-family-equality}
+Two diagrams $L$ and $R$ are \term{equal as families} when $\sem{L_\alpha}=\sem{R_\alpha}$ for every admissible assignment $\alpha$ of all their free symbols at which both instantiate, where $L_\alpha$ is $L$ with every \bbox{} of concrete multiplicity expanded and every symbol substituted, and $\sem{\cdot}$ is the denotation of \cref{ch:semantics}. They are \term{unequal} when some admissible $\alpha$ gives $\sem{L_\alpha}\neq\sem{R_\alpha}$. A diagram's parameter environment (the values its user bound to symbols) never enters this definition: the ladder decides the family.
+\end{definition}
+
+\subsection{Verdicts and decision methods}
+
+\begin{signature}
+\py!class EqualityVerdict(enum.Enum)!: \py!EQUAL = "equal"!, \py!UNEQUAL = "unequal"!, \py!EQUAL_UNCERTIFIED = "equal_uncertified"!, \py!UNEQUAL_UNCERTIFIED = "unequal_uncertified"!, \py!UNKNOWN = "unknown"!.
+
+\py!class DecisionMethod(enum.Enum)!: \py!INTERFACE!, \py!NORMAL_FORM!, \py!SATURATION!, \py!PATH_SUM!, \py!SYMBOLIC_CONTRACTION!, \py!INDUCTION!, \py!ORACLE_COUNTEREXAMPLE!, \py!SYMBOLIC_WITNESS!, \py!DOUBLED!, \py!NONE!; each value is the lower-case name (\py!"interface"!, \py!"normal_form"!, \ldots, \py!"none"!).
+\end{signature}
+
+\begin{definition}[Verdict classes]\label{def:proofs-verdicts}
+A \term{certified verdict} is \texttt{EQUAL} with a proof that the proof kernel or Lean re-checks, or \texttt{UNEQUAL} with a Lean refutation or with a failed interface. An \term{uncertified verdict} is \texttt{EQUAL\_UNCERTIFIED} or \texttt{UNEQUAL\_UNCERTIFIED}: the ladder established the claim, but no proof or Lean refutation was built. \texttt{UNKNOWN} means no rung settled the claim. The ladder is sound: a verdict of \texttt{EQUAL} or \texttt{EQUAL\_UNCERTIFIED} implies family equality, and \texttt{UNEQUAL} or \texttt{UNEQUAL\_UNCERTIFIED} implies inequality at the recorded counterexample, up to the floating-point tolerance of the rungs that compare numbers (\cref{sec:proofs-oracle}). It is incomplete: some equal families end in \texttt{UNKNOWN}.
+\end{definition}
+
+\Cref{tab:proofs-rung-verdicts} lists which method can give which verdict before certification (\cref{sec:proofs-certify}). An \texttt{EQUAL} comes only from the normal-form, saturation, symbolic-contraction, path-sum and induction rungs; an \texttt{UNEQUAL} comes only from the interface rung, an oracle counterexample or a symbolic witness; every other outcome is \texttt{UNKNOWN}. The decision method \texttt{DOUBLED} wraps the method of a ladder run on doubled diagrams, and \texttt{NONE} accompanies \texttt{UNKNOWN} and the uncertified verdicts of restricted decisions over finite clauses.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Method & Verdicts & Evidence recorded in the \py!Decision! \\
+\midrule
+\texttt{INTERFACE} & \texttt{UNEQUAL} & reason text only \\
+\texttt{NORMAL\_FORM} & \texttt{EQUAL} & both normal forms, two certificates, assumptions \\
+\texttt{ORACLE\_COUNTEREXAMPLE} & \texttt{UNEQUAL} & counterexample, comparison \\
+\texttt{SATURATION} & \texttt{EQUAL} & saturation report, one certificate per e-graph edge, assumptions \\
+\texttt{SYMBOLIC\_CONTRACTION} & \texttt{EQUAL}; \texttt{EQUAL\_UNCERTIFIED} (restricted range) & floors used, contracted pair \\
+\texttt{SYMBOLIC\_WITNESS} & \texttt{UNEQUAL} & counterexample, entry witness, comparison \\
+\texttt{PATH\_SUM} & \texttt{EQUAL} & reason text only \\
+\texttt{INDUCTION} & \texttt{EQUAL} & induction result, kernel theorem, base-case decision \\
+\texttt{DOUBLED} & any & inner method, doubled pair \\
+\texttt{NONE} & \texttt{UNKNOWN}; \texttt{EQUAL\_UNCERTIFIED} (finite restriction) & notes of every rung tried \\
+\bottomrule
+\end{tabularx}
+\caption{Decision methods and the verdicts they give before certification.}
+\label{tab:proofs-rung-verdicts}
+\end{table}
+
+\subsection{Errors}
+
+Every module of this chapter defines a base exception and a grammar subclass for malformed requests. \Cref{tab:proofs-errors} lists them. Errors from the layers below (dimension, phase, scalar, graph, generator, \bbox{} and validation errors) are caught by the rungs and turned into reasons; the sets each rung catches are given with the rung.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.33\linewidth}X@{}}
+\toprule
+Exception & Raised when \\
+\midrule
+\py!CheckError! & base of \module{archytaszx.semantics.check} \\
+\quad\py!CheckGrammarError! & an assignment leaves a symbol uninstantiated; \py!compare_tensors! receives an unknown mode \\
+\quad\py!CheckDomainError! & \py!compare_symbolic! receives a mode other than \texttt{EXACT} \\
+\py!DecideError! & base of \module{archytaszx.semantics.decide} \\
+\quad\py!DecideGrammarError! & an argument of \py!decide_equal!, \py!refute_by_oracle!, \py!refute_by_symbolic_witness!, \py!interface_reason! or \py!Decision! has the wrong type or is out of range \\
+\py!CertificateError! & base of \module{archytaszx.semantics.certificate} \\
+\quad\py!CertificateGrammarError! & a malformed certificate, derivation, claim or request \\
+\quad\py!CertificateDomainError! & declared; no function of the module raises it \\
+\py!ProveError! & base of \module{archytaszx.semantics.prove} \\
+\quad\py!ProveGrammarError! & a malformed argument, or a start or goal diagram that fails validation \\
+\py!LemmaError! & a lemma is unknown, unproved, being proved, or has no instance where one was asked for \\
+\bottomrule
+\end{tabularx}
+\caption{Exceptions of this chapter's modules.}
+\label{tab:proofs-errors}
+\end{table}
+
+\subsection{The ladder at a glance}
+
+\Cref{fig:proofs-ladder} shows the order in which \py!decide_equal! tries its rungs on a pure pair; \cref{sec:proofs-ladder,sec:proofs-rungs} specify each step.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  rung/.style={draw,rounded corners=2pt,fill=gray!6,minimum width=5.6cm,minimum height=6.5mm,font=\small,align=center},
+  rungout/.style={font=\scriptsize,align=left,anchor=west},
+  arr/.style={-{Stealth[length=2mm]},line width=0.5pt}]
+\node[rung] (pre) at (0,0) {expand concrete extended \bboxes{}; restriction?};
+\node[rung] (mix) at (0,-1.1) {mixed? $\Rightarrow$ double both sides};
+\node[rung] (r1) at (0,-2.2) {1. interface};
+\node[rung] (r2) at (0,-3.3) {2. normal form (both sides)};
+\node[rung] (r3) at (0,-4.4) {3. numeric oracle (small samples)};
+\node[rung] (nf) at (0,-5.5) {normal forms agree?};
+\node[rung] (r4) at (0,-6.6) {4. saturation};
+\node[rung] (r5) at (0,-7.7) {5a. symbolic contraction / witness};
+\node[rung] (r6) at (0,-8.8) {5b. path sum};
+\node[rung] (r7) at (0,-9.9) {6. induction};
+\node[rung] (r8) at (0,-11.0) {deferred large oracle samples};
+\node[rung] (r9) at (0,-12.1) {certification: proof or Lean refutation};
+\foreach \a/\b in {pre/mix,mix/r1,r1/r2,r2/r3,r3/nf,nf/r4,r4/r5,r5/r6,r6/r7,r7/r8,r8/r9} \draw[arr] (\a) -- (\b);
+\node[rungout] at (3.0,-2.2) {\texttt{UNEQUAL}};
+\node[rungout] at (3.0,-4.4) {\texttt{UNEQUAL} (counterexample)};
+\node[rungout] at (3.0,-5.5) {\texttt{EQUAL}};
+\node[rungout] at (3.0,-6.6) {\texttt{EQUAL}};
+\node[rungout] at (3.0,-7.7) {\texttt{EQUAL} or \texttt{UNEQUAL}};
+\node[rungout] at (3.0,-8.8) {\texttt{EQUAL} or \texttt{UNEQUAL}};
+\node[rungout] at (3.0,-9.9) {\texttt{EQUAL} or \texttt{UNEQUAL}};
+\node[rungout] at (3.0,-11.0) {\texttt{UNEQUAL}, else \texttt{UNKNOWN}};
+\node[rungout] at (3.0,-12.1) {uncertified verdict if none};
+\end{tikzpicture}
+\caption{The decision ladder of \texttt{decide\_equal}, top to bottom; the right column names what each step can return. The normal-form verdict waits for the oracle rung.}
+\label{fig:proofs-ladder}
+\end{figure}
+
+\section{The Numeric Oracle}\label{sec:proofs-oracle}
+
+The \term{numeric oracle} decides whether two diagrams denote the same tensor at one concrete assignment. It instantiates both diagrams, contracts them with \tool{NumPy}{https://numpy.org}~\cite{harris2020numpy} through \py!contract! of \module{archytaszx.semantics.contract_numeric} (\cref{ch:semantics}), and compares the two arrays entrywise. It is the only rung that computes in floating point, together with the witness checks of \cref{sec:proofs-symbolic} and the induction confirmations of \cref{sec:proofs-rungs}.
+
+\subsection{Instantiation}
+
+\begin{signature}
+\py!instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]) -> Diagram!
+\end{signature}
+
+\py!instantiate! returns a concrete diagram. Let $F$ be every free symbol of the diagram: the symbols of the diagram scalar, of every port dimension, of every phase vector (\py!node.phase.free_symbols!), of every copy scalar, and every multiplicity symbol, less the copy-index symbols (private \py!_diagram_free_symbols!).
+
+\begin{algorithm}[Instantiation]\label{alg:proofs-instantiate}
+\leavevmode
+\begin{enumerate}
+\item Start the resolved map $\rho$ with every binding of the diagram's parameter environment whose name lies in $F$; then overwrite $\rho$ with every entry of \py!assignment! whose name lies in $F$. Entries of \py!assignment! that name no symbol of $F$ are dropped without error, so one assignment can serve two diagrams that do not share every symbol.
+\item If $F\setminus\operatorname{dom}\rho$ is nonempty, raise \py!CheckGrammarError! with the message \code!assignment leaves symbol(s) uninstantiated: [...]; neither the assignment nor the diagram's parameter environment supplies them, and instantiate() never defaults a missing symbol!, the bracket listing the missing names sorted.
+\item Expand \bboxes{} (\py!_expand_bang_boxes!): for every multiplicity symbol $m$ of the diagram in sorted order, require $\rho(m)$ to be a non-negative \py!int! that is not a \py!bool! (else raise \py!BangBoxDomainError! \code!multiplicity symbol 'm' requires a non-negative int, got v!); skip $m$ when an earlier instantiation already removed every box that carried it; otherwise replace the working diagram by \py!instantiate_symbol(working, m, rho[m])!. Finally apply \py!expand_concrete_boxes! (\cref{ch:diagrams}).
+\item Let $R$ be the entries of $\rho$ whose name is not a multiplicity symbol of the original diagram or is still free in the expanded diagram. Return \py!expanded.substitute(R)!, the node-id-preserving substitution of every dimension, phase and scalar symbol.
+\end{enumerate}
+\end{algorithm}
+
+Multiplicities are instantiated before the other symbols because expansion creates ports whose dimensions still carry the symbols that the last step substitutes.
+
+\begin{signature}
+\py!score(diagram, assignment, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> ContractionResult!
+\end{signature}
+\py!score! returns \py!contract(instantiate(diagram, assignment), max_elements=max_elements)!. \py!DEFAULT_MAX_ELEMENTS! is the element cap of \module{archytaszx.semantics.contract_numeric}: the process memory limit (the smallest cgroup~v2 \code!memory.max! on the process's cgroup path, else \code!RLIMIT_AS!) divided by $16$ and by $4$, or $10^7$ when no limit is set (\cref{app:params}).
+
+\subsection{Comparison modes}
+
+\begin{signature}
+\py!class EqualityMode(enum.Enum)!: \py!EXACT = "exact"!, \py!UP_TO_GLOBAL_PHASE = "up_to_global_phase"!, \py!UP_TO_POSITIVE_SCALAR = "up_to_positive_scalar"!.
+
+\py!@dataclass(frozen=True, slots=True) class ComparisonResult!: \py!mode: EqualityMode!; \py!matched: bool!; \py!reason: str!; \py!max_abs_deviation: float!; \py!recovered_lambda: complex | None = None!; \py!doubled: bool = False!; \py!difference: Scalar | None = None!; \py!index: tuple[int, ...] | None = None!.
+\end{signature}
+
+\texttt{EXACT} is the default of every function; the two other modes are used only when a caller passes them. \py!difference! is the nonzero entry difference of a symbolic comparison that found one; \py!index! is the index tuple, boundary outputs first and then inputs, of the largest entrywise deviation of a failed \texttt{EXACT} dense comparison.
+
+\begin{signature}
+\py!DEFAULT_TOLERANCE = 1e-9!\\
+\py!compare_tensors(a: np.ndarray, b: np.ndarray, *, mode=EqualityMode.EXACT, tolerance=DEFAULT_TOLERANCE) -> ComparisonResult!
+\end{signature}
+
+\begin{algorithm}[Tensor comparison]\label{alg:proofs-compare-tensors}
+\leavevmode
+\begin{enumerate}
+\item If \py!a.shape != b.shape!, return a non-match with reason \code!shape mismatch: S vs T! and deviation $+\infty$.
+\item \texttt{EXACT}: let $g=|a-b|$ entrywise and $\delta=\max g$ ($0$ for an empty array). The result matches iff $\delta\le\tau$ ($\tau$ the tolerance). Reasons: \code!tensors agree entrywise within tolerance! or \code!max abs deviation D exceeds tolerance T!, with $D=\delta$ and $T=\tau$. On a non-match of a nonempty array, \py!index! is the unraveled position of the first maximum of $g$.
+\item \texttt{UP\_TO\_GLOBAL\_PHASE} and \texttt{UP\_TO\_POSITIVE\_SCALAR}: if the arrays are empty, match (\code!both tensors are empty!). Let $\nu_a=\max|a|$ and $\nu_b=\max|b|$. If both are at most $\tau$, match (\code!both tensors are zero!); if exactly one is, a non-match (\code!one tensor is zero and the other is not!, deviation $+\infty$). Otherwise take the first position $p$ of the largest $|a|$, recover $\lambda=b_p/a_p$, and let $\delta=\max|b-\lambda a|$.
+  \begin{itemize}
+  \item \texttt{UP\_TO\_POSITIVE\_SCALAR}: if $|\operatorname{Im}\lambda|>\tau$ or $\operatorname{Re}\lambda\le\tau$, a non-match \code!recovered factor λ is not a positive real!; else match iff $\delta\le\tau$.
+  \item \texttt{UP\_TO\_GLOBAL\_PHASE}: if $\bigl||\lambda|-1\bigr|>\tau$, a non-match whose reason names the magnitude and says \code!a rescaling is not a global phase!; else match iff $\delta\le\tau$.
+  \end{itemize}
+  Both record $\lambda$ in \py!recovered_lambda!.
+\item Any other mode raises \py!CheckGrammarError! \code!unknown equality mode ...!.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Comparing two diagrams}
+
+\begin{signature}
+\py!compare(diagram_a, diagram_b, assignment, *, mode=EqualityMode.EXACT, tolerance=DEFAULT_TOLERANCE, max_elements=DEFAULT_MAX_ELEMENTS) -> ComparisonResult!
+\end{signature}
+
+\begin{algorithm}[Diagram comparison]\label{alg:proofs-compare}
+\leavevmode
+\begin{enumerate}
+\item \emph{Mixed operands.} If either diagram is not pure (it holds a discard $G$; \py!is_pure!, \cref{ch:mixed}), instantiate both at the assignment, double each (\py!double!, the CPM construction~\cite{selinger2007cpm,carette2019mixed}), and compare the doubled diagrams recursively at the empty assignment, with \texttt{UP\_TO\_GLOBAL\_PHASE} replaced by \texttt{EXACT}. The result's reason gains the prefix \code!doubled: ! and, after a mode replacement, the suffix \code!; on CPMs UP_TO_GLOBAL_PHASE coincides with EXACT!; \py!doubled! is set.
+\item Instantiate both diagrams (\cref{alg:proofs-instantiate}) and contract both.
+\item \emph{Interface check} (\py!_interface_mismatch!). Let $o_X$ be the number of boundary outputs of contraction $X$ and $i_X$ the number of its remaining axes. If $(o_a,i_a)\neq(o_b,i_b)$, return a non-match \code!boundary arity mismatch: o output(s)/i input(s) vs ...!. Otherwise read the concrete dimension of the port behind each axis, in axis order; if the two tuples differ, return a non-match \code!boundary axis dimension mismatch: (...) vs (...)!. Both carry deviation $+\infty$.
+\item Return \py!compare_tensors! of the two arrays under the mode and tolerance.
+\end{enumerate}
+\end{algorithm}
+
+The interface check cannot detect a permutation of boundary ports that leaves both tensors unchanged: the oracle establishes that two arrays agree axis by axis, never that axis $i$ of one side and axis $i$ of the other belong to corresponding ports. The tolerance of \py!compare! is an absolute entrywise bound. The decision procedure applies a relative bound on top of it (\cref{alg:proofs-oracle-compare}).
+
+\section{Exact Comparison of Symbolic Tensors}\label{sec:proofs-symbolic}
+
+Symbolic contraction (\py!contract_symbolic!, \cref{ch:semantics}) turns a diagram into a \py!SymbolicTensor!: an exact entry \py!Scalar! over index symbols, one per boundary axis, with every dimension kept formal, and, for a \term{variable-rank} tensor, a layout of replicated blocks with their factor groups. This section specifies how two such tensors are compared and how a differing entry is found.
+
+\subsection{The comparison}
+
+\begin{signature}
+\py!compare_symbolic(left: SymbolicTensor, right: SymbolicTensor, *, mode=EqualityMode.EXACT, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS, dimension_floors: Mapping[str, int] | None = None) -> ComparisonResult!
+\end{signature}
+
+\py!DEFAULT_MAX_SIMPLIFY_STEPS! is $1024$ (\module{archytaszx.algebra.scalar}). The comparison has three outcomes: equal, definitely unequal, and \term{indeterminate}. An indeterminate result has \py!matched=False! and a reason that begins with \code!indeterminate!; a caller must read the reason before treating a non-match as inequality.
+
+\begin{algorithm}[Symbolic comparison]\label{alg:proofs-compare-symbolic}
+\leavevmode
+\begin{enumerate}
+\item If \py!mode! is not \texttt{EXACT}, raise \py!CheckDomainError! \code!up-to-global-phase comparison requires concrete entries; substitute the parameter environment first!.
+\item \emph{Variable rank.} If either tensor is of variable rank: if their signatures (\py!signature()!) or shared indices differ, return \code!indeterminate: the variable-rank layouts or shared indices differ!. Otherwise split and normalize the groups of both (\cref{alg:proofs-split-groups,alg:proofs-normalise-groups}); if the groups then differ (\cref{alg:proofs-same-groups}), return \code!indeterminate: the replicated factors differ!.
+\item If the ranks differ, return a non-match \code!rank r != rank s!; if the axis dimension tuples (\py!dims()!) differ, return \code!axis dimensions ... != ...!.
+\item Let the ranges be \py!left.ranges()! when it equals \py!right.ranges()!, else none. Simplify $\Delta=\text{left.entry}-\text{right.entry}$ with \py!max_steps! and the ranges.
+\item If $\Delta$ is zero, or it vanishes by \cref{alg:proofs-vanishes} without or with resumming, return a match \code!entries are exactly equal with d formal!.
+\item If \py!dimension_floors! is nonempty, apply \py!Scalar.with_dimension_floors! to $\Delta$ and simplify again; if zero, return a match \code!entries are exactly equal with d formal, given d >= c, ...!, the floors listed sorted by name.
+\item If the left tensor is of variable rank, return \code!indeterminate: the entries differ by E under shared replicated factors!, $E$ the printed $\Delta$, with \py!difference! set.
+\item If $\Delta$ still contains an unevaluated \py!Sum!, a \py!ModDelta!, a \py!ModGcd! or a \py!ModResidue! atom, return \code!indeterminate: the difference E still carries an unevaluated index sum or divisibility atom, so no conclusion is drawn!.
+\item Otherwise return a non-match \code!entries differ by E! with \py!difference! set to $\Delta$.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Factor groups of variable-rank tensors}
+
+A variable-rank tensor's \py!groups! are \py!ReplicatedFactor! records (multiplicity, factor, optional mark, inner tensor, copy index and pairs), and its \py!layout! is a tuple of slots, some of them \py!ReplicatedBlock(group, axes)!; see \cref{ch:semantics}. A group is \term{plain} when its mark, inner tensor and pairs are all absent.
+
+\begin{algorithm}[Splitting groups]\label{alg:proofs-split-groups}
+\py!_split_groups(t, max_steps)! returns $t$ unchanged when it has no groups or no layout. For each plain group laid out in more than one top-level block, it tries to split the group's factor into one factor per block (\py!_split_parts!):
+\begin{enumerate}
+\item Map each template index of each block to the block's position; give up (no split) if a block axis is not a \py!SymbolicAxis!.
+\item For each \py!ModDelta! factor $[A\equiv 0 \bmod m]$ of the factor, and for each of its symbols $x$ that is a template index (by name): if the delta pins $x$ to values free of every template index, and every other factor is periodic in $x$ with period $m$, substitute the first pin into that delta and stop scanning this delta.
+\item Assign every factor to the unique block whose template indices it reads, or to block~$0$ when it reads none; give up when a factor reads indices of two blocks. The result is one product per block.
+\end{enumerate}
+When at least one group splits, the layout is rebuilt in order: each block of a split group gets its own new group with its own factor; each block of an unsplit group reuses the new number of that group's first block; new groups are numbered by first appearance, and each block's template indices are renamed \code!_t<g>_<k>! (nonnegative integer symbols, $g$ the new group number and $k$ the axis position), the factor rewritten under the renaming and simplified with \py!max_steps!.
+\end{algorithm}
+
+\begin{algorithm}[Normalizing groups]\label{alg:proofs-normalise-groups}
+\py!_normalise_groups(t, max_steps)! moves each plain group's constant factor into the entry. For every group without mark and inner tensor, the factor's multiplicands split into the \emph{bound} ones (reading a template index of the group's blocks, a shared index, or a symbol whose name starts with \code!_t<g>_!) and the \emph{constant} rest $c$. The product moved is $c^{\mu}$, $\mu$ the group multiplicity; for an indexed group (copy index $j$) it is the closed product \py!_closed_product(c[j := _COPY], mu)! of \cref{ch:semantics}, and when no closed form exists the constants stay in the factor. When a product moves, the entry is multiplied by it and the group keeps the bound multiplicands, simplified. When any group changed, the entry is simplified with the tensor's ranges.
+\end{algorithm}
+
+\begin{algorithm}[Same groups]\label{alg:proofs-same-groups}
+\py!_same_groups(left, right, max_steps)! holds iff both tensors have the same number of groups and, group by group, the multiplicities, marks, inner tensors and copy indices are equal; the pairs are equal or both present with a difference that simplifies to zero; and the factors are equal or, for a group with no mark and no inner tensor, their difference simplifies to zero with the ranges of the left group's template indices and of the left tensor.
+\end{algorithm}
+
+\subsection{The vanishing test}\label{sec:proofs-vanishes}
+
+The symbolic simplifier of \cref{ch:algebra} leaves some differences that are zero in a form it does not reduce to the literal $0$: sums of roots of unity, complete residue sets of indicator deltas, and character orbits. \py!_vanishes! recognizes these forms. It works on a SymPy expression $E$; $[A\equiv 0\bmod m]$ denotes \py!ModDelta(A, m)!, and $e(x)$ denotes $e^{2\pi i x}$.
+
+\begin{algorithm}[Vanishing test]\label{alg:proofs-vanishes}
+\py!_vanishes(expr, ranges=None, cases=1, resum=False)!:
+\begin{enumerate}
+\item If $E$ contains an unevaluated \py!Sum!, return false.
+\item Replace every symbol whose range is the concrete dimension $1$ by $0$ and expand.
+\item Rewrite each power with a constant non-rational base and a symbolic exponent into the exact simplified form of its base (\py!radsimp(expand_complex(base.rewrite(exp)))!; \py!_constant_bases!), then fold square moduli (\py!_square_moduli!, below).
+\item Rewrite through \py!exp!, expand with \py!power_exp!, reduce exponents modulo one turn (\py!_reduce_exponents!: in each $e(P)$ with $P$ a polynomial with rational coefficients over integer symbols, every coefficient $c$ becomes $c-\lfloor c\rfloor$; a constant rational $P$ becomes $P-\lfloor P\rfloor$), fold complete residue sets (\py!_fold_residues!: a sum $c[x+r_0]+\cdots+c[x+r_{m-1}]$ over all $m$ residues modulo a concrete $m$, $x$ one symbol with coefficient $1$ and $r_j$ integers, becomes $c$), and expand.
+\item If \py!resum! is set and the result is nonzero, apply \py!_resummed! (\cref{alg:proofs-resum}).
+\item Return true if the result is $0$. If it has no free symbol, return \py!_cyclotomic_zero! of it: read it exactly as a cyclotomic number times a power of $\sqrt2$ (\py!constant! and \py!with_sqrt2! of \module{archytaszx.algebra.pathsum}) and test for zero; false when it is not of that form.
+\item Return true if \py!_grouped_zero! holds: group the terms by their symbol-dependent factor; when at least two terms share a group and every group's constant coefficients sum to a cyclotomic zero.
+\item If exactly one free symbol remains, no \py!ModDelta! remains, and \py!_uw_zero! holds (below), return true.
+\item \emph{Case split.} Choose an index symbol by \py!_case_index!: first a symbol $x$ of concrete range $m$ that a delta modulo $m$ reads alone plus an integer constant (coefficient $\pm1$); else the first by name of the symbols of concrete range $m$ that a delta modulo $m$ reads among others; else a symbol of concrete range read by a delta with a symbolic coefficient. With no choice, return false. With choice $(x,s)$: if $\text{cases}\cdot s>4096$ (\py!_MAX_CASES!), return false; else return true iff \py!_vanishes! holds at $x=v$ for every $v\in\{0,\ldots,s-1\}$, with \py!cases! multiplied by $s$.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Square moduli.} \py!_square_moduli! applies only when the expression contains a \py!conjugate!. In each term of the expansion it replaces a factor pair $\sqrt{X}\cdot\overline{\sqrt{X}}$ by $X$ when $X$ is real and bounded below by zero: either \py!_lower_bound(X)! exists, is nonnegative and \py!_is_real(X)! holds, or \py!_real_nonnegative_uw(X)! holds. Failing a pair, \py!_fold_product! replaces $\sqrt{Z}\cdot\prod_{i=1}^k\overline{\sqrt{X_i}}$ ($k\ge2$) by $Z$ when $Z=\prod X_i$ (no difference at the integer points $1,2,3,5$, each symbol offset by its sorted position, at 30 digits with relative gap above $10^{-20}(1+|x|+|y|)$, and either \py!_uw_zero! or \py!cancel! of the difference is zero) and every $X_i$ is real and nonnegative.
+
+\paragraph{Lower bounds.} \py!_lower_bound(x)! sums the real constant terms of $x$ and subtracts, for every other term, the supremum of its modulus with every unimodular factor ($e^{ir}$ with $r$ real, or $(-1)^q$ with $q$ rational) dropped. \py!_modulus_sup! accepts a product of positive constants and powers $b^e$ with constant $b>0$ and $e$ linear in nonnegative integer symbols, where $b>1$ requires nonpositive coefficients and $b<1$ nonnegative ones; the supremum is the product at every symbol $0$. Any other term makes the bound undefined. \py!_is_real(x)! holds when $x-\bar x$, rewritten through \py!exp! with exponents reduced, expands to zero.
+
+\paragraph{Single-symbol forms.} \py!_uw_form(x)! applies to an expression in one nonnegative integer symbol $n$ whose every $n$-dependence is an exponential $e^{i\pi c n}$ with rational $c$ or a power $b^{rn}$ with one integer base $b>1$ and rational $r$. With $q_w$ the least common denominator of the $c$ and $q_u$ that of the $r$, it substitutes $W=e^{i\pi n/q_w}$ (a real symbol) and $U=b^{n/q_u}$ (a positive symbol), giving a rational function in $U,W$ with period $2q_w$ of $W$. \py!_uw_zero! holds when the numerator of that function, reduced modulo $W^{2q_w}-1$ as a Laurent polynomial in $W$ (\py!_laurent_mod!), is zero. \py!_real_nonnegative_uw! decides that such a $P/Q$ is real (the difference with its conjugate, $W\mapsto W^{-1}$, reduces to zero) and that $P\bar Q\ge0$ for all $U\ge1$: it bounds the top $U$-coefficient's real $W^0$ part less the moduli of its other parts against the moduli of the lower coefficients, and accepts when this polynomial bound is not negative at $U=1$ and \py!solveset! finds no point of $[1,\infty)$ where it is negative; otherwise \py!_shifted_nonnegative! accepts when, at each $W=e(r/2q_w)$ for $r=0,\ldots,2q_w-1$, every coefficient of the polynomial in $t=U-1$ is real (imaginary part below $10^{-30}$ at 50 digits or simplifying to $0$) and nonnegative (real part not below $-10^{-30}$, and a real part below $10^{-30}$ simplifies to $0$).
+
+\begin{algorithm}[Resumming character orbits]\label{alg:proofs-resum}
+\py!_resummed(expr)! works over the integer symbols of the expression, sorted by name, and repeats at most four rounds (\py!_RESUM_ROUNDS!), stopping early at a fixed point:
+\begin{enumerate}
+\item Normalize deltas (\py!_normal_deltas!): a positive power of a delta becomes the delta; each delta $[A\equiv0\bmod m]$ with integer $m\ge2$ and $A$ an integer polynomial over integer symbols becomes \py!_normal_delta(A, m)!: divide $g=\gcd(m,\text{coefficients})$ out of $A$ and $m$; return $1$ if $m/g=1$; return $0$ if the non-constant coefficients share a divisor of the modulus that the constant lacks; otherwise multiply by the inverse of the first unit coefficient (linear monomials first, then by decreasing exponents) and reduce every coefficient modulo the modulus.
+\item Reduce exponents.
+\item Resum orbits (\py!_resum_orbits!): write each term as $c\,e(T)$ with $c$ a positive rational times its non-phase factors and $T$ a polynomial of turns modulo one ($-1$ contributes $\tfrac12$, $i$ contributes $\tfrac14$; \py!_phase_split!). Group the terms by $c$, groups in the order of their text. In a group of at least two members, let $\Lambda$ be the lattice of turns $\sum_j t_jA_j/m_j \bmod 1$ generated by the deltas $[A_j\equiv0\bmod m_j]$ of $c$ (only $\{0\}$ when the product of the moduli exceeds $4096$, \py!_LATTICE_MAX!). For a base member $e(b)$ and each other member $e(p)$, let $g=p-b$; skip $g=0$ and $g$ whose denominators' least common multiple exceeds $4096$ (\py!_ORBIT_MAX!); let $r$ be the least integer $\ge2$ with $rg\in\Lambda$. Try candidates by decreasing $r$, ties by text: if members $e(b+kg+\ell_k)$ with $\ell_k\in\Lambda$ exist for $k=1,\ldots,r-1$, replace the $r$ members by $c\cdot r\cdot e(b)\cdot[Mrg\equiv0\bmod Mr]$, $M$ the least integer making $Mrg$ integral.
+\item Fold complete residue sets (\py!_fold_residue_sets!, as \py!_fold_residues! but with the coefficient $c$ allowed to hold other deltas; groups in order of their text, each term in at most one group), normalize deltas again, and drop implied deltas (\py!_absorb_deltas!: in a term, a delta modulo $m$ is dropped when another delta of the term modulo a proper multiple of $m$, read modulo $m$ by \py!_normal_delta!, equals it).
+\end{enumerate}
+\end{algorithm}
+
+The orbit step implements the orthogonality of additive characters: $\sum_{k=0}^{r-1}e(b+kg)=r\,e(b)\,[rg\in\Z]$ for $g$ of order dividing $r$~\cite{berndt1998gauss}.
+
+\subsection{Entry witnesses}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class EntryWitness!: \py!assignment: Mapping[str, CheckAssignmentValue]!; \py!index: tuple[int, ...]!; \py!left: complex!; \py!right: complex!; property \py!deviation = abs(left - right)!.
+\end{signature}
+
+An \term{entry witness} is an assignment and a boundary index tuple, in axis order, at which two symbolic tensors' entries differ, with both entry values.
+
+\begin{signature}
+\py!support_points(difference: Scalar, indices: Sequence[str], extents: Sequence[int]) -> tuple[tuple[int, ...], ...]!
+\end{signature}
+
+\py!support_points! lists index tuples at which a difference is likely nonzero: all zeros; all ones (each $1 \bmod$ its extent); then, for each term of the expanded difference, the tuple that its deltas pin. Pinning iterates to a fixed point: a delta pins an index when, after the pins so far are substituted, its argument has exactly one free symbol, with coefficient $\pm1$ and an integer rest; the pinned residue is $-\text{rest}\cdot\text{coefficient}\bmod m$. Unpinned indices are $0$ and every component is reduced modulo its extent. Duplicates are removed in order.
+
+\begin{signature}
+\py!find_entry_witness(left, right, assignments, *, tolerance=DEFAULT_TOLERANCE, max_steps=DEFAULT_MAX_SIMPLIFY_STEPS) -> EntryWitness | None!
+\end{signature}
+
+\begin{algorithm}[Witness search]\label{alg:proofs-find-witness}
+For each assignment in order:
+\begin{enumerate}
+\item Substitute it into both tensors; skip it on a \py!SymbolicContractionError!, \py!ScalarError!, \py!TypeError! or \py!ValueError!.
+\item Skip it unless both sides have the same axis dimensions, all concrete, the same axis index names, and entries free of every symbol other than those index names.
+\item Simplify the entry difference; skip on a \py!ScalarError! or a zero difference.
+\item For each point of \py!support_points! of the difference: evaluate both entries exactly (\py!value_at!), skipping the point on the errors above, and convert to complex values $a,b$. Return the witness when $|a-b|>\tau\max(1,|a|,|b|)$ or when the exact difference is provably nonzero (\py!_exactly_nonzero!: as a cyclotomic number times a power of $\sqrt2$ when it reads as one, else by \py!Scalar.is_provably_nonzero!).
+\end{enumerate}
+Return \py!None! when no assignment yields a witness.
+\end{algorithm}
+
+\section{Sampling}\label{sec:proofs-sampling}
+
+The oracle rung, the witness search and the certification checks evaluate a pair at a deterministic list of small assignments, the \term{sample grid}.
+
+\subsection{Sample values}
+
+\begin{signature}
+\py!DIMENSION_SAMPLE_VALUES = (2, 3, 4, 1)!\\
+\py!MULTIPLICITY_SAMPLE_VALUES = (0, 1, 2, 3)!\\
+\py!PHASE_SAMPLE_VALUES = (Rational(1, 3), Rational(1, 4), 0, Rational(1, 2))!\\
+\py!INTEGER_SAMPLE_POOL = (1, 2, 0, 3, -1, 4, 5, -2, 6, 7, -3, 8)!\\
+\py!RATIONAL_SAMPLE_POOL = (1/3, 1/4, 0, 1/2, 1, 2, -1/3, -1/4, -1, -1/2, -2)!
+\end{signature}
+
+\begin{definition}[Sample values of a symbol]\label{def:proofs-sample-values}
+For a pair $(L,R)$ with roles $(M,\Delta,O)$ (\cref{def:proofs-roles}), symbol table $T$, and optional dimension floors $\phi$, \py!_sample_values(L, R, floors)! maps each symbol of $M\cup\Delta\cup O$, in sorted name order, to a tuple:
+\begin{enumerate}
+\item a multiplicity symbol: \py!MULTIPLICITY_SAMPLE_VALUES!;
+\item a dimension symbol $d$ named in $\phi$: \py!_floor_samples(f)! with $f=\max(\phi(d),\text{pf}(d))$, $\text{pf}$ the phase-vector floor of \cref{def:proofs-dimension-floors} (default $1$); \py!_floor_samples(f)! is the first four values $\ge f$ of the sequence $2,3,4,1,5,6,7,\ldots$;
+\item any other dimension symbol: \py!DIMENSION_SAMPLE_VALUES!;
+\item any other symbol $s$: \py!_assumption_samples(T[s])!. From \py!INTEGER_SAMPLE_POOL! when any symbol of that name is an integer symbol, else from \py!RATIONAL_SAMPLE_POOL!, take the first four values that meet every assumption (\cref{def:proofs-assignment}), then repeat them cyclically to length four. A symbol with no value meeting its assumptions gets no entry.
+\end{enumerate}
+\end{definition}
+
+\begin{example}
+A positive rational symbol samples $(\tfrac13,\tfrac14,\tfrac12,1)$; a positive integer symbol $(1,2,3,4)$; a negative integer symbol has only $-1,-2,-3$ in the pool and samples $(-1,-2,-3,-1)$; a symbol without assumptions samples \py!PHASE_SAMPLE_VALUES!. With floor $3$ a dimension samples $(3,4,5,6)$; with floor $6$, $(6,7,8,9)$.
+\end{example}
+
+\begin{definition}[Dimension floors]\label{def:proofs-dimension-floors}
+\py!dimension_floors(*diagrams) -> dict[str, int]! maps each dimension symbol $d$ that is the bare dimension of a phase vector with at least one stored entry or weight to one more than the largest stored index over all such vectors of all the diagrams. A phase vector over $d$ is defined only when $d$ exceeds each stored index; the floor is the least such $d$.
+\end{definition}
+
+\subsection{The grid}
+
+\begin{signature}
+\py!sample_grid(left: Diagram, right: Diagram, floors: Mapping[str, int] | None = None) -> tuple[Mapping[str, CheckAssignmentValue], ...]!
+\end{signature}
+
+\begin{algorithm}[Sample grid]\label{alg:proofs-sample-grid}
+Let $V$ be \py!_sample_values(left, right, floors)!, $n$ its number of symbols in name order, and $w=4$.
+\begin{enumerate}
+\item If $n=0$, return the one empty assignment.
+\item The \emph{diagonals} are the index tuples $(i,\ldots,i)$ for $i=0,1,2,3$.
+\item If $w^n\le 4096$ (\py!_MAX_GRID_PRODUCT!), the rest is every other index tuple of $\{0,1,2,3\}^n$ sorted by (largest index, index sum, tuple). Otherwise the rest is, for each base $b=0,\ldots,3$, each position $p=0,\ldots,n-1$ and each $i\neq b$, the tuple equal to $b$ everywhere but $i$ at $p$, in that loop order.
+\item Remove repeated tuples, keeping the first. Return, for each tuple $t$, the read-only assignment mapping the $j$-th symbol to its $t_j$-th sample value.
+\end{enumerate}
+\end{algorithm}
+
+The grid therefore begins with the four diagonal points, in which every symbol takes its first, second, third and fourth sample value together. Over one dimension symbol $d$ it is $\{d=2\},\{d=3\},\{d=4\},\{d=1\}$.
+
+\begin{signature}
+\py!_smallest_admissible(left, right, table) -> Mapping[str, CheckAssignmentValue] | None!
+\end{signature}
+
+\py!_smallest_admissible! gives each free symbol, in name order, its least value meeting its assumptions: a multiplicity symbol the first of $0,\ldots,63$ that does (64 is \py!_ADMISSIBLE_SEARCH!); a dimension symbol the first of $f,\ldots,f+63$ with $f$ its phase-vector floor (default $1$); any other symbol the first value of \py!_assumption_samples!. It returns \py!None! when some symbol has no such value or the pair has no symbol.
+
+\paragraph{Planned size.} \py!_planned_size(left, right, assignment)! instantiates both sides (\cref{alg:proofs-instantiate}) and returns the larger product of boundary dimensions as a float, or $+\infty$ when either side fails to instantiate or the product overflows a float. \py!_interleave_degenerate(left, right, ordered)! splits a point list into \emph{degenerate} points (a multiplicity value below $1$ or a dimension value below $2$, among integer values) and the others, keeps each part in its order, and alternates them starting with the kind of the first point; a list with only one kind is returned unchanged.
+
+\subsection{The oracle rung}
+
+\begin{algorithm}[Relative oracle comparison]\label{alg:proofs-oracle-compare}
+\py!_oracle_compare(left, right, assignment, table, tolerance, max_elements)! returns a pair (refusal, mismatch):
+\begin{enumerate}
+\item If the assignment is not admissible for the table, return (\code!breaks a symbol's assumptions!, none).
+\item Run \py!compare! in \texttt{EXACT} mode with the tolerance and element cap. An error of the oracle set (\py!BangBoxError!, \py!DimensionError!, \py!GeneratorError!, \py!GraphError!, \py!PhaseError!, \py!ScalarError!, \py!ValidateError!, \py!CheckError!, \py!ContractError!, \py!DenoteError!) returns (\code!ErrorName: message!, none).
+\item A match returns (none, none).
+\item If the deviation $\delta$ is finite, let $s=\max(1,\mu_L,\mu_R)$, $\mu_X$ the largest entry modulus of side $X$ contracted at the assignment (\py!_magnitude!, $0$ for an empty array); an oracle error here returns (none, none). If $\delta\le\tau s$, return (none, none).
+\item Return (none, the comparison).
+\end{enumerate}
+\end{algorithm}
+
+A counted mismatch therefore needs a deviation above $\tau\cdot\max(1,m)$ with $m$ the largest entry modulus of either side; interface mismatches carry $\delta=+\infty$ and always count.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class _OracleRun!: \py!evaluated!; \py!mismatch!; \py!comparison!; \py!refusals: tuple[str, ...] = ()!; \py!deferred = ()!.
+\end{signature}
+
+\begin{algorithm}[Oracle run]\label{alg:proofs-run-oracle}
+\py!_run_oracle(left, right, candidates, max_samples, tolerance, max_elements, fallback_point=False, max_planned=inf, by_size=False)!:
+\begin{enumerate}
+\item Build the symbol table. With \py!fallback_point!, compute the smallest admissible point.
+\item With \py!by_size!, sort the candidates stably by planned size and interleave degenerate and other points; else keep the given order. This is the queue.
+\item Set $\ell=0$ (the largest evaluated planned size). While the queue is nonempty and fewer than \py!max_samples! samples have evaluated, pop its head $a$ and let $p$ be its planned size:
+  \begin{enumerate}
+  \item if $p$ is finite and $p>$ \py!max_planned!, append $a$ to the deferred list;
+  \item else if a sample has evaluated, $p$ is finite and $p>\max(16\ell,2^{20})$ (\py!_SIZE_GROWTH = 16!, \py!_DEFERRED_SIZE = 2**20!), record the refusal \code!{a}: larger than needed (planned p elements, over 16 x the largest evaluated L)!, $L=\ell$;
+  \item else run \cref{alg:proofs-oracle-compare}. A refusal is recorded as \code!{a}: reason!; then, if a fallback point exists and was not yet a candidate, it is pushed onto the queue's head. Otherwise $a$ counts as evaluated, $\ell\leftarrow\max(\ell,p)$, and a mismatch ends the run with $a$ as the mismatch.
+  \end{enumerate}
+\item Return the evaluated samples, the mismatch and its comparison (or none), the refusals and the deferred samples.
+\end{enumerate}
+\end{algorithm}
+
+\begin{signature}
+\py!oracle_summary(checked: int, refusals: Sequence[str]) -> str!
+\end{signature}
+returns \code!no oracle sample evaluated! when \py!checked! is $0$, else \code!no oracle mismatch in N sample(s)!, followed, when refusals exist, by \code!; K sample(s) refused, first at R!, $R$ the first refusal.
+
+\begin{signature}
+\py!refute_by_oracle(left, right, *, samples=None, max_samples=24, tolerance=DEFAULT_TOLERANCE, max_elements=DEFAULT_MAX_ELEMENTS) -> OracleRefutation!
+
+\py!@dataclass(frozen=True, slots=True, eq=False) class OracleRefutation!: \py!evaluated!; \py!counterexample!; \py!comparison!; \py!refusals = ()!; property \py!refuted! (a counterexample exists).
+\end{signature}
+
+\py!refute_by_oracle! is rung~3 alone. It validates the arguments as \py!decide_equal! does, clears both parameter environments (\py!_family!: a copy with an empty environment), takes the candidates from \py!samples! or the sample grid, and runs \cref{alg:proofs-run-oracle} with \py!fallback_point! and \py!by_size! set exactly when \py!samples! is \py!None!, and no planned-size deferral.
+
+\section{What Each Rung Establishes}\label{sec:proofs-soundness}
+
+This section states, rung by rung, the claim a verdict establishes and the evidence that backs it. Write $L\equiv R$ for family equality (\cref{def:proofs-family-equality}), $\alpha$ for an admissible assignment, and $\mathcal{A}$ for the tuple of assumed dimension equations a decision carries in \py!assumptions!.
+
+\paragraph{Interface.} An \texttt{UNEQUAL} from rung~1 establishes that no assignment gives the two sides equal interfaces. In the unboxed case, the boundary lists differ in length, or at some position the two dimension expressions $\delta_L,\delta_R$ admit no solution of $\delta_L=\delta_R$ under the symbols' assumptions (\py!unify! status \texttt{FAILURE}); since a denotation's shape is the product of its boundary dimensions, $\sem{L_\alpha}$ and $\sem{R_\alpha}$ never have equal shapes. In the boxed case, the arity polynomials $c_L,c_R$ differ at the recorded point $\nu$ of the degree grid and both sides instantiate there to the arities the polynomials predict, so $L_\nu$ and $R_\nu$ have different numbers of boundary ports. The failed interface is the whole evidence: the decision carries no counterexample tensor and needs no Lean refutation.
+
+\paragraph{Normal form.} An \texttt{EQUAL} from rung~2 establishes
+\[
+L \;\xrightarrow{\;r_1\cdots r_k\;}\; N_L \;\cong\; N_R \;\xleftarrow{\;s_1\cdots s_l\;}\; R,
+\]
+where each arrow is a sequence of sound rule applications (\cref{ch:rules}) recorded in a replayable certificate, and $\cong$ is isomorphism of comparison views (spider ports unordered within a direction, parameter environment cleared, scalar simplified; \cref{ch:rewriting}). Each rule holds for every value of the symbols its side conditions admit; a rule whose dimension constraint the matcher could not discharge records it as \texttt{DEFERRED} or \texttt{BOUND}, and the verdict then holds under $\mathcal{A}$. The oracle samples that rung~3 evaluated agree with this verdict; they are evidence against a defective rule, not part of the proof.
+
+\paragraph{Oracle counterexample.} An \texttt{UNEQUAL} from rung~3 establishes $\bigl\|\sem{L_\alpha}-\sem{R_\alpha}\bigr\|_\infty>\tau\max\bigl(1,\|\sem{L_\alpha}\|_\infty,\|\sem{R_\alpha}\|_\infty\bigr)$ in floating point at the admissible counterexample $\alpha$, or an interface mismatch of the two instances. The Lean refutation of certification (\cref{sec:proofs-certify}) re-establishes the inequality in Lean (\cref{ch:lean-export}).
+
+\paragraph{Saturation.} An \texttt{EQUAL} from rung~4 establishes a chain $L=D_0\sim D_1\sim\cdots\sim D_m=R$ in which each link is one rule application, read in either direction, from an e-node's diagram to a diagram whose comparison view is isomorphic to its child e-node's. Each link is a replayed certificate. The verdict holds under the union of the links' assumed constraints.
+
+\paragraph{Symbolic contraction.} An \texttt{EQUAL} from rung~5a establishes that the symbolic tensors $t_L,t_R$ (\cref{ch:semantics}), whose entries are exact expressions in the boundary indices with every dimension formal, have equal ranks, equal axis dimensions and an entry difference that the simplifier reduces to $0$ or the vanishing test of \cref{alg:proofs-vanishes} proves zero, possibly given floors $d\ge c$ that the phase vectors require (\cref{def:proofs-dimension-floors}). The symbolic contraction is the denotation for every value of the dimensions, so the entries agree for all $\alpha$. No rewrite certificate exists; the proof is built afterwards (\cref{sec:proofs-decision-proof}).
+
+\paragraph{Symbolic witness.} An \texttt{UNEQUAL} from rung~5a establishes, at the admissible assignment $\alpha$ and boundary index $\iota$, that the exact entries $t_L(\alpha)[\iota]$ and $t_R(\alpha)[\iota]$ differ by more than $\tau\max(1,|a|,|b|)$ in floating point, or that their exact difference is provably nonzero as a cyclotomic number times a power of $\sqrt2$.
+
+\paragraph{Path sum.} An \texttt{EQUAL} from rung~5b establishes that both diagrams reduce, by the path-sum rewrite system of \cref{ch:algebra}, to the same canonical path sum up to renaming of path variables~\cite{amy2018pathsums}. An \texttt{UNEQUAL} establishes that the two canonical forms differ at a recorded boundary index, read at the parameter point when the family lies outside the class.
+
+\paragraph{Induction.} An \texttt{EQUAL} from rung~6 establishes, for the index $n$ chosen by \py!choose_index!,
+\[
+L[n:=0]\equiv R[n:=0]\quad\text{and}\quad\bigl(L[n:=k]\equiv R[n:=k]\bigr)\Rightarrow\bigl(L[n:=k+1]\equiv R[n:=k+1]\bigr),
+\]
+the base case by a nested ladder that returned \texttt{EQUAL}, the step case by one of the exact discharges of \py!_STEP_LADDER! (\cref{ch:kernel}). A proved step from base~$1$ establishes only $n\ge1$ and is reported \texttt{UNKNOWN}. The shifted, carry-open, open-ends, periodic, value-count and column-count arguments each establish the same family claim by a combination of nested decisions and kernel rules (\py!subst!, \py!congr!, \py!instance!, \py!periodic!, \py!trans!, \py!symm!). An \texttt{UNEQUAL} from the rung is an oracle counterexample of the original pair, lifted from the base or step case and confirmed by \cref{alg:proofs-oracle-compare}.
+
+\paragraph{Uncertified verdicts.} \texttt{EQUAL\_UNCERTIFIED} establishes the same claim as \texttt{EQUAL} without a re-checkable proof; \texttt{UNEQUAL\_UNCERTIFIED} the same as \texttt{UNEQUAL} without a Lean refutation. The restricted verdicts of \cref{sec:proofs-restricted} that are uncertified by construction (every finite instance equal; a difference that vanishes on a range) establish the claim on the restricted domain only.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.2\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Rung & Inputs read & Exact or floating point \\
+\midrule
+1 interface & boundary lists, port dimensions, \bbox{} scopes, arity polynomials & exact \\
+2 normal form & both family diagrams, \py!rules!, \py!guard! & exact \\
+3 oracle & both family diagrams at sample assignments & floating point, tolerance $\tau$ \\
+4 saturation & both family diagrams, \py!rules!, \py!saturation_limits! & exact \\
+5a symbolic & both symbolic contractions, floors & exact equality; floating-point or exact witness \\
+5b path sum & both family diagrams; the parameter point & exact \\
+6 induction & both family diagrams, the evaluated samples, nested ladders & exact; floating-point confirmation of counterexamples \\
+\bottomrule
+\end{tabularx}
+\caption{What each rung reads and how it computes.}
+\label{tab:proofs-rung-inputs}
+\end{table}
+
+\section{Determinism, State and Caching}\label{sec:proofs-determinism}
+
+The ladder and the prover are deterministic for given inputs: every sample list, candidate order and tie-break is fixed by sorting on names, index tuples, planned sizes or text, and no randomness is used. The only concurrency is the two-thread restricted exhaustive proof (\cref{alg:proofs-restricted-exhaustive}), whose result depends on which search finishes first when both would settle.
+
+The modules keep the following process-wide state:
+\begin{itemize}
+\item the context variables \py!_NESTED!, \py!_INDUCING!, \py!_USE_PATH_SUM! and \py!_RESIDUAL_PATHS! of \module{archytaszx.semantics.decide}, each set on entry to one call and reset on its exit;
+\item the proved-lemma table \py!_PROVED! and the in-progress set \py!_PROVING! of \module{archytaszx.semantics.lemmas}: a lemma's theorem is built once per process; a lemma requested while it is being proved raises \py!LemmaError!, and \py!rewrite_all! skips it;
+\item the parsed-lemma memo \py!_PARSED!, keyed by the two DSL texts and the count's value, which hands out copies;
+\item the caches of the layers below (\cref{app:params}), which change running time and never results.
+\end{itemize}
+\py!Decision!, \py!ProofOutcome!, \py!ProofCheck!, \py!Certificate! and \py!Derivation! are frozen dataclasses. The ladder decides family copies of its inputs (\py!_family!), and \py!certify! stores copies of the diagrams it records.
+
+\section{The Decision Procedure}\label{sec:proofs-ladder}
+
+\subsection{The decision record}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class Decision!
+\end{signature}
+
+A \py!Decision! holds a verdict, the rung behind it, and the evidence each rung produced. It compares by identity (\py!eq=False!). Construction raises \py!DecideGrammarError! when \py!verdict! is not an \py!EqualityVerdict!, \py!method! not a \py!DecisionMethod!, or \py!reason! not a \py!str!. \Cref{tab:proofs-decision-fields} lists the fields, all optional after the first three.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.31\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}X@{}}
+\caption{Fields of \texttt{Decision}.}\label{tab:proofs-decision-fields}\\
+\toprule
+Field & Type (default) & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Field & Type (default) & Meaning \\
+\midrule
+\endhead
+\py!verdict! & \py!EqualityVerdict! & the verdict \\
+\py!method! & \py!DecisionMethod! & the settling rung, or \texttt{NONE} \\
+\py!reason! & \py!str! & a human-readable account (\cref{sec:proofs-reasons}) \\
+\py!left_nf!, \py!right_nf! & \py!NormalForm | None! & the two normal forms when rung~2 ran without error \\
+\py!certificates! & tuple of \py!Certificate! (empty) & normal-form certificates, or one certificate per saturation edge \\
+\py!counterexample! & mapping or \py!None! & the assignment of an \texttt{UNEQUAL} verdict \\
+\py!comparison! & \py!ComparisonResult | None! & the comparison at the counterexample \\
+\py!induction! & \py!InductionResult | None! & the step-case result of the induction rung (\cref{ch:kernel}) \\
+\py!samples_checked! & \py!int! (\py!0!) & how many oracle samples evaluated, in total \\
+\py!assumptions! & tuple of \py!DimensionConstraint! & the \texttt{DEFERRED} and \texttt{BOUND} dimension equations a derivation assumed \\
+\py!parameters_agree! & \py!bool! (\py!True!) & whether both sides have equal parameter environments \\
+\py!induction_reversed! & \py!bool! (\py!False!) & the induction step ran with the right side first \\
+\py!saturation! & \py!SaturationReport | None! & the saturation report whenever saturation finished \\
+\py!witness! & \py!EntryWitness | None! & the differing entry of a \texttt{SYMBOLIC\_WITNESS} verdict \\
+\py!inner_method! & \py!DecisionMethod | None! & the settling rung of a \texttt{DOUBLED} decision \\
+\py!doubled! & pair or \py!None! & the two doubled diagrams of a \texttt{DOUBLED} decision \\
+\py!restriction! & \py!Restriction | None! & the restriction of a restricted decision \\
+\py!family! & \py!Decision | None! & the unrestricted decision of a restricted one \\
+\py!family_holds! & \py!bool! (\py!False!) & the unrestricted decision was \texttt{EQUAL} \\
+\py!counterexample_original! & mapping or \py!None! & the counterexample in the original symbols \\
+\py!restricted_pair! & pair or \py!None! & the restricted pair decided \\
+\py!floors_used! & mapping or \py!None! & the dimension floors a symbolic contraction needed \\
+\py!refutation! & \py!str | None! & the Lean refutation source of an \texttt{UNEQUAL} not settled by the interface \\
+\py!proof! & \py!object | None! & the proof of an \texttt{EQUAL} (\cref{sec:proofs-decision-proof}) \\
+\py!induction_proof! & \py!Theorem | None! & the kernel theorem of an \texttt{INDUCTION} verdict \\
+\py!stops! & tuple of string pairs & one (rung, stop code) per rung tried, in ladder order (\cref{tab:proofs-stops}) \\
+\py!base_case! & \py!Decision | None! & the induction rung's base-case decision when it reached one \\
+\py!contracted! & 4-tuple or \py!None! & the pair a \texttt{SYMBOLIC\_CONTRACTION} verdict decided and its two contractions, absent when either side has parameters \\
+\bottomrule
+\end{xltabular}
+
+Four properties classify the verdict: \py!decided! (\texttt{EQUAL} or \texttt{UNEQUAL}), \py!holds_uncertified! (either uncertified verdict), \py!claims_equal! (\texttt{EQUAL} or \texttt{EQUAL\_UNCERTIFIED}) and \py!claims_unequal! (\texttt{UNEQUAL} or \texttt{UNEQUAL\_UNCERTIFIED}).
+
+\subsection{Stop codes}
+
+Every rung the ladder tries appends one pair to \py!stops!. \Cref{tab:proofs-stops} lists the codes. A decision settled by the interface rung has no stops. Certification appends \code!("proof", "no_proof")! or \code!("refutation", "no_lean")! when it downgrades the verdict.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.235\linewidth}>{\raggedright\arraybackslash}p{0.385\linewidth}X@{}}
+\caption{Stop codes of \texttt{Decision.stops}.}\label{tab:proofs-stops}\\
+\toprule
+Rung & Code & Condition \\
+\midrule
+\endfirsthead
+\toprule
+Rung & Code & Condition \\
+\midrule
+\endhead
+\code!doubled! & \code!doubled! & the ladder ran on the doubled pair \\
+ & \code!withheld! & the doubled comparison was withheld (\cref{sec:proofs-doubled}) \\
+\code!normal_form! & \code!agree!, \code!differ! & whether the two normal forms are the same \\
+\code!oracle!, \code!oracle_deferred! & \code!mismatch! & a sample mismatched \\
+ & \code!none_evaluated! & no sample evaluated \\
+ & \code!refused! & samples evaluated, none mismatched, some refused \\
+ & \code!no_mismatch! & samples evaluated, none mismatched or refused \\
+\code!saturation! & \code!merged! & the sides merged and every edge replayed \\
+ & a \py!SaturationStop! value & \code!saturated!, \code!iteration_limit!, \code!enode_limit! or \code!application_limit! \\
+ & \code!error! & saturation raised before it reported \\
+\code!symbolic! & \code!equal! & the contractions agree \\
+ & \code!differ! & a witness was found \\
+ & \code!declined.box_meets_wire! & the reason contains \code!declined! or \code!skipped! and \code!meets the rest! \\
+ & \code!declined.scalar_budget! & \ldots\ and \code!budget! \\
+ & \code!declined.other! & any other declined or skipped reason \\
+ & \code!indeterminate.replicated_factors! & the reason contains \code!replicated factors differ! \\
+ & \code!indeterminate! & the reason starts with \code!indeterminate! \\
+ & \code!entries_differ! & any other non-match \\
+\code!path_sum! & \code!not_applicable! & the pair lies outside the path-sum class \\
+ & \code!equal!, \code!unequal! & the canonical forms coincide or differ \\
+ & \code!residual_enum! & the comparison used residual enumeration \\
+ & \code!residual! & any other unknown outcome \\
+\code!induction!, \code!induction_reversed! & \code!base_not_proved! & the reason part names a base case \\
+ & \code!step_not_discharged! & otherwise \\
+\code!induction! & \code!proved!, \code!refuted! & the rung settled; replaces every earlier induction code \\
+\code!proof! & \code!no_proof! & no proof was built for an \texttt{EQUAL} \\
+\code!refutation! & \code!no_lean! & no Lean refutation was built for an \texttt{UNEQUAL} \\
+\bottomrule
+\end{xltabular}
+
+\subsection{Entry point and arguments}
+
+\begin{signature}
+\begin{lstlisting}[style=python,frame=none]
+decide_equal(left: Diagram, right: Diagram, *,
+    rules: Sequence[Rule] | None = None,
+    guard: TerminationGuard = DEFAULT_GUARD,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    max_samples: int = 24, use_symbolic: bool = True,
+    use_induction: bool = True, max_depth: int = 2,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_elements: int = DEFAULT_MAX_ELEMENTS,
+    use_saturation: bool = True,
+    saturation_limits: SaturationLimits = DECIDE_SATURATION_LIMITS,
+    mixed: bool = False,
+    restrict: Restriction | str | Mapping[str, str] | None = None,
+    describe: Callable[[Diagram], str] | None = None,
+    prove_equal: bool = True, use_path_sum: bool = True,
+    family_first: bool = True, enumerate_residual: bool = False,
+    max_residual_paths: int = 6) -> Decision
+\end{lstlisting}
+\end{signature}
+
+\py!decide_equal! decides whether \py!left! and \py!right! are equal for every value of their free symbols (\cref{def:proofs-family-equality}), or for the values a restriction covers. The parameters:
+\begin{description}[style=nextline,leftmargin=1.5em]
+\item[\py!rules!] the rule set of the normal-form driver and of saturation; \py!None! selects each procedure's default (\cref{ch:rewriting}).
+\item[\py!guard!] the termination guard of the normal-form driver; \py!DEFAULT_GUARD! is \py!TerminationGuard(max_steps=128, max_nodes=None, detect_loops=True)!.
+\item[\py!samples!] replaces the sample grid of the oracle rung; for the induction base case it is cut to the base pair's symbols (\py!_restrict_samples!).
+\item[\py!max_samples!] the most oracle samples that evaluate in one oracle run.
+\item[\py!use_symbolic!, \py!use_saturation!, \py!use_induction!, \py!use_path_sum!] switch rungs~5a, 4, 6 and 5b on or off.
+\item[\py!max_depth!] the nesting bound of induction: the base case is decided with \py!max_depth - 1!, and depth~$0$ turns induction off.
+\item[\py!tolerance!, \py!max_elements!] the oracle tolerance and element cap.
+\item[\py!saturation_limits!] the limits of rung~4; \py!DECIDE_SATURATION_LIMITS! is \py!SaturationLimits(max_iterations=3, max_enodes=128, max_applications=1024, node_margin=4)! with the default backoff (\py!match_limit=1000!, \py!ban_length=5!).
+\item[\py!mixed!] forces the doubled ladder even on pure diagrams.
+\item[\py!restrict!] a restriction (\cref{sec:proofs-restricted}).
+\item[\py!describe!] gives the diagram comments of the Lean refutation and the proof.
+\item[\py!prove_equal!] when false, an \texttt{EQUAL} is returned unproved and unchanged.
+\item[\py!family_first!] when false, a restricted claim is decided on the restricted pair alone.
+\item[\py!enumerate_residual!, \py!max_residual_paths!] let the path-sum rung evaluate residual sums of at most \py!max_residual_paths! path variables exactly at boundary points; this can only find an \texttt{UNEQUAL}.
+\end{description}
+
+\paragraph{Validation.} \py!decide_equal! raises \py!DecideGrammarError! when \py!family_first!, \py!prove_equal!, \py!use_path_sum! or \py!enumerate_residual! is not a \py!bool!, or \py!max_residual_paths! is a \py!bool!, not an \py!int!, or negative. \py!_check_args! then raises \py!DecideGrammarError! when: \py!left! or \py!right! is not a \py!Diagram!; \py!rules! is not \py!None! and is a string, not a sequence, or holds a non-\py!Rule!; \py!guard! is not a \py!TerminationGuard!; \py!samples! is not \py!None! and is a string, not a sequence, or holds a non-mapping; \py!max_samples! or \py!max_depth! is a \py!bool!, not an \py!int!, or below $0$, or \py!max_elements! below $1$ (message \code!NAME must be an int >= LOW, got V!); \py!use_symbolic!, \py!use_induction! or \py!use_saturation! is not a \py!bool!; \py!saturation_limits! is not a \py!SaturationLimits!; \py!tolerance! is a \py!bool!, not an \py!int! or \py!float!, or not $\ge0$ (a NaN fails).
+
+\begin{algorithm}[Top level of \texttt{decide\_equal}]\label{alg:proofs-decide-top}
+\leavevmode
+\begin{enumerate}
+\item Validate the arguments. Set two context variables for the duration of the call: \py!_USE_PATH_SUM! to \py!use_path_sum!, and \py!_RESIDUAL_PATHS! to \py!max_residual_paths! when \py!enumerate_residual! is set, else \py!None!. Both are reset on exit.
+\item If either side holds an extended \bbox{} (a chain, indexed or copy-scalar \bbox; \py!box.is_extended!), replace both sides by \py!expand_concrete_boxes! of them.
+\item If \py!restrict! is given, parse and validate it against both sides (by \py!parse_restriction! and \py!validate!); when it has clauses, run \py!decide_restricted! (\cref{sec:proofs-restricted}) and certify its result (step~5).
+\item Otherwise run the ladder \py!_decide(left, right, floors=None, ...)! (\cref{alg:proofs-decide}).
+\item Certify the decision (\cref{alg:proofs-certify}) and return it.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{The ladder}
+
+\begin{algorithm}[The ladder \texttt{\_decide}]\label{alg:proofs-decide}
+Input: a pair $(L,R)$, the options of \py!decide_equal!, and optional dimension floors $\phi$ under which samples and contractions are taken.
+\begin{enumerate}
+\item \emph{Mixed operands.} If \py!mixed! is set or either side is not pure, run the doubled ladder (\cref{sec:proofs-doubled}) and return its result.
+\item Record \py!parameters_agree! (equal parameter environments) and clear both environments: $L_f$, $R_f$.
+\item \emph{Rung 1}, interface (\cref{sec:proofs-rung-interface}). A reason returns \texttt{UNEQUAL}/\allowbreak\texttt{INTERFACE} with that reason.
+\item \emph{Rung 2}, normal forms (\cref{sec:proofs-rung-nf}): compute both normal forms and their certificates, the assumptions, and whether they agree; stop code \code!agree! or \code!differ!.
+\item \emph{Rung 3}, oracle: the candidates are \py!samples! or \py!sample_grid(L_f, R_f, phi)!; run \cref{alg:proofs-run-oracle} with \py!max_samples!, the fallback point and size ordering exactly when \py!samples! is \py!None!, and \py!max_planned! $=2^{20}$. A mismatch returns \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with the counterexample, its comparison and no assumptions.
+\item \emph{Normal-form verdict.} If the normal forms agree: when no sample evaluated, run the deferred check (step~11), which may return \texttt{UNEQUAL}; then return \texttt{EQUAL}/\allowbreak\texttt{NORMAL\_FORM} with both certificates and the normal-form assumptions.
+\item \emph{Rung 4}, saturation (\cref{sec:proofs-rung-saturation}) when enabled: a merge returns \texttt{EQUAL}/\allowbreak\texttt{SATURATION} with the edge certificates and their assumptions.
+\item \emph{Rung 5a}, symbolic contraction (\cref{sec:proofs-rung-symbolic}) when enabled: returns \texttt{EQUAL}/\allowbreak\texttt{SYMBOLIC\_CONTRACTION}, \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} at a root point, or \texttt{UNEQUAL}/\allowbreak\texttt{SYMBOLIC\_WITNESS}.
+\item \emph{Rung 5b}, path sum (\cref{sec:proofs-rung-pathsum}) when \py!_USE_PATH_SUM! is set: returns \texttt{EQUAL}/\allowbreak\texttt{PATH\_SUM} or \texttt{UNEQUAL}/\allowbreak\texttt{SYMBOLIC\_WITNESS}.
+\item \emph{Rung 6}, induction (\cref{sec:proofs-rung-induction}) when enabled, \py!max_depth! $>0$, and $M(L_f)\cup M(R_f)\neq\emptyset$. A settled verdict is returned; an \texttt{UNKNOWN} from the rung first runs the deferred check.
+\item \emph{Deferred check.} If rung~3 deferred samples (planned size above $2^{20}$), run \cref{alg:proofs-run-oracle} on them in their stored order, with \py!max_samples! and no fallback, size ordering or deferral; add the evaluated count; append stop \code!oracle_deferred!. A mismatch returns \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with reason \code!oracle mismatch at {a} (a deferred large sample): ...!. The check runs at most once on any path through the ladder.
+\item Return \texttt{UNKNOWN}/\allowbreak\texttt{NONE} with the notes of every rung joined by \code!; ! and the induction base case, when one was reached.
+\end{enumerate}
+Every decision of steps~3--12 carries both normal forms, the saturation report when saturation ran, \py!parameters_agree!, the stops so far, and \py!samples_checked!. Unless a step names other assumptions, the decision carries the normal-form certificates and assumptions; every \texttt{UNEQUAL}, the symbolic-contraction and path-sum \texttt{EQUAL} carry no assumptions.
+\end{algorithm}
+
+The notes of an \texttt{UNKNOWN} are, in order: the normal-form note (\code!normal forms differ! or \code!normal form failed: Error: message!), the oracle summary, \code!saturation: R! or \code!saturation disabled!, \code!symbolic: R! or \code!symbolic contraction disabled!, the path-sum note when that rung ran without settling, and the induction note: \code!induction: R!, \code!induction disabled!, \code!no multiplicity symbol to induct on! or \code!induction depth exhausted!. An \texttt{UNKNOWN} returned by the induction rung itself joins the notes and \code!induction: R! the same way.
+
+\section{The Rungs}\label{sec:proofs-rungs}
+
+\subsection{Mixed operands}\label{sec:proofs-doubled}
+
+A pair with a discard, or any pair when \py!mixed! is set, is decided through the CPM doubling of \cref{ch:mixed}. Let $(L_2,R_2)$ be \py!double(L)! and \py!double(R)!.
+
+\begin{algorithm}[Doubled ladder]\label{alg:proofs-doubled}
+\leavevmode
+\begin{enumerate}
+\item \emph{Withheld check} (\py!_doubled_order_withheld!). For each doubled side, each node-scoped \bbox{} of it, and each of its boundary output and input lists of length $\ell$ with half $h=\lfloor \ell/2\rfloor$: let $S$ be the positions in the list whose port lies on a node of the \bbox. When $S$ is nonempty, the comparison is withheld if the \bbox{} lacks the sheets flag (\py!box.sheets!), or $2h\neq\ell$, or the positions below $h$ (the plain half) are not exactly half of $S$. The reason is \code!a node-scope bang box with boundary slots has no plain/conjugate split, so expanding it after doubling would order its copies differently from doubling after expanding!.
+\item If withheld, run only the oracle on the undoubled family pair (parameters cleared), with the given samples or the grid under $\phi$, \py!max_samples!, fallback and size ordering when \py!samples! is \py!None!, and no deferral. A mismatch returns \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with reason \code!oracle mismatch at {a} (expanded, then doubled): ...!; otherwise \texttt{UNKNOWN}/\allowbreak\texttt{NONE} with reason \code!doubled comparison withheld: W; S (expanded, then doubled)!, $S$ the oracle summary. The stops are \code!("doubled", "withheld")! and the oracle code. Because \py!compare! itself doubles a mixed pair after instantiating and expanding it, these samples compare the doubling of the expansion.
+\item Otherwise run \py!_decide! on $(L_2,R_2)$ with \py!mixed=False!, the same floors and options, and return its decision with method \texttt{DOUBLED}, \py!inner_method! the inner method, \py!doubled! $=(L_2,R_2)$, stops prefixed by \code!("doubled", "doubled")!, and reason \code!doubled, M: R!, $M$ the inner method's value.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Rung 1: interface}\label{sec:proofs-rung-interface}
+
+The interface rung returns a reason when the two interfaces can never agree, for any value of the symbols.
+
+\begin{signature}
+\py!interface_reason(left: Diagram, right: Diagram) -> str | None!
+\end{signature}
+\py!interface_reason! raises \py!DecideGrammarError! for a non-diagram argument and returns \py!_interface_reason! of the two family copies.
+
+\begin{algorithm}[Interface reason]\label{alg:proofs-interface}
+\leavevmode
+\begin{enumerate}
+\item If some boundary port of either side lies on a node in a \bbox's node scope or in a \bbox's port scope, return the arity reason (\cref{alg:proofs-arity}).
+\item Otherwise, for inputs and then outputs: if the boundary lists have different lengths $p\neq q$, return \code!boundary LABEL count p != q!. Read the dimension of each boundary port; if a port does not resolve, return \py!None!. For each position $i$, if \py!dim_l.unify(dim_r)! has status \texttt{FAILURE} (\cref{ch:algebra}), return \code!boundary LABEL i has dimension A vs B, never equal!.
+\item Return \py!None!.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Arity reason]\label{alg:proofs-arity}
+Let $a_L=(I_L,O_L)$ and $a_R$ be \py!boundary_arity! of the sides: the numbers of boundary inputs and outputs as polynomials in the multiplicity symbols (\cref{ch:diagrams}); return \py!None! if either is undefined. For inputs, then outputs, with counts $c_L,c_R$:
+\begin{enumerate}
+\item If $c_L-c_R$ expands to $0$, continue.
+\item If neither count has a free symbol, return \code!boundary LABEL count cL != cR!.
+\item Otherwise search the \emph{degree grid}: over the symbols of both counts in name order, symbol $x$ ranging over $0,\ldots,\deg_x(c_L-c_R)$ ($3$ when the difference is not a polynomial in $x$), in product order. Skip a point where the difference vanishes or where instantiating a side raises a domain error. At the first other point, instantiate both sides there (\py!instantiate_symbol! for every multiplicity symbol of the point the side carries); if the instance arity of either side differs from its arity polynomials at that point, return \py!None!; else that point is the witness.
+\item With no witness return \py!None!; with witness $x_1=v_1,\ldots$ return \code!boundary LABEL count cL != cR, differing at x1 = v1, ...!.
+\end{enumerate}
+\end{algorithm}
+
+The arity polynomials are $(\text{inputs},\text{outputs})$; the witness instantiation guards against a polynomial that does not describe its family at a degenerate point.
+
+\begin{example}
+A $Z(1\to2)$ spider against a $Z(1\to1)$ spider over the same dimension $d$ returns \texttt{UNEQUAL}/\allowbreak\texttt{INTERFACE} with reason \code!boundary output count 2 != 1! and no stops. A $d$-dimensional identity against a $2d$-dimensional identity returns \code!boundary input 0 has dimension d vs 2*d, never equal!, because $d=2d$ has no solution with $d\ge1$. A $d$-dimensional identity against a $2$-dimensional identity proceeds down the ladder: a free $d$ unifies with $2$.
+\end{example}
+
+\subsection{Rung 2: normal forms}\label{sec:proofs-rung-nf}
+
+The rung runs the normal-form driver (\py!normal_form!, \cref{ch:rewriting}) on $L_f$ and on $R_f$ with \py!rules! and \py!guard!. It certifies each run: \py!certify(nf.source, nf.results, label="left normal form")! and the same with \code!right normal form! (\cref{sec:proofs-certificates}). The assumptions are \py!assumed! of both normal forms' assumed constraints: the \texttt{DEFERRED} and \texttt{BOUND} dimension equations that are not identities, one per equation up to orientation and equal SymPy forms, in first-occurrence order. The two forms agree when \py!same_normal_form! holds: equal canonical keys and isomorphic comparison views. An error of the normal-form set (the domain errors of \cref{alg:proofs-oracle-compare} without the oracle-specific ones, plus \py!CertificateError! and \py!RewriteError!) discards both forms and every certificate, sets the note \code!normal form failed: Error: message!, and counts as disagreement.
+
+The normal-form verdict waits for rung~3. When the forms agree and the oracle finds no mismatch, the decision is \texttt{EQUAL}/\allowbreak\texttt{NORMAL\_FORM} with reason \code!normal forms agree; S!, or \code!normal forms agree, conditional on the assumed dimension equation(s) E1, E2; S! when assumptions exist, $S$ the oracle summary.
+
+\subsection{Rung 3: the numeric oracle}
+
+The oracle rung runs \cref{alg:proofs-run-oracle} on the family pair, as stated in step~5 of \cref{alg:proofs-decide}. Samples whose planned size exceeds $2^{20}$ elements are deferred to the end of the ladder (step~11) or, when the normal forms agree and no smaller sample evaluated, to just before the normal-form verdict. The rung's mismatch reason is \code!oracle mismatch at {a}: C!, $C$ the comparison reason.
+
+\begin{example}
+For $L=Z_d(1\to2)$ and $R=X_d(1\to2)$, both without phase, the normal forms differ and the first grid sample $\{d=2\}$ mismatches: the decision is \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with reason \code!oracle mismatch at {'d': 2}: max abs deviation 1.0 exceeds tolerance 1e-09!, stops \code!(("normal_form", "differ"), ("oracle", "mismatch"))!, and, after certification, a Lean refutation.
+\end{example}
+
+\subsection{Rung 4: saturation}\label{sec:proofs-rung-saturation}
+
+Rung~4 builds a diagram-level e-graph~\cite{tate2011eqsat,willsey2021egg} (\py!EGraph!, \cref{ch:rewriting}) holding both sides, saturates it, and asks for an explanation~\cite{flatt2022proofs} of their equality.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class _SaturationRun!: \py!report: SaturationReport | None!; \py!certificates: tuple[Certificate, ...] | None!; \py!assumptions!; \py!reason: str!.
+\end{signature}
+
+\begin{algorithm}[Saturation rung]\label{alg:proofs-saturation}
+\leavevmode
+\begin{enumerate}
+\item Create an empty e-graph; add $L_f$ and $R_f$ as roots; saturate with \py!rules! (default \py!saturation_rules()!) under the limits.
+\item Let the edges be \py!graph.explain(first, second)!. If there is none, return no certificates and the reason \code!no merge after N round(s) and K e-node(s), stopped by STOP!.
+\item For each edge $e_j$ in order: certify \py!graph.diagram(parent)! with the single result \py!e.result! and label \code!saturation edge j: RULE!; replay the certificate without rediscovery; on failure return \code!edge j did not replay: R!. Compare the comparison view of the certificate's final diagram with that of \py!graph.diagram(child)!; when they are not isomorphic return \code!edge j does not reach its child e-node!.
+\item An error of the normal-form set returns \code!failed: Error: message!, keeping the report when one was made.
+\item The assumptions are \py!assumed! of every dimension constraint of every step of every certificate. The reason is \code!N edge(s)!, or \code!0 edge(s), both sides one e-node! when the sides share an e-node.
+\end{enumerate}
+\end{algorithm}
+
+A merge yields \texttt{EQUAL}/\allowbreak\texttt{SATURATION} with reason \code!saturation merged both sides along R!, followed by \code!, conditional on the assumed dimension equation(s) E1, ...; S! when assumptions exist. The edge certificates form a chain from one root to the other through the explanation; each edge runs from its parent to its child, so a backward edge in the chain runs against the chain's direction. The stop code is \code!merged!, else the report's stop reason, else \code!error!.
+
+\subsection{Rung 5a: symbolic contraction and witnesses}\label{sec:proofs-rung-symbolic}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class _SymbolicRun!: \py!matched: bool!; \py!reason: str!; \py!tensors = None!; \py!floors_used = None!; \py!difference: Scalar | None = None!.
+\end{signature}
+
+\begin{algorithm}[Symbolic match]\label{alg:proofs-symbolic-match}
+\py!_symbolic_match(L, R, floors=None)!:
+\begin{enumerate}
+\item \emph{Interface trust} (\py!_symbolic_interface_reason!): unless a side holds a tree \bbox{} (whose stored leaf slots stand for $b^k$ slots), read the boundary input and output dimension tuples of both sides; a port that does not resolve gives \code!a boundary LABEL does not resolve!, and different tuples give \code!boundary LABEL dimensions A vs B!. Such a reason returns a non-match \code!symbolic contraction skipped: REASON!.
+\item Contract both sides symbolically and compare (\cref{alg:proofs-compare-symbolic}) with the phase-vector floors of both sides as \py!dimension_floors!.
+\item If they do not match and \py!floors! is nonempty, compare again under the merged floors (each name's maximum of the phase-vector floor and the given floor); a match there returns a match with \py!floors_used! equal to the given floors.
+\item An error of the symbolic set (domain errors, \py!CheckError!, \py!DenoteError!, \py!PathSumError!, \py!SymbolicContractionError!) returns a non-match \code!symbolic contraction declined: Error: message!.
+\item Otherwise return the comparison's match flag, reason, both tensors and its difference.
+\end{enumerate}
+\end{algorithm}
+
+A match returns \texttt{EQUAL}/\allowbreak\texttt{SYMBOLIC\_CONTRACTION} with reason \code!symbolic contractions agree: R!, no assumptions, the floors used, and \py!contracted! set to $(L,R,t_L,t_R)$ when neither original side has parameters.
+
+On a non-match the rung searches for a counterexample:
+\begin{enumerate}
+\item \emph{Root points} (\py!root_points!). When the comparison produced a difference $\Delta$, take every dimension symbol $d$ of $\Delta$ (a symbol of some port dimension of either side). For each, factor $\Delta$, keep the factors (or bases of positive powers) that are polynomials in $d$ alone, and collect their integer roots (\py!_integer_roots!); when there are roots, $d$ is raised to $\max+1$. Each candidate of the oracle rung with a raised value applied to every integer value below it gives a new point; new points that equal neither their candidate nor an earlier point nor a candidate are kept, in order.
+\item \emph{Witness} (\py!_symbolic_witness!): \py!find_entry_witness! of the two tensors (\cref{alg:proofs-find-witness}) over the candidates followed by the root points, filtered to those admissible for the symbol table and meeting every merged floor (\py!_witness_assignments!); a symbolic-set error gives no witness.
+\item \emph{Cross check.} When root points exist, run the oracle on them in order, with \py!max_samples!, no fallback and no ordering; add the evaluated count. If no witness was found and this oracle run mismatches, return \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} at that point.
+\item A witness $w$ sets the stop code to \code!differ! and returns \texttt{UNEQUAL}/\allowbreak\texttt{SYMBOLIC\_WITNESS} with reason \code!symbolic contractions differ at {a}, boundary index (i, ...): x vs y!, counterexample $w$'s assignment, the witness, and a synthetic \texttt{EXACT} comparison with reason \code!entry (i, ...) differs by D! and deviation $D=|x-y|$.
+\item Otherwise the note \code!symbolic: R! is kept.
+\end{enumerate}
+
+\begin{signature}
+\py!refute_by_symbolic_witness(left, right, *, samples=None, tolerance=DEFAULT_TOLERANCE) -> EntryWitness | None!
+\end{signature}
+runs the witness search alone on the family copies: \py!None! when the contractions are unavailable or agree, else \py!_symbolic_witness! over \py!samples! or the sample grid (without root points).
+
+\subsection{Rung 5b: path sums}\label{sec:proofs-rung-pathsum}
+
+The path-sum rung compares the path sums~\cite{amy2018pathsums} of both sides through \py!compare_path_sums! of \module{archytaszx.semantics.pathsum_diagram} (\cref{ch:semantics}), which reduces both sums, compares their canonical forms, and raises \py!PathSumUnsupported! for a pair outside its class. Its result is a \py!PathSumComparison! with \py!status! in \code!equal!, \code!unequal!, \code!unknown!, a reason, the differing boundary \py!index! and both exact entries (\py!left!, \py!right!, cyclotomic values), the parameter \py!point!, and \py!residual_enum!.
+
+\begin{algorithm}[Path-sum rung]\label{alg:proofs-pathsum}
+\py!_path_sum_rung(L_f, R_f, P)!, $P$ the left parameter environment when both environments agree, else empty; residual enumeration with the bound in \py!_RESIDUAL_PATHS! when set:
+\begin{enumerate}
+\item Return the comparison of the family pair when the pair is inside the class.
+\item Otherwise let $W$ be \code!path_sum: not applicable (E)!. With $P$ empty return $W$. Else instantiate both sides at $P$ and compare again; an unsupported pair or a \py!CheckError! returns \code!W; at {P}: E!.
+\item At the instantiated pair, an \code!equal! status becomes \code!unknown! with reason \code!path_sum: equal at {P} only, not over the family!; any other status keeps its reason with \code! at {P}! appended. Both record the point.
+\end{enumerate}
+\end{algorithm}
+
+\code!equal! returns \texttt{EQUAL}/\allowbreak\texttt{PATH\_SUM} with reason \code!R; S!. \code!unequal! builds an entry witness at the point, the index and both entries as complex numbers, and returns \texttt{UNEQUAL}/\allowbreak\texttt{SYMBOLIC\_WITNESS} with reason \code!path sums differ at boundary index I: x vs y (R)!. A string or \code!unknown! result becomes a note. The parameter point is the only place where the ladder reads bound values: a family outside the class can still be refuted at the values its user bound.
+
+\subsection{Rung 6: induction}\label{sec:proofs-rung-induction}
+
+The induction rung proves a family over a multiplicity symbol by induction~\cite{kissinger2015firstorder}: a base case decided by the whole ladder, nested, and a step case discharged by the induction machinery of \cref{ch:kernel}. When the plain argument fails, it tries five further arguments. Its result is either a settled tuple (verdict, method, reason, evidence) or a reason string (\py!_Unsettled!, a \py!str! subclass that also carries the base-case decision it reached).
+
+\paragraph{Nesting.} Three context variables govern nested ladders. \py!_NESTED! is true inside a base case's or sub-pair's \py!decide_equal!; it makes \py!_certify! return the decision unchanged, so nested decisions are not certified. \py!_INDUCING! is true while an induction rung runs; \py!_decide_by_induction! passes \py!shift=True! to the rung only when no induction rung is running already.
+
+\begin{signature}
+\py!_STEP_LADDER = (UNIFORM_REWRITE, INDUCTION_REWRITE, SYMBOLIC_CONTRACTION, CHAIN_WINDOW, TREE_WINDOW)!
+\end{signature}
+The step ladder is the default step ladder of \module{archytaszx.semantics.induction} without \texttt{ORACLE\_WINDOW}: every discharge of the step case the decision procedure accepts is exact.
+
+\begin{algorithm}[Induction rung]\label{alg:proofs-induction}
+\py!_induction_rung(L, R, shift, evaluated, samples, ...)!, $L,R$ the family pair, \py!evaluated! the samples rung~3 evaluated:
+\begin{enumerate}
+\item Choose the index $n$ by \py!choose_index(L, R)! (\cref{ch:kernel}); an \py!InductionError! returns its message.
+\item \emph{Base value.} For $b=0$, then $b=1$, instantiate both sides at $n=b$ (\py!_instantiate_index!: \py!instantiate_symbol! when $n$ is a multiplicity symbol of the side, else \py!substitute_count!, then validation); the first that succeeds is the base. If neither does, return \code!neither n=0 nor n=1 instantiates both sides!.
+\item \emph{Shift.} If \py!shift! is set, $b\neq0$, and the least offset $c$ of $n$ (\py!_least_offset!: the most negative constant $-c$ in a multiplicity $n-c$) is negative, try the shifted argument (\cref{alg:proofs-shifted}); a settled result is returned, else its reason is kept as \code!; shifted: R!.
+\item \emph{Base case.} Decide the base pair with \py!_NESTED! set: \py!decide_equal! with \py!max_depth - 1!, \py!use_induction=True! and the samples cut to the base pair's symbols without $n$ (or none); under floors, \py!_decide! with those floors instead.
+\item If the base decision is \texttt{UNEQUAL} with a counterexample $a$, lift it to $a\cup\{n=b\}$ and confirm it on the original pair (\cref{alg:proofs-oracle-compare}); a confirmed mismatch returns \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with reason \code!base case n=b refuted at {a}!.
+\item If the base decision is not \texttt{EQUAL}, return \code!base case n=b not proved: R! with the base decision.
+\item \emph{Witness.} The base witness is the first evaluated sample, $n$ dropped, at which \py!compare! of the original pair with $n=b$ raises no oracle error; empty when none does.
+\item \emph{Step case.} For the forward direction and then the reversed one ($R$ first), call \py!prove_by_induction! (\cref{ch:kernel}) on (first, second) with \py!index=n!, \py!base=b!, the witness, \py!ladder=_STEP_LADDER!, the rules, the tolerance and the element cap, and \py!base_proved! true exactly when the witness is empty. An induction-set error records \code!step case declined: Error: message!. A \texttt{REFUTED} result with counterexample $v$ lifts to the witness with $n=v$; a confirmed mismatch returns \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with reason \code!induction refuted the claim at {a}!. An unproved result records \code!step case over n not proved: R!.
+\item A proved step with $b\neq0$ returns \texttt{UNKNOWN}/\allowbreak\texttt{NONE} with reason \code!P; proved for n >= b only, n=0 does not instantiate!, where $P$ is \code!base case n=b proved by M; step case proved by D! (plus \code! with sides reversed!).
+\item A proved step with $b=0$ builds the kernel theorem by \py!induction_theorem(L, R, result, reversed, pair, base_decision, rules)! (\cref{ch:kernel}) and returns \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} with reason \code!P; holds for n >= 0; kernel proof built! (or \code!no kernel proof: W!), the induction result, the direction, the assumptions (the base decision's assumptions and every dimension constraint of the result's tier steps, by \py!assumed!), the theorem and the base decision.
+\item Failing both directions, try in order the carry-open argument (\cref{alg:proofs-carry-open}), the periodic argument (\cref{alg:proofs-periodic}), the value-count argument (\cref{alg:proofs-value-count}) and the column-count argument (\cref{alg:proofs-columns}); the first settled result is returned.
+\item Return the reasons joined by \code!; reversed: !, followed by \code!; carry open: R; periodic: R! the shift note \code!; value count: R; columns: R!, with the base decision.
+\end{enumerate}
+\end{algorithm}
+
+Induction proves \texttt{EQUAL} for the whole family only from base~$0$. The ladder's stop codes record \code!induction! (and \code!induction_reversed! when the reason has a reversed part) with \code!base_not_proved! or \code!step_not_discharged!; a settled \texttt{EQUAL} or \texttt{UNEQUAL} replaces them with \code!proved! or \code!refuted!.
+
+\begin{algorithm}[Shifted argument]\label{alg:proofs-shifted}
+\py!_decide_shifted(L, R, n, c, ...)! proves the family for $n\ge c$:
+\begin{enumerate}
+\item Choose a fresh symbol $s$ (\py!_fresh_symbol_name("s", ...)!) and rename $n$ to $s+c$ on both sides (\py!rename_multiplicity!); an error returns \code!n = s + c: Error: message!.
+\item Move the evaluated samples and samples: drop $n$, and give $s=v-c$ for each integer $v\ge c$ of $n$; a point without $n$ keeps its other values; other points are dropped.
+\item Run the induction rung on the renamed pair (nested, so without a further shift). A string returns \code!n = s + c: R!; a settled non-\texttt{EQUAL} returns \code!n = s + c: V: R!.
+\item For an \texttt{EQUAL} with a kernel theorem, carry it back by \py!kernel.subst! at the clause $s=n-c$ (a multiplicity shift with $a=1$, constant $-c$ and fresh symbol $n$) between isomorphisms of the original sides, noting \code!; kernel proof carried to n >= c by subst at s = n - c!; a kernel error drops the theorem with \code!; no kernel proof: subst at s = n - c: E!.
+\item Return the verdict with reason \code!with n = s + c: R; holds for n >= c (n < c does not instantiate)N!, $N$ the kernel note.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Carry-open argument]\label{alg:proofs-carry-open}
+\py!_decide_carry_open(L, R, n, ...)!:
+\begin{enumerate}
+\item For the left side holding the chain and then the right (flipped): compute \py!open_carry(first, second, n)! of \module{archytaszx.semantics.carry_open} (\cref{ch:kernel}), the pair with the carry left open after the chain, the closed diagram and the cut; an induction-set error records its message.
+\item Prove the open pair by the induction rung; when it is not \texttt{EQUAL}, record \code!the open pair is not proved by induction!.
+\item Decide the closed pair (\py!carry.closed!, \py!second!) with \py!decide_equal!, \py!use_induction=False!, \py!_NESTED! set; when it is not \texttt{EQUAL}, record \code!the closed pair is V!.
+\item Build the theorem when the open pair has one: \py!congr(check(proof), first, cut)!, then \py!from_decision(closing, opened.rhs, second)!, joined by \py!trans!, and \py!symm! when flipped; a kernel error records \code!the kernel refused a piece: E!.
+\item Return \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} with reason \code!carry left open after the SIDE side's chain: R; the closed pair is equal by M; kernel proof built! (or \code!no kernel proof: W!).
+\item Failing both, try the open-ends argument for each cut kind in \py!CHAIN_END_CUTS! $=$ (\code!both!, \code!out!, \code!in!): cut the wires from those link ends of both chains over $n$ (\py!open_chain_ends!), prove the open pair by the induction rung, decide the context pair $(L,\text{context})$ and the closed pair $(\text{closed},R)$ without induction, and build the theorem \py!trans(trans(lead, opened), closed)!. A success returns \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} with reason \code!chain ends (K) cut on both sides: R; the context and closed pairs are equal by M1 and M2; ...!; a failure records \code!chain ends (K): R!.
+\item Return the recorded reasons joined by \code!; !.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Periodic argument]\label{alg:proofs-periodic}
+\py!_decide_periodic(L, R, n, ...)! applies when each side reads $n$ only in its scalar and in at most one chain \bbox's multiplicity:
+\begin{enumerate}
+\item Compute \py!chain_period(side, n)! of \module{archytaszx.semantics.periodic} for both sides: a period $p$ with $T^p=c\,I$ for the chain's transfer matrix $T$, or none. If neither side has one, return \code!neither side holds a chain over the index!. Let $P=\operatorname{lcm}$ of the periods and $\rho_X$ the factor by which side $X$ scales from $n$ to $n+P$ (\py!scaling!). A \py!PeriodicError! returns its message.
+\item If $\rho_L-\rho_R$ does not simplify to $0$, return \code!the two sides scale by A and B from n to n + P!.
+\item For $v=0,\ldots,P-1$, decide the pair at $n=v$ with \py!use_induction=False! and \py!_NESTED! set; a non-\texttt{EQUAL} returns \code!the pair at n = v is V!; a domain error returns its message.
+\item Prove each base pair by \py!kernel.from_decision!, falling back to \py!kernel.contraction!; build \py!kernel.periodic(L, R, n, theorems)!.
+\item Return \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} with reason \code!periodic: each side scales by A from n to n + P (a scalar power of each chain's transfer matrix) and the pairs at n = 0 .. P-1 are equal; kernel proof built! (or \code!no kernel proof: E!).
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Value-count argument]\label{alg:proofs-value-count}
+\py!_decide_value_count(L, R, evaluated, ...)! applies to a pair whose single power \bbox{} count $b^e$ \py!generalise! of \module{archytaszx.semantics.valuecount} replaces by a free count $N$:
+\begin{enumerate}
+\item With no such count, return \code!no single power box count!.
+\item \emph{Step first} (\py!_value_count_step!): call \py!prove_by_induction! over $N$ from $0$ in each direction with the step ladder, \py!certify_proof=False! and \py!base_proved=True!. If neither direction proves the step, try the copy argument: \py!induct_by_copies! of \cref{sec:proofs-lemmas} over $N$, the theorem carried back at $N=b^e$ by \py!specialised!; a success returns \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} \code!P counted by N: induction over N with a per-copy lemma; kernel proof carried to N = P by instance!; a failure returns \code!P counted by N: S; copies: C!.
+\item When the step is proved, extend every evaluated sample whose values of the symbols of $b^e$ are integers with $N=b^e$ there, and run the induction rung on the generalized pair. A string or non-\texttt{EQUAL} returns its reason labeled \code!P counted by N!; an \texttt{EQUAL} without kernel theorem returns \code!...: equal with no kernel proof: R!.
+\item Carry the theorem to $N=b^e$ by \py!specialised! (a \py!kernel.instance!); a kernel error returns \code!...: the kernel refused N = P: E!; else return \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} with \code!...; kernel proof carried to N = P by instance!.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Column-count argument]\label{alg:proofs-columns}
+\py!_decide_column_count(L, R)! applies when \py!generalise! of \module{archytaszx.semantics.columns} finds a rows \bbox{} beside column \bboxes{} on both sides and counts the columns by a free $m$:
+\begin{enumerate}
+\item With none, return \code!no rows box beside column boxes on both sides!.
+\item Let $n$ be the rows index and $c=\max(0,-\text{least offset})$. With $c>0$: rename $n$ to $s+c$ ($s$ fresh), prove \py!induct_rows! over $s$, and carry back by \py!kernel.subst! at $s=n-c$ between isomorphisms; with $c=0$ prove \py!induct_rows! over $n$ directly. Carry the theorem to $m=n$ by \py!specialised!.
+\item An error (\py!ColumnsError!, \py!KernelError!, \py!BangBoxError! or the induction set) returns \code!n rows, columns counted by m: E!.
+\item Return \texttt{EQUAL}/\allowbreak\texttt{INDUCTION} with reason \code!columns counted by m: induction over the n rows (n = s + c, carried back by subst); holds for n >= c; kernel proof carried to m = n by instance!, the shift part only when $c>0$.
+\end{enumerate}
+\end{algorithm}
+
+\section{Certification of Decisions}\label{sec:proofs-certify}
+
+The ladder establishes a verdict; certification attaches the evidence that an outside checker re-checks. An \texttt{EQUAL} needs a proof that the proof kernel (\cref{ch:kernel}) or Lean re-checks; an \texttt{UNEQUAL} not settled by the interface needs a Lean refutation at its counterexample. A decision without its evidence is downgraded to the uncertified verdict, with the missing evidence named in its reason.
+
+\begin{algorithm}[Certification]\label{alg:proofs-certify}
+\py!_certify(decision, left, right, describe, prove_equal)!, \py!left! and \py!right! the sides after the extended-\bbox{} expansion of \cref{alg:proofs-decide-top}:
+\begin{enumerate}
+\item If \py!_NESTED! is set, return the decision unchanged.
+\item \texttt{EQUAL}: if \py!prove_equal! is false, return it unchanged. Otherwise build \py!decision_proof(decision, left, right, describe)! (\cref{sec:proofs-decision-proof}); a \py!RecursionError! yields no proof and the reason \code!proof builder: RecursionError: E!. Without a proof, return the decision with verdict \texttt{EQUAL\_UNCERTIFIED}, stop \code!("proof", "no_proof")! appended, and \code!; uncertified: no proof the kernel re-checks (W)! appended to the reason; with one, set \py!proof!.
+\item Any verdict other than \texttt{UNEQUAL} is returned unchanged.
+\item An \texttt{UNEQUAL} with method \texttt{INTERFACE}, or \texttt{DOUBLED} with inner method \texttt{INTERFACE}, is returned unchanged: a failed interface is its own certificate.
+\item \emph{Refutation point.} The point is the counterexample; for a restricted decision with an original-symbol counterexample, that one. If there is none and the decision carries an induction result with a counterexample $v$, the point is the induction witness with $n=v$.
+\item \emph{Index hint.} When the point is the counterexample itself, the hint is the witness's boundary index if a witness exists, else the comparison's \py!index!; otherwise no hint.
+\item Build \py!lean_refutation(left, right, point, describe, hint)!. A \py!NetUnsupported! returns the decision with verdict \texttt{UNEQUAL\_UNCERTIFIED}, stop \code!("refutation", "no_lean")!, and \code!; uncertified: no Lean refutation (E)! appended; otherwise set \py!refutation! to the Lean source.
+\end{enumerate}
+\end{algorithm}
+
+\begin{signature}
+\py!lean_refutation(left, right, point, describe=None, index=None) -> str!
+\end{signature}
+\py!lean_refutation! returns Lean~4 source that refutes \py!left = right! at \py!point! (or a default sample point). When either side is not pure it doubles both and drops the index hint. It calls \py!export_refutation! of \module{archytaszx.semantics.lean_refute} (\cref{ch:lean-export}); a \py!NetUnsupported! is re-raised, and any other exception is re-raised as \py!NetUnsupported("Error: message")!. The exporter tries the given point first and then at most $16$ further points (\py!MAX_POINTS!) of \py!sample_grid! ordered by the sum of the absolute values of their entries, smallest first; an interface refutation reads the first $16$ points of the grid in grid order.
+
+\section{Restricted Decisions}\label{sec:proofs-restricted}
+
+A \term{restriction} narrows a claim to some values of its symbols: clauses such as $n\ge c$, $n=am+c$, $d\ge c$, a finite set of values, a shifted range with side conditions. \module{archytaszx.semantics.restrict} parses, validates and substitutes restrictions; this section specifies how the ladder uses them. The properties used are: \py!empty! (no clause); \py!finite! (the clauses with finitely many values); \py!certifiable! (every clause of a form the kernel states: $=v$, $\ge c$, $=am+c$, without a domain); \py!ranged! (a shift's range has an upper end, or a shift or side condition excludes points); \py!floors! (the floor $c$ of each dimension clause $d\ge c$); \py!instance_at(values)!; \py!in_domain(restriction, point)!; \py!subst_pair! (both sides with every clause substituted); \py!to_original! (an assignment over the restricted pair read in the original symbols); \py!restricted_samples!; \py!vanishes_on_range!; and \py!range_point!.
+
+\begin{signature}
+\py!decide_restricted(left, right, restriction, *, family_first=True, **options) -> Decision!
+\end{signature}
+
+\begin{algorithm}[Restricted decision]\label{alg:proofs-restricted}
+\leavevmode
+\begin{enumerate}
+\item Raise \py!DecideGrammarError! when \py!family_first! is not a \py!bool!.
+\item \emph{Finite clauses.} If the restriction has finite clauses, decide every combination of their values in product order by \py!decide_restricted! on \py!instance_at! of it. The first \texttt{UNEQUAL} or \texttt{UNEQUAL\_UNCERTIFIED} returns with reason \code!instance x = v, ...: R!. If any instance is undecided (or none is equal), return \texttt{UNKNOWN}/\texttt{NONE} with reason \code!instances left undecided: L1; L2 (equal at E1; ...)!. Otherwise return the last instance's decision with verdict \texttt{EQUAL\_UNCERTIFIED} and reason \code!every instance equal (E1; ...); uncertified: the kernel has no proof combining the instances!.
+\item \emph{Family first.} With \py!family_first!, run the ladder on the unrestricted pair. An \texttt{EQUAL} is returned with \py!family_holds! set.
+\item Compute the restricted pair by \py!subst_pair!.
+\item If the family decision is \texttt{UNEQUAL}: when its method is \texttt{INTERFACE}, recompute the interface reason on the restricted pair and, when it still fails, return the family decision with that reason and the restricted pair; otherwise, when its counterexample (or the lifted induction counterexample) lies in the domain, return the family decision with \py!counterexample_original! set to that point.
+\item \emph{Samples.} Given samples are cut by \py!restricted_samples!. Without given samples and with a non-certifiable restriction, the samples are the points of \py!sample_grid! of the restricted pair under the restriction's floors whose original reading lies in the domain.
+\item Run the ladder on the restricted pair under the restriction's floors.
+\item \emph{Interval reduction.} If the result is \texttt{UNKNOWN}, the restriction is ranged, and symbolic contraction is enabled: run \cref{alg:proofs-symbolic-match} on the restricted family pair under the floors. When it does not match and both tensors have the same structure (both of fixed rank, or equal groups, shared indices and layouts) and dimensions, let $\Delta$ be the entry difference. If \py!vanishes_on_range! names a range on which $\Delta$ vanishes, the result becomes \texttt{EQUAL\_UNCERTIFIED}/\texttt{SYMBOLIC\_CONTRACTION} with reason \code!symbolic contractions agree on RANGE: their difference vanishes there (interval reduction); uncertified: the kernel has no proof of the vanishing!. Otherwise, when \py!range_point! gives a point where $\Delta$ is nonzero and both sides are pure, run the oracle once on the first four grid points of the restricted pair each overlaid with that point (or the point alone), with \py!max_samples!~$=1$; a mismatch makes the result \texttt{UNEQUAL}/\texttt{ORACLE\_COUNTEREXAMPLE} with reason \code!oracle mismatch at {a}, a point of the range where the symbolic contractions' difference is nonzero (interval reduction): C!.
+\item When the result has a counterexample, read it in the original symbols and append \code!; in the original symbols at x = v, ...!.
+\item Return the result with the restriction, the family decision, \py!family_holds! false, the restricted pair, the original counterexample, and \py!samples_checked! the sum over the family and restricted runs.
+\item \emph{Finish.} For a non-certifiable restriction, an \texttt{UNEQUAL} whose counterexample (original reading first) lies outside the domain becomes \texttt{UNKNOWN}/\texttt{NONE} with \code!; that point lies outside TEXT! appended and both counterexamples cleared.
+\end{enumerate}
+\end{algorithm}
+
+\section{Reason Strings}\label{sec:proofs-reasons}
+
+Every \py!Decision.reason!, \py!ProofOutcome.reason! and \py!ProofCheck.reason! is user-visible text that the shell prints (\cref{ch:shell}). The preceding sections give each template in \code!typewriter! form; in them, \code!{a}! stands for the Python \py!repr! of a dictionary (for example \code!{'d': 2, 'n': 0}!), uppercase letters stand for inserted reasons, values or expressions in their \py!str! form, and \code!...! for a repetition joined by \code!, !. Where a reason is composed from several parts, the parts are joined by \code!; !. A doubled decision prefixes \code!doubled, METHOD: !. Certification appends \code!; uncertified: ...!.
+
+\section{Certificates}\label{sec:proofs-certificates}
+
+\module{archytaszx.semantics.certificate} records derivations as machine-checkable data and replays them. A \term{derivation} is one node of a proof tree: an initial diagram, a final diagram, and the evidence between them. A \term{certificate} pairs a derivation with the method that discharges its claim.
+
+\subsection{Data structures}
+
+\begin{signature}
+\py!class CheckMethod(enum.Enum)!: \py!NUMERIC_ORACLE = "numeric_oracle"!, \py!INDUCTION = "induction"!.\\
+\py!class DerivationKind(enum.Enum)!: \py!STEP_SEQUENCE = "step_sequence"!, \py!INDUCTION = "induction"!.
+\end{signature}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class InductionClaim!: \py!symbol: str!; \py!base_value: int!; \py!held_symbolic: tuple[str, ...] = ()!; \py!step_discharge: str = ""!.
+\end{signature}
+An induction claim names the multiplicity symbol an induction derivation quantifies over, its base value, the symbols held symbolic, and the name of the step discharge. Construction raises \py!CertificateGrammarError! when \py!symbol! is not a \py!str!, \py!base_value! is a \py!bool! or not an \py!int!, \py!held_symbolic! is not a tuple of strings, or \py!step_discharge! is not a \py!str!.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class Derivation!: \py!kind: DerivationKind!; \py!initial: Diagram!; \py!final: Diagram!; \py!steps: tuple[RewriteStep, ...] = ()!; \py!children: tuple[Derivation, ...] = ()!; \py!label: str = ""!; \py!induction: InductionClaim | None = None!.
+\end{signature}
+
+\begin{definition}[Derivation invariants]\label{def:proofs-derivation}
+A \py!Derivation! is valid when every field has its declared type (each step a \py!RewriteStep! of \cref{ch:rewriting}, each child a \py!Derivation!) and:
+\begin{enumerate}
+\item a \texttt{STEP\_SEQUENCE} derivation has no children;
+\item \py!induction! is set exactly when the kind is \texttt{INDUCTION};
+\item the claim's base value is $0$ or $1$;
+\item an \texttt{INDUCTION} derivation has exactly two children, a base child and a step child, both \texttt{STEP\_SEQUENCE}.
+\end{enumerate}
+Construction checks the fields in declaration order and raises \py!CertificateGrammarError! at the first violation.
+\end{definition}
+
+Two derivations are equal when their kinds, labels, steps, children and claims are equal and their initial and final diagrams are structurally identical (\py!compare_structure!, node id for node id; \cref{ch:diagrams}). \py!compare_structure(a, b)! of this module raises \py!CertificateGrammarError! for a non-diagram argument and otherwise delegates to \module{archytaszx.diagram.compare}.
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class Certificate!: \py!derivation: Derivation!; \py!check_method: CheckMethod = NUMERIC_ORACLE!; properties \py!initial!, \py!final!, \py!steps! of the derivation.
+\end{signature}
+Two certificates are equal when their methods are the same and their derivations equal.
+
+\subsection{Assembling certificates}
+
+\begin{signature}
+\py!certify(initial: Diagram, results: Sequence[RewriteResult], *, label="", check_method=NUMERIC_ORACLE) -> Certificate!
+\end{signature}
+\py!certify! raises \py!CertificateGrammarError! when \py!initial! is not a diagram or \py!results! is a string, not a sequence, or holds a non-\py!RewriteResult!. It returns a \texttt{STEP\_SEQUENCE} certificate whose initial diagram is a copy of \py!initial!, whose final diagram is a copy of the last result's diagram (of \py!initial! when there is none), and whose steps are the results' steps in order. Because the diagrams are copies, a certificate's initial diagram is never the caller's object.
+
+\begin{signature}
+\py!certify_induction(initial, final, results, base, step, claim, *, label="", check_method=INDUCTION) -> Certificate!
+\end{signature}
+returns an \texttt{INDUCTION} certificate over copies of the symbolic pre and post diagrams, the steps of \py!results!, the two child derivations and the claim, after the same type checks for each argument.
+
+\subsection{Replay}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class StepReplay!: \py!index: int!; \py!rule_name: str!; \py!reproduced: bool!; \py!reason: str!.\\
+\py!@dataclass(frozen=True, slots=True, eq=False) class ReplayResult!: \py!reproduced: bool!; \py!reason: str!; \py!diagram: Diagram!; \py!steps: tuple[StepReplay, ...]!; \py!children: tuple[ReplayResult, ...] = ()!.\\
+\py!replay(certificate, source: Diagram | None = None, *, rediscover: bool = True) -> ReplayResult!
+\end{signature}
+
+\py!replay! raises \py!CertificateGrammarError! for a non-certificate, a non-diagram \py!source!, or a non-\py!bool! \py!rediscover!. It re-applies every recorded step to a fresh copy of \py!source!, which defaults to the recorded initial diagram.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}rl@{\qquad}rl@{}}
+\toprule
+1 & \py!rule_name! & 8 & \py!port_mapping! \\
+2 & \py!match! & 9 & \py!new_node_ids! \\
+3 & \py!consumed_node_ids! & 10 & \py!removed_deferred_issues! \\
+4 & \py!consumed_wires! & 11 & \py!introduced_deferred_issues! \\
+5 & \py!side_condition_outcomes! & 12 & \py!phase_substitutions! \\
+6 & \py!dimension_constraints! & 13 & \py!deferred_issue_identity_ambiguous! \\
+7 & \py!scalar_introduced! & & \\
+\bottomrule
+\end{tabular}
+\caption{The fields of a \texttt{RewriteStep} in the order replay compares them.}
+\label{tab:proofs-step-fields}
+\end{table}
+
+\begin{algorithm}[Replay]\label{alg:proofs-replay}
+For a derivation and a working copy $W$:
+\begin{enumerate}
+\item For each step $j$ with rule name $r$, with failure prefix \code!step j (r): !:
+  \begin{enumerate}
+  \item resolve $r$ by \py!lookup_rule! (\cref{ch:rules}); a \py!RewriteError! fails with \code!rule lookup failed: E!;
+  \item every consumed node id must be in $W$ (\code!consumed node N is absent from the diagram being replayed!) and every consumed wire must be in $W$ (\code!consumed wire W is absent ...!);
+  \item with \py!rediscover!, the rule's pattern must verify the recorded match on $W$ (\py!rule.pattern.verify!), else \code!the recorded match is not among the matches rediscovered in the diagram being replayed!;
+  \item apply the rule at the recorded match (\py!apply!); a \py!RewriteError! fails with \code!apply raised Error: E!;
+  \item the produced step must equal the recorded one; otherwise fail with \code!the replayed step differs from the record: F: A vs B!, $F$ the first differing field in the order of \cref{tab:proofs-step-fields} (the two mapping fields printed as lists sorted by the \py!repr! of their keys);
+  \item $W$ becomes the produced diagram.
+  \end{enumerate}
+  A failed step ends the replay with \py!reproduced=False!, the reason, the diagram before the step, and the step records so far (the last one failed).
+\item $W$ must be structurally identical to the recorded final diagram, else \code!final diagram differs: R!.
+\item Replay each child from its own initial diagram; a failed child ends with \code!child derivation did not reproduce: R!.
+\item Return \py!reproduced=True!, \code!reproduced!, $W$, the step records (each \code!reproduced!) and the child results.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Verification}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class VerificationReport!: \py!verified: bool!; \py!reason: str!; \py!replay: ReplayResult!; \py!comparison: ComparisonResult | None!; \py!assignment!; \py!mode: EqualityMode!; \py!check_method: CheckMethod!; \py!child_comparisons: tuple[ComparisonResult, ...] = ()!.\\
+\py!verify(certificate, assignment, *, mode=EXACT, tolerance=DEFAULT_TOLERANCE, max_elements=DEFAULT_MAX_ELEMENTS, rediscover=True) -> VerificationReport!
+\end{signature}
+
+\py!verify! raises \py!CertificateGrammarError! for a non-certificate, a non-mapping assignment or a non-mode, and for an \texttt{INDUCTION} check method on a derivation of another kind.
+
+\begin{algorithm}[Verification]\label{alg:proofs-verify}
+\leavevmode
+\begin{enumerate}
+\item \texttt{NUMERIC\_ORACLE}: replay; a failed replay gives \code!replay failed: R!. Otherwise compare the initial diagram with the replayed diagram at the assignment (\cref{alg:proofs-compare}); \py!verified! is the match flag, the reason the comparison's or \code!oracle disagreed: R!.
+\item \texttt{INDUCTION}: replay; then check the binding of the claim (below), failing with \code!induction claim unbound: R!. Compare each child's initial diagram with its replayed diagram at the assignment. \py!verified! holds when every child comparison matches; the reason is \code!reproduced and every child comparison matched! or the failures \code!child i: R! joined by \code!; !.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Claim binding.} \py!_induction_binding_failure! requires: a claim; a claim symbol that is a Python identifier; exactly two children; exactly one free multiplicity symbol $n$ of the parent's initial diagram; and, for the base child at value $v_0$ (the claim's base value) and the successor child at $v_0+1$, that each child's initial and final diagrams are structurally identical to the parent's initial and final diagrams instantiated at the assignment with $n=v$. A parent end that does not instantiate fails with \code!the parent's END diagram cannot be instantiated at n=v to check the LABEL child against: E!; a mismatch fails with \code!the LABEL child's END diagram is not the parent's END diagram at n=v: R!.
+
+\paragraph{What a verified certificate establishes.} A verified certificate establishes that: the recorded steps re-derive the recorded final diagram exactly; every named rule exists; every match is rediscoverable where it was recorded; every recorded side-condition outcome and dimension constraint is what the matcher derives fresh; and, for \texttt{NUMERIC\_ORACLE}, the two ends denote the same tensor at that assignment. An \texttt{INDUCTION} certificate's own ends are symbolic in the induction index and never contracted; its check covers the base case and one concrete instance of the step, not the step schema, which the induction module discharges (\cref{ch:kernel}). No certificate establishes anything about other assignments, the satisfiability of a \texttt{DEFERRED} dimension constraint, or a rule whose meaning changed under a name it kept.
+
+\section{Proof Search}\label{sec:proofs-prove}
+
+\module{archytaszx.semantics.prove} searches for a derivation between two diagrams, certifies it and checks it. Where \py!decide_equal! decides a claim by any sound means, \py!prove! produces a derivation by rewrite rules: a chain of rule applications from each side to a common diagram, or an induction over a multiplicity whose pieces are such chains.
+
+\subsection{Statuses and proof records}
+
+\begin{signature}
+\py!class ProofStatus(enum.Enum)!: \py!PROVED = "proved"!, \py!REFUTED = "refuted"!, \py!NOT_FOUND = "not_found"!, \py!CHECK_FAILED = "check_failed"!.
+\end{signature}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class ProofCertificate!: \py!start: Diagram!; \py!goal: Diagram!; \py!forward: Certificate!; \py!backward: Certificate!; \py!moves: tuple[str, ...]!; \py!backward_moves: tuple[str, ...]!.
+\end{signature}
+
+\begin{definition}[Proof certificate]\label{def:proofs-proof-certificate}
+A \term{proof certificate} records a found derivation as two \texttt{STEP\_SEQUENCE} certificates: \py!forward! from \py!start! and \py!backward! from \py!goal!, which end on diagrams with isomorphic comparison views (the \emph{meet}). \py!moves! and \py!backward_moves! name the tactics of each half. Construction raises \py!ProveGrammarError! when a diagram field is not a \py!Diagram!, a half is not a \py!Certificate! or not a step sequence, or a move tuple is not a tuple of strings. Its \py!assumptions! are \py!assumed! of every dimension constraint of every step of both halves; its \py!length! is the total number of steps.
+\end{definition}
+
+\begin{signature}
+\py!class InductionSide(enum.Enum)!: \py!START = "start"!, \py!GOAL = "goal"!.\\
+\py!@dataclass(frozen=True, slots=True, eq=False) class InductionProof!: \py!start!; \py!goal!; \py!index: str!; \py!step_symbol: str!; \py!base: ProofCertificate | InductionProof!; \py!side: InductionSide!; \py!expose: Certificate!; \py!region: frozenset[NodeId]!; \py!step: ProofCertificate | InductionProof!.\\
+\py!Proof = ProofCertificate | InductionProof!
+\end{signature}
+
+\begin{definition}[Induction proof]\label{def:proofs-induction-proof}
+An \term{induction proof} establishes $\text{start}=\text{goal}$ for every value of the multiplicity \py!index! from $0$. With $k$ the fresh \py!step_symbol!, \emph{own} the side named by \py!side! and \emph{other} the remaining side:
+\begin{enumerate}
+\item \py!base! proves the two sides at $\text{index}=0$;
+\item \py!expose! derives, from own's peeled successor at $k+1$, a diagram whose node set \py!region! is own at $k$ (the hypothesis);
+\item \py!step! proves the exposed diagram, with that region replaced by other at $k$, equal to other's peeled successor.
+\end{enumerate}
+Its \py!assumptions! are \py!assumed! over the base's assumptions, the exposing certificate's and the step's; its \py!length! is the base's length plus the exposing steps plus the step's length.
+\end{definition}
+
+\paragraph{Successor helpers.} The induction pieces are rebuilt from the two sides by public helpers:
+\begin{sloppypar}
+\begin{itemize}
+\item \py!induction_base(diagram, index)!: the diagram at $\text{index}=0$, by \py!instantiate_symbol! when \py!index! is a multiplicity symbol of it, else \py!substitute_count! (boxes, scalar, copy scalars, phases and port dimensions).
+\item \py!induction_hypothesis(diagram, index, k)!: \py!index! renamed to $k$ (\py!rename_multiplicity!), scalar included.
+\item \py!induction_renamed(diagram, index, k)!: the diagram at $k+1$, unpeeled, scalar included.
+\item \py!induction_successor(diagram, index, k)!: the diagram at $k+1$ with one copy peeled. With no \bbox{} carrying $k$ (\py!index_owners!) it is the renamed diagram. A box is \emph{peelable} when it is a tree \bbox{} or the constant term of its expanded multiplicity is an integer $\ge1$. One owner: peel it (\py!peel_one!) when peelable, else return the renamed diagram (a multiplicity such as $b^{k+1}$ has no positive constant term). Several owners, all peelable: peel one copy off each (\py!peel_owners!). Several owners, some peelable: return \py!None! when none is peelable or any owner is a tree; otherwise peel the peelable ones (\py!peel_owners(..., partial=True)!). A \py!BangBoxError! from \py!peel_owners! returns \py!None!.
+\item \py!peels_shifted(diagram, index)!: whether an owner reads a copy index and peels its first copy (\py!peels_first!); for one owner, that owner.
+\item \py!induction_offset(diagram, index, by)!: the one owner reading its copy index as \emph{copy index} $+$ \py!by! (\py!offset_index!), the diagram itself when it reads none; with several owners, each that peels its first copy and reads an index. With no owner it raises \py!InductionError!.
+\item \py!offset_symbol(*diagrams)!: the nonnegative integer SymPy symbol \code!s!, \code!s1!, \code!s2!, \ldots{} first named in none of the diagrams' free symbols or copy indices.
+\end{itemize}
+\end{sloppypar}
+The private \py!_step_symbol(start, goal, index)! returns the first of \code!k!, \code!k1!, \code!k2!, \ldots{} that is neither a multiplicity symbol nor a scalar symbol of either side nor \py!index!.
+
+\begin{signature}
+\py!certify_proof(path: ProofPath) -> ProofCertificate!
+\end{signature}
+certifies a search path (\py!ProofPath! of \module{archytaszx.rewrite.tactics}, \cref{ch:rewriting}): \py!forward! is \py!certify(path.start, path.forward_results, label="forward")!, \py!backward! is \py!certify(path.goal, path.backward_results, label="backward")!, and the moves are the path's. A non-path raises \py!ProveGrammarError!.
+
+\subsection{Checking a proof}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class ProofCheck!: \py!verified: bool!; \py!reason: str!; \py!forward_replay!; \py!backward_replay!; \py!meet_isomorphic: bool!; \py!samples_checked: int!; \py!counterexample!; \py!comparison!.\\
+\py!check_proof(certificate: Proof, *, samples=None, max_samples=24, tolerance=DEFAULT_TOLERANCE, max_elements=DEFAULT_MAX_ELEMENTS, rediscover=True) -> ProofCheck!
+\end{signature}
+
+\py!check_proof! raises \py!ProveGrammarError! when the certificate is not a \py!ProofCertificate! or \py!InductionProof!, an oracle argument is malformed (\py!_check_oracle_args!: \py!samples! not \py!None! and a string, not a sequence or holding a non-mapping; \py!max_samples! below $0$ or \py!max_elements! below $1$, or either a \py!bool! or not an \py!int!; \py!tolerance! a \py!bool!, not a number, or not $\ge0$), or \py!rediscover! is not a \py!bool!.
+
+\begin{algorithm}[Proof-certificate check]\label{alg:proofs-check}
+For a \py!ProofCertificate!, stop at the first failure, each failure giving \py!verified=False!, the replays so far and \py!samples_checked=0!:
+\begin{enumerate}
+\item[(a)] \py!start! and \py!goal! pass validation: the reason of a failure is \code!start fails validation: M1; M2! (or \code!goal ...!), the messages of the error-level issues. Each half's initial diagram is structurally identical to its end, else \code!the forward half does not begin at start: R! (or \code!backward ... goal!).
+\item[(b)] Each half replays (\cref{alg:proofs-replay}, with \py!rediscover!), else \code!the LABEL half did not replay: R!; an error of the check set (\py!BangBoxError!, \py!CertificateError!, \py!DimensionError!, \py!GeneratorError!, \py!GraphError!, \py!PhaseError!, \py!RewriteError!, \py!ScalarError!, \py!ValidateError!) gives \code!the LABEL half's replay raised Error: E!.
+\item[(c)] The two replayed diagrams have isomorphic comparison views (\cref{ch:rewriting}); failing that, isomorphic algebraic views (\py!algebraic_view!, with a \py!ValueError! or \py!ArithmeticError! counting as non-isomorphic). Else \code!the two halves end on diagrams with different comparison views!; a check-set error in the first comparison gives \code!comparing the meet raised Error: E!.
+\item[(d)] The oracle finds no counterexample between \py!start! and \py!goal!: the certification oracle (\cref{alg:proofs-certify-oracle}) unless an oracle result is supplied, and its deferred samples when it evaluated none. A counterexample gives \code!oracle mismatch at {a}: C! with \py!meet_isomorphic=True!, the count, the counterexample and the comparison.
+\end{enumerate}
+Success gives \code!both halves replay and meet; S!, $S$ the oracle summary. Zero evaluated samples passes~(d), and the summary says so.
+\end{algorithm}
+
+\begin{signature}
+\py!CERTIFY_SAMPLE_ELEMENTS = 2**20!
+\end{signature}
+
+\begin{algorithm}[Certification oracle]\label{alg:proofs-certify-oracle}
+\py!_certify_oracle(left, right, *, samples=None, max_samples=24, tolerance, max_elements, defer=False)!:
+\begin{enumerate}
+\item The candidates are \py!samples! or the sample grid of the family copies; compute each one's planned size.
+\item With no candidate above $2^{20}$ elements, return \py!refute_by_oracle(left, right, samples=samples, ...)!.
+\item Otherwise run \py!refute_by_oracle! on the small candidates (explicit samples, so no fallback or size ordering). If it found a counterexample, evaluated a sample, or \py!defer! is set, return its result with the refusals extended by one entry \code!{a}: deferred (planned N elements, over 1048576)! per large candidate and the large candidates kept as deferred samples (\py!_DeferredOracle!).
+\item Otherwise return \py!refute_by_oracle! on the large candidates.
+\end{enumerate}
+\py!_run_deferred! runs the kept deferred samples by \py!refute_by_oracle! when a deferred result evaluated no sample, and returns any other result unchanged.
+\end{algorithm}
+
+\begin{algorithm}[Induction-proof check]\label{alg:proofs-check-induction}
+\py!_check_induction(proof, ...)! returns a failure reason or \py!None!, rebuilding every diagram from the two sides:
+\begin{enumerate}
+\item Both sides pass validation (\code!start fails validation: ...!).
+\item \py!index! is a free multiplicity of a side and \py!step_symbol! is not, else \code!'n' is not a free multiplicity or 'k' is not fresh!.
+\item The base certificate's start and goal are structurally identical to \py!induction_base! of the sides, else \code!the base case is not the two sides at multiplicity 0!; the base checks recursively (\cref{alg:proofs-check} or this algorithm), else \code!the base case fails: R!.
+\item With own and other per \py!side!, both \py!induction_successor! results exist, else \code!a successor has no single box to peel!. The exposing certificate begins at own's peeled successor (\code!the exposing derivation does not begin at the peeled successor!) and replays (\code!the exposing derivation did not replay: R!).
+\item The region is a subset of the exposed diagram's nodes and no wire crosses its border, else \code!the hypothesis region is not a closed part of the exposed diagram!; the region, extracted with its \bboxes{} and stripped (\py!_extract!, \py!_bare!), is isomorphic with symmetric legs to the stripped hypothesis, else \code!the hypothesis region is not the hypothesis diagram!.
+\item Replace the region by other's hypothesis (\py!replace_region!). The step's start must be identical to the result and its goal to other's peeled successor, else \code!the step does not run from the rewritten successor to the other side's!; the step checks recursively, else \code!the step fails: R!.
+\item An error of the induction set (the check set plus \py!InductionError!) gives \code!rebuilding the induction raised Error: E!.
+\end{enumerate}
+\py!check_proof! of an induction proof then runs the certification oracle on its two sides as in step~(d) and reports \code!base and step check by replay and the hypothesis; S!.
+\end{algorithm}
+
+\subsection{Mixed proofs}
+
+\begin{signature}
+\py!class MixedKind(enum.Enum)!: \py!DOUBLED = "doubled"!, \py!NATIVE = "native"!.\\
+\py!@dataclass(frozen=True, slots=True, eq=False) class MixedCertificate!: \py!kind!; \py!start!; \py!goal!; \py!inner: ProofCertificate | InductionProof!; \py!start_doubled = None!; \py!goal_doubled = None!; \py!start_origin: Mapping[NodeId, Origin] | None = None!; \py!goal_origin = None!; property \py!length! (the inner proof's).
+\end{signature}
+
+A \texttt{NATIVE} mixed certificate holds a proof between the two mixed diagrams themselves, found with the discard rules of \cref{ch:mixed}. A \texttt{DOUBLED} one holds a proof between their doubled diagrams, with the origin of every doubled node (\py!double_with_origin!). Construction raises \py!ProveGrammarError! for a non-\py!MixedKind!, a non-proof inner, or a \texttt{DOUBLED} certificate without both doubled diagrams.
+
+\begin{signature}
+\py!check_mixed(certificate, *, samples=None, max_samples=24, tolerance, max_elements) -> ProofCheck!
+\end{signature}
+For \texttt{DOUBLED}, \py!check_mixed! re-doubles each side and requires the result to be structurally identical to the stored doubled diagram, else \code!re-doubling differs from the stored diagram: R!. It then checks the inner proof by \py!check_proof! and prefixes a successful reason with \code!KIND: !.
+
+\subsection{Outcomes}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True, eq=False) class ProofOutcome!: \py!status!; \py!reason!; \py!certificate = None!; \py!check = None!; \py!search: SearchResult | None = None!; \py!counterexample = None!; \py!assumptions = ()!; \py!induction = None!; \py!mixed = None!; \py!restriction = None!; \py!family = None!; \py!family_holds = False!; \py!restricted_pair = None!; \py!counterexample_original = None!; \py!refutation: str | None = None!; \py!instances: tuple[tuple[str, ProofOutcome], ...] = ()!; property \py!proved!.
+\end{signature}
+Construction raises \py!ProveGrammarError! when the status, reason, certificate, check, search, counterexample, assumptions or induction field has the wrong type. \py!refutation! is the Lean refutation of an oracle \texttt{REFUTED}; \py!instances! holds, for a restriction with finitely many values, each instance's label and outcome.
+
+\subsection{The prover}
+
+\begin{signature}
+\begin{lstlisting}[style=python,frame=none]
+prove(start: Diagram, goal: Diagram, *,
+    moves: Sequence[Tactic] | None = None,
+    limits: SearchLimits = DEFAULT_SEARCH_LIMITS,
+    bidirectional: bool = True, cache: RewriteCache | None = None,
+    refute: bool = True, samples=None, max_samples: int = 24,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_elements: int = DEFAULT_MAX_ELEMENTS,
+    induction_depth: int = DEFAULT_INDUCTION_DEPTH,
+    restrict=None, family_first: bool = True,
+    enumerate_residual: bool = False,
+    max_residual_paths: int = 6) -> ProofOutcome
+\end{lstlisting}
+\end{signature}
+
+\begin{sloppypar}
+The default search limits \py!DEFAULT_SEARCH_LIMITS! are \py!SearchLimits()!: \py!max_depth=4!, \py!max_states=2048!, \py!max_applications=20000! and \py!node_margin=4!. The default induction depth \py!DEFAULT_INDUCTION_DEPTH! is $2$. \py!moves! defaults to the tactic set of \py!search! (\cref{ch:rewriting}).
+\end{sloppypar}
+
+\begin{algorithm}[Prover]\label{alg:proofs-prove}
+\leavevmode
+\begin{enumerate}
+\item Raise \py!ProveGrammarError! when \py!family_first! or \py!enumerate_residual! is not a \py!bool!, or \py!max_residual_paths! is a \py!bool!, not an \py!int!, or negative.
+\item \emph{Residual enumeration.} With \py!enumerate_residual!, run \py!prove! with the same arguments without it. Return that outcome unless it is \texttt{NOT\_FOUND} and no restriction is given; then return \py!_residual_refuted! (below).
+\item \emph{Restriction.} With \py!restrict!, return \py!restricted_outcome! with \py!prove! as the runner (\cref{alg:proofs-restricted-outcome}).
+\item Validate: diagrams, \py!moves! (none, or a non-string sequence of \py!Tactic!), \py!limits! a \py!SearchLimits!, \py!bidirectional! and \py!refute! booleans, \py!cache! none or a \py!RewriteCache!, the oracle arguments, \py!induction_depth! a non-\py!bool! \py!int! $\ge0$; and both sides pass validation (\code!start fails validation: ...!). Each failure raises \py!ProveGrammarError!.
+\item \emph{Mixed.} If either side is not pure, try the native proof: when the interfaces can agree, search with \py!mixed_moves()! (or the given moves), certify and check; a verified check returns \texttt{PROVED} with a \texttt{NATIVE} mixed certificate and reason \code!native: proved in N step(s), F forward and B backward; C!. Otherwise prove the doubled diagrams by \py!prove! with the same options and return its outcome with reason prefixed \code!doubled: ! and, when \texttt{PROVED}, a \texttt{DOUBLED} mixed certificate.
+\item \emph{Interface.} An interface reason returns \texttt{REFUTED} with \code!interfaces never agree: R!.
+\item \emph{Oracle.} With \py!refute!, run the certification oracle with \py!defer=True!. A counterexample returns \py!_oracle_refuted!: \texttt{REFUTED} with reason \code!oracle mismatch at {a}: C!, the counterexample and its Lean refutation (\py!lean_refutation!); a \py!NetUnsupported! returns \texttt{NOT\_FOUND} with \code!; not refuted: no Lean refutation (E)! appended and the counterexample kept.
+\item \emph{Search.} Run \py!search(start, goal, moves, limits, bidirectional, cache)!.
+\item \emph{No path.} If \py!induction_depth! $>0$, try \py!_induct! (\cref{alg:proofs-induct}) with depth \py!induction_depth!. Without an induction proof, return \texttt{NOT\_FOUND} with the search summary \code!search STATUS after D layer(s): S state(s), E expanded, A application(s), P pruned, F failure(s)!. With one, check it (\cref{alg:proofs-check-induction}) reusing the oracle result; a failed check returns \texttt{CHECK\_FAILED} with \code!induction proof check failed: R!; a passed one returns \texttt{PROVED} with \code!proved by induction on n from 0 in L step(s) after SUMMARY; C! and the induction proof's assumptions.
+\item \emph{Path found.} Certify it and check it (\cref{alg:proofs-check}) reusing the oracle result. A failed check returns \texttt{CHECK\_FAILED} with \code!proof check failed: R!; a passed one returns \texttt{PROVED} with \code!proved in N step(s), F forward and B backward; C!, or with \code!, conditional on the K deferred dimension constraint(s) in assumptions! before the semicolon when assumptions exist.
+\end{enumerate}
+\end{algorithm}
+
+With \py!refute=False! step~7 is skipped, yet the check of step~10 still runs the oracle itself.
+
+\begin{algorithm}[Induction search]\label{alg:proofs-induct}
+\py!_induct(start, goal, run, depth)!, \py!run! the shared search settings:
+\begin{enumerate}
+\item For each free multiplicity symbol $n$ of either side, in sorted order:
+  \begin{enumerate}
+  \item choose $k$ by \py!_step_symbol!; compute both base diagrams; skip $n$ when either fails validation;
+  \item prove the base by \py!_prove_piece! at depth $\text{depth}-1$ (a search proof, else a nested induction while the depth is positive); skip $n$ without one;
+  \item for own $=$ start and then own $=$ goal: compute both peeled successors (skip the side when either is \py!None!) and own's hypothesis; run \py!search_for! from own's successor with the predicate \py!find_hypothesis_region(hypothesis=...)! of \cref{ch:kernel}, which looks for a closed region isomorphic to the hypothesis; without a hit, skip the side; replace the hit region by other's hypothesis and prove the result equal to other's successor by \py!_prove_piece! at depth $\text{depth}-1$;
+  \item on success return the induction proof with copies of both sides, the exposing certificate \py!certify(peeled, hit.path.forward_results, label="expose")! and the region.
+  \end{enumerate}
+  An error of the induction set skips $n$.
+\item Return \py!None!.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Residual refutation.} \py!_residual_refuted(start, goal, outcome, max_paths)! applies to pure pairs: it runs \py!compare_path_sums(start, goal, max_paths)!. An unsupported pair returns the outcome; a result other than \code!unequal! with both entries returns the outcome with \code!; R! appended; an \code!unequal! returns \texttt{REFUTED} with reason \code!path sums differ at boundary index I: x vs y (R)! and the empty counterexample.
+
+\subsection{Exhaustive proofs}
+
+\begin{signature}
+\py!prove_exhaustive(start, goal, *, refute=True, samples=None, max_samples=24, tolerance, max_elements, on_layer=None, algebraic=False, restrict=None, family_first=True) -> ProofOutcome!
+\end{signature}
+
+\py!prove_exhaustive! runs, after the interface and oracle steps of \cref{alg:proofs-prove} (validation, doubling of mixed operands without the native attempt, interface, oracle with \py!defer=True!), the exhaustive search of \cref{ch:completeness}: \py!exhaustive_search!, or \py!algebraic_search! when \py!algebraic! is set, over every registered rule, with \py!on_layer! called after each layer. No limit bounds the search: on a pair that no enumerated derivation joins it does not terminate. With \py!algebraic!, both sides must have an algebraic view, else \py!ProveGrammarError! \code!NAME: algebraic search needs concrete dimensions and algebraic parameters: E!. An \py!ExhaustedError! returns \texttt{NOT\_FOUND} with \code!exhaustive search: E!. A found path is certified and checked; the reasons are \code!proof check failed: R! and \code!proved exhaustively in N step(s), F forward and B backward; C!. Under \py!restrict! it runs the threaded restricted search below.
+
+\subsection{Restricted proofs}
+
+\begin{algorithm}[Restricted outcome]\label{alg:proofs-restricted-outcome}
+\py!restricted_outcome(left, right, restrict, run, samples=None, family_first=True)!:
+\begin{enumerate}
+\item Raise \py!ProveGrammarError! for a non-\py!bool! \py!family_first!; parse and validate the restriction, re-raising a \py!DecideGrammarError! as \py!ProveGrammarError!. An empty restriction returns \py!run(left, right, samples=samples)!.
+\item Without \py!family_first!: for finite clauses, prove by instances (below); else run on the restricted pair only (\py!_pair_only!).
+\item Run on the family. \texttt{PROVED} returns with \py!family_holds! set; \texttt{REFUTED} with a counterexample in the domain returns with that counterexample as the original one.
+\item For finite clauses, return the instance proof with the family outcome attached.
+\item Otherwise run on the restricted pair (\py!subst_pair!, grammar errors re-raised as above) with the samples cut by \py!restricted_samples!. A counterexample is read in the original symbols; a \texttt{REFUTED} whose original point lies outside the domain becomes \texttt{NOT\_FOUND} with \code!; that point lies outside TEXT! (\py!_inside!). Return it with the restriction, the family outcome and the pair.
+\end{enumerate}
+\py!_by_instances! runs \py!restricted_outcome! with \py!family_first=False! on each combination of the finite clauses' values in product order: the first \texttt{REFUTED} returns with \code!instance LABEL: R!; any unproved instance gives \texttt{NOT\_FOUND} \code!instances left unproved: L1; ... (proved at P1; ...)!; otherwise \texttt{PROVED} \code!every instance proved (P1; ...), one certificate each!, with every instance's outcome in \py!instances!.
+\end{algorithm}
+
+\begin{algorithm}[Threaded restricted exhaustive proof]\label{alg:proofs-restricted-exhaustive}
+\py!_restricted_exhaustive! runs the family search and the restricted pair's search side by side in two daemon threads, synchronized by a condition variable; each thread's layer callback forwards to \py!on_layer! and raises the private \py!_Stopped! (a \py!BaseException!) once its search is told to stop. The main thread waits until either: the family outcome is \emph{decisive} (\texttt{PROVED}, or \texttt{REFUTED} with a counterexample in the domain), which stops the pair search; or the pair outcome exists and the family has finished or the pair outcome is \texttt{PROVED} or \texttt{REFUTED}, which stops the family search; or the pair thread raised an exception other than \py!_Stopped!, which stops the family search and is re-raised. A decisive family outcome is returned as in \cref{alg:proofs-restricted-outcome}; otherwise the pair outcome, read in the original symbols and passed through \py!_inside!. Without \py!family_first! only the pair search runs; an empty restriction runs the unrestricted search.
+\end{algorithm}
+
+\section{Proofs of Decisions}\label{sec:proofs-decision-proof}
+
+\module{archytaszx.semantics.certify_decision} turns an \texttt{EQUAL} decision into a proof that the proof kernel or Lean re-checks. It tries the decision's own evidence first, then the verified normalizer of symbolic sums, then a proof search.
+
+\begin{signature}
+\py!EqualProof = ProofCertificate | ProofOutcome | kernel.Theorem | kernel.Symbolic | kernel.RestrictedProof!\\
+\py!decision_proof(decision, left, right, describe=None) -> tuple[EqualProof | None, str]!
+\end{signature}
+
+\py!decision_proof! returns a proof and an empty string, or \py!None! and the reasons each builder gave. A restricted decision goes to \py!restricted_proof!. Otherwise the pair is \py!(left, right)!, or the doubled pair of a \texttt{DOUBLED} decision, whose inner method then replaces the method; the result is \py!pair_proof! of that pair.
+
+\begin{algorithm}[Pair proof]\label{alg:proofs-pair-proof}
+\py!pair_proof(decision, left, right, describe=None)!:
+\begin{enumerate}
+\item \texttt{NORMAL\_FORM} with two certificates whose initial diagrams are the objects \py!left! and \py!right!: return the \py!ProofCertificate! of the two certificates, their rule names as moves.
+\item \texttt{PATH\_SUM}: return \py!path_sum_proof(left, right)!.
+\item For every method other than \texttt{SYMBOLIC\_CONTRACTION}: try \py!kernel.from_decision(decision, left, right)! (\cref{ch:kernel}); a theorem is returned; a \py!KernelError! is kept as the kernel reason.
+\item Try \py!kernel.symbolic(left, right, describe=describe)!, the Lean export through the verified normalizer of symbolic sums (\cref{ch:lean-sym}); a result is returned; a \py!KernelError! is kept as the normalizer reason.
+\item For \texttt{SYMBOLIC\_CONTRACTION} only: try \py!kernel.from_decision! now, then \py!path_sum_proof!; a path-sum failure appends its reasons to the normalizer reason.
+\item Run \py!prove(left, right)! with default options; a \texttt{PROVED} outcome is returned.
+\item Return \py!None! and \code!kernel: K; normaliser: N; search: S!.
+\end{enumerate}
+\end{algorithm}
+
+Because \py!certify! stores copies (\cref{sec:proofs-certificates}), the identity test of step~1 does not hold for certificates the ladder built, and a normal-form verdict is proved through \py!kernel.from_decision!.
+
+\begin{signature}
+\py!path_sum_proof(left, right) -> tuple[kernel.Symbolic | None, str]!
+\end{signature}
+tries, in order, the Lean network exports of the path sums over qubits (\py!export_net!), over qudits (\py!export_qudit_net!) and over qudit digits (\py!export_qudit_digits_net!) of \cref{ch:lean-pathsum,ch:lean-export}; the first that raises neither \py!PathSumError! nor \py!ScalarUnsupported! is wrapped as \py!kernel.Symbolic(left, right, source)!. Failing all three it returns \code!path_sum network export: E1; qudit network export: E2; qudit digit network export: E3!.
+
+\begin{algorithm}[Restricted proof]\label{alg:proofs-restricted-proof}
+\py!restricted_proof(decision, left, right, describe=None)!:
+\begin{enumerate}
+\item When the family held, the source is the family decision and the pair \py!(left, right)!; otherwise the source is the decision and the pair its restricted pair. Without a pair or source, return \code!the decision names no pair to prove!. A doubled source replaces the pair by its doubled pair and its method by the inner method.
+\item Let $F$ be the names of \py!decision.floors_used!. When $F$ is nonempty and the family did not hold, try \py!lean_sym.export_symbolic(pair, describe, floors=floors_of(pair, restriction))!, where \py!floors_of! raises the pair's phase-vector floors to the restriction's floors; \py!NetUnsupported! or \py!ScalarUnsupported! records \code!normaliser under floors: E; !.
+\item Otherwise, or on that failure, run \cref{alg:proofs-pair-proof} on the source and pair.
+\item A \py!ProofOutcome! is replaced by its certificate or induction proof; without either, return \code!search: R (no certificate or induction proof)!.
+\item Return a \py!kernel.RestrictedProof! of the evidence, the restriction, both sides, whether the family held, and $F$.
+\end{enumerate}
+\end{algorithm}
+
+\section{The Lemma Store}\label{sec:proofs-lemmas}
+
+\module{archytaszx.semantics.lemmas} holds a library of \term{stated lemmas}: named identities between two diagrams over one symbol, proved once with the symbol formal and kept with their kernel theorems. The induction machinery (\cref{ch:kernel}) rewrites with them inside larger diagrams to close step cases that rules alone do not close: the \term{lemma window} rewrites library lemmas on both sides of a step case, the \term{insertion window} inserts identities until a hypothesis becomes visible, and the \term{copy window} closes the parts left over by a per-copy lemma.
+
+\subsection{Lemmas}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class Lemma!: \py!name: str!; \py!symbol: str!; \py!statement: str!; \py!build: Callable[[sympy.Expr], tuple[Diagram, Diagram]]!; \py!prove: Callable[[Diagram, Diagram, str], object] | None = None!.
+\end{signature}
+
+A lemma states \py!build(e)[0] = build(e)[1]! for every value $e$ of \py!symbol!. \py!prove!, when given, proves both sides with the symbol formal to a kernel theorem. \Cref{tab:proofs-lemmas} lists the stored lemmas; all use the symbol \code!p!.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.17\linewidth}X@{}}
+\toprule
+Name & Group & Statement \\
+\midrule
+\code!carry_shift! & \py!LIBRARY! & the shift by one over $2^{p+1}$, with the top bit and the low $2^p$ register bound by $B(2,2^p)$, is the top bit flipped when the low register is all ones, then the low register shifted by one over $2^p$ \\
+\code!and_register! & \py!LIBRARY! & $p$ bits copied into triangles gathered by one Z spider give $\ket0+\mathrm{AND}\ket1$, which is $\ket0+[\text{register all ones}]\ket1$ on the bits bound into a $2^p$ register \\
+\code!and_gated! & \py!LIBRARY! & \code!and_register! with the gathering Z spider taking one more input, on both sides \\
+\code!and_split! & \py!LIBRARY! & a $2^p$ register split by an S chain into $p$ bits, each copied into a triangle gathered with one more input by one Z spider, is the register tested for all ones as in \code!and_register!, then split \\
+\code!zero_register! & \py!LIBRARY! & a bit bound under $p$ zero bits by a B chain is the bit bound under one zero $2^p$ register \\
+\code!split_bind! & \py!INSERTIONS! & a $2^p$ register split by an S chain into $p$ bits and bound back by an aligned B chain is the identity \\
+\code!qram_copy! & \py!COPIES! & $p$ address bits, each flipped unless it matches the bit of a $2^p$ register $R$ split by an S chain, gathered with a data bit through triangles into a controlled flip of the target, is the address bound into a $2^p$ register less $R$ (split and bound back), tested for $0$ with the data bit and the Fourier-side target \\
+\bottomrule
+\end{tabularx}
+\caption{The stored lemmas.}
+\label{tab:proofs-lemmas}
+\end{table}
+
+Only \code!qram_copy! has its own prover, \py!induct_by_insertion!. \py!lemma(name)! returns the lemma of that name from the three groups, else raises \py!LemmaError! \code!no lemma named 'x'!. \py!sides(entry, value=None)! returns both sides at \py!value!, or with the symbol formal (the dimension symbol of that name).
+
+\paragraph{The carry lemma.} \code!carry_shift! is built directly (\py!_carry_sides(p)!). With $\mathrm{Sh}_s(D)$ the X spider $X(1\to1)$ over $D$ whose phase-vector rule is $-s\,k/D$ (the shift by $s$; \py!_shift!), the left side is $B(2,2^p)$ on inputs (top, low), then $\mathrm{Sh}_1(2^{p+1})$, then $S(2,2^p)$ on the outputs. The right side applies $F$ to the top input, binds it with the low input by $B(2,2^p)$, applies $\mathrm{Sh}_1(2^{p+1})$, a Z spider $Z(1\to1)$ over $2^{p+1}$ with weight rule $-1$, and $\mathrm{Sh}_{-1}(2^{p+1})$, splits by $S(2,2^p)$, applies $F^3$ to the top output and $\mathrm{Sh}_1(2^p)$ to the low output, with scalar $-1$.
+
+\paragraph{The DSL lemmas.} The other lemmas are DSL texts (\cref{ch:language}) parsed by \py!parse_dsl!, with the count \code!p! renamed to the requested value by \py!rename_multiplicity! when it differs from the multiplicity symbol \code!p!; \py!_dsl_sides! memoizes the parsed pair by (left text, right text, value) and returns fresh copies. The texts of \code!and_register! are:
+\begin{lstlisting}[style=azx]
+# and_register, left
+count p
+c = Z(1 -> 2, literal 2)
+t = T(literal 2)
+z = Z(1 -> 1, literal 2)
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+wire c.out1 -- t.in0, t.out0 -- z.in0, c.out0 -- b.in0, h.out0 -- b.in1
+repeat p as V index m: c, t, b
+chain V: b.out0 -> b.in1
+inputs c.in0
+outputs b.out0, z.out0
+
+# and_register, right
+count p
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+zt = Z(0 -> 1, literal 2)
+bb = B(literal 2, literal 2^p)
+u = X(1 -> 1, literal 2^(p + 1)) phase{k: -k/2^(p + 1)}
+g = Z(1 -> 1, literal 2^(p + 1)) weight{k: -1}
+v = X(1 -> 1, literal 2^(p + 1)) phase{k: k/2^(p + 1)}
+ss = S(literal 2, literal 2^p)
+f = F(literal 2)
+tr = T(literal 2)
+wire h.out0 -- b.in1, b.out0 -- bb.in1, zt.out0 -- bb.in0, bb.out0 -- u.in0, u.out0 -- g.in0
+wire g.out0 -- v.in0, v.out0 -- ss.in0, ss.out0 -- f.in0, f.out0 -- tr.in0
+repeat p as V index m: b
+chain V: b.out0 -> b.in1
+inputs b.in0
+outputs ss.out1, tr.out0
+scalar -1/sqrt(2)
+\end{lstlisting}
+\code!and_gated! applies three textual replacements to the left text (\code!z = Z(1 -> 1, literal 2)! becomes \code!z = Z(2 -> 1, literal 2)!; \code!inputs c.in0! becomes \code!inputs c.in0, z.in1!) and four to the right text (a line \code!zz = Z(2 -> 1, literal 2)! after the triangle, the wire \code!tr.out0 -- zz.in0! added, the input \code!zz.in1! added, and the output \code!tr.out0! replaced by \code!zz.out0!). The texts of \code!and_split!, \code!zero_register!, \code!split_bind! and \code!qram_copy! are:
+\begin{lstlisting}[style=azx]
+# and_split, left
+count p
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+c = Z(1 -> 2, literal 2)
+t = T(literal 2)
+z = Z(2 -> 1, literal 2)
+wire s.out0 -- c.in0, c.out1 -- t.in0, t.out0 -- z.in0, s.out1 -- e.in0
+repeat p as U index m: s, c, t
+chain U: s.in0 -> s.out1
+inputs s.in0, z.in1
+outputs c.out0, z.out0
+
+# and_split, right
+count p
+zt = Z(0 -> 1, literal 2)
+bb = B(literal 2, literal 2^p)
+u = X(1 -> 1, literal 2^(p + 1)) phase{k: -k/2^(p + 1)}
+g = Z(1 -> 1, literal 2^(p + 1)) weight{k: -1}
+v = X(1 -> 1, literal 2^(p + 1)) phase{k: k/2^(p + 1)}
+ss = S(literal 2, literal 2^p)
+f = F(literal 2)
+tr = T(literal 2)
+zz = Z(2 -> 1, literal 2)
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+wire zt.out0 -- bb.in0, bb.out0 -- u.in0, u.out0 -- g.in0, g.out0 -- v.in0, v.out0 -- ss.in0
+wire ss.out0 -- f.in0, f.out0 -- tr.in0, tr.out0 -- zz.in0, ss.out1 -- s.in0, s.out1 -- e.in0
+repeat p as U index m: s
+chain U: s.in0 -> s.out1
+inputs bb.in1, zz.in1
+outputs s.out0, zz.out0
+scalar -1/sqrt(2)
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# zero_register, left                   # zero_register, right
+count p                                 count p
+r = B(literal 2, literal 2^(m + 1))     zr = X(0 -> 1, literal 2^p)
+zr = X(0 -> 1, literal 2)               r = B(literal 2^p, literal 2)
+wire zr.out0 -- r.in0                   wire zr.out0 -- r.in0
+repeat p as R index m: r, zr            inputs r.in1
+chain R: r.out0 -> r.in1                outputs r.out0
+inputs r.in1
+outputs r.out0
+
+# split_bind, left                      # split_bind, right
+count p                                 count p
+s = S(literal 2, literal 2^m)           z = Z(1 -> 1, literal 2^p)
+e = Z(1 -> 0, literal 1)                inputs z.in0
+h = Z(0 -> 1, literal 1)                outputs z.out0
+b = B(literal 2, literal 2^m)
+wire s.out1 -- e.in0, h.out0 -- b.in1, s.out0 -- b.in0
+repeat p as U index m: s
+chain U: s.in0 -> s.out1
+repeat p as V index m: b
+chain V: b.out0 -> b.in1
+align U with V
+inputs s.in0
+outputs b.out0
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# qram_copy, left
+count p
+g0 = Z(1 -> 2, literal 2)
+g1 = Z(1 -> 2, literal 2)
+g3 = S(literal 2, literal 2^j)
+g4 = Z(1 -> 0, literal 1)
+g5 = X(2 -> 1, literal 2)
+g6 = X(1 -> 1, literal 2) phase{1: 1/2}
+g7 = T(literal 2)
+g8 = Z(2 -> 1, literal 2)
+g9 = T(literal 2)
+g10 = Ti(literal 2)
+g11 = X(2 -> 1, literal 2)
+wire g3.out1 -- g4.in0, g3.out0 -- g5.in1, g0.out1 -- g5.in0, g5.out0 -- g6.in0
+wire g6.out0 -- g7.in0, g7.out0 -- g8.in1, g1.out1 -- g9.in0, g9.out0 -- g8.in0
+wire g8.out0 -- g10.in0, g10.out0 -- g11.in1
+repeat p as C index j: g0, g3, g5, g6, g7
+chain C: g3.in0 -> g3.out1
+inputs g0.in0, g1.in0, g11.in0, g3.in0
+outputs g1.out0, g0.out0, g11.out0
+scalar sqrt(2)
+
+# qram_copy, right
+count p
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+z = Z(1 -> 2, literal 2^p)
+xs = X(1 -> 2, literal 2^p)
+cap = Z(2 -> 0, literal 2^p)
+sr = S(literal 2, literal 2^m)
+er = Z(1 -> 0, literal 1)
+hr = Z(0 -> 1, literal 1)
+br = B(literal 2, literal 2^m)
+c = Z(1 -> 2, literal 2)
+pb = B(literal 2^p, literal 2)
+qb = B(literal 2^(p + 1), literal 2)
+g = Z(1 -> 0, literal 2^(p + 2)) phase{3: 1/2}
+f0 = F(literal 2)
+y = Z(1 -> 2, literal 2)
+f1 = F(literal 2)
+f2 = F(literal 2)
+f3 = F(literal 2)
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+wire h.out0 -- b.in1, b.out0 -- z.in0, z.out0 -- s.in0, s.out1 -- e.in0
+wire sr.out1 -- er.in0, sr.out0 -- br.in0, hr.out0 -- br.in1, br.out0 -- cap.in1
+wire z.out1 -- xs.in0, xs.out0 -- pb.in0, xs.out1 -- cap.in0, c.out1 -- pb.in1, pb.out0 -- qb.in0
+wire y.out1 -- qb.in1, qb.out0 -- g.in0
+wire f0.out0 -- y.in0, y.out0 -- f1.in0, f1.out0 -- f2.in0, f2.out0 -- f3.in0
+repeat p as V index m: b
+chain V: b.out0 -> b.in1
+repeat p as UR index m: sr
+chain UR: sr.in0 -> sr.out1
+repeat p as Q index m: br
+chain Q: br.out0 -> br.in1
+align UR with Q
+repeat p as U index m: s
+chain U: s.in0 -> s.out1
+inputs b.in0, c.in0, f0.in0, sr.in0
+outputs c.out0, s.out0, f3.out0
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[zxd]
+\node[snode] (s2) at (0,0) {$S$};
+\node[snode] (s1) at (1.2,1.0) {$S$};
+\node[zdot] (e) at (1.6,1.9) {};
+\node[zdot] (h) at (1.6,2.3) {};
+\node[bnode] (b1) at (1.2,3.2) {$B$};
+\node[bnode] (b2) at (0,4.3) {$B$};
+\draw[wire] (0,-0.8) -- (s2);
+\draw[wire] ($(s2.north)+(-0.2,0)$) -- ($(b2.south)+(-0.2,0)$);
+\draw[wire] ($(s2.north)+(0.2,0)$) -- ($(s1.south)$);
+\draw[wire] ($(s1.north)+(-0.2,0)$) -- ($(b1.south)+(-0.2,0)$);
+\draw[wire] ($(s1.north)+(0.2,0)$) -- (e);
+\draw[wire] (h) -- ($(b1.south)+(0.2,0)$);
+\draw[wire] (b1.north) -- ($(b2.south)+(0.2,0)$);
+\draw[wire] (b2) -- (0,5.1);
+\node[dimlabel,left] at (0,-0.6) {$4$};
+\node[dimlabel,left] at (-0.2,2.2) {$2$};
+\node[dimlabel,right] at (0.6,0.45) {$2$};
+\node[dimlabel,left] at (1.0,2.2) {$2$};
+\node[dimlabel,right] at (1.65,1.65) {$1$};
+\node[dimlabel,right] at (1.65,2.55) {$1$};
+\node[dimlabel,right] at (0.6,3.85) {$2$};
+\node[dimlabel,left] at (0,4.9) {$4$};
+\node at (2.8,2.2) {$=$};
+\draw[wire] (3.6,-0.8) -- (3.6,5.1);
+\node[dimlabel,right] at (3.6,2.2) {$4$};
+\end{tikzpicture}
+\caption{The insertion lemma \texttt{split\_bind} at $p=2$, expanded: two dimension splitters $S(2,2^m)$ ($m=1,0$) split a $4$-dimensional register into two bits and a $1$-dimensional rest capped by a phaseless Z effect; two dimension binders $B(2,2^m)$, fed from a phaseless Z state of dimension $1$, bind the bits back. The right side is the $4$-dimensional identity (a phaseless $Z(1\to1)$).}
+\label{fig:proofs-split-bind}
+\end{figure}
+
+\subsection{Proved lemmas and instances}
+
+\begin{signature}
+\py!proved(entry: Lemma) -> object!
+\end{signature}
+returns the kernel theorem of the lemma with its symbol formal, proved on first use and kept in a module table for the life of the process. The lemma's own prover is used when it has one; otherwise \py!decide_equal(left, right, samples=[])! (no oracle sample evaluates) must return \texttt{EQUAL}, else \py!LemmaError! \code!lemma NAME is not proved: V!, and the theorem is \py!kernel.from_decision!. A lemma requested while it is being proved raises \py!LemmaError! \code!lemma NAME is being proved!.
+
+\begin{signature}
+\py!instance(entry: Lemma, value: sympy.Expr) -> object!
+\end{signature}
+
+\begin{algorithm}[Lemma instance]\label{alg:proofs-lemma-instance}
+Let $\Theta$ be \py!proved(entry)! and $(A,B)$ the sides at \py!value!.
+\begin{enumerate}
+\item \emph{Substitution} (\py!_substituted!): when \py!value! is one symbol $s$ plus an integer $c$ and the lemma symbol is a box multiplicity of $\Theta$'s left side, apply \py!kernel.subst! with the clause $\text{symbol}=s+c$ (a multiplicity shift with $a=1$, fresh symbol $s$; a negative $c$ holds for $s\ge-c$) and join isomorphisms to $A$ and $B$; a \py!KernelError! or \py!DecideGrammarError! moves on.
+\item \py!kernel.contraction(A, B)!.
+\item On its \py!KernelError!: \py!kernel.path_sum(A, B)!; then, for a lemma with its own prover, \py!kernel.instance(Theta, symbol, value)! between isomorphisms (\py!_renamed!); then \py!decide_equal(A, B, samples=[])!, which must be \texttt{EQUAL} (else \py!LemmaError! \code!lemma NAME at VALUE: E!, $E$ the contraction's error), proved by \py!kernel.from_decision! (a \py!KernelError! raises \py!LemmaError! with its message).
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Rewriting with lemmas}
+
+\paragraph{Candidate values.} \py!_values(diagram, entry)! lists, in order of first appearance over the nodes in id order and their input then output ports, the values $e$, $e-1$ and $e-2$ for each port dimension $2^e$ with symbolic $e$.
+
+\paragraph{Candidate regions.} \py!_regions(diagram, pattern)! enumerates, without repetition, node sets of the diagram that assign to each pattern node (in sorted id order) a distinct node of the same generator type, such that every pattern wire between assigned nodes joins assigned nodes that are adjacent in the diagram (in either direction). It is a backtracking search in pattern-node order.
+
+\begin{signature}
+\py!rewrite(diagram, entry) -> object | None!\\
+\py!rewrite_all(diagram) -> object!
+\end{signature}
+\py!rewrite! tries each candidate value whose sides build (a \py!DimensionError! skips it) and each candidate region of the left side; when \py!find_cut_region! of \cref{ch:kernel} reads the left side in the region through cut wires, it returns \py!kernel.congr(instance(entry, value), diagram, cut)!, the diagram equal to the diagram with the right side in place. A \py!KernelError! of \py!congr! tries the next region; with no success it returns \py!None!. \py!rewrite_all! starts from \py!kernel.refl(diagram)! and, for each library lemma in order, rewrites the current right side with it while it applies, at most four times (\py!_MAX_REWRITES!), skipping a lemma that is being proved and stopping a lemma on a \py!LemmaError!; the steps are chained by \py!trans!.
+
+\begin{signature}
+\py!close_by_cores(a, b, index) -> object!\\
+\py!close_with_lemmas(replaced, target, source, index) -> object!
+\end{signature}
+\py!close_by_cores! returns \py!kernel.iso(a, b)! when the diagrams are isomorphic; otherwise it takes on each side the union of the chain cores (\py!box_core!: a chain box's scope and the nodes off it reached from its link-in ends without passing a scope node) of every chain \bbox{} carrying \py!index! (\py!_owner_cores!; none when no such box exists or a core's head meets its tail) and returns \py!kernel.local_contraction(a, core_a, b, core_b, open_region(a, core_a))!. It raises \py!KernelError! \code!no chain cores carrying the index on both sides! when a side has no core.
+
+\begin{algorithm}[Lemma window]\label{alg:proofs-lemma-window}
+\py!close_with_lemmas(replaced, target, source, index)! proves $\text{replaced}=\text{target}$, \py!target! being the joint peel of \py!source!'s boxes carrying \py!index!:
+\begin{enumerate}
+\item Rewrite library lemmas on \py!replaced!: $\theta=$ \py!rewrite_all(replaced)!.
+\item Starting points for \py!target!: \py!refl(target)!, preceded, when some chain boxes of \py!source! carrying \py!index! peel their first copy, by \py!kernel.repeel(source, index, {}, firsts)! (every such box peeling its last copy instead) when its left side is \py!target!.
+\item For each starting point $\sigma$: $\beta=\sigma$ followed by \py!rewrite_all! of its right side; on success of \py!close_by_cores(theta.rhs, beta.rhs, index)! return \py!trans(theta, trans(middle, symm(beta)))!.
+\item Raise \py!KernelError! \code!lemma window: R1; R2! (or \code!lemma window: no lemma applies!).
+\end{enumerate}
+\end{algorithm}
+
+\subsection{The insertion window}
+
+The insertion window splits spiders off a peeled copy and inserts identities until the induction hypothesis reads through cut wires.
+
+\paragraph{Splitting a spider.} \py!_split_off(diagram, v, moved, via)! replaces spider $v$ by three spiders of its type in series: a phaseless \emph{leaf} holding the port \py!via!'s wire and the ports \py!moved!; a phaseless $1\to1$ \emph{middle}; and a \emph{hub} with $v$'s phase and its other ports, the place of \py!via! on the hub wired to the middle. Boundary slots move to the leaf or hub port that inherits them. It raises \py!LemmaError! for a spider in a \bbox{} (\code!a boxed spider!) or with a self-loop. \py!_split_theorem! proves the diagram equal to the split one by two spider fusions (middle with hub, then the leaf with the fused node; \py!SPIDER_FUSION!, \cref{ch:rules}), reversed by \py!symm!, with an isomorphism to the original.
+
+\paragraph{Identities.} \py!_inserted(diagram, mid, hub, kind)! replaces the middle spider, of dimension $D$, by an identity under \py!congr!:
+\begin{itemize}
+\item \code!split_bind!: for $D=2^e$ with symbolic $e$, the reversed instance of \code!split_bind! at $e$ (else \py!LemmaError! \code!not a register of symbolic width!);
+\item \code!fourier!: the reversed Fourier cancellation of four $F$ boxes in series to a phaseless $Z(1\to1)$ (\py!_fourier_identity!, \py!FOURIER_CANCELLATION!);
+\item \code!triangle!: a phaseless $Z(1\to1)$ equal to $T^{-1}$, then $Z(1\to2)$ with one output on a phaseless Z effect, then $T$, by symbolic contraction (\py!_triangle_identity!).
+\end{itemize}
+It returns the theorem, the \emph{inner} inserted nodes on the hub's side (the B chain reached from the hub without passing a dimension splitter; the last $F$ box; $T$ and the $Z(1\to2)$) and the other inserted nodes. A middle spider that is not read as the identity's left side raises \code!the middle spider is not the identity!.
+
+\paragraph{Options.} \py!_insertion_options(diagram, v, copy)! lists, for each port of $v$ wired off the copy to an unboxed node or a chain end, that port with each kind fitting its dimension: \code!split_bind! for $2^e$ with symbolic $e$, \code!triangle! for dimension $2$, and \code!fourier! always.
+
+\begin{signature}
+\py!expose_by_insertion(peeled, copies, hypothesis) -> tuple[Theorem, CutRegion, frozenset[NodeId]] | None!
+\end{signature}
+
+\begin{algorithm}[Insertion exposure]\label{alg:proofs-insertion}
+For each candidate copy (a node set) in order:
+\begin{enumerate}
+\item The spiders to split are the unboxed Z spiders off the copy, holding no boundary slot, with a port wired into the copy, in id order. Skip the copy when there are none or more than three (\py!_MAX_INSERTED!).
+\item For each combination (product order) of one option per spider: starting from \py!refl(peeled)!, split each spider with its ports into the copy moved to the leaf, insert the identity on the chosen wire, and chain the theorems; collect the leaves and outer inserted nodes, and block the hubs and inner inserted nodes.
+\item Let \emph{reached} be the copy, the leaves and everything reachable from the leaves without entering a blocked node. Read the hypothesis by \py!find_cut_region! in the complement of reached; on success return the theorem, the cut and the copy. A \py!KernelError!, \py!LemmaError! or \py!DimensionError! tries the next combination.
+\end{enumerate}
+Return \py!None! when no choice reads as the hypothesis.
+\end{algorithm}
+
+\begin{signature}
+\py!induct_by_insertion(left, right, index) -> object!
+\end{signature}
+
+\begin{algorithm}[Induction by insertion]\label{alg:proofs-induct-insertion}
+\leavevmode
+\begin{enumerate}
+\item Choose a fresh step symbol $k$; prove the base by \py!kernel.contraction! of the two sides at $\text{index}=0$.
+\item For own $=$ left and then own $=$ right: compute both peeled successors (else record \code!SIDE: no single box to peel!) and both hypotheses at $k$. For each starting point of \py!_repeels! of own (the identity, and a re-peel at the chains' last copies when one applies), find the copy (the starting diagram's nodes not in own's hypothesis), its candidates (\py!copy_candidates!), and the exposure (\cref{alg:proofs-insertion}); the first found, chained after its starting point, is used; none records \code!SIDE: no insertion exposes the hypothesis!.
+\item Replace the cut region by other's hypothesis (\py!replace_cut_region!). For each starting point of \py!_repeels! of other, close the result against it by \py!close_by_cores! over $k$ and return \py!kernel.induction(left, right, index, k, base, side, expose, region, step, cut=cut)!. Errors (\py!KernelError!, \py!InductionError!, \py!BangBoxError!, \py!ValidateError!) record \code!SIDE: E!.
+\item Raise \py!LemmaError! with the recorded reasons joined by \code!; !.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{The copy window}
+
+\begin{signature}
+\py!close_rests(a, b) -> object!\\
+\py!induct_by_copies(left, right, index) -> Theorem!
+\end{signature}
+
+\py!close_rests! proves $a=b$ by an isomorphism; else, for each copy lemma, each candidate value and each candidate region of its left side that \py!find_cut_region! reads in $a$, by \py!congr! of the lemma instance, followed by \code!split_bind! rewritten at most four times while it applies, and closed against $b$ by \py!close_by_cores! over each free multiplicity of the result in sorted order. It raises \py!LemmaError! \code!rests: R1; ...! (or \code!rests: no copy lemma applies!).
+
+\begin{algorithm}[Induction by copies]\label{alg:proofs-induct-copies}
+\py!induct_by_copies! proves a value-count family over its free count \py!index!:
+\begin{enumerate}
+\item Choose a fresh step symbol $k$. For own $=$ left and then right: compute both peeled successors and hypotheses (else \code!SIDE: no single box to peel!).
+\item Expose own's hypothesis by insertion and other's hypothesis by \py!expose_cut! of \cref{ch:kernel}, each over its copy candidates; else \code!SIDE: a hypothesis is not exposed!.
+\item Replace own's cut region by other's hypothesis. Close the parts off the two hypothesis regions, each read as an open diagram (\py!_open_region!), by \py!close_rests!; place the result in other's exposed diagram by \py!find_cut_region! (else \code!the other rest is not its open diagram!); chain other's exposing steps (\py!_steps_theorem!) with \py!congr! of the closed rests.
+\item The base is decided once, by \py!decide_equal(..., samples=[])! at $\text{index}=0$, which must be \texttt{EQUAL} (else \code!base: V!), and proved by \py!kernel.from_decision!.
+\item Return \py!kernel.induction(left, right, index, k, base, side, expose, region, step, cut=cut)!; errors, including \py!NoInductionTheorem!, record \code!SIDE: E!. Raise \py!LemmaError! with the reasons when neither side succeeds.
+\end{enumerate}
+\end{algorithm}
+
+\section{Summary of Certificate Formats}\label{sec:proofs-formats}
+
+\Cref{tab:proofs-formats} lists every evidence record of this chapter, what establishes it, and how it is re-checked.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}>{\raggedright\arraybackslash}p{0.3\linewidth}X@{}}
+\caption{Evidence records and their checks.}\label{tab:proofs-formats}\\
+\toprule
+Record & Produced by & Re-checked by \\
+\midrule
+\endfirsthead
+\toprule
+Record & Produced by & Re-checked by \\
+\midrule
+\endhead
+\py!Certificate! (\texttt{STEP\_SEQUENCE}) & \py!certify! of a rewrite run: normal forms, saturation edges, proof halves, exposures & \py!replay!; \py!verify! at one assignment \\
+\py!Certificate! (\texttt{INDUCTION}) & \py!certify_induction! & \py!replay! and claim binding; \py!verify! of both children \\
+\py!ProofCertificate! & \py!certify_proof! of a search path; \py!pair_proof! of a normal-form decision & \py!check_proof! (\cref{alg:proofs-check}) \\
+\py!InductionProof! & \py!_induct! of \py!prove! & \py!check_proof! (\cref{alg:proofs-check-induction}) \\
+\py!MixedCertificate! & \py!prove! and \py!prove_exhaustive! on mixed operands & \py!check_mixed! \\
+\py!kernel.Theorem! & \py!kernel.from_decision!, induction, lemmas, periodic and column arguments & the proof kernel (\cref{ch:kernel}) \\
+\py!kernel.Symbolic! & \py!kernel.symbolic!, \py!path_sum_proof! & Lean (\cref{ch:lean-sym,ch:lean-pathsum}) \\
+\py!kernel.RestrictedProof! & \py!restricted_proof! & the proof kernel and Lean \\
+Lean refutation (\py!str!) & \py!lean_refutation! & Lean (\cref{ch:lean-export}) \\
+\py!EntryWitness! & witness search, path-sum rung & exact re-evaluation of both entries \\
+\bottomrule
+\end{xltabular}
+
+\section{Worked Examples}\label{sec:proofs-examples}
+
+The following outputs come from the engine at this version on diagrams written in the DSL of \cref{ch:language}.
+
+\begin{example}[Normal-form equality]
+For $L$ two phaseless $Z_d(1\to1)$ spiders in series and $R$ one $Z_d(1\to1)$, \py!sample_grid(L, R)! is $\{d=2\},\{d=3\},\{d=4\},\{d=1\}$. \py!decide_equal(L, R)! returns \texttt{EQUAL}/\texttt{NORMAL\_FORM} with reason \code!normal forms agree; no oracle mismatch in 4 sample(s)!, stops \code!(("normal_form", "agree"), ("oracle", "no_mismatch"))!, and a kernel theorem as proof. \py!prove(L, R)! returns \texttt{PROVED} with reason \code!proved in 1 step(s), 1 forward and 0 backward; both halves replay and meet; no oracle mismatch in 4 sample(s)! and forward moves \code!("normalize",)!.
+\end{example}
+
+\begin{example}[Symbolic contraction]
+For $L=Z_d(1\to1)$ and $R=X_d(1\to1)$, both phaseless, the normal forms differ, the oracle evaluates four samples without mismatch, saturation stops with \code!saturated! without a merge, and symbolic contraction settles: \texttt{EQUAL}/\texttt{SYMBOLIC\_CONTRACTION} with reason \code!symbolic contractions agree: entries are exactly equal with d formal! and stops \code!(("normal_form", "differ"), ("oracle", "no_mismatch"), ("saturation", "saturated"), ("symbolic", "equal"))!.
+\end{example}
+
+\begin{example}[Interface refutation]
+For $L=Z_d(1\to2)$ and $R=Z_d(1\to1)$, \py!decide_equal! returns \texttt{UNEQUAL}/\texttt{INTERFACE} with reason \code!boundary output count 2 != 1!, no stops and no Lean refutation.
+\end{example}
+
+\begin{example}[A chain family]
+Let $L$ be a phaseless $Z_d(1\to1)$ spider followed by a node-scoped \bbox{} of multiplicity $n$ around one phaseless $Z_d(1\to1)$ spider whose copies form a chain (output of one copy to the input of the next), and let $R$ be a single $Z_d(1\to1)$. In DSL form:
+\begin{lstlisting}[style=azx]
+count n
+dim d
+h = Z(1 -> 1, d)
+z = Z(1 -> 1, d)
+wire h.out0 -- z.in0
+repeat n as V: z
+chain V: z.out0 -> z.in0
+inputs h.in0
+outputs z.out0
+\end{lstlisting}
+The pair has the symbols $d$ (dimension) and $n$ (multiplicity), so \py!sample_grid! has $4^2=16$ points; it begins with the diagonals $\{d{=}2,n{=}0\}$, $\{d{=}3,n{=}1\}$, $\{d{=}4,n{=}2\}$, $\{d{=}1,n{=}3\}$, then $\{d{=}2,n{=}1\}$, $\{d{=}3,n{=}0\}$, $\{d{=}2,n{=}2\}$, $\{d{=}4,n{=}0\}$, \ldots{} by (largest index, index sum, tuple). With the default options \py!decide_equal(L, R)! returns \texttt{EQUAL}/\texttt{SYMBOLIC\_CONTRACTION}, stops \code!(("normal_form", "differ"), ("oracle", "no_mismatch"), ("saturation", "saturated"), ("symbolic", "equal"))!. With \py!use_symbolic=False! and \py!use_path_sum=False! the induction rung settles it: \texttt{EQUAL}/\texttt{INDUCTION} with reason \code!base case n=0 proved by normal_form; step case proved by symbolic_contraction; holds for n >= 0; kernel proof built!, stop \code!("induction", "proved")! after the first three, \py!samples_checked! $=16$, and a kernel theorem as proof.
+\end{example}

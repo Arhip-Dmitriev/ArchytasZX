@@ -1,0 +1,1903 @@
+\chapter{The Complete Axiomatization and Exhaustive Search}\label{ch:completeness}
+
+% Local notation of this chapter.
+\providecommand{\cmplr}[1]{\texttt{\detokenize{#1}}}
+\tikzset{
+  cmplbox/.style={rectangle,draw,fill=zxgreen,minimum height=4.2mm,minimum width=4.2mm,
+    inner sep=1.5pt,font=\scriptsize},
+  cmplpk/.style={circle,draw,fill=zxred!40,minimum size=4.8mm,inner sep=0.3pt,font=\scriptsize},
+  cmplpd/.style={circle,draw,fill=zxred!40,minimum size=2.2mm,inner sep=0pt},
+  cmplmult/.style={rectangle,draw,fill=white,minimum height=3.8mm,minimum width=4.4mm,
+    inner sep=1.5pt,font=\scriptsize},
+  cmplmultt/.style={rectangle,draw,fill=gray!20,minimum height=3.8mm,minimum width=4.4mm,
+    inner sep=1.5pt,font=\scriptsize},
+  cmplwt/.style={isosceles triangle,isosceles triangle apex angle=60,shape border rotate=-90,
+    draw,fill=black,minimum size=3mm,inner sep=0pt},
+  cmplv/.style={rectangle,draw,fill=white,minimum height=4.2mm,minimum width=5.5mm,
+    inner sep=1.5pt,font=\scriptsize},
+}
+\providecommand{\cmplempty}{\tikz[baseline=-0.5ex]{\draw[dashed,gray] (0,-0.25) rectangle (0.5,0.25);}}
+\providecommand{\cmpleq}[3]{\par\smallskip\noindent\hfil#1\quad$=$\quad\ensuremath{#2}\,#3\hfil\par\smallskip}
+
+This chapter specifies the rules that make the rewriting system of ArchytasZX complete for
+concrete diagrams, and the exhaustive search that uses them. Two modules implement it.
+\module{archytaszx.rewrite.rules_axioms} states every axiom of the qudit ZXW-calculus of Po\'or
+et al.~\cite{poor2023zxw} (cited as [P1]) and every axiom of the qufinite ZXW-calculus of Wang,
+Po\'or, and Shaikh~\cite{wang2023qufinitezxw} (cited as [P2]) that [P1] lacks, as
+\term{template rules}: equations between two small diagrams that the generic template matcher of
+\module{archytaszx.rewrite.match_template} finds and rebuilds. It adds the definitional rules that
+translate the engine's generators into the papers' generators, templates of the engine's older
+hand-written rules so that their converses exist, and the converse of every equation.
+\module{archytaszx.rewrite.exhaustive} searches for a derivation between two diagrams by a fair
+bidirectional breadth-first enumeration of every application of every registered rule. Together
+they realize the transfer of the completeness theorems of [P1] and [P2] to the engine
+(\cref{sec:completeness-transfer}): two concrete diagrams with equal denotations are joined by a
+finite engine derivation, and exhaustive search finds one.
+
+The template matcher, the \py!Rule! record, the rewrite engine, the comparison view, and the
+tactic records \py!ProofPath! and \py!ProofStep! are specified in \cref{ch:rewriting}; the
+hand-written rules in \cref{ch:rules}; the generators, phase vectors, and dimensions in
+\cref{ch:diagrams,ch:algebra}; the denotation in \cref{ch:semantics}; the command
+\azx!prove exhaustive! and the function \py!prove_exhaustive! that wraps the search in
+\cref{ch:proofs,ch:shell}. The discard rules of mixed diagrams, which reuse the template builder of
+this chapter, are specified in \cref{ch:mixed}.
+
+\section{Sources, Generators, and Conventions}\label{sec:completeness-conventions}
+
+\subsection{The two calculi}
+
+The ZX-calculus~\cite{coecke2011interacting,vandewetering2020working} and the ZW-calculus~\cite{hadzihasanovic2015zw}
+combine in the ZXW-calculus. [P1] axiomatizes the ZXW-calculus at one concrete dimension
+$d\ge 2$ and proves it complete: two diagrams that denote the same linear map are joined by a
+finite sequence of axiom applications in context. [P2] extends the language to wires of
+different dimensions, with a dimension splitter and its transpose, building on the qufinite
+ZX-calculus~\cite{wang2021qufinite}, and proves this qufinite ZXW-calculus complete. Write
+$\mathrm{ZXW}_d$ for the calculus of [P1] at dimension $d$ and $\mathrm{ZXW}_{\mathrm{qf}}$ for the
+calculus of [P2]. Neither result covers \bboxes{}~\cite{carette2022bangboxes} or symbolic
+dimensions.
+
+The axiom labels of this chapter are those of the papers: S1, S2, D1, Ept, B2, K0, K1, K2, Zer,
+P1, H1, Pcy, AD, Sym, Aso, BZW, WW, Bs0, Bsj, TA, HD, ZV, VA, VW, and KZ of [P1], with the
+notational equations (Du) and (YT); WF, MW, D1, WW, VA, HD, DD, E, DZX, K0, BZW, TA, and S1 of
+[P2], with the equations numbered (2.8), (2.9), and (2.10) and the definition (2.3.3) of the
+mixed-dimensional Z box. Rule names follow one scheme:
+\begin{itemize}
+\item \cmplr{zxw_*} states an axiom of [P1] (several are also axioms of [P2]);
+\item \cmplr{qf_*} states an axiom of [P2] that is not one of [P1]'s;
+\item \cmplr{*_definition}, \cmplr{phase_to_weight}, \cmplr{weight_to_phase}, and
+  \cmplr{scalar_box} are the definitional rules;
+\item \cmplr{*_converse} states the same equation read right to left.
+\end{itemize}
+
+\subsection{The translation of generators}\label{sec:completeness-translation}
+
+A \term{translation} $\tau$ sends each generator or notation of the papers to an engine diagram
+and a scalar factor $s$: the paper generator denotes $s$ times the engine diagram. The module
+realizes $\tau$ through the following conventions, fixed in its templates.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.33\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{0.17\linewidth}@{}}
+\toprule
+Paper generator or notation & Engine diagram & Factor $s$ \\
+\midrule
+Z box with parameter $a$ & Z spider whose phase vector is the weight vector with coefficients $a$ & $1$ \\
+green circle spider with phases $\alpha$ & Z spider with phase vector $\alpha$ & $1$ \\
+Hadamard box $H$; $H^\dagger$ & $F$; $F^3$ (three $F$ in series) & $1$ \\
+$D$ & $F^2$ & $1$ \\
+pink spider $K_j$, $m$ inputs, $n$ outputs & X spider with phase vector $K_j$ & $d^{(m+n)/2-1}$ \\
+pink dot (phaseless pink spider) & phaseless X spider & $d^{(m+n)/2-1}$ \\
+plain green dot & phaseless Z spider & $1$ \\
+W node; W transpose & W node; W node with its ports bent & $1$ \\
+cap, cup, swap, identity & wires & $1$ \\
+triangle; inverse triangle & $T$; $T_i$ & $1$ \\
+dimension splitter; merger & $S$; $B$ & $1$ \\
+closed scalar diagram & its value, in the diagram scalar & $1$ \\
+multiplier, V box, M box & their definitions (\cref{sec:completeness-notations}) & as built \\
+mixed-dimensional Z box & its definition (2.3.3) (\cref{sec:completeness-mixed}) & $1$ \\
+\bottomrule
+\end{tabularx}
+\caption{The translation $\tau$ that the templates of \module{archytaszx.rewrite.rules_axioms} encode.}
+\label{tab:completeness-translation}
+\end{table}
+
+A W transpose is a W node whose input and outputs are bent: its outputs are wired to output
+ports elsewhere or its input to an input port elsewhere. A cap or cup is a wire between two ports
+of the same direction. Neither needs a generator of its own.
+
+\begin{definition}[Pink normalization]\label{def:completeness-pink}
+A \term{pink node} is a template node flagged \py!pink=True!: an X spider in [P1]'s
+normalization. A pink node with $k$ ports at dimension $D$ denotes
+\[
+  \nu_D(k) \;=\; D^{k/2-1}
+\]
+times the engine's X spider with the same phase vector. $D$ is the node's own dimension when the
+template gives one (\py!TNode.dim!), else the dimension of the host match. The number $k$ counts
+the template ports plus, for an open node, the host ports it carries beyond them.
+\end{definition}
+
+In the pictures of this chapter a light-red node is a pink node and a full-red node an engine X
+spider; a green circle is a Z spider with a phase vector, a green square a Z box (a Z spider
+read through its coefficients), a small green dot a plain green dot, a small light-red dot a pink
+dot, a black upward triangle a W node, a black downward triangle a W transpose, a yellow square
+the Fourier box $F$, and a white triangle the triangle $T$. Diagrams flow from bottom to top.
+
+\subsection{Coefficient vectors}\label{sec:completeness-vectors}
+
+A Z spider at concrete dimension $d$ carries a phase vector $v$ (\cref{ch:algebra}); its
+\term{coefficients} are $c_0=1$ and $c_k=w_k\,e^{2\pi i t_k}$ for $1\le k\le d-1$, where $t_k$ is the
+phase in turns at index $k$ and $w_k$ the weight, both read from the stored entries or rules of
+$v$ (\py!PhaseVector.coefficient(k)!). A phaseless spider (\py!None!) has all coefficients $1$.
+The Z box with parameter $a=(a_1,\dots,a_{d-1})$ denotes
+$\sum_{k=0}^{d-1} a_k\,\ket{k\cdots k}\bra{k\cdots k}$ with $a_0=1$. Indices of $a$ are read
+modulo $d$, so $a_{-j}=a_{d-j}$. Addition of phase vectors (\py!PhaseVector.__add__!) adds
+phases and multiplies weights, hence multiplies coefficients; it is the product $ab$ of Z boxes
+with $(ab)_k=a_kb_k$.
+
+The module defines these vector operations. Each takes a \py!Dim! and returns a
+\py!PhaseVector! or \py!None! (phaseless).
+
+\begin{signature}
+\py!coefficients(pv: PhaseVector | None, dim: Dim) -> list[Scalar]!\\
+$[c_0,\dots,c_{d-1}]$ at the concrete dimension \py!dim! (\py!dim.to_int()! raises at a symbolic
+one); \py!None! gives $d$ copies of $1$.
+
+\py!from_coefficients(values: Sequence[Scalar], dim: Dim) -> PhaseVector | None!\\
+The weight vector with weights \py!values[1:]! at indices $1,\dots,\text{len}-1$
+(\py!PhaseVector.from_weights!); \py!values[0]! is ignored and taken as $1$. Returns \py!None!
+when the result \py!is_zero! (the plain vector).
+
+\py!vector_of(values, dim)! $=$ \py!from_coefficients([1, *values], dim)!: the Z box
+$(\text{values}[0],\dots,\text{values}[d-2])$.
+\end{signature}
+
+\begin{signature}
+\py!zero_vector(dim)!: weights all $0$, the Z box $(0,\dots,0)=\ket{0}\bra{0}$ (a weight rule $0$).\\
+\py!minus_ones(dim)!: weights all $-1$ (a weight rule $-1$).\\
+\py!constant_vector(x: Scalar, dim)!: weights all $x$ (a weight rule $x$).\\
+\py!last_vector(x: Scalar, dim)!: the \term{box labelled $x$}, $(0,\dots,0,x)$: weight $0$ at
+$1,\dots,d-2$ and $x$ at $d-1$. At a symbolic dimension it raises \py!RewriteDomainError!
+\code!"the box (0, ..., 0, x) needs a concrete dimension, got {dim}"!.\\
+\py!unit_vector(index, dim)!: at concrete $d$, with $i=\text{index}\bmod d$, weight $1$ at $i$ when
+$i\ne 0$ and $0$ at every other index of $1,\dots,d-1$; write $u_i$ for it ($u_0=(0,\dots,0)$). At a symbolic
+dimension, the weight rule \py!KroneckerDelta(INDEX, 0 + index)!.
+\end{signature}
+
+\begin{signature}
+\py!reversed_vector(pv, dim)!: $\overleftarrow{a}=(a_{d-1},\dots,a_1)$, the coefficient at $k$ being
+$a_{d-k}$; \py!None! and a zero vector pass through unchanged. An unweighted vector keeps its phase
+form (entry at $k$ is the entry of \py!pv! at $d-k$); a weighted one is rebuilt with
+\py!from_coefficients!. Concrete dimension only.
+
+\py!sum_vector(a, b, dim) -> PhaseVector!: $a+b$ entrywise on indices $1,\dots,d-1$, as weights.
+At a symbolic dimension both vectors must carry neither explicit entries nor explicit weights
+(else \py!RewriteDomainError! \code!"a + b at a symbolic dimension needs rule-only vectors"!); the
+result is the weight rule $r_a+r_b$ with $r_v=w\,e^{2\pi i t}$, $w$ the weight rule of $v$ (or $1$)
+and $t$ its phase rule in turns (or absent).
+
+\py!shifted_vector(pv, j: int, dim)!: $k_j(a)=(a_{1-j}/a_{-j},\dots,a_{d-1-j}/a_{-j})$, the
+coefficient at $k$ being $a_{k-j}/a_{-j}$. It calls the memoized
+\py!_shifted_vector(pv, j mod d, dim)! (an \py!lru_cache! of 256 entries), which computes
+$1/a_{-j}$ once and raises \py!RewriteDomainError! \code!"k_j(a) needs a_{-j} != 0"! when the
+pivot \py!is_zero! or simplifies to $0$.
+\end{signature}
+
+Two predicates decide zero-ness. \py!_nonzero(x)! holds when \py!x.is_zero! is false and
+\py!sympy.simplify! of $x$ is not $0$. \py!_zero(expr)! first evaluates a symbol-free
+expression to 30 digits and returns false when the modulus exceeds $10^{-8}$; otherwise (or when
+evaluation raises \py!TypeError!, \py!ValueError!, or \py!ArithmeticError!) it returns whether
+\py!simplify(expr) == 0!. \py!_same_coefficients(x, y, dim)! holds when the vectors are equal as
+objects (\py!None! read as the plain vector), or, at a concrete dimension, when $\_zero(x_k-y_k)$
+holds for every $k=1,\dots,d-1$.
+
+\subsection{The phase vector \texorpdfstring{$K_j$}{K\_j}}
+
+The phase vector $K_j$ has phase $jk/d$ turns at index $k$ (function \py!k_vector! of
+\module{archytaszx.rewrite.match_template}). At a concrete dimension $j$ must be an integer;
+$j\bmod d=0$ gives \py!None! (phaseless), otherwise the memoized vector with entries
+$(jk\bmod d)/d$. At a symbolic dimension $K_j$ is the phase rule $j\cdot\mathtt{INDEX}/d$, and
+$j=0$ gives \py!None!. The pink spider $K_j$ of [P1] is the pink node with phase vector $K_j$;
+the pink dot is $K_0$.
+
+\subsection{Composite notations}\label{sec:completeness-notations}
+
+\begin{definition}[Multiplier]\label{def:completeness-multiplier}
+The \term{multiplier} labeled $m\ge 0$ is a plain green dot with one input and $m$ outputs whose
+outputs are the $m$ inputs of a pink dot with one output (\py!TB.multiplier(m)!). Its
+\term{transpose} (\py!up=True!) is a pink dot with one input and $m$ outputs into a plain green
+dot with $m$ inputs and one output. Both have one input and one output and carry the pink
+normalization $\nu_d(m+1)=d^{(m-1)/2}$. \py!_mult_at(t, m, dim, up=...)! builds the same shape
+with every node of the explicit dimension \py!dim!.
+\end{definition}
+
+\begin{center}
+\begin{tikzpicture}[zxd]
+\node[cmplmult] (m) at (0,0) {$m$};
+\draw[wire] (0,-0.7) -- (m) -- (0,0.7);
+\node at (0.9,0) {$:=$};
+\begin{scope}[xshift=2cm]
+\node[zdot] (g) at (0,-0.4) {};
+\node[cmplpd] (p) at (0,0.4) {};
+\draw[wire] (0,-0.9) -- (g); \draw[wire] (p) -- (0,0.9);
+\draw[wire] (g) to[bend left=50] (p); \draw[wire] (g) to[bend right=50] (p);
+\node[dimlabel] at (0,0) {$\cdots$}; \node[dimlabel] at (0.55,0) {$m$};
+\end{scope}
+\begin{scope}[xshift=4.6cm]
+\node[cmplmultt] (m) at (0,0) {$m$};
+\draw[wire] (0,-0.7) -- (m) -- (0,0.7);
+\node at (0.9,0) {$:=$};
+\end{scope}
+\begin{scope}[xshift=6.6cm]
+\node[cmplpd] (g) at (0,-0.4) {};
+\node[zdot] (p) at (0,0.4) {};
+\draw[wire] (0,-0.9) -- (g); \draw[wire] (p) -- (0,0.9);
+\draw[wire] (g) to[bend left=50] (p); \draw[wire] (g) to[bend right=50] (p);
+\node[dimlabel] at (0,0) {$\cdots$}; \node[dimlabel] at (0.55,0) {$m$};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
+\noindent A white box labeled $m$ is a multiplier; a gray box is a transposed multiplier. A
+multiplier labeled $0$ is a plain green effect followed by a pink dot state.
+
+\begin{definition}[V box and M box]\label{def:completeness-vm}
+At concrete dimension $d$, the \term{V box} (\py!_v_box(t, d)!) is the box labeled $1$,
+$(0,\dots,0,1)$, followed by a W node with $d-1$ outputs; output $k-1$ ($1\le k\le d-1$) passes
+through the multiplier labeled $(-k)\bmod d$ into input $k-1$ of a pink dot with $d-1$ inputs
+and one output. The \term{M box} (\py!_m_box(t, d)!) is the box labeled $1$ followed by a W
+node with $d$ outputs; output $p$ passes through the multiplier labeled $L_p$ into input $p$ of
+a pink dot with $d$ inputs, where $(L_0,\dots,L_{d-1})=((-1)\bmod d,\dots,(-(d-1))\bmod d,0)$.
+Both have one input and one output.
+\end{definition}
+
+\begin{center}
+\begin{tikzpicture}[zxd]
+\node[cmplv] (v) at (0,0) {$V$}; \draw[wire] (0,-0.8) -- (v) -- (0,0.8);
+\node at (0.9,0) {$:=$};
+\begin{scope}[xshift=2.6cm]
+\node[cmplbox] (b) at (0,-1.3) {$1$};
+\node[wnode] (w) at (0,-0.55) {};
+\node[cmplmult] (m1) at (-0.8,0.35) {$-1$};
+\node[cmplmult] (m2) at (0.8,0.35) {$1$};
+\node[dimlabel] at (0,0.35) {$\cdots$};
+\node[cmplpd] (p) at (0,1.2) {};
+\draw[wire] (0,-1.9) -- (b) -- (w);
+\draw[wire] (w) -- (m1) -- (p); \draw[wire] (w) -- (m2) -- (p); \draw[wire] (p) -- (0,1.8);
+\end{scope}
+\begin{scope}[xshift=5.6cm]
+\node[cmplv] (v) at (0,0) {$M$}; \draw[wire] (0,-0.8) -- (v) -- (0,0.8);
+\node at (0.9,0) {$:=$};
+\end{scope}
+\begin{scope}[xshift=8.4cm]
+\node[cmplbox] (b) at (0,-1.3) {$1$};
+\node[wnode] (w) at (0,-0.55) {};
+\node[cmplmult] (m1) at (-1.1,0.35) {$-1$};
+\node[cmplmult] (m2) at (0.2,0.35) {$1$};
+\node[cmplmult] (m3) at (1.1,0.35) {$0$};
+\node[dimlabel] at (-0.45,0.35) {$\cdots$};
+\node[cmplpd] (p) at (0,1.2) {};
+\draw[wire] (0,-1.9) -- (b) -- (w);
+\draw[wire] (w) -- (m1) -- (p); \draw[wire] (w) -- (m2) -- (p); \draw[wire] (w) -- (m3) -- (p);
+\draw[wire] (p) -- (0,1.8);
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
+\noindent The labels $-1,\dots,1$ stand for $(-1)\bmod d=d-1$ down to $(-(d-1))\bmod d=1$. A V box carries the pink
+normalization $\nu_d(d)\prod_{L=1}^{d-1}\nu_d(L+1)=d^{\,d/2-1+(d-1)(d-2)/4}$; an M box carries
+$d^{(d-2)(d+1)/4}$.
+
+\begin{definition}[Mixed-dimensional Z box]\label{def:completeness-mixedz}
+For ports $(\delta_1,d_1),\dots,(\delta_r,d_r)$ (direction $\delta_i$, concrete dimension
+$d_i$), let $D=\prod_i d_i$ and $\ell=\min_i d_i$. The \term{mixed-dimensional Z box}
+(\py!mixed_z(t, legs, param)!, definition (2.3.3) of [P2]) is a Z spider of dimension $D$ with one
+input per input port and one output per output port. An input port $i$ is port $1$ of a merger
+$B$ with input dimensions $(D/d_i,d_i)$ and output dimension $D$; port $0$ of that $B$ carries a
+pink dot state of dimension $D/d_i$, and its output feeds the Z spider. An output port $i$ is
+port $1$ of a splitter $S$ from $D$ to $(D/d_i,d_i)$ fed by the Z spider; port $0$ of that $S$
+ends in a pink dot effect of dimension $D/d_i$. The Z spider's parameter is \py!param!, by default
+the fixed vector with coefficients $1$ below $\ell$ and $0$ from $\ell$ on (\py!_ones_below!); this
+default is the \term{plain mixed green dot}. The function returns the external ports in the order of
+\py!legs!. Its pink normalization is $\prod_i (D/d_i)^{-1/2}$.
+\end{definition}
+
+\begin{center}
+\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0) {$a$};
+\draw[wire] (z) -- (-0.4,-0.8) node[below,dimlabel] {$d_1$};
+\draw[wire] (z) -- (0.4,-0.8) node[below,dimlabel] {$d_2$};
+\draw[wire] (z) -- (0,0.8) node[above,dimlabel] {$d_3$};
+\node at (1.1,0) {$:=$};
+\begin{scope}[xshift=3.4cm]
+\node[zs,minimum size=5mm] (z) at (0,0) {$a$};
+\node[bnode] (b1) at (-0.9,-1) {$B$};
+\node[bnode] (b2) at (0.9,-1) {$B$};
+\node[snode] (s) at (0,1) {$S$};
+\node[cmplpd] (p1) at (-1.25,-1.75) {};
+\node[cmplpd] (p2) at (0.55,-1.75) {};
+\node[cmplpd] (p3) at (-0.35,1.75) {};
+\draw[wire] (p1) -- (b1.south west); \draw[wire] (b1.south east) -- (-0.55,-2.1) node[below,dimlabel] {$d_1$};
+\draw[wire] (p2) -- (b2.south west); \draw[wire] (b2.south east) -- (1.25,-2.1) node[below,dimlabel] {$d_2$};
+\draw[wire] (b1) -- (z); \draw[wire] (b2) -- (z); \draw[wire] (z) -- node[right,dimlabel] {$D$} (s);
+\draw[wire] (s.north west) -- (p3); \draw[wire] (s.north east) -- (0.35,2.1) node[above,dimlabel] {$d_3$};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
+\subsection{The scalar convention}\label{sec:completeness-scalar}
+
+A template rule states $L = s\cdot R$, where $L$ and $R$ are the two templates in paper
+normalization. The stated factor is assembled from three parts of the rule: the axiom's own
+\py!scalar(dim, bindings)!, and the \py!scalar! callables the two templates carry (a scalar
+diagram of the paper on that side, already evaluated). In the pictures below, a template scalar is
+written as a factor in front of its side and the axiom scalar in front of the right side. Applying the
+rule left to right replaces an occurrence of the engine image of $L$ by the engine image of $R$
+and multiplies the diagram scalar by the \term{engine scalar} (function \py!template_scalar!)
+\begin{equation}\label{eq:completeness-engine-scalar}
+  \sigma \;=\; s_{\mathrm{ax}}\cdot\frac{N_R}{N_L}\cdot\frac{s_R}{s_L},
+  \qquad N_X=\prod_{\text{pink }v\in X}\nu_{D_v}(k_v),
+\end{equation}
+where $s_{\mathrm{ax}}$ is the axiom scalar, $s_L$ and $s_R$ are the template scalars (absent means
+$1$), and $k_v$ is the port count of the pink node $v$ in the match, including the host ports an
+open node carries. \py!_inverse! raises \py!RewriteDomainError!
+\code!"a template rule scalar of 0 has no converse"! when it must invert $0$. When both sides
+have one shape at every dimension, carry no template scalar, and have no open node,
+\py!fixed_template_scalar! of \module{archytaszx.rewrite.rules_library} evaluates $\sigma$ once at
+the symbol $d$ and records it as the rule's \py!scalar_introduced!; otherwise
+\py!scalar_introduced! is $1$ and \py!scalar_in_match! computes $\sigma$ per match. The match is
+rejected when $s_L$ evaluates to $0$.
+
+\section{Template Machinery of the Module}\label{sec:completeness-machinery}
+
+\subsection{Parameters}
+
+A template node carries a \py!Param! (\cref{ch:rewriting}): \py!match(phase, dim, bindings)!
+extends the bindings by the match of a host phase vector or returns \py!None!;
+\py!build(dim, bindings)! returns the vector the parameter denotes; \py!variables()! names the
+variables \py!build! reads; \py!binds()! names those \py!match! binds. The matcher module
+supplies \py!Fixed! (a function of the dimension; \py!PHASELESS! is \py!Fixed(lambda d: None)!),
+\py!Var(name)! (binds the host vector, the plain vector for a phaseless host, or compares it with
+the bound value), \py!Derived(reads, compute)! (recomputed from the bindings and compared;
+binds nothing), and \py!Kj(name, sign=1, offset=0)! (recognizes $K_{\mathit{sign}\cdot j+\mathit{offset}}$ and binds
+$j$, reduced modulo $d$ at a concrete dimension). This module adds three parameters and four
+fixed vectors.
+
+\begin{signature}
+\py!class LastEntry(Param)!, \py!LastEntry(name: str)!\\
+Matches the box labeled $x$. At a symbolic dimension it fails. At concrete $d$ every
+coefficient at $1,\dots,d-2$ must be $0$ (\py!is_zero! or simplifying to $0$); $x=c_{d-1}$ is bound
+to \py!name!, or, when \py!name! is bound, compared by simplifying the difference to $0$. Builds
+\py!last_vector(x, dim)!. \py!variables()! and \py!binds()! are \py!{name}!. Equality and
+hash are by \py!name!.
+\end{signature}
+
+\begin{signature}
+\py!class MixedVar(Param)!, \py!MixedVar(name: str, low: int)!\\
+The parameter of a mixed-dimensional Z box whose least port dimension is \py!low!. Matching
+requires every coefficient at an index $\ge$ \py!low! to be exactly zero (\py!is_zero!) and binds
+the vector of dimension \py!low! with coefficients $c_1,\dots,c_{\mathit{low}-1}$ (the plain vector
+when that is zero); a bound value is compared by \py!_same_coefficients! at dimension \py!low!.
+Builds \py!_spread(a, low, dim)!: weights $a_k$ for $k<\mathit{low}$ and $0$ for $k\ge\mathit{low}$
+over \py!dim!.
+\end{signature}
+
+\begin{signature}
+\py!class UnitIndex(Param)!, \py!UnitIndex(name: str, sign: int = 1)!\\
+Matches $u_{\mathit{sign}\cdot j}$ and binds $j$. At a symbolic dimension it fails. At concrete $d$
+every coefficient at $1,\dots,d-1$ must be $0$ (\py!is_zero!) or simplify to $1$, with at most one
+$1$; the index $i$ of that $1$ (or $0$) gives the binding $(\mathit{sign}\cdot i)\bmod d$, which
+replaces any previous binding of \py!name!. Builds \py!unit_vector(sign * j, dim)!.
+\end{signature}
+
+\begin{signature}
+\py!ZERO = Fixed(zero_vector)!, \py!MINUS_ONES = Fixed(minus_ones)!,
+\py!ONE_LAST = Fixed(lambda dim: last_vector(1, dim))! (the box labeled $1$),
+\py!k_fixed(j) = Fixed(lambda dim: k_vector(j, dim))!, \py!fixed(build) = Fixed(build)!.
+\end{signature}
+
+\subsection{The template builder}
+
+\begin{signature}
+\py!class TB! --- builds a \py!Template! node by node. Fields: \py!nodes: list[TNode]!,
+\py!wires: list[tuple[TPort, TPort]]!, \py!terminals: dict[str, TPort]!,
+\py!bare: list[tuple[str, str]]!, \py!rest: dict[str, str]!, and a counter for generated keys.
+\begin{itemize}[leftmargin=1.2em]
+\item \py!node(gen, ins, outs, param=PHASELESS, key=None, *, open=False, pink=False, dim=None) -> str!
+  appends a \py!TNode! and returns its key; a missing key becomes \code!_1!, \code!_2!, \ldots{}
+  in creation order. After each node and each wire it calls \py!check_template_budget! with the
+  node count plus the wire count, which raises \py!TemplateTooLarge! when the template outgrows the host
+  being matched.
+\item \py!z(ins, outs, param, key, *, open)!, \py!pink(ins, outs, param, key)! (an X spider with
+  \py!pink=True!), \py!w(outs, key)! (a W node with one input), \py!f(key)! (a Fourier box).
+\item \py!conn(gen, dims, key)! a merger or splitter with explicit input and output dimensions
+  \py!dims = ((d_in, ...), (d_out, ...))!, stored as \py!port_dims!.
+\item \py!wire(a, b)!, \py!term(name, port)!, \py!chain(keys)! (output $0$ of each node into input
+  $0$ of the next), \py!fs(count)! (\py!count! Fourier boxes in series),
+  \py!multiplier(m, *, up=False) -> (input, output)!.
+\item \py!done(scalar=None) -> Template! freezes the template with the optional template scalar.
+\end{itemize}
+\py!i(key, index=0)! and \py!o(key, index=0)! name the input and the output port \py!index! of node
+\py!key!; \py!_cdim(v)! is \py!Dim.concrete(v)!.
+\end{signature}
+
+A template's first node is its \term{anchor}: the matcher tries every host node of the anchor's
+generator. An \term{open} node may carry host ports beyond its template ports in its symmetric
+groups (\cref{ch:rewriting}); its template \py!rest! map names, per open node of the matched side,
+the node of the built side that receives those ports. A \py!bare! pair joins two terminals by a
+bare wire on the built side.
+
+\subsection{Sides and arity enumerators}
+
+A \py!Side! couples a template function \py!template(dim, arities)! with an arity enumerator
+\py!arities(diagram, anchor, dim)! and a lower bound \py!min_size(dim)! on the template's node plus
+wire count; the matcher skips a side whose bound exceeds the host's node plus wire count.
+\py!fixed_side(build)! makes a side whose template ignores the dimension and the arities (one
+empty arity assignment). \py!concrete_side(build, grows=False)! makes a side whose template
+\py!build(d)! exists only at a concrete dimension (\py!None! otherwise); with \py!grows=True! its
+\py!min_size! is $d$. \py!arity_from_anchor(build)! lifts an enumerator that ignores the dimension.
+\py!_first_kind(gen)! yields one empty assignment when the anchor has generator \py!gen!.
+
+The enumerators read the host through \py!_partners(diagram)! (each wire end to the other),
+\py!_legs(diagram, n)! (the input port references, then the output port references, of node
+$n$), \py!_neighbour_ids(diagram, n)! (the node at the far end of each connected port of $n$,
+in port order, with repetition), and \py!_count(diagram, n)! (the port count of $n$). For the
+mixed rules, \py!_host_values(diagram)! is the sorted set of every concrete port dimension of the
+diagram, read through its parameter environment (\py!Diagram.resolve_dim!), and
+\py!_divisor_pairs(values)! yields every $(m,n)$ with $m\ge 2$, $m\in\text{values}$, and $mn\in\text{values}$
+for some $n\ge2$, in the order of \py!values! for $m$ and then for $mn$.
+
+An arity enumerator bounds the instances of a family that a host can match: an instance whose
+arity assignment the enumerator does not yield is never tried. The enumerator of each rule is
+given with the rule.
+
+\subsection{Template axioms}
+
+A \py!TemplateAxiom! (\cref{ch:rewriting}) has the fields \py!name!, \py!left!, \py!right!,
+\py!scalar!, \py!conditions! (named predicates on the bindings, checked on the matched side),
+\py!concrete_only! (match only where the anchor's dimension is concrete), \py!description!,
+\py!quantifiers!, \py!free!, \py!converse_free!, \py!solve!, and \py!candidates!. A \term{free
+variable} is one the built side reads and the matched side does not bind; \py!free! maps it to its
+default value, which every match carries, and \azx!apply ... with NAME=VALUE! supplies another,
+which the conditions then check. \py!converse_free! holds the free variables of the converse.
+\py!solve(dim, bindings)! returns the free variables that the conditions determine from the
+others, or \py!None!. \py!candidates(dim, bindings)! lists further values of the free variables,
+computed from the matched side; exhaustive search enumerates a match with each
+(\py!TemplatePattern.candidate_matches!).
+
+\begin{definition}[Converse]\label{def:completeness-converse}
+\py!axiom.converse(name)! is the template axiom with the sides swapped, the scalar
+$1/s_{\mathrm{ax}}$ (through \py!_inverse!), the same conditions, \py!concrete_only!, and
+quantifiers, the description followed by \code!" Read right to left."!, and \py!free! set to the
+original's \py!converse_free!. It carries no \py!converse_free!, \py!solve!, or \py!candidates!.
+The template scalars swap sides with the templates, so \cref{eq:completeness-engine-scalar}
+gives the reciprocal engine scalar.
+\end{definition}
+
+\py!template_rule(axiom)! of \module{archytaszx.rewrite.rules_library} turns a template axiom into
+a \py!Rule! with the axiom's name, a \py!TemplatePattern!, the template builder, the axiom's side
+conditions, the quantifiers (leg counts: every quantifier other than \code!d!; dimensions:
+\code!("d",)!), and \py!automatic! true only for the names in \py!PROMOTED_RULE_NAMES!:
+\cmplr{zxw_ept}, \cmplr{scalar_box}, \cmplr{zxw_k0}, \cmplr{zxw_k2}, \cmplr{zxw_zer},
+\cmplr{zxw_ad}, \cmplr{zxw_bs0}, \cmplr{zxw_bsj}, \cmplr{zxw_ta}, \cmplr{zxw_bzw},
+\cmplr{zxw_aso}, \cmplr{zxw_hd}, \cmplr{zxw_va}, \cmplr{zxw_zv}, \cmplr{zxw_kz}, \cmplr{qf_dzx},
+\cmplr{qf_e}, \cmplr{qf_k0}, \cmplr{qf_bzw}, and \cmplr{qf_s1}. Every other template rule,
+converses included, is manual: only an explicit \azx!apply!, the tactics, and exhaustive search
+use it.
+
+\providecommand{\cmplhead}[2]{\par\medskip\noindent\textbf{\cmplr{#1}}\quad #2\par\nopagebreak\smallskip}
+
+\section{The Axioms of [P1]}\label{sec:completeness-p1}
+
+This section states the 27 rules that encode the axioms of [P1], in the order of
+\py!AXIOMS!. Each entry gives the equation as a picture with the stated factors, the engine scalar
+$\sigma$ of \cref{eq:completeness-engine-scalar}, the side conditions beyond the template match,
+whether the rule is \py!concrete_only!, the arity enumerators of the two sides (the left side's
+enumerator serves the forward rule, the right side's the converse), and the converse. A
+\term{fixed side} has the single empty arity assignment; its anchor is still required to have the
+generator of the template's first node.
+
+\cmplhead{zxw_s1}{[P1] S1: spider fusion of Z boxes.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$a$};
+\node[cmplbox] (b) at (0,1.4) {$b$};
+\draw[wire] (a) to[bend left=45] (b); \draw[wire] (a) to[bend right=45] (b);
+\node[dimlabel] at (0,0.7) {$\cdots$}; \node[dimlabel] at (0.62,0.7) {$k$};
+\draw[wire] (a) -- (-0.45,-0.7); \draw[wire] (a) -- (0.45,-0.7); \node[dimlabel] at (0,-0.6) {$\cdots$};
+\draw[wire] (b) -- (-0.45,2.1); \draw[wire] (b) -- (0.45,2.1); \node[dimlabel] at (0,2.0) {$\cdots$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (c) at (0,0.7) {$ab$};
+\draw[wire] (c) -- (-0.45,-0.7); \draw[wire] (c) -- (0.45,-0.7); \node[dimlabel] at (0,-0.6) {$\cdots$};
+\draw[wire] (c) -- (-0.45,2.1); \draw[wire] (c) -- (0.45,2.1); \node[dimlabel] at (0,2.0) {$\cdots$};
+\end{tikzpicture}}
+The left template is a Z spider \code!a! with no inputs and $k$ outputs, all wired to the $k$
+inputs of a Z spider \code!b! with no outputs; both are open, with \py!Var("a")! and
+\py!Var("b")!. The right template is one Z spider \code!c! with no template ports whose parameter
+is the derived product $ab$ (\py!PhaseVector! addition), and \code!c! receives the remaining
+ports of both (\py!rest = {"a": "c", "b": "c"}!). $\sigma=1$. Left arities: when the anchor is a
+Z spider, count, for each other Z spider adjacent to it, the wires joining the two; yield
+$\{k\}$ for each distinct count in increasing order. The right side is matched only through the
+explicit converse \cmplr{zxw_s1_converse} (\cref{sec:completeness-converses}). Quantifiers
+\code!k!, \code!legs!, \code!d!.
+
+\cmplhead{zxw_s2}{[P1] S2: the plain green dot with two ports is the identity.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[zdot] (z) at (0,0) {}; \draw[wire] (0,-0.7) -- (z) -- (0,0.7);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]\draw[wire] (0,-0.7) -- (0,0.7);\end{tikzpicture}}
+Left: a phaseless Z spider with one input (terminal \code!in!) and one output (terminal
+\code!out!). Right: the bare wire \code!(in, out)!. $\sigma=1$; fixed sides. The generated
+converse \cmplr{zxw_s2_converse} inserts a plain green dot on a wire: one match per host wire,
+and one per boundary port whose node is not a merger or splitter (\cref{ch:rewriting}).
+
+\cmplhead{zxw_s2_pink}{[P1] S2 (second part), [P2] S2: the pink dot with two ports is the identity.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (z) at (0,0) {}; \draw[wire] (0,-0.7) -- (z) -- (0,0.7);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]\draw[wire] (0,-0.7) -- (0,0.7);\end{tikzpicture}}
+Left: a pink dot with one input and one output; right: the bare wire. $\nu_d(2)=1$, so
+$\sigma=1$. Fixed sides; generated converse \cmplr{zxw_s2_pink_converse}.
+
+\cmplhead{zxw_d1}{[P1] D1: a Z box passes through $D$ reversed.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$a$}; \node[fbox] (f1) at (0,0.75) {$F$}; \node[fbox] (f2) at (0,1.45) {$F$};
+\draw[wire] (0,-0.6) -- (a) -- (f1) -- (f2) -- (0,2.05);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[fbox] (f1) at (0,0) {$F$}; \node[fbox] (f2) at (0,0.7) {$F$}; \node[cmplbox] (a) at (0,1.45) {$\overleftarrow{a}$};
+\draw[wire] (0,-0.6) -- (f1) -- (f2) -- (a) -- (0,2.05);
+\end{tikzpicture}}
+Left: a Z spider (one input, one output) with \py!Var("a")! followed by two $F$ in series. Right:
+two $F$ followed by a Z spider with the derived parameter \py!reversed_vector(a)!. $\sigma=1$.
+\py!concrete_only!. Converse: \cmplr{zxw_d1_converse}.
+
+\cmplhead{zxw_ept}{[P1] Ept: the pink dot state into a Z box effect is the empty diagram.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0) {}; \node[cmplbox] (a) at (0,0.8) {$a$}; \draw[wire] (p) -- (a);
+\end{tikzpicture}}{}{\cmplempty}
+Left: a pink dot with one output into a Z spider with one input and \py!Var("a")!. Right: the
+empty template. $\sigma=\nu_d(1)^{-1}=\sqrt d$; fixed sides; promoted to automatic.
+\py!converse_free = {"a": plain vector}!, so the generated converse \cmplr{zxw_ept_converse}
+inserts a pink dot state into a plain green effect by default and accepts any $a$ through
+\azx!with a=...!. A side with no nodes and no bare wire matches once per distinct dimension of
+the host's nodes (\cref{ch:rewriting}).
+
+\cmplhead{zxw_b2}{[P1] B2, [P2] B2: the bialgebra of the plain green and pink dots.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[zdot] (g1) at (-0.5,0) {}; \node[zdot] (g2) at (0.5,0) {};
+\node[cmplpd] (p1) at (-0.5,1.1) {}; \node[cmplpd] (p2) at (0.5,1.1) {};
+\draw[wire] (g1) -- (p1); \draw[wire] (g1) -- (p2); \draw[wire] (g2) -- (p1); \draw[wire] (g2) -- (p2);
+\draw[wire] (g1) -- (-0.5,-0.6) node[below,dimlabel] {$a$}; \draw[wire] (g2) -- (0.5,-0.6) node[below,dimlabel] {$b$};
+\draw[wire] (p1) -- (-0.5,1.7) node[above,dimlabel] {$c$}; \draw[wire] (p2) -- (0.5,1.7) node[above,dimlabel] {$e$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0.2) {}; \node[zdot] (g) at (0,0.9) {}; \draw[wire] (p) -- (g);
+\draw[wire] (p) -- (-0.4,-0.6) node[below,dimlabel] {$a$}; \draw[wire] (p) -- (0.4,-0.6) node[below,dimlabel] {$b$};
+\draw[wire] (g) -- (-0.4,1.7) node[above,dimlabel] {$c$}; \draw[wire] (g) -- (0.4,1.7) node[above,dimlabel] {$e$};
+\end{tikzpicture}}
+Left: plain green dots \code!g1!, \code!g2! (one input, two outputs) and pink dots \code!p1!,
+\code!p2! (two inputs, one output), output $i$ of \code!g!$_j$ into input $j$ of \code!p!$_i$
+($i,j\in\{1,2\}$, counted from $1$); terminals $a,b$ at the green inputs and $c,e$ at the pink
+outputs. Right: a pink dot with two inputs into a plain green dot with two outputs.
+$\sigma=\nu_d(3)/\nu_d(3)^2=d^{-1/2}$. Fixed sides; generated converse \cmplr{zxw_b2_converse}.
+
+\cmplhead{zxw_k0}{[P1] K0: a pink $K_j$ state is copied by a plain green dot.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (0,0) {$K_j$}; \node[zdot] (g) at (0,0.8) {}; \draw[wire] (p) -- (g);
+\draw[wire] (g) -- (-0.4,1.5); \draw[wire] (g) -- (0.4,1.5);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p1) at (-0.45,0.4) {$K_j$}; \node[cmplpk] (p2) at (0.45,0.4) {$K_j$};
+\draw[wire] (p1) -- (-0.45,1.5); \draw[wire] (p2) -- (0.45,1.5);
+\end{tikzpicture}}
+Left: a pink state with \py!Kj("j")! into a plain green dot with two outputs; right: two pink
+states with \py!Kj("j")!. $\sigma=\nu_d(1)^2/\nu_d(1)=d^{-1/2}$. Fixed sides; promoted;
+quantifiers \code!j!, \code!d!; generated converse \cmplr{zxw_k0_converse}.
+
+\cmplhead{zxw_k1}{[P1] K1: a pink $K_j$ passes through a plain green dot.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (0,0) {$K_j$}; \node[zdot] (g) at (0,0.8) {};
+\draw[wire] (0,-0.6) -- (p) -- (g);
+\draw[wire] (g) -- (-0.5,1.5); \draw[wire] (g) -- (0.5,1.5); \node[dimlabel] at (0,1.4) {$\cdots n$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[zdot] (g) at (0,0) {};
+\node[cmplpk] (q1) at (-0.5,0.85) {$K_j$}; \node[cmplpk] (q2) at (0.5,0.85) {$K_j$};
+\draw[wire] (0,-0.6) -- (g); \draw[wire] (g) -- (q1) -- (-0.5,1.5); \draw[wire] (g) -- (q2) -- (0.5,1.5);
+\node[dimlabel] at (0,0.85) {$\cdots$};
+\end{tikzpicture}}
+Left: a pink $K_j$ (one input, one output) into a plain green dot with one input and $n$ outputs.
+Right: the plain green dot with a pink $K_j$ on each output. $\sigma=1$. Left arities: the anchor
+must be an X spider with one input and one output; yield $n=(\text{port count})-1$ for each
+distinct port count of an adjacent Z spider, in increasing order. Right arities: for a Z anchor,
+$n=(\text{port count})-1$. Quantifiers \code!n!, \code!j!, \code!d!; generated converse
+\cmplr{zxw_k1_converse}.
+
+\cmplhead{zxw_k2}{[P1] K2, [P2] K2: a pink $K_j$ passes through a Z box.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (0,0) {$K_j$}; \node[cmplbox] (a) at (0,0.85) {$a$};
+\draw[wire] (0,-0.6) -- (p) -- (a) -- (0,1.45);
+\end{tikzpicture}}{a_{-j}\cdot}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$k_j(a)$}; \node[cmplpk] (p) at (0,0.85) {$K_j$};
+\draw[wire] (0,-0.6) -- (a) -- (p) -- (0,1.45);
+\end{tikzpicture}}
+Left: a pink $K_j$ into a Z spider with \py!Var("a")!. Right: a Z spider with the derived
+\py!shifted_vector(a, j)! into a pink $K_j$; the right template carries the scalar $a_{-j}$
+(\py!_coefficient(a, -j)!, index read modulo $d$; $1$ for a phaseless $a$). $\sigma=a_{-j}$.
+Condition \cmplr{a_minus_j_nonzero}: $a_{d-j}\neq 0$ by \py!_nonzero!. \py!concrete_only!;
+promoted. The binding $j$ must be a concrete integer; otherwise \py!_int! raises
+\py!RewriteDomainError! \code!"expected a concrete integer, got ..."!. Converse:
+\cmplr{zxw_k2_converse}.
+
+\cmplhead{zxw_zer}{[P1] Zer: the Z box $0$ state is the pink dot state.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$0$}; \draw[wire] (a) -- (0,0.8);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0) {}; \draw[wire] (p) -- (0,0.8);
+\end{tikzpicture}}
+Left: a Z spider with no inputs, one output, and the fixed vector \py!ZERO!; right: a pink dot
+state. $\sigma=\nu_d(1)=d^{-1/2}$. Fixed sides; promoted; generated converse
+\cmplr{zxw_zer_converse}.
+
+\cmplhead{zxw_p1}{[P1] P1 with (Du): $H$ followed by $H$ is $D$, the bent pink dot.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[fbox] (f1) at (0,0) {$F$}; \node[fbox] (f2) at (0,0.7) {$F$};
+\draw[wire] (0,-0.6) -- (f1) -- (f2) -- (0,1.3);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0.55) {};
+\draw[wire] (p) -- (0,1.3);
+\draw[wire] (p) to[out=-20,in=90] (0.45,0.1) to[out=-90,in=0] (0.2,-0.25) to[out=180,in=90] (0,-0.6);
+\end{tikzpicture}}
+Left: two $F$ in series (terminals \code!in!, \code!out!). Right: a pink dot with no inputs and two
+outputs, output $0$ the terminal \code!in! (bent down) and output $1$ the terminal \code!out!.
+$\nu_d(2)=1$, so $\sigma=1$. Fixed sides; generated converse \cmplr{zxw_p1_converse}.
+
+\cmplhead{zxw_p1_multiplier}{[P1] P1, [P2] P1: $H$ followed by $H$ is the multiplier $-1$.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[fbox] (f1) at (0,0) {$F$}; \node[fbox] (f2) at (0,0.7) {$F$};
+\draw[wire] (0,-0.6) -- (f1) -- (f2) -- (0,1.3);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplmult] (m) at (0,0.35) {$d-1$}; \draw[wire] (0,-0.6) -- (m) -- (0,1.3);
+\end{tikzpicture}}
+Left: two $F$ in series, defined at every dimension. Right: the multiplier labeled $d-1$ at a
+concrete dimension (\py!None! at a symbolic one), with \py!min_size! $d-1$.
+$\sigma=\nu_d(d)=d^{(d-2)/2}$. \py!concrete_only!; generated converse
+\cmplr{zxw_p1_multiplier_converse}.
+
+\cmplhead{zxw_h1}{[P1] H1: $H$ and $H^\dagger$ pass through a green circle spider $K_j$, negating $j$.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[zs] (p) at (0,0.7) {$K_j$};
+\node[fbox] (a1) at (-0.5,-0.2) {$F^3$}; \node[fbox] (a2) at (0.5,-0.2) {$F^3$};
+\node[fbox] (b1) at (-0.5,1.6) {$F$}; \node[fbox] (b2) at (0.5,1.6) {$F$};
+\draw[wire] (-0.5,-0.8) -- (a1) -- (p); \draw[wire] (0.5,-0.8) -- (a2) -- (p);
+\draw[wire] (p) -- (b1) -- (-0.5,2.2); \draw[wire] (p) -- (b2) -- (0.5,2.2);
+\node[dimlabel] at (0,-0.2) {$\cdots n$}; \node[dimlabel] at (0,1.6) {$\cdots m$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[zs] (p) at (0,0.7) {$K_{-j}$};
+\node[fbox] (a1) at (-0.5,-0.2) {$F$}; \node[fbox] (a2) at (0.5,-0.2) {$F$};
+\node[fbox] (b1) at (-0.5,1.6) {$F^3$}; \node[fbox] (b2) at (0.5,1.6) {$F^3$};
+\draw[wire] (-0.5,-0.8) -- (a1) -- (p); \draw[wire] (0.5,-0.8) -- (a2) -- (p);
+\draw[wire] (p) -- (b1) -- (-0.5,2.2); \draw[wire] (p) -- (b2) -- (0.5,2.2);
+\node[dimlabel] at (0,-0.2) {$\cdots n$}; \node[dimlabel] at (0,1.6) {$\cdots m$};
+\end{tikzpicture}}
+A box $F^3$ is three $F$ in series. Left: a Z spider with $n$ inputs, $m$ outputs, and
+\py!Kj("j")!, three $F$ before each input and one $F$ after each output. Right: the Z spider with
+\py!Kj("j", sign=-1)!, one $F$ before each input and three after each output. $\sigma=1$. Both
+sides: for a Z anchor with $p$ ports, yield $(n,m)=(0,p),(1,p-1),\dots,(p,0)$. Quantifiers
+\code!n!, \code!m!, \code!j!, \code!d!; generated converse \cmplr{zxw_h1_converse}.
+
+\cmplhead{zxw_pcy}{[P1] Pcy: a Z box on the input of a W node is copied onto both outputs.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$a$}; \node[wnode] (w) at (0,0.75) {};
+\draw[wire] (0,-0.6) -- (a) -- (w); \draw[wire] (w) -- (-0.4,1.45); \draw[wire] (w) -- (0.4,1.45);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \node[cmplbox] (a1) at (-0.45,0.8) {$a$}; \node[cmplbox] (a2) at (0.45,0.8) {$a$};
+\draw[wire] (0,-0.6) -- (w); \draw[wire] (w) -- (a1) -- (-0.45,1.45); \draw[wire] (w) -- (a2) -- (0.45,1.45);
+\end{tikzpicture}}
+Left: a Z spider (one input, one output, \py!Var("a")!) into a W node with two outputs. Right: the
+W node with a Z spider \py!Var("a")! on each output. $\sigma=1$. Fixed sides; generated converse
+\cmplr{zxw_pcy_converse}, whose matched side binds $a$ twice, so both boxes must carry the same
+vector.
+
+\cmplhead{zxw_ad}{[P1] AD, [P2] AD: Z box effects on a W node add.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \node[cmplbox] (a) at (-0.45,0.8) {$a$}; \node[cmplbox] (b) at (0.45,0.8) {$b$};
+\draw[wire] (0,-0.6) -- (w); \draw[wire] (w) -- (a); \draw[wire] (w) -- (b);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (c) at (0,0.4) {$a+b$}; \draw[wire] (0,-0.6) -- (c);
+\end{tikzpicture}}
+Left: a W node with two outputs into Z effects \py!Var("a")! and \py!Var("b")!. Right: one Z
+effect with the derived \py!sum_vector(a, b)!. $\sigma=1$. Fixed sides; the rule also applies at
+a symbolic dimension when both vectors are rule-only; promoted. Converse: \cmplr{zxw_ad_converse}.
+
+\cmplhead{zxw_sym}{[P1] Sym: the two outputs of a W node may be swapped.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \draw[wire] (0,-0.6) -- (w);
+\draw[wire] (w) -- (-0.4,0.7) node[above,dimlabel] {$a$}; \draw[wire] (w) -- (0.4,0.7) node[above,dimlabel] {$b$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \draw[wire] (0,-0.6) -- (w);
+\draw[wire] (w.north) to[out=60,in=-90] (0.4,0.7) node[above,dimlabel] {$a$};
+\draw[wire] (w.north) to[out=120,in=-90] (-0.4,0.7) node[above,dimlabel] {$b$};
+\end{tikzpicture}}
+Left: a W node whose outputs $0$ and $1$ are the terminals $a$ and $b$; right: the same node with
+the terminals exchanged. $\sigma=1$. Fixed sides; generated converse \cmplr{zxw_sym_converse}.
+The matcher identifies the outputs of a W node up to permutation, so the rule changes only the
+port order of the result.
+
+\cmplhead{zxw_aso}{[P1] Aso: the W node is associative.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w1) at (0,0) {}; \node[wnode] (w2) at (-0.4,0.8) {};
+\draw[wire] (0,-0.6) -- (w1); \draw[wire] (w1) -- (w2); \draw[wire] (w1) -- (0.5,1.6) node[above,dimlabel] {$c$};
+\draw[wire] (w2) -- (-0.8,1.6) node[above,dimlabel] {$a$}; \draw[wire] (w2) -- (-0.1,1.6) node[above,dimlabel] {$b$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w1) at (0,0) {}; \node[wnode] (w2) at (0.4,0.8) {};
+\draw[wire] (0,-0.6) -- (w1); \draw[wire] (w1) -- (w2); \draw[wire] (w1) -- (-0.5,1.6) node[above,dimlabel] {$a$};
+\draw[wire] (w2) -- (0.1,1.6) node[above,dimlabel] {$b$}; \draw[wire] (w2) -- (0.8,1.6) node[above,dimlabel] {$c$};
+\end{tikzpicture}}
+Left: W node \code!w1! (two outputs), output $0$ into W node \code!w2! (two outputs); terminals
+$a,b$ at the outputs of \code!w2! and $c$ at output $1$ of \code!w1!. Right: output $1$ of
+\code!w1! into \code!w2!; $a$ at output $0$ of \code!w1!, $b,c$ at the outputs of \code!w2!.
+$\sigma=1$. Fixed sides; promoted; generated converse \cmplr{zxw_aso_converse}.
+
+\cmplhead{zxw_bzw}{[P1] BZW: the bialgebra of the W node and the plain green dot.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w1) at (-0.5,0) {}; \node[wnode] (w2) at (0.5,0) {};
+\node[zdot] (g1) at (-0.5,1.1) {}; \node[zdot] (g2) at (0.5,1.1) {};
+\draw[wire] (w1) -- (g1); \draw[wire] (w1) -- (g2); \draw[wire] (w2) -- (g1); \draw[wire] (w2) -- (g2);
+\draw[wire] (w1) -- (-0.5,-0.6) node[below,dimlabel] {$a$}; \draw[wire] (w2) -- (0.5,-0.6) node[below,dimlabel] {$b$};
+\draw[wire] (g1) -- (-0.5,1.7) node[above,dimlabel] {$c$}; \draw[wire] (g2) -- (0.5,1.7) node[above,dimlabel] {$e$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[zdot] (g) at (0,0.2) {}; \node[wnode] (w) at (0,0.9) {}; \draw[wire] (g) -- (w);
+\draw[wire] (g) -- (-0.4,-0.6) node[below,dimlabel] {$a$}; \draw[wire] (g) -- (0.4,-0.6) node[below,dimlabel] {$b$};
+\draw[wire] (w) -- (-0.4,1.7) node[above,dimlabel] {$c$}; \draw[wire] (w) -- (0.4,1.7) node[above,dimlabel] {$e$};
+\end{tikzpicture}}
+Left: W nodes \code!w1!, \code!w2! (two outputs each) and plain green dots \code!g1!, \code!g2!
+(two inputs, one output), output $i$ of \code!w!$_j$ into input $j$ of \code!g!$_i$. Right: a
+plain green dot with two inputs into a W node with two outputs. $\sigma=1$. Fixed sides;
+promoted; generated converse \cmplr{zxw_bzw_converse}.
+
+\cmplhead{zxw_ww}{[P1] WW: the crossed bialgebra of W nodes and W transposes.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplwt] (t) at (-1,-0.35) {}; \node[wnode] (w) at (-1,0.35) {};
+\node[wnode] (p) at (0.6,0.35) {};
+\node[zdot] (g1) at (-0.6,1.35) {}; \node[zdot] (g2) at (0.4,1.35) {};
+\draw[wire] (-1.35,-1.1) node[below,dimlabel] {$x_0$} -- (t); \draw[wire] (-0.65,-1.1) node[below,dimlabel] {$x_1$} -- (t);
+\draw[wire] (t) -- (w); \draw[wire] (0.6,-1.1) node[below,dimlabel] {$u$} -- (p);
+\draw[wire] (w) -- (g1); \draw[wire] (w) -- (g2); \draw[wire] (p) -- (g1); \draw[wire] (p) -- (g2);
+\draw[wire] (g1) -- (-0.6,2) node[above,dimlabel] {$y_0$}; \draw[wire] (g2) -- (0.4,2) node[above,dimlabel] {$y_1$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w0) at (-1.5,-0.45) {}; \node[wnode] (w1) at (-0.5,-0.45) {};
+\node[cmplwt] (t0) at (-1.5,0.55) {}; \node[cmplwt] (t1) at (-0.5,0.55) {};
+\node[wnode] (p) at (0.7,0.0) {};
+\node[zdot] (g0) at (-1.0,1.45) {}; \node[zdot] (g1) at (0.2,1.45) {};
+\draw[wire] (-1.5,-1.1) node[below,dimlabel] {$x_0$} -- (w0); \draw[wire] (-0.5,-1.1) node[below,dimlabel] {$x_1$} -- (w1);
+\draw[wire] (0.7,-1.1) node[below,dimlabel] {$u$} -- (p);
+\draw[wire] (w0) -- (t0); \draw[wire] (w0) -- (t1); \draw[wire] (w1) -- (t0); \draw[wire] (w1) -- (t1);
+\draw[wire] (p) -- (g0); \draw[wire] (p) -- (g1); \draw[wire] (t0) -- (g0); \draw[wire] (t1) -- (g1);
+\draw[wire] (g0) -- (-1.0,2.05) node[above,dimlabel] {$y_0$}; \draw[wire] (g1) -- (0.2,2.05) node[above,dimlabel] {$y_1$};
+\end{tikzpicture}}
+Shown for $n=m=2$. Left: a W node \code!t! with $n$ outputs whose input is wired to the input of
+a W node \code!w! with $m$ outputs, so \code!t! is a W transpose with the $n$ inputs $x_k$; a W
+node \code!p! with $m$ outputs and input $u$; plain green dots \code!g!$_k$ (two inputs, output
+$y_k$) with input $0$ from output $k$ of \code!p! and input $1$ from output $k$ of \code!w!.
+Right: \code!p! with input $u$; for each $k<n$ a W node \code!w!$_k$ with $m$ outputs and input
+$x_k$; for each $c<m$ a W node \code!t!$_c$ with $n$ outputs, output $k$ wired to output $c$ of
+\code!w!$_k$ (a W transpose), the input of \code!t!$_c$ into input $1$ of \code!g!$_c$, and output
+$c$ of \code!p! into input $0$ of \code!g!$_c$. $\sigma=1$. Left arities: when the anchor is a W
+node whose input is wired to the input of another W node, yield $n=$ the anchor's output count
+and $m=$ the other's. Right arities: for a W anchor with $m$ outputs, yield
+$n=1,\dots,|\text{nodes}|$. Quantifiers \code!n!, \code!m!, \code!d!; generated converse
+\cmplr{zxw_ww_converse}.
+
+\cmplhead{zxw_bs0}{[P1] Bs0: the pink dot state into a W node is two pink dot states.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0) {}; \node[wnode] (w) at (0,0.7) {}; \draw[wire] (p) -- (w);
+\draw[wire] (w) -- (-0.4,1.4); \draw[wire] (w) -- (0.4,1.4);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p1) at (-0.4,0.4) {}; \node[cmplpd] (p2) at (0.4,0.4) {};
+\draw[wire] (p1) -- (-0.4,1.4); \draw[wire] (p2) -- (0.4,1.4);
+\end{tikzpicture}}
+$\sigma=\nu_d(1)^2/\nu_d(1)=d^{-1/2}$. Fixed sides; promoted; generated converse
+\cmplr{zxw_bs0_converse}.
+
+\cmplhead{zxw_bsj}{[P1] Bsj, [P2] Bsj: a pink $K_j$ state into a W node with one output on a plain green effect.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (0,0) {$K_j$}; \node[wnode] (w) at (0,0.75) {}; \node[zdot] (e) at (-0.45,1.35) {};
+\draw[wire] (p) -- (w); \draw[wire] (w) -- (e); \draw[wire] (w) -- (0.45,1.6);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0.4) {$u_{-j}$}; \draw[wire] (z) -- (0,1.4);
+\end{tikzpicture}}
+Left: a pink $K_j$ state into a W node with two outputs, output $0$ into a plain green effect,
+output $1$ the terminal. Right: a Z state with the derived \py!unit_vector(-j)!, the state
+$T_j$ of the papers: $u_{-j}$, with coefficient $1$ at $0$ and at $-j\bmod d$ and $0$ elsewhere.
+$\sigma=\nu_d(1)^{-1}=\sqrt d$. Fixed sides; promoted; quantifiers \code!j!, \code!d!. Converse:
+\cmplr{zxw_bsj_converse}.
+
+\cmplhead{zxw_ta}{[P1] TA: the trialgebra rule; the pink dot becomes a W node.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (-0.5,0) {}; \node[cmplpd] (p) at (0.5,0) {};
+\node[zdot] (g1) at (-0.5,1.1) {}; \node[zdot] (g2) at (0.5,1.1) {};
+\draw[wire] (w) -- (g1); \draw[wire] (w) -- (g2); \draw[wire] (p) -- (g1); \draw[wire] (p) -- (g2);
+\draw[wire] (w) -- (-0.5,-0.6) node[below,dimlabel] {$a$}; \draw[wire] (p) -- (0.5,-0.6) node[below,dimlabel] {$b$};
+\draw[wire] (g1) -- (-0.5,1.7) node[above,dimlabel] {$c$}; \draw[wire] (g2) -- (0.5,1.7) node[above,dimlabel] {$e$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (-0.5,0) {}; \node[wnode] (p) at (0.5,0) {};
+\node[zdot] (g1) at (-0.5,1.1) {}; \node[zdot] (g2) at (0.5,1.1) {};
+\draw[wire] (w) -- (g1); \draw[wire] (w) -- (g2); \draw[wire] (p) -- (g1); \draw[wire] (p) -- (g2);
+\draw[wire] (w) -- (-0.5,-0.6) node[below,dimlabel] {$a$}; \draw[wire] (p) -- (0.5,-0.6) node[below,dimlabel] {$b$};
+\draw[wire] (g1) -- (-0.5,1.7) node[above,dimlabel] {$c$}; \draw[wire] (g2) -- (0.5,1.7) node[above,dimlabel] {$e$};
+\end{tikzpicture}}
+Left (\py!_ta_left(False)!): a W node \code!w! and a pink dot \code!p! (one input, two outputs);
+output $i$ of \code!w! into input $0$ of the plain green dot \code!g!$_{i+1}$ and output $i$ of
+\code!p! into its input $1$. Right (\py!_ta_left(True)!): the same with \code!p! a W node.
+$\sigma=\nu_d(3)^{-1}=d^{-1/2}$. Fixed sides; promoted; generated converse \cmplr{zxw_ta_converse}.
+
+\cmplhead{zxw_hd}{[P1] HD: the decomposition of the Hadamard box.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (top) at (0,-2.7) {};
+\node[cmplpk] (k1) at (0,-2.0) {$K_1$}; \node[wnode] (w) at (0,-1.3) {};
+\node[cmplmultt] (m0) at (-1.3,-1.3) {$0$}; \node[cmplmultt] (m1) at (1.3,-1.3) {$1$};
+\node[zdot] (g0) at (-1.3,-0.35) {}; \node[zdot] (g1) at (1.3,-0.35) {};
+\node[cmplv] (M0) at (-1.3,0.45) {$M$}; \node[cmplv] (M1) at (1.3,0.45) {$M$};
+\node[zs] (K0) at (-1.3,1.3) {$K_0$}; \node[zs] (Kd) at (1.3,1.3) {$K_{d-1}$};
+\node[cmplpd] (bot) at (0,2.1) {};
+\draw[wire] (0,-3.2) -- (top); \draw[wire] (top) -- (m0); \draw[wire] (top) -- (m1);
+\draw[wire] (k1) -- (w); \draw[wire] (w) -- (g0); \draw[wire] (w) -- (g1);
+\draw[wire] (m0) -- (g0) -- (M0) -- (K0) -- (bot); \draw[wire] (m1) -- (g1) -- (M1) -- (Kd) -- (bot);
+\draw[wire] (bot) -- (0,2.6);
+\node[dimlabel] at (0,0.45) {$\cdots$}; \node[dimlabel] at (0,1.3) {$\cdots$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[fbox] (f) at (0,0) {$F$}; \draw[wire] (0,-0.6) -- (f) -- (0,0.6);
+\end{tikzpicture}}
+At concrete $d$ the left side is $d^{-1/2}$ (its template scalar) times the following diagram,
+drawn with the columns $c=0$ and $c=d-1$. A pink dot \code!top! takes the rule's input and has
+$d$ outputs. For each column $c=0,\dots,d-1$: output $c$ of \code!top! passes through the
+transposed multiplier labeled $(-c)\bmod d$ into input $0$ of a plain green dot \code!c!$_c$ with
+three inputs and no outputs; input $1$ of \code!c!$_c$ comes from output $c$ of a W node with $d$
+outputs fed by a pink $K_1$ state; input $2$ of \code!c!$_c$ is wired to the input of an M box, so
+\code!c!$_c$ acts as a dot with two inputs and one output into the M box; the M box feeds a Z
+spider with phase vector $K_c$ (phaseless for $c=0$), which feeds input $c$ of a pink dot
+\code!bottom! with $d$ inputs whose output is the rule's output. The right side is one $F$. With
+$E_L=(d-2)(d^2+2d+3)/4$ the exponent of $N_L$,
+\[
+\sigma \;=\; d^{\,1/2-E_L}\qquad(\sigma=\sqrt2,\ 3^{-4},\ 4^{-13},\ 5^{-28}\ \text{at}\ d=2,3,4,5).
+\]
+\py!concrete_only!; the left side grows; promoted; generated converse \cmplr{zxw_hd_converse}.
+
+\cmplhead{zxw_zv}{[P1] ZV: a Z box state into V is a constant Z box state.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$a$}; \node[cmplv] (v) at (0,0.8) {$V$};
+\draw[wire] (a) -- (v) -- (0,1.5);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (c) at (0,0.4) {$(a_{d-1},\dots,a_{d-1})$}; \draw[wire] (c) -- (0,1.5);
+\end{tikzpicture}}
+Left: a Z state with \py!Var("a")! into the V box. Right: a Z state with the derived
+\py!constant_vector(a_{-1})!. With the V-box normalization,
+$\sigma=d^{-(d/2-1)-(d-1)(d-2)/4}$ ($1$, $1/3$, $1/32$, $\sqrt5/3125$ at $d=2,3,4,5$).
+\py!concrete_only!; the left side grows; promoted. Converse: \cmplr{zxw_zv_converse}.
+
+\cmplhead{zxw_va}{[P1] VA: boxes on a W node through multipliers into a pink dot are V followed by a Z box.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,-0.9) {};
+\node[cmplbox] (b1) at (-0.9,-0.1) {$a_1$}; \node[cmplbox] (b2) at (0.9,-0.1) {$a_{d-1}$};
+\node[cmplmult] (m1) at (-0.9,0.7) {$-1$}; \node[cmplmult] (m2) at (0.9,0.7) {$1$};
+\node[cmplpd] (q) at (0,1.5) {};
+\draw[wire] (0,-1.5) -- (w); \draw[wire] (w) -- (b1) -- (m1) -- (q); \draw[wire] (w) -- (b2) -- (m2) -- (q);
+\draw[wire] (q) -- (0,2.0); \node[dimlabel] at (0,0.3) {$\cdots$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplv] (v) at (0,0) {$V$}; \node[cmplbox] (a) at (0,0.8) {$a$};
+\draw[wire] (0,-0.6) -- (v) -- (a) -- (0,1.4);
+\end{tikzpicture}}
+In this picture a box labeled $a_k$ is the box labeled $a_k$, $(0,\dots,0,a_k)$. Left: a W
+node with $d-1$ outputs; output $k-1$ into a Z spider with \py!LastEntry("a_k")!, then the
+multiplier labeled $(-k)\bmod d$, into input $k-1$ of a pink dot with $d-1$ inputs. Right: the V
+box into a Z spider with the derived \py!vector_of([a_1, ..., a_{d-1}])!, the Z box
+$a=(a_1,\dots,a_{d-1})$. $\sigma=1$, since both sides carry the V-box normalization.
+\py!concrete_only!; both sides grow; promoted. Converse: \cmplr{zxw_va_converse}.
+
+\cmplhead{zxw_vw}{[P1] VW: V into a W node is the W node with V on both outputs.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplv] (v) at (0,0) {$V$}; \node[wnode] (w) at (0,0.75) {};
+\draw[wire] (0,-0.6) -- (v) -- (w); \draw[wire] (w) -- (-0.4,1.45); \draw[wire] (w) -- (0.4,1.45);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \node[cmplv] (v1) at (-0.5,0.8) {$V$}; \node[cmplv] (v2) at (0.5,0.8) {$V$};
+\draw[wire] (0,-0.6) -- (w); \draw[wire] (w) -- (v1) -- (-0.5,1.45); \draw[wire] (w) -- (v2) -- (0.5,1.45);
+\end{tikzpicture}}
+$\sigma=d^{\,d/2-1+(d-1)(d-2)/4}$ ($1$, $3$, $32$, $625\sqrt5$ at $d=2,3,4,5$). \py!concrete_only!;
+both sides grow; generated converse \cmplr{zxw_vw_converse}.
+
+\cmplhead{zxw_kz}{[P1] KZ: a pink $K_1$ state on a W node whose other outputs meet a pink dot.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (-0.6,-1.1) {$K_1$}; \node[wnode] (w) at (-0.6,-0.4) {};
+\node[cmplpd] (q) at (1.0,-1.1) {};
+\node[cmplmultt] (e1) at (0.5,-0.2) {$e_1$}; \node[cmplmultt] (e2) at (1.5,-0.2) {$e_2$};
+\node[zdot] (g1) at (0.1,0.7) {}; \node[zdot] (g2) at (1.1,0.7) {};
+\draw[wire] (p) -- (w); \draw[wire] (w) -- (-1.1,1.3) node[above,dimlabel] {$o_0$};
+\draw[wire] (w) -- (g1); \draw[wire] (w) -- (g2);
+\draw[wire] (q) -- (e1) -- (g1); \draw[wire] (q) -- (e2) -- (g2);
+\draw[wire] (g1) -- (0.1,1.3) node[above,dimlabel] {$o_1$}; \draw[wire] (g2) -- (1.1,1.3) node[above,dimlabel] {$o_2$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (-0.7,0.3) {$K_1$}; \node[cmplpd] (q1) at (0.1,0.3) {}; \node[cmplpd] (q2) at (0.8,0.3) {};
+\draw[wire] (p) -- (-0.7,1.3) node[above,dimlabel] {$o_0$}; \draw[wire] (q1) -- (0.1,1.3) node[above,dimlabel] {$o_1$};
+\draw[wire] (q2) -- (0.8,1.3) node[above,dimlabel] {$o_2$};
+\end{tikzpicture}}
+Shown for $n=2$. Left: a W node with $n+1$ outputs fed by a pink $K_1$ state (\py!k_fixed(1)!);
+output $0$ the terminal $o_0$; output $k+1$ into input $0$ of a plain green dot \code!g!$_k$ (two
+inputs, output $o_{k+1}$); a pink dot with $n$ outputs, output $k$ through the transposed
+multiplier labeled $e_k$ into input $1$ of \code!g!$_k$. Right: a pink $K_1$ state and $n$ pink
+dot states. $\sigma=d^{\,1-n-\sum_k (e_k-1)/2}$. Left arities (dimension-aware): the anchor must
+be a W node with $n+1\ge2$ outputs; collect the input counts of the Z spiders adjacent to the Z
+neighbors of the anchor, keep those $e$ with $1\le e\le d-1$ (with no upper bound at a symbolic
+dimension), and yield every multiset of $n$ of them (\py!combinations_with_replacement! of the
+sorted labels) as $e_0\le\dots\le e_{n-1}$. Right arities: at a concrete $d$, for an X-spider
+anchor with no inputs, let $s$ be the number of phaseless X spiders with no inputs and one
+output; yield $n=1,\dots,s$ with every multiset of $n$ labels from $1,\dots,d-1$.
+\py!concrete_only!; promoted; quantifiers \code!n!, \code!e_1..e_n!, \code!d!; generated
+converse \cmplr{zxw_kz_converse}.
+
+
+\section{The Axioms of [P2] Not in [P1]}\label{sec:completeness-p2}
+
+The axioms S2, B2, K2, P1, AD, and Bsj of [P2] coincide with rules of \cref{sec:completeness-p1}.
+This section states the remaining 16 rules: eight at one dimension (WF, (2.10), (2.9), MW, D1, WW,
+VA, HD) and eight on wires of several dimensions ((2.8), DD, E, DZX, K0, BZW, TA, S1).
+
+\subsection{Single-dimensional rules}
+
+\cmplhead{qf_wf}{[P2] WF: a W node fed by an output of another is one W node.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w1) at (0,0) {}; \node[wnode] (w2) at (0,0.8) {};
+\draw[wire] (0,-0.6) -- (w1); \draw[wire] (w1) -- (w2);
+\draw[wire] (w1) -- (-0.7,1.6) node[above,dimlabel] {$p$}; \draw[wire] (w1) -- (0.7,1.6) node[above,dimlabel] {$q$};
+\draw[wire] (w2) -- (-0.25,1.6); \draw[wire] (w2) -- (0.25,1.6); \node[dimlabel] at (0,1.75) {$r$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0.3) {}; \draw[wire] (0,-0.6) -- (w);
+\draw[wire] (w) -- (-0.7,1.6); \draw[wire] (w) -- (-0.25,1.6); \draw[wire] (w) -- (0.25,1.6); \draw[wire] (w) -- (0.7,1.6);
+\node[dimlabel] at (0,1.75) {$p+r+q$};
+\end{tikzpicture}}
+Left: a W node \code!w1! with $p+1+q$ outputs whose output $p$ feeds a W node \code!w2! with $r$
+outputs; the terminals $o_0,\dots,o_{p+r+q-1}$ are, in order, the first $p$ outputs of \code!w1!,
+the $r$ outputs of \code!w2!, and the last $q$ outputs of \code!w1!. Right: one W node with
+$p+q+r$ outputs, output $k$ the terminal $o_k$. $\sigma=1$. Left arities: for a W anchor with at
+least one output, for each output wired to the input of a different W node, collect that node's
+output count $r$; yield $(p,q,r)=(0,\text{outputs}-1,r)$ for each distinct $r$ in increasing
+order. Right arities: for a W anchor with $t$ outputs, yield $(0,t-r,r)$ for $r=0,\dots,t$.
+Quantifiers \code!p!, \code!q!, \code!r!, \code!d!; generated converse \cmplr{qf_wf_converse}.
+
+\cmplhead{qf_w_sym}{[P2] (2.10): adjacent outputs of a W node may be swapped.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \draw[wire] (0,-0.6) -- (w);
+\draw[wire] (w) -- (-0.7,0.9); \draw[wire] (w) -- (-0.2,0.9) node[above,dimlabel] {$k$};
+\draw[wire] (w) -- (0.2,0.9) node[above,dimlabel] {$k{+}1$}; \draw[wire] (w) -- (0.7,0.9);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0) {}; \draw[wire] (0,-0.6) -- (w);
+\draw[wire] (w) -- (-0.7,0.9); \draw[wire] (w.north) to[out=70,in=-90] (0.2,0.9) node[above,dimlabel] {$k$};
+\draw[wire] (w.north) to[out=110,in=-90] (-0.2,0.9) node[above,dimlabel] {$k{+}1$}; \draw[wire] (w) -- (0.7,0.9);
+\end{tikzpicture}}
+Left: a W node with $n$ outputs, terminal $o_p$ at output $p$. Right: the same with outputs $k$
+and $k+1$ exchanged among the terminals. $\sigma=1$. Both sides: for a W anchor with $n$ outputs,
+yield $(n,k)$ for $k=0,\dots,n-2$. Quantifiers \code!n!, \code!k!, \code!d!; generated converse
+\cmplr{qf_w_sym_converse}.
+
+\cmplhead{qf_z_flex}{[P2] (2.9): an input port of a Z box bends to an output port.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0.4) {$a$};
+\draw[wire] (z) -- (-0.4,-0.5); \draw[wire] (z) -- (0.4,-0.5) node[below,dimlabel] {$i_{m-1}$};
+\draw[wire] (z) -- (-0.4,1.3); \draw[wire] (z) -- (0.4,1.3);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0.4) {$a$};
+\draw[wire] (z) -- (-0.4,-0.5); \draw[wire] (z) -- (-0.4,1.3); \draw[wire] (z) -- (0.2,1.3);
+\draw[wire] (z) to[out=30,in=90] (0.75,0.8) -- (0.75,-0.5) node[below,dimlabel] {$i_{m-1}$};
+\end{tikzpicture}}
+Left: a Z spider with $m$ inputs, $n$ outputs, and \py!Var("a")!. Right: a Z spider with $m-1$
+inputs and $n+1$ outputs and the same parameter, whose last output $n$ is the terminal
+$i_{m-1}$. $\sigma=1$. Left arities: for a Z anchor with $m\ge1$ inputs and $n$ outputs, yield
+$(m,n)$. Right arities: for a Z anchor with $n'\ge1$ outputs and $m'$ inputs, yield
+$(m'+1,n'-1)$. Quantifiers \code!m!, \code!n!, \code!d!; generated converse
+\cmplr{qf_z_flex_converse}.
+
+\cmplhead{qf_mw}{[P2] MW: a multiplier through the box labeled 1 and a W node.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (b) at (0,0) {$1$}; \node[cmplmult] (m) at (0,0.75) {$e$}; \node[wnode] (w) at (0,1.45) {};
+\draw[wire] (0,-0.6) -- (b) -- (m) -- (w); \draw[wire] (w) -- (-0.4,2.1); \draw[wire] (w) -- (0.4,2.1);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (b) at (0,0) {$1$}; \node[wnode] (w) at (0,0.7) {};
+\node[cmplmult] (m1) at (-0.45,1.45) {$e$}; \node[cmplmult] (m2) at (0.45,1.45) {$e$};
+\draw[wire] (0,-0.6) -- (b) -- (w); \draw[wire] (w) -- (m1) -- (-0.45,2.1); \draw[wire] (w) -- (m2) -- (0.45,2.1);
+\end{tikzpicture}}
+Left: the box labeled $1$ (\py!ONE_LAST!, one input, one output) into the multiplier labeled $e$
+into a W node with two outputs. Right: the box into the W node with the multiplier labeled $e$ on
+each output. $\sigma=\nu_d(e+1)^2/\nu_d(e+1)=d^{(e-1)/2}$. Left arities (dimension-aware): for a Z
+anchor, collect the output counts of the adjacent Z spiders; yield each $e$ in increasing order
+with $e\not\equiv 0\pmod d$ (every $e$ at a symbolic $d$). Right arities: for a Z anchor, for each
+adjacent W node, collect the output counts of the Z spiders adjacent to that W node other than
+the anchor; yield as on the left. Quantifiers \code!e!, \code!d!; generated converse
+\cmplr{qf_mw_converse}.
+
+\cmplhead{qf_d1}{[P2] D1: $D$ on every input of a Z box is $D$ on every output of the reversed box.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0.7) {$a$};
+\node[fbox] (f1) at (-0.45,-0.2) {$F^2$}; \node[fbox] (f2) at (0.45,-0.2) {$F^2$};
+\draw[wire] (-0.45,-0.8) -- (f1) -- (z); \draw[wire] (0.45,-0.8) -- (f2) -- (z);
+\draw[wire] (z) -- (-0.4,1.5); \draw[wire] (z) -- (0.4,1.5);
+\node[dimlabel] at (0,-0.75) {$n$}; \node[dimlabel] at (0,1.5) {$m$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0.1) {$\overleftarrow{a}$};
+\node[fbox] (f1) at (-0.45,1.0) {$F^2$}; \node[fbox] (f2) at (0.45,1.0) {$F^2$};
+\draw[wire] (-0.4,-0.8) -- (z); \draw[wire] (0.4,-0.8) -- (z);
+\draw[wire] (z) -- (f1) -- (-0.45,1.6); \draw[wire] (z) -- (f2) -- (0.45,1.6);
+\node[dimlabel] at (0,-0.75) {$n$}; \node[dimlabel] at (0,1.6) {$m$};
+\end{tikzpicture}}
+A box $F^2$ is two $F$ in series. Left: a Z spider with $n$ inputs, $m$ outputs, and
+\py!Var("a")!, two $F$ before each input. Right: a Z spider with \py!reversed_vector(a)!, two $F$
+after each output. $\sigma=1$. Both sides: for a Z anchor with $p$ ports, yield $(n,m)=(n,p-n)$
+for $n=1,\dots,p$. \py!concrete_only!; quantifiers \code!n!, \code!m!, \code!d!. Converse:
+\cmplr{qf_d1_converse}.
+
+\cmplhead{qf_ww}{[P2] WW: a W transpose into a W node.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplwt] (t) at (0,0) {}; \node[wnode] (w) at (0,0.7) {};
+\draw[wire] (-0.4,-0.7) node[below,dimlabel] {$x_0$} -- (t); \draw[wire] (0.4,-0.7) node[below,dimlabel] {$x_1$} -- (t);
+\draw[wire] (t) -- (w); \draw[wire] (w) -- (-0.4,1.4) node[above,dimlabel] {$y_0$}; \draw[wire] (w) -- (0.4,1.4) node[above,dimlabel] {$y_1$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (u0) at (-1.3,-0.5) {}; \node[wnode] (u1) at (-0.3,-0.5) {};
+\node[cmplwt] (v0) at (-1.3,0.5) {}; \node[cmplwt] (v1) at (-0.3,0.5) {};
+\node[zdot] (g0) at (-1.3,1.3) {}; \node[zdot] (g1) at (-0.3,1.3) {};
+\node[cmplwt] (s) at (0.8,2.0) {}; \node[zdot] (e) at (0.8,2.7) {};
+\draw[wire] (-1.3,-1.2) node[below,dimlabel] {$x_0$} -- (u0); \draw[wire] (-0.3,-1.2) node[below,dimlabel] {$x_1$} -- (u1);
+\draw[wire] (u0) -- (v0); \draw[wire] (u0) -- (v1); \draw[wire] (u1) -- (v0); \draw[wire] (u1) -- (v1);
+\draw[wire] (v0) -- (g0); \draw[wire] (v1) -- (g1);
+\draw[wire] (g0) -- (-1.5,2.7) node[above,dimlabel] {$y_0$}; \draw[wire] (g1) -- (-0.5,2.7) node[above,dimlabel] {$y_1$};
+\draw[wire] (g0) to[out=60,in=-120] (s); \draw[wire] (g1) to[out=60,in=-100] (s); \draw[wire] (s) -- (e);
+\end{tikzpicture}}
+Shown for $m=n=2$. Left: a W node \code!t! with $m$ outputs whose input is wired to the input of a
+W node \code!w! with $n$ outputs; terminals $x_k$ at the outputs of \code!t! and $y_c$ at the
+outputs of \code!w!. Right: for $k<m$, a W node \code!u!$_k$ with $n$ outputs and input $x_k$; a W
+node \code!s! with $n$ outputs whose input is wired to the input of a plain green effect \code!e!;
+for $c<n$, a W node \code!v!$_c$ with $m$ outputs, output $k$ wired to output $c$ of
+\code!u!$_k$, the input of \code!v!$_c$ into a plain green dot \code!g!$_c$ with one input and two
+outputs, output $0$ of \code!g!$_c$ the terminal $y_c$ and output $1$ wired to output $c$ of
+\code!s!. So \code!v!$_c$ and \code!s! act as W transposes and \code!s! ends in the green effect.
+$\sigma=1$. Left arities: when the anchor is a W node whose input is wired to the input of a
+different W node, yield $m=$ the anchor's output count and $n=$ the other's. Right arities: for a W
+anchor with $n$ outputs, for each output wired to an output of a W node, collect that node's output
+count $m$; yield each distinct $(m,n)$ in increasing $m$. Quantifiers \code!m!, \code!n!, \code!d!;
+generated converse \cmplr{qf_ww_converse}.
+
+\cmplhead{qf_va}{[P2] VA: boxes on a W node through multipliers into a pink dot.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,-0.9) {};
+\node[cmplbox] (b0) at (-1.3,-0.1) {$1$}; \node[cmplbox] (b1) at (0,-0.1) {$a_1$}; \node[cmplbox] (b2) at (1.3,-0.1) {$a_{d-1}$};
+\node[cmplmult] (m0) at (-1.3,0.7) {$0$}; \node[cmplmult] (m1) at (0,0.7) {$-1$}; \node[cmplmult] (m2) at (1.3,0.7) {$1$};
+\node[cmplpd] (q) at (0,1.5) {};
+\draw[wire] (0,-1.5) -- (w); \draw[wire] (w) -- (b0) -- (m0) -- (q); \draw[wire] (w) -- (b1) -- (m1) -- (q);
+\draw[wire] (w) -- (b2) -- (m2) -- (q);
+\draw[wire] (q) -- (0,2.0); \node[dimlabel] at (0.65,0.3) {$\cdots$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (b) at (0,-1.2) {$1$}; \node[cmplpk] (km) at (0,-0.5) {$K_{-1}$};
+\node[cmplwt] (wt) at (0.3,0.25) {}; \node[zdot] (g) at (0.75,-0.5) {};
+\node[cmplpk] (kp) at (0.3,0.95) {$K_1$}; \node[cmplbox] (a) at (0.3,1.65) {$a$};
+\draw[wire] (0,-1.8) -- (b) -- (km); \draw[wire] (km) -- (wt); \draw[wire] (g) -- (wt);
+\draw[wire] (wt) -- (kp) -- (a) -- (0.3,2.2);
+\end{tikzpicture}}
+Left: a W node with $d$ outputs; output $0$ into the box labeled $1$, then the multiplier labeled
+$0$, into input $0$ of a pink dot with $d$ inputs; output $k\ge1$ into a Z spider with
+\py!LastEntry("a_k")!, then the multiplier labeled $(-k)\bmod d$, into input $k$ of the pink dot.
+Right: the box labeled $1$, a pink $K_{-1}$ (1 input, 1 output) whose output is wired to output
+$0$ of a W node \code!wt! with two outputs, a plain green state wired to output $1$ of \code!wt!,
+the input of \code!wt! wired to the input of a pink $K_1$, and the pink $K_1$ into a Z spider with
+the derived \py!vector_of([a_1, ..., a_{d-1}])!. \code!wt! acts as a W transpose with two inputs.
+$\sigma=d^{-(d-2)(d+1)/4}$ ($1$, $1/3$, $1/32$, $\sqrt5/3125$ at $d=2,3,4,5$). \py!concrete_only!;
+the left side grows. Converse: \cmplr{qf_va_converse}.
+
+\cmplhead{qf_hd}{[P2] HD: the decomposition of the Hadamard box.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (top) at (0,-2.7) {};
+\node[cmplpk] (k1) at (0,-2.0) {$K_1$}; \node[wnode] (w) at (0,-1.3) {};
+\node[cmplmultt] (m0) at (-1.5,-1.3) {$0$}; \node[cmplmultt] (m1) at (1.5,-1.3) {$1$};
+\node[zdot] (g0) at (-1.5,-0.45) {}; \node[zdot] (g1) at (1.5,-0.45) {};
+\node[cmplpk] (km0) at (-1.5,0.2) {$K_{-1}$}; \node[cmplpk] (km1) at (1.5,0.2) {$K_{-1}$};
+\node[cmplwt] (wt0) at (-1.3,0.9) {}; \node[cmplwt] (wt1) at (1.7,0.9) {};
+\node[zdot] (s0) at (-0.85,0.2) {}; \node[zdot] (s1) at (2.15,0.2) {};
+\node[zs] (K0) at (-1.3,1.6) {$K_0$}; \node[zs] (Kd) at (1.7,1.6) {$K_{d-1}$};
+\node[cmplpd] (bot) at (0.2,2.4) {};
+\draw[wire] (0,-3.2) -- (top); \draw[wire] (top) -- (m0); \draw[wire] (top) -- (m1);
+\draw[wire] (k1) -- (w); \draw[wire] (w) -- (g0); \draw[wire] (w) -- (g1);
+\draw[wire] (m0) -- (g0) -- (km0) -- (wt0); \draw[wire] (s0) -- (wt0); \draw[wire] (wt0) -- (K0) -- (bot);
+\draw[wire] (m1) -- (g1) -- (km1) -- (wt1); \draw[wire] (s1) -- (wt1); \draw[wire] (wt1) -- (Kd) -- (bot);
+\draw[wire] (bot) -- (0.2,2.9);
+\node[dimlabel] at (0.2,0.9) {$\cdots$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[fbox] (f) at (0,0) {$F$}; \draw[wire] (0,-0.6) -- (f) -- (0,0.6);
+\end{tikzpicture}}
+The left side is $(-1)^{d+1}/\sqrt d$ (its template scalar) times the diagram of \cmplr{zxw_hd}
+with two changes per column $c$: the plain green dot \code!c!$_c$ has two inputs and one output,
+and the M box is replaced by a pink $K_{-1}$ whose output is wired to output $1$ of a W node
+\code!wt!$_c$ with two outputs, a plain green state wired to output $0$ of \code!wt!$_c$, and the
+input of \code!wt!$_c$ wired to the input of the Z spider $K_c$. The right side is one $F$. With
+$E_L=(d-2)(d+3)/4$,
+\[
+\sigma\;=\;(-1)^{d+1}\,d^{\,1/2-E_L}\qquad(-\sqrt2,\ 1/3,\ -1/64,\ \sqrt5/15625\ \text{at}\ d=2,3,4,5).
+\]
+\py!concrete_only!; the left side grows; generated converse \cmplr{qf_hd_converse}.
+
+\subsection{Mixed-dimensional rules}\label{sec:completeness-mixed}
+
+These rules read every port dimension from the template (\py!TNode.dim! or \py!port_dims!), so
+their arities include dimensions. All are \py!concrete_only!. Their enumerators draw dimensions
+from \py!_host_values!, so a rule instance whose dimensions do not all occur among the host's
+concrete port dimensions is not tried, except for the anchor's own dimension. In the pictures a
+port label is its dimension.
+
+\cmplhead{binder_definition}{[P2] (2.8): the merger $B$ is the splitter $S$ with its ports bent.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[bnode] (b) at (0,0.3) {$B$};
+\draw[wire] (b.south west) -- ++(0,-0.6) node[below,dimlabel] {$s$}; \draw[wire] (b.south east) -- ++(0,-0.6) node[below,dimlabel] {$t$};
+\draw[wire] (b) -- (0,1.2) node[above,dimlabel] {$st$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[snode] (s) at (0,0.3) {$S$};
+\draw[wire] (s.north west) to[out=90,in=90] ($(s.north west)+(-0.55,0)$) -- ++(0,-1.0) node[below,dimlabel] {$s$};
+\draw[wire] (s.north east) to[out=90,in=90] ($(s.north east)+(0.55,0)$) -- ++(0,-1.0) node[below,dimlabel] {$t$};
+\draw[wire] (s.south) to[out=-90,in=-90] ($(s.south)+(0.0,-0.3)+(1.3,0)$) -- ++(0,1.6) node[above,dimlabel] {$st$};
+\end{tikzpicture}}
+Left: $B$ with input dimensions $(s,t)$ and output dimension $st$; terminals $a$, $b$ at its inputs
+and $c$ at its output. Right: $S$ from $st$ to $(s,t)$ with $a$, $b$ at its outputs and $c$ at its
+input. $\sigma=1$. Left arities: for a $B$ anchor whose two input dimensions resolve to concrete
+values, yield $(s,t)$ from them. Right arities: for an $S$ anchor, the same from its outputs.
+Quantifiers \code!s!, \code!t!; generated converse \cmplr{binder_definition_converse}.
+
+\cmplhead{qf_dd}{[P2] DD: the splitter is a pink dot with plain mixed green dots.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[snode] (s) at (0,0.3) {$S$};
+\draw[wire] (0,-0.5) node[below,dimlabel] {$mn$} -- (s);
+\draw[wire] (s.north west) -- ++(0,0.7) node[above,dimlabel] {$m$}; \draw[wire] (s.north east) -- ++(0,0.7) node[above,dimlabel] {$n$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0) {}; \node[cmplmultt] (m) at (-0.6,0.7) {$n$};
+\node[cmplbox] (z1) at (-0.6,1.5) {}; \node[cmplbox] (z2) at (0.6,1.5) {};
+\draw[wire] (0,-0.6) node[below,dimlabel] {$mn$} -- (p); \draw[wire] (p) -- (m) -- (z1); \draw[wire] (p) -- (z2);
+\draw[wire] (z1) -- (-0.6,2.2) node[above,dimlabel] {$m$}; \draw[wire] (z2) -- (0.6,2.2) node[above,dimlabel] {$n$};
+\end{tikzpicture}}
+Left: $S$ from $mn$ to $(m,n)$. Right: a pink dot of dimension $mn$ with one input and two outputs;
+output $0$ through the transposed multiplier labeled $n$ (at $mn$) into a plain mixed green dot with
+an input of dimension $mn$ and an output of dimension $m$; output $1$ into a plain mixed green dot
+with ports $mn$ and $n$. $\sigma=(mn)^{(n-3)/2}$. Left arities: for an $S$ anchor whose output
+dimensions resolve to concrete $m$, $n$, yield them. Right arities: for an X anchor, every
+$(m,n)$ of \py!_divisor_pairs(_host_values)!. Quantifiers \code!m!, \code!n!; generated converse
+\cmplr{qf_dd_converse}.
+
+\cmplhead{qf_e}{[P2] E: a pink dot state through a multiplier into dimension 2.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0) {}; \node[cmplmult] (m) at (0,0.7) {$e$}; \node[cmplbox] (z) at (0,1.45) {};
+\draw[wire] (p) -- node[right,dimlabel] {$n$} (m) -- (z) -- (0,2.1) node[above,dimlabel] {$2$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (p) at (0,0.6) {}; \draw[wire] (p) -- (0,1.6) node[above,dimlabel] {$2$};
+\end{tikzpicture}}
+Left: a pink dot state of dimension $n$ through the multiplier labeled $e$ (at $n$) into a plain
+mixed green dot with ports $n$ (input) and $2$ (output). Right: a pink dot state of dimension $2$.
+$\sigma=n^{(3-e)/2}$. Left arities (\py!_e_arities!): for an X anchor with no inputs at a concrete
+dimension $n$ whose output reaches a Z spider with $L$ ports, yield $(n,e)$ for
+$e=1,\dots,\min(n,L+1)-1$ (the multiplier's top dot has $e+1$ ports, so $e\le L$). Right arities:
+for an X anchor of dimension $2$, yield $(n,e)$ for every $n$ in \py!_host_values! and
+$e=1,\dots,n-1$. Quantifiers \code!n!, \code!e!; generated converse \cmplr{qf_e_converse}.
+
+\cmplhead{qf_dzx}{[P2] DZX: a pink dot of dimension $mn$ seen through dimension $m$.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpd] (c) at (0,0.6) {};
+\node[cmplmult] (mi) at (0,-0.2) {$n$}; \node[cmplbox] (zi) at (0,-0.95) {};
+\node[cmplmultt] (mo) at (0,1.4) {$n$}; \node[cmplbox] (zo) at (0,2.15) {};
+\draw[wire] (0,-1.6) node[below,dimlabel] {$m$} -- (zi) -- node[right,dimlabel] {$mn$} (mi) -- (c) -- (mo) -- (zo) -- (0,2.8) node[above,dimlabel] {$m$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplpd] (c) at (0,0.6) {};
+\draw[wire] (0,-0.4) node[below,dimlabel] {$m$} -- (c) -- (0,1.6) node[above,dimlabel] {$m$};
+\end{tikzpicture}}
+Shown for $p=q=1$. Left: a pink dot of dimension $mn$ with $p$ inputs and $q$ outputs; each input
+$k$ is fed through a plain mixed green dot with ports $m$ (input, the terminal $i_k$) and $mn$
+(output) and the multiplier labeled $n$ (at $mn$); each output passes through the transposed
+multiplier labeled $n$ (at $mn$) into a plain mixed green dot with ports $mn$ and $m$ (output,
+the terminal $o_k$). Right: a pink dot of dimension $m$ with $p$ inputs and $q$ outputs. With
+$k=p+q$, $\sigma=m^{k-1}(mn)^{1-k(n-1)/2}$. Left arities: for an X anchor of concrete dimension
+$D$, yield $(m,n,p,q)$ for every divisor pair with $mn=D$, $p$ and $q$ the anchor's input and output
+counts. Right arities: for an X anchor of concrete dimension $m$, yield $(m,n,p,q)$ for every
+$n\ge2$ in \py!_host_values!. Quantifiers \code!m!, \code!n!, \code!p!, \code!q!; promoted;
+generated converse \cmplr{qf_dzx_converse}.
+
+\cmplhead{qf_k0}{[P2] K0: a pink $K_{-j}$ state copied into two dimensions.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p) at (0,0) {$K_{-j}$}; \node[cmplbox] (z) at (0,0.85) {};
+\draw[wire] (p) -- node[right,dimlabel] {$m$} (z);
+\draw[wire] (z) -- (-0.4,1.6) node[above,dimlabel] {$n_1$}; \draw[wire] (z) -- (0.4,1.6) node[above,dimlabel] {$n_2$};
+\end{tikzpicture}}{[\,j\bmod m<\min(m,n_1,n_2)\,]\cdot}{\begin{tikzpicture}[zxd]
+\node[cmplpk] (p1) at (-0.5,0.4) {$K_{-j}$}; \node[cmplpk] (p2) at (0.5,0.4) {$K_{-j}$};
+\draw[wire] (p1) -- (-0.5,1.6) node[above,dimlabel] {$n_1$}; \draw[wire] (p2) -- (0.5,1.6) node[above,dimlabel] {$n_2$};
+\end{tikzpicture}}
+Left: a pink state of dimension $m$ with \py!Kj("j", sign=-1)! into a plain mixed green dot with
+ports $m$ (input), $n_1$, $n_2$ (outputs). Right: pink $K_{-j}$ states of dimensions $n_1$ and
+$n_2$; the right template carries the scalar $1$ when $(j\bmod m)<\min(m,n_1,n_2)$ and $0$
+otherwise. $\sigma=m^{3/2}(n_1n_2)^{1/2}\cdot[\,j\bmod m<\min(m,n_1,n_2)\,]$. A forward
+application may introduce the scalar $0$; the converse rejects a match whose matched template
+scalar is $0$. Left arities: for an X anchor with no inputs at concrete dimension $m$, yield
+$(m,n_1,n_2)$ for every $n_1\le n_2$ in \py!_host_values!. Right arities: for an X anchor with no
+inputs at concrete dimension $n_1$, yield $(m,n_1,n_2)$ for every $m$ and every $n_2\ge n_1$ in
+\py!_host_values!. Quantifiers \code!m!, \code!n1!, \code!n2!, \code!j!; promoted; generated
+converse \cmplr{qf_k0_converse}.
+
+\cmplhead{qf_bzw}{[P2] BZW: W nodes of dimensions $m$ and $n$ crossed into mixed Z boxes.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (wm) at (-0.5,0) {}; \node[wnode] (wn) at (0.5,0) {};
+\node[cmplbox] (z1) at (-0.5,1.1) {$a$}; \node[cmplbox] (z2) at (0.5,1.1) {$a$};
+\draw[wire] (wm) -- (z1); \draw[wire] (wm) -- (z2); \draw[wire] (wn) -- (z1); \draw[wire] (wn) -- (z2);
+\draw[wire] (wm) -- (-0.5,-0.6) node[below,dimlabel] {$m$}; \draw[wire] (wn) -- (0.5,-0.6) node[below,dimlabel] {$n$};
+\draw[wire] (z1) -- (-0.5,1.8) node[above,dimlabel] {$k$}; \draw[wire] (z2) -- (0.5,1.8) node[above,dimlabel] {$k$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0.2) {$a$}; \node[wnode] (w) at (0,1.0) {}; \draw[wire] (z) -- node[right,dimlabel] {$k$} (w);
+\draw[wire] (z) -- (-0.4,-0.6) node[below,dimlabel] {$m$}; \draw[wire] (z) -- (0.4,-0.6) node[below,dimlabel] {$n$};
+\draw[wire] (w) -- (-0.4,1.8) node[above,dimlabel] {$k$}; \draw[wire] (w) -- (0.4,1.8) node[above,dimlabel] {$k$};
+\end{tikzpicture}}
+Left: W nodes of dimensions $m$ and $n$ with two outputs each; output $c$ of each feeds the
+mixed-dimensional Z box number $c$ with ports $m$, $n$ (inputs) and $k$ (output) and parameter
+\py!MixedVar("a", min(m, n, k))! (both boxes bind the same $a$). Right: one such Z box into a W
+node of dimension $k$ with two outputs. $\sigma=mnk$. Left arities: for a W anchor of concrete
+dimension $m$, yield $(m,n,k)$ for every $n$ and $k$ in \py!_host_values!. Right arities: for a Z
+anchor of concrete dimension $D$, every $(m,n,k)$ from \py!_host_values!$^3$ with $mnk=D$.
+Quantifiers \code!m!, \code!n!, \code!k!; promoted; generated converse \cmplr{qf_bzw_converse}.
+
+\cmplhead{qf_ta}{[P2] TA: the mixed trialgebra rule.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (-0.6,0) {}; \node[cmplpd] (p) at (0.6,-0.2) {};
+\node[cmplmultt] (e1) at (0.2,0.55) {$e_1$}; \node[cmplmultt] (e2) at (1.0,0.55) {$e_2$};
+\node[cmplbox] (z1) at (-0.4,1.35) {}; \node[cmplbox] (z2) at (0.6,1.35) {};
+\draw[wire] (w) -- (z1); \draw[wire] (w) -- (z2); \draw[wire] (p) -- (e1) -- (z1); \draw[wire] (p) -- (e2) -- (z2);
+\draw[wire] (w) -- (-0.6,-0.7) node[below,dimlabel] {$m$}; \draw[wire] (p) -- (0.6,-0.7) node[below,dimlabel] {$n$};
+\draw[wire] (z1) -- (-0.4,2.0) node[above,dimlabel] {$k$}; \draw[wire] (z2) -- (0.6,2.0) node[above,dimlabel] {$k$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (-0.6,0) {}; \node[wnode] (p) at (0.6,-0.2) {};
+\node[cmplmultt] (e1) at (0.2,0.55) {$e_1$}; \node[cmplmultt] (e2) at (1.0,0.55) {$e_2$};
+\node[cmplbox] (z1) at (-0.4,1.35) {}; \node[cmplbox] (z2) at (0.6,1.35) {};
+\draw[wire] (w) -- (z1); \draw[wire] (w) -- (z2); \draw[wire] (p) -- (e1) -- (z1); \draw[wire] (p) -- (e2) -- (z2);
+\draw[wire] (w) -- (-0.6,-0.7) node[below,dimlabel] {$m$}; \draw[wire] (p) -- (0.6,-0.7) node[below,dimlabel] {$n$};
+\draw[wire] (z1) -- (-0.4,2.0) node[above,dimlabel] {$k$}; \draw[wire] (z2) -- (0.6,2.0) node[above,dimlabel] {$k$};
+\end{tikzpicture}}
+Shown for $i=2$. Left: a W node of dimension $m$ and a pink dot of dimension $n$, each with one
+input and $i$ outputs; output $c$ of the pink dot passes through the transposed multiplier labeled
+$e_c$ (at $n$); output $c$ of the W node and that multiplier feed a plain mixed green dot with ports
+$m$, $n$ (inputs) and $k$ (output). Right: the same with the pink dot replaced by a W node of
+dimension $n$. $\sigma=n^{-(i-1)/2}$. Both sides: for a W anchor of concrete dimension $m$ with $i$
+outputs, yield $(m,n,k,i,e_0,\dots,e_{i-1})$ for every $n$, $k$ in \py!_host_values! and every
+multiset $e_0\le\dots\le e_{i-1}$ from $1,\dots,n-1$. Quantifiers \code!m!, \code!n!, \code!k!,
+\code!i!, \code!e_1..e_i!; generated converse \cmplr{qf_ta_converse}.
+
+\cmplhead{qf_s1}{[P2] S1: mixed-dimensional Z boxes joined by wires fuse.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (a) at (0,0) {$a$}; \node[cmplbox] (b) at (0,1.4) {$b$};
+\draw[wire] (a) to[bend left=40] node[left,dimlabel] {$d_1$} (b); \draw[wire] (a) to[bend right=40] node[right,dimlabel] {$d_2$} (b);
+\draw[wire] (a) -- (0,-0.7); \draw[wire] (b) -- (0,2.1);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[cmplbox] (c) at (0,0.7) {$ab'$}; \draw[wire] (c) -- (0,-0.7); \draw[wire] (c) -- (0,2.1);
+\end{tikzpicture}}
+The anchor and its partner are host mixed-dimensional Z boxes, recognized by
+\py!mixed_legs(diagram, z)!. That function returns, for a Z spider \code!z!, the list of
+(direction, dimension, external port) of its ports, or \py!None! unless every port of \code!z! is
+wired as in \cref{def:completeness-mixedz}: an input port to the output of a $B$ whose input $0$
+carries a phaseless X spider with exactly one port and whose input $1$ is the external port of
+concrete dimension $d_i$; an output port to the input of an $S$ whose output $0$ carries such an X
+spider and whose output $1$ is the external port; and the product of the $d_i$ equals the
+dimension of \code!z! (read from its first port).
+
+Left arities (\py!_s1m_arities!): for an anchor with legs $A$, every other node with legs $B$
+registers its external ports; for each port of $A$ whose external port is wired to a registered
+external port of some $B$, record the pair of indices; for each partner $B$ in increasing node id,
+yield the arity map with \code!na!, \code!nb! (leg counts), \code!nc! (connections),
+\code!a{k}d!, \code!a{k}o! (dimension, and $1$ for an output) for each leg of $A$, the same for
+$B$ with prefix \code!b!, and \code!c{k}a!, \code!c{k}b! for each connection. The left template is
+the mixed Z box $a$ over the legs of $A$ with \py!MixedVar("a", low_a)! and the mixed Z box $b$
+over the legs of $B$ with \py!MixedVar("b", low_b)!, the connected external ports wired, and the
+other ports terminals \code!a{k}! and \code!b{k}!. With $\ell=\min(\ell_a,\ell_b)$ and $\ell'$ the
+least dimension among the free ports, the right template is the mixed Z box over the free ports
+(in the order: those of $A$, then those of $B$) with the derived parameter
+$ab'=(a_1b_1,\dots,a_{\ell-1}b_{\ell-1},0,\dots,0)$ over dimension $\ell'$, spread to the box's
+dimension. When no port is free, the right template is empty and carries the scalar
+$\sum_{k=0}^{\ell-1}a_kb_k$ (with $a_0=b_0=1$). The engine scalar is
+\[
+\sigma=\frac{\prod_{i\in\text{free}}(D_f/d_i)^{-1/2}}{\prod_{i\in A}(D_A/d_i)^{-1/2}\prod_{i\in B}(D_B/d_i)^{-1/2}}\cdot s_R,
+\]
+with $D_X$ the product of the port dimensions of $X$ and the free product read as $1$ when nothing
+is free. Promoted; quantifiers \code!legs!, \code!dimensions!. The rule has no converse: the
+right side binds neither $a$ nor $b$, so \py!_determined! rejects it, and no explicit converse is
+written.
+
+
+\section{Definitional and Structural Rules}\label{sec:completeness-definitional}
+
+Five rules of \py!AXIOMS! translate engine generators and parameters into the papers' notation;
+\cmplr{weight_to_phase}, an explicit converse, reverses one of them. With \cmplr{binder_definition}
+(\cref{sec:completeness-mixed}) they are the rules of the reachability step of
+\cref{sec:completeness-transfer}.
+
+\cmplhead{x_spider_definition}{The X spider is the Z spider with $F$ on each output and $F^3$ on each input.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[xs] (x) at (0,0.7) {$a$};
+\draw[wire] (-0.4,-0.3) -- (x); \draw[wire] (0.4,-0.3) -- (x); \draw[wire] (x) -- (-0.4,1.7); \draw[wire] (x) -- (0.4,1.7);
+\node[dimlabel] at (0,-0.25) {$n$}; \node[dimlabel] at (0,1.65) {$m$};
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[zs] (p) at (0,0.7) {$a$};
+\node[fbox] (a1) at (-0.5,-0.2) {$F^3$}; \node[fbox] (a2) at (0.5,-0.2) {$F^3$};
+\node[fbox] (b1) at (-0.5,1.6) {$F$}; \node[fbox] (b2) at (0.5,1.6) {$F$};
+\draw[wire] (-0.5,-0.8) -- (a1) -- (p); \draw[wire] (0.5,-0.8) -- (a2) -- (p);
+\draw[wire] (p) -- (b1) -- (-0.5,2.2); \draw[wire] (p) -- (b2) -- (0.5,2.2);
+\node[dimlabel] at (0,-0.2) {$\cdots n$}; \node[dimlabel] at (0,1.6) {$\cdots m$};
+\end{tikzpicture}}
+Left: an engine X spider (not pink) with $n$ inputs, $m$ outputs, and \py!Var("a")!. Right: a Z
+spider with \py!Var("a")!, three $F$ before each input and one after each output. $\sigma=1$.
+Left arities: for an X anchor, yield its $(n,m)$. Right arities: those of \cmplr{zxw_h1}.
+Quantifiers \code!n!, \code!m!, \code!d!; generated converse \cmplr{x_spider_definition_converse}.
+
+\cmplhead{triangle_definition}{[P1] (YT): the triangle is a W node with one output on a plain green effect.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[tri] (t) at (0,0.4) {}; \draw[wire] (0,-0.4) -- (t) -- (0,1.2);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0.2) {}; \node[zdot] (e) at (-0.45,0.85) {};
+\draw[wire] (0,-0.4) -- (w); \draw[wire] (w) -- (e); \draw[wire] (w) -- (0.45,1.2);
+\end{tikzpicture}}
+Left: $T$ (one input, one output). Right: a W node with two outputs, output $0$ into a plain green
+effect, output $1$ the terminal \code!out!. $\sigma=1$; fixed sides; generated converse
+\cmplr{triangle_definition_converse}.
+
+\cmplhead{triangle_inverse_definition}{[P1] (YT): the inverse triangle is a W node with one output on the box $-1$.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[tri] (t) at (0,0.4) {}; \node[dimlabel] at (0.4,0.4) {$-1$}; \draw[wire] (0,-0.4) -- (t) -- (0,1.2);
+\end{tikzpicture}}{}{\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0.2) {}; \node[cmplbox] (e) at (-0.55,0.9) {$-1$};
+\draw[wire] (0,-0.4) -- (w); \draw[wire] (w) -- (e); \draw[wire] (w) -- (0.45,1.2);
+\end{tikzpicture}}
+Left: $T_i$. Right: as for \cmplr{triangle_definition} with the effect a Z spider carrying
+\py!MINUS_ONES!, the Z box $(-1,\dots,-1)$. $\sigma=1$; fixed sides; generated converse
+\cmplr{triangle_inverse_definition_converse}.
+
+\cmplhead{phase_to_weight}{[P1] green circle spider: the phase $\alpha$ is the weight $e^{i\alpha}$.}
+Left: an open Z spider with no template ports and \py!Var("a")!. Right: an open Z spider \code!z!
+with the derived \py!as_weights(a)! that receives the left node's ports
+(\py!rest = {"z": "z"}!). The left side's arity enumerator yields one empty assignment for a Z
+anchor. Condition \cmplr{carries_a_phase}: the bound vector has an explicit phase entry or a phase
+rule. $\sigma=1$. \py!as_weights(pv, dim)! returns the weight vector with the same coefficients:
+at a concrete dimension \py!from_weights({k: pv.coefficient(k)})! for $k=1,\dots,d-1$; at a
+symbolic dimension, for a vector with neither entries nor explicit weights, the weight rule
+$r_{pv}$ of \cref{sec:completeness-vectors}. It raises \py!RewriteDomainError! with
+\code!"a phaseless spider has no phase to move"! for \py!None!,
+\code!"the vector carries no phase"! for a vector with no entry and no rule, and
+\code!"moving explicit entries needs a concrete dimension"! at a symbolic dimension with explicit
+entries or weights. The rule has no generated converse (it is excluded by name); its converse is
+\cmplr{weight_to_phase}.
+
+\cmplhead{weight_to_phase}{The converse of \cmplr{phase_to_weight}: weights that are roots of unity become phases.}
+Left: an open Z spider with \py!Var("w")!; right: an open Z spider with the derived
+\py!_as_phases(w)!. \py!concrete_only!; $\sigma=1$. \py!_as_phases! requires a vector of weights
+only (no phase entries, no phase rule, \py!is_weighted!), else \py!RewriteDomainError!
+\code!"weight_to_phase reads a vector of weights only"!; it returns the phase vector whose entry at
+$k$ is \py!_phase_of_weight(w_k)!. \py!_phase_of_weight(value)! returns the phase $t$ (in turns)
+with $\mathit{value}=e^{2\pi i t}$:
+\begin{enumerate}
+\item If the expression is \py!exp(x)! and $x/(2\pi i)$ simplifies to a real number $t$, return $t$.
+\item If $|\mathit{value}|-1$ does not simplify to $0$, raise \code!"{value} is not a unit complex number"!.
+\item Let $t$ be \py!nsimplify(arg(value) / (2*pi))!; if $t$ is not rational, raise
+  \code!"{value} is not a rational root of unity"!.
+\item If $e^{2\pi i t}-\mathit{value}$ does not simplify to $0$, raise
+  \code!"{value} is not e^(2 pi i {t})"!; otherwise return $t$.
+\end{enumerate}
+
+\cmplhead{scalar_box}{A Z box with no ports is a scalar.}
+\cmpleq{\begin{tikzpicture}[zxd]
+\node[cmplbox] (z) at (0,0) {$a$};
+\end{tikzpicture}}{\bigl(1+a_1+\dots+a_{d-1}\bigr)\cdot}{\cmplempty}
+Left: a Z spider with no ports and \py!Var("a")! (not open: a host spider with ports does not
+match). Right: the empty template. The axiom scalar is \py!_box_value(dim, a)!:
+\begin{itemize}
+\item at a concrete dimension, $\sum_{k=0}^{d-1}c_k$ over the coefficients ($c_0=1$);
+\item at a symbolic dimension: for \py!None!, $d$; for a vector with explicit entries or weights,
+  \py!RewriteDomainError! \code!"a symbolic sum over explicit entries"!; otherwise, with $r$ the
+  rule coefficient $r_{a}$, the value $1+(d-1)r$ when $r$ does not contain \py!INDEX!, else
+  $1+\sum_{k=0}^{d-1}r(k)-r(0)$ (\py!Scalar.index_sum!).
+\end{itemize}
+$\sigma$ equals that value. \py!converse_free = {"a": plain vector}!; promoted. The generated
+converse is replaced by the explicit \cmplr{scalar_box_converse}
+(\cref{sec:completeness-converses}).
+
+\section{Templates of the Older Rules}\label{sec:completeness-legacy}
+
+The hand-written rules of \cref{ch:rules} predate the template machinery and have no converses.
+\py!LEGACY! restates 27 of their equations as template axioms, read left to right; only their
+converses are registered (\py!LEGACY_CONVERSES!, named \cmplr{<name>_converse}), since the forward
+direction is the hand-written rule. Every node is an engine node (no pink normalization), so
+$\sigma$ is the axiom scalar. A side whose arity enumerator yields nothing (\py!lambda d, n, dim: ()!)
+never matches; the converse matches the other side. The descriptions of these templates cite
+rule numbers 2.1 to 2.28 of a retired document; the numbers carry no behavior.
+
+\begin{table}[H]
+\centering\small
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.40\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{0.10\linewidth}@{}}
+\toprule
+Template name & Left $=$ $\sigma\cdot$ Right & $\sigma$ \\
+\midrule
+\cmplr{fourier_cancellation} & four $F$ in series $=$ bare wire & $1$ \\
+\cmplr{triangle_inverse_cancellation} & $T$ then $T_i$ $=$ bare wire & $1$ \\
+\cmplr{triangle_inverse_cancellation_ti_t} & $T_i$ then $T$ $=$ bare wire & $1$ \\
+\cmplr{w_identity} & W node with one output $=$ bare wire & $1$ \\
+\cmplr{zx_cap} & plain Z state into plain X effect $=$ empty & $\sqrt d$ \\
+\cmplr{zx_cap_swapped} & plain X state into plain Z effect $=$ empty & $\sqrt d$ \\
+\cmplr{fourier_state_color_change} & plain Z state then $F$ $=$ plain X state & $1$ \\
+\cmplr{fourier_effect_color_change} & $F$ then plain X effect $=$ plain Z effect & $1$ \\
+\cmplr{fourier_state_color_change_swapped} & plain X state then $F$ $=$ plain Z state & $1$ \\
+\cmplr{fourier_effect_color_change_swapped} & $F$ then plain Z effect $=$ plain X effect & $1$ \\
+\cmplr{triangle_zero_state_t} & plain X state then $T$ $=$ plain X state & $1$ \\
+\cmplr{triangle_zero_state_ti} & plain X state then $T_i$ $=$ plain X state & $1$ \\
+\cmplr{triangle_zero_effect} & $T$ then plain X effect $=$ plain Z effect & $\sqrt d$ \\
+\cmplr{w_z_effect} & W node ($m$ outputs), output $0$ on a plain Z effect $=$ $T$ then a W node with $m-1$ outputs & $1$ \\
+\cmplr{w_zero_effect} & W node ($m$ outputs), output $0$ on a plain X effect $=$ a W node with $m-1$ outputs & $\sqrt d$ \\
+\cmplr{hopf} & open Z spider $a$ (two outputs) and open X spider $b$ (two inputs) joined by a wire and by a wire through $F^2$ $=$ the two spiders disconnected & $1/d$ \\
+\cmplr{hopf_swapped} & the same with the X spider below & $1/d$ \\
+\cmplr{bialgebra_swapped} & plain Z (2 in, 1 out) into plain X (1 in, 2 out) $=$ two plain X (1 in, 2 out) crossed into two plain Z (2 in, 1 out) & $\sqrt d$ \\
+\cmplr{wz_bialgebra} & plain Z ($n$ in, 1 out) into W ($m$ outputs) $=$ $n$ W nodes ($m$ outputs) crossed into $m$ plain Z ($n$ in, 1 out) & $1$ \\
+\cmplr{state_copy} & plain X state into plain Z (1 in, $n$ out) $=$ $n$ plain X states & $d^{(1-n)/2}$ \\
+\cmplr{state_copy_swapped} & plain Z state into plain X (1 in, $n$ out) $=$ $n$ plain Z states & $d^{(1-n)/2}$ \\
+\cmplr{w_zero_copy} & plain X state into W ($n$ outputs) $=$ $n$ plain X states & $d^{(1-n)/2}$ \\
+\cmplr{connective_inverse} & $S$ ($st\to s,t$) into $B$ $=$ bare wire & $1$ \\
+\cmplr{connective_states_states} & plain Z states of dimensions $s$, $t$ into $B$ $=$ plain Z state of dimension $st$ & $1$ \\
+\cmplr{connective_states_effects} & $S$ into plain Z effects of dimensions $s$, $t$ $=$ plain Z effect of dimension $st$ & $1$ \\
+\cmplr{connective_states_swapped_states} & the same with plain X states & $1$ \\
+\cmplr{connective_states_swapped_effects} & the same with plain X effects & $1$ \\
+\bottomrule
+\end{tabularx}
+\caption{The 27 templates of \py!LEGACY!, in order.}
+\label{tab:completeness-legacy}
+\end{table}
+
+\begin{center}
+\begin{tikzpicture}[zxd]
+\node[zdot] (z) at (0,0) {}; \node[xdot] (x) at (0,0.7) {}; \draw[wire] (z) -- (x);
+\node at (0.6,0.35) {$=$}; \node at (1.3,0.35) {$\sqrt d$};
+\begin{scope}[xshift=3cm]
+\node[xs] (x) at (0,0) {$b$}; \node[zs] (z) at (0,1.4) {$a$}; \node[fbox] (f1) at (0.6,0.45) {$F$}; \node[fbox] (f2) at (0.6,0.95) {$F$};
+\draw[wire] (z) to[bend right=30] (x); \draw[wire] (x) to[out=20,in=-90] (f1) -- (f2) to[out=90,in=-20] (z);
+\draw[wire] (x) -- (-0.3,-0.6); \draw[wire] (z) -- (-0.3,2.0);
+\node at (1.4,0.7) {$=$}; \node at (2.0,0.7) {$\frac1d$};
+\node[xs] (x2) at (2.7,0.2) {$b$}; \node[zs] (z2) at (2.7,1.2) {$a$};
+\draw[wire] (x2) -- (2.7,-0.6); \draw[wire] (z2) -- (2.7,2.0);
+\end{scope}
+\begin{scope}[xshift=8.2cm]
+\node[xdot] (s) at (0,0) {}; \node[zdot] (g) at (0,0.7) {}; \draw[wire] (s) -- (g);
+\draw[wire] (g) -- (-0.4,1.4); \draw[wire] (g) -- (0.4,1.4); \node[dimlabel] at (0,1.35) {$n$};
+\node at (0.8,0.6) {$=$}; \node at (1.6,0.6) {$d^{\frac{1-n}{2}}$};
+\node[xdot] (s1) at (2.3,0.5) {}; \node[xdot] (s2) at (2.9,0.5) {};
+\draw[wire] (s1) -- (2.3,1.4); \draw[wire] (s2) -- (2.9,1.4); \node[dimlabel] at (2.6,1.0) {$\cdots$};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+\noindent The pictures show \cmplr{zx_cap}, \cmplr{hopf} (the open spiders keep their other ports,
+drawn as one wire each), and \cmplr{state_copy}; the full-red nodes are engine X spiders.
+
+The arity enumerators of the converses are as follows. \cmplr{w_z_effect} and
+\cmplr{w_zero_effect}: for a W anchor, $m=\text{outputs}+1$; for a $T$ anchor, $m=$ the output count
+of an adjacent W node plus $1$, for each adjacent W node. \cmplr{hopf} and \cmplr{hopf_swapped}:
+one empty assignment at a Z anchor (the right side is two open spiders with no ports, receiving
+the rest ports: \py!rest = {"z": "z2", "x": "x2"}! and back). \cmplr{wz_bialgebra}: for a W anchor,
+$n$ ranges over the distinct input counts of adjacent Z spiders and $m$ is the anchor's output
+count. \cmplr{state_copy}, \cmplr{state_copy_swapped}, \cmplr{w_zero_copy}: for a phaseless state
+anchor of the copied generator (no inputs, one output), $n=2,\dots,s$ with $s$ the number of such
+phaseless states in the host. \cmplr{connective_inverse} (right side a bare wire): at a concrete
+dimension $D$, every factor pair $(s,t)$ with $2\le s<D$, $s\mid D$, and $t=D/s\ge2$, enumerated
+per wire of that dimension. \cmplr{connective_states_*}: for an anchor of the right generator
+with exactly one port, the factor pairs of its dimension. The connective templates are
+\py!concrete_only!.
+
+\cmplhead{x_fusion_converse}{Spider fusion of X spiders read right to left.}
+Left: an X spider \code!x! with $n_i$ inputs, $n_o$ outputs, and \py!Var("c")!. Right: X spiders
+\code!xa! (parameter \py!Var("a")!) and \code!xb! (\py!Var("b")!); input $k$ goes to \code!xa! when
+bit $k$ of the mask $m_i$ is set and to \code!xb! otherwise, output $k$ likewise by the mask
+$m_o$; an extra output of \code!xa! feeds an extra input of \code!xb!. Arities: for an X anchor,
+every $(n_i,n_o,m_i,m_o)$ with $0\le m_i<2^{n_i}$ and $0\le m_o<2^{n_o}$. Condition
+\cmplr{fuses_back}: $ab=c$ (\py!_fuses_to!). Free variables: $a$ defaults to $c$, $b$ to the plain
+vector. \py!solve = _solve_product!: given $a$ and $c$, $b_k=c_k/a_k$ for $k=1,\dots,d-1$, or
+\py!None! when some $a_k$ is $0$ (by \py!_zero!). \py!candidates = _swapped_default!: the single
+assignment $a=$ plain, $b=c$. $\sigma=1$. It belongs to \py!LEGACY_CONVERSES!.
+
+\section{Converses}\label{sec:completeness-converses}
+
+Every equation of \py!AXIOMS! except \cmplr{qf_s1} is available in both directions.
+
+\begin{definition}[Determined axiom]\label{def:completeness-determined}
+\py!_determined(axiom)! reads both templates at $d=3$ and at the first arity sample of
+\py!_SAMPLES! for which both build without \py!KeyError!, \py!IndexError!, \py!ValueError!, or
+\py!RewriteDomainError!. The samples are, in order,
+$\{k{=}1,n{=}2,m{=}2,p{=}0,q{=}1,r{=}1,e{=}1,e0{=}1\}$, $\{k{=}0,n{=}2,m{=}2\}$, $\{n{=}1,e0{=}1\}$,
+$\{s{=}2,t{=}3\}$, $\{m{=}2,n{=}3,k{=}2,i{=}1,e0{=}1\}$, $\{m{=}2,n1{=}2,n2{=}3\}$. The axiom is
+determined when both templates exist, the right template has a node, a bare wire, or
+\py!converse_free! is non-empty, and the variables read by the left template's parameters are
+among those bound by the right template's parameters together with the names of
+\py!converse_free!. No sample building both sides gives false.
+\end{definition}
+
+\py!CONVERSES! is the concatenation of three groups:
+\begin{enumerate}
+\item the generated converses \py!axiom.converse(name + "_converse")! of every axiom of \py!AXIOMS!
+  that is determined, whose converse name is not among the explicit converses, and that is not
+  \cmplr{phase_to_weight}: the 36 rules \cmplr{zxw_s2}, \cmplr{zxw_s2_pink}, \cmplr{zxw_ept},
+  \cmplr{zxw_b2}, \cmplr{zxw_k0}, \cmplr{zxw_k1}, \cmplr{zxw_zer}, \cmplr{zxw_p1},
+  \cmplr{zxw_p1_multiplier}, \cmplr{zxw_h1}, \cmplr{zxw_pcy}, \cmplr{zxw_sym}, \cmplr{zxw_aso},
+  \cmplr{zxw_bzw}, \cmplr{zxw_ww}, \cmplr{zxw_bs0}, \cmplr{zxw_ta}, \cmplr{zxw_hd},
+  \cmplr{zxw_vw}, \cmplr{zxw_kz}, \cmplr{qf_wf}, \cmplr{qf_w_sym}, \cmplr{qf_z_flex},
+  \cmplr{qf_mw}, \cmplr{qf_ww}, \cmplr{qf_hd}, \cmplr{binder_definition}, \cmplr{qf_dd},
+  \cmplr{qf_e}, \cmplr{qf_dzx}, \cmplr{qf_k0}, \cmplr{qf_bzw}, \cmplr{qf_ta},
+  \cmplr{x_spider_definition}, \cmplr{triangle_definition}, and
+  \cmplr{triangle_inverse_definition}, each followed by \cmplr{_converse};
+\item \py!EXPLICIT_CONVERSES! (11 rules), whose matched side carries a derived parameter;
+\item \py!LEGACY_CONVERSES! (28 rules): the 27 converses of \py!LEGACY! and
+  \cmplr{x_fusion_converse}.
+\end{enumerate}
+The explicit converses are listed below. Each is \py!concrete_only! except where stated; the
+scalar of each follows \cref{eq:completeness-engine-scalar}.
+
+\begin{description}[style=nextline,leftmargin=1.2em]
+\item[\cmplr{scalar_box_converse}] The converse of \cmplr{scalar_box} with the condition
+  \cmplr{box_value_nonzero} added (\py!dataclasses.replace! then \py!converse!):
+  inserts a Z box with no ports and the default plain vector (value $d$), times $1/v$ with $v$ its
+  value; condition \cmplr{box_value_nonzero}: $v\neq0$ by \py!_nonzero!. Not \py!concrete_only!.
+\item[\cmplr{zxw_d1_converse}] Two $F$ then a Z spider \py!Var("b")! become a Z spider
+  \py!reversed_vector(b)! then two $F$.
+\item[\cmplr{zxw_k2_converse}] A Z spider \py!Var("c")! into a pink $K_j$ becomes a pink $K_j$ into
+  a Z spider with \py!_unshift(c, j)!, $a_k=c_{k+j}/c_j$, and the right template carries the scalar
+  $c_j$: $c\,;K_j=c_j\cdot K_j\,;a$. Condition \cmplr{c_j_nonzero}; \py!_unshift! raises
+  \code!"k_j(a) = c needs c_j != 0"! otherwise.
+\item[\cmplr{zxw_s1_converse}] Unfusion of a Z box: left, a Z spider with no inputs, $n$ outputs, and
+  \py!Var("c")!; right, Z spiders $a$ (no inputs) and $b$ joined by $k$ wires, port $p$ of the
+  original going to $a$ when bit $p$ of the mask is set and to $b$ otherwise. Arities: for a Z
+  anchor with $n$ ports, every mask $0\le\mathit{mask}<2^n$ and $k\in\{1,2\}$. Condition
+  \cmplr{fuses_back} ($ab=c$); free variables $a=c$ and $b=$ plain by default;
+  \py!solve = _solve_product!; \py!candidates = _single_entry_splits!: the assignment
+  $(a,b)=(\text{plain},c)$ and, at a concrete dimension when at least two indices $k$ of $c$ have
+  a coefficient other than $1$, for each such $k$ the two assignments $(c^{(k)},c^{\neg k})$ and
+  $(c^{\neg k},c^{(k)})$, where $c^{(k)}$ carries the weight $c_k$ at $k$ alone and $c^{\neg k}$
+  the weights at the other such indices. Not \py!concrete_only!.
+\item[\cmplr{zxw_ad_converse}] A Z effect \py!Var("c")! becomes a W node with effects $a$ and $b$.
+  Condition \cmplr{adds_back} ($a+b=c$ by \py!_same_coefficients!); free variables $a=c$,
+  $b=$ \py!zero_vector! by default; \py!solve = _solve_sum! ($b_k=c_k-a_k$).
+\item[\cmplr{zxw_bsj_converse}] A Z state matching \py!UnitIndex("j", sign=-1)! becomes the left
+  side of \cmplr{zxw_bsj} with the bound $j$.
+\item[\cmplr{zxw_zv_converse}] A Z state \py!Var("c")! becomes a Z state $a$ into V. Condition
+  \cmplr{constant_vector}: every coefficient of $c$ equals $c_1$ and $c$ equals the constant vector
+  of $a_{d-1}$; free variable $a$, default \py!last_vector(c_1)!.
+\item[\cmplr{zxw_va_converse}] V then a Z spider \py!Var("a")! becomes the left side of
+  \cmplr{zxw_va} with the boxes labelled $a_k$ derived from $a$ (\py!_box_entry(k)!).
+\item[\cmplr{qf_va_converse}] The right side of \cmplr{qf_va} with \py!Var("a")! becomes its left
+  side with derived boxes.
+\item[\cmplr{qf_d1_converse}] A Z spider \py!Var("b")! with two $F$ after each output becomes a Z
+  spider \py!reversed_vector(b)! with two $F$ before each input; arities as \cmplr{qf_d1}.
+\item[\cmplr{weight_to_phase}] See \cref{sec:completeness-definitional}.
+\end{description}
+
+A converse whose matched side is empty or a bare wire inserts its built side: once per wire for a
+bare wire (plus once per suitable boundary port when the built side takes no arities), and once
+per distinct node dimension of the host for an empty side (\cref{ch:rewriting}).
+
+\section{The Registry}\label{sec:completeness-registry}
+
+\begin{signature}
+\py!AXIOMS: tuple[TemplateAxiom, ...]! --- the 48 axioms and definitional rules, in the order of
+\cref{sec:completeness-p1,sec:completeness-p2,sec:completeness-definitional}: the 27 rules of [P1]
+(\cmplr{zxw_s1} to \cmplr{zxw_kz}), \cmplr{qf_wf}, \cmplr{qf_w_sym}, \cmplr{qf_z_flex},
+\cmplr{qf_mw}, \cmplr{qf_d1}, \cmplr{qf_ww}, \cmplr{qf_va}, \cmplr{qf_hd},
+\cmplr{binder_definition}, \cmplr{qf_dd}, \cmplr{qf_e}, \cmplr{qf_dzx}, \cmplr{qf_k0},
+\cmplr{qf_bzw}, \cmplr{qf_ta}, \cmplr{qf_s1}, \cmplr{x_spider_definition},
+\cmplr{triangle_definition}, \cmplr{triangle_inverse_definition}, \cmplr{phase_to_weight},
+\cmplr{scalar_box}.
+
+\py!CONVERSES: tuple[TemplateAxiom, ...]! --- the 75 converses of \cref{sec:completeness-converses}.
+
+\py!LEGACY!, \py!EXPLICIT_CONVERSES!, \py!LEGACY_CONVERSES! --- the groups above.
+
+\py!by_name() -> Mapping[str, TemplateAxiom]! --- a new dict of every axiom and converse by name
+(123 entries; names are unique).
+
+\py!__all__ = ["AXIOMS", "CONVERSES", "by_name"]!.
+\end{signature}
+
+\py!TEMPLATE_RULES! of \module{archytaszx.rewrite.rules_library} applies \py!template_rule! to
+\py!(*AXIOMS, *CONVERSES)!; the registry \py!RULES! holds these 123 rules after the 28
+hand-written rules, 151 rules in all. The forward templates of \py!LEGACY! are not registered.
+\module{archytaszx.rewrite.rules_discard} imports \py!TB!, \py!_legs!, \py!_partners!,
+\py!fixed_side!, \py!i!, and \py!o! from this module.
+
+\begin{table}[H]
+\centering\footnotesize
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.31\linewidth}>{\raggedright\arraybackslash}p{0.12\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{0.17\linewidth}@{}}
+\toprule
+Rule & Source & Engine scalar $\sigma$ & Converse \\
+\midrule
+\cmplr{zxw_s1} & [P1] S1 & $1$ & explicit \\
+\cmplr{zxw_s2}, \cmplr{zxw_s2_pink} & [P1] S2 & $1$ & generated \\
+\cmplr{zxw_d1} & [P1] D1 & $1$ & explicit \\
+\cmplr{zxw_ept} & [P1] Ept & $\sqrt d$ & generated \\
+\cmplr{zxw_b2} & [P1] B2 & $d^{-1/2}$ & generated \\
+\cmplr{zxw_k0} & [P1] K0 & $d^{-1/2}$ & generated \\
+\cmplr{zxw_k1} & [P1] K1 & $1$ & generated \\
+\cmplr{zxw_k2} & [P1] K2 & $a_{-j}$ & explicit \\
+\cmplr{zxw_zer} & [P1] Zer & $d^{-1/2}$ & generated \\
+\cmplr{zxw_p1} & [P1] P1, (Du) & $1$ & generated \\
+\cmplr{zxw_p1_multiplier} & [P1] P1 & $d^{(d-2)/2}$ & generated \\
+\cmplr{zxw_h1} & [P1] H1 & $1$ & generated \\
+\cmplr{zxw_pcy}, \cmplr{zxw_sym}, \cmplr{zxw_aso}, \cmplr{zxw_bzw}, \cmplr{zxw_ww} & [P1] Pcy, Sym, Aso, BZW, WW & $1$ & generated \\
+\cmplr{zxw_ad} & [P1] AD & $1$ & explicit \\
+\cmplr{zxw_bs0} & [P1] Bs0 & $d^{-1/2}$ & generated \\
+\cmplr{zxw_bsj} & [P1] Bsj & $\sqrt d$ & explicit \\
+\cmplr{zxw_ta} & [P1] TA & $d^{-1/2}$ & generated \\
+\cmplr{zxw_hd} & [P1] HD & $d^{1/2-(d-2)(d^2+2d+3)/4}$ & generated \\
+\cmplr{zxw_zv} & [P1] ZV & $d^{-(d/2-1)-(d-1)(d-2)/4}$ & explicit \\
+\cmplr{zxw_va} & [P1] VA & $1$ & explicit \\
+\cmplr{zxw_vw} & [P1] VW & $d^{d/2-1+(d-1)(d-2)/4}$ & generated \\
+\cmplr{zxw_kz} & [P1] KZ & $d^{1-n-\sum(e_k-1)/2}$ & generated \\
+\cmplr{qf_wf}, \cmplr{qf_w_sym}, \cmplr{qf_z_flex} & [P2] WF, (2.10), (2.9) & $1$ & generated \\
+\cmplr{qf_mw} & [P2] MW & $d^{(e-1)/2}$ & generated \\
+\cmplr{qf_d1} & [P2] D1 & $1$ & explicit \\
+\cmplr{qf_ww} & [P2] WW & $1$ & generated \\
+\cmplr{qf_va} & [P2] VA & $d^{-(d-2)(d+1)/4}$ & explicit \\
+\cmplr{qf_hd} & [P2] HD & $(-1)^{d+1}d^{1/2-(d-2)(d+3)/4}$ & generated \\
+\cmplr{binder_definition} & [P2] (2.8) & $1$ & generated \\
+\cmplr{qf_dd} & [P2] DD & $(mn)^{(n-3)/2}$ & generated \\
+\cmplr{qf_e} & [P2] E & $n^{(3-e)/2}$ & generated \\
+\cmplr{qf_dzx} & [P2] DZX & $m^{p+q-1}(mn)^{1-(p+q)(n-1)/2}$ & generated \\
+\cmplr{qf_k0} & [P2] K0 & $m^{3/2}(n_1n_2)^{1/2}[j\bmod m<\min(m,n_1,n_2)]$ & generated \\
+\cmplr{qf_bzw} & [P2] BZW & $mnk$ & generated \\
+\cmplr{qf_ta} & [P2] TA & $n^{-(i-1)/2}$ & generated \\
+\cmplr{qf_s1} & [P2] S1 & see the rule & none \\
+\cmplr{x_spider_definition} & definition & $1$ & generated \\
+\cmplr{triangle_definition}, \cmplr{triangle_inverse_definition} & [P1] (YT) & $1$ & generated \\
+\cmplr{phase_to_weight} & definition & $1$ & \cmplr{weight_to_phase} \\
+\cmplr{scalar_box} & definition & $1+\sum_k a_k$ & explicit \\
+\bottomrule
+\end{tabularx}
+\caption{The 48 rules of \py!AXIOMS! with their engine scalars.}
+\label{tab:completeness-summary}
+\end{table}
+
+\section{The Transfer of Completeness}\label{sec:completeness-transfer}
+
+The module does not state a theorem; its rules are chosen so that the following argument holds
+for the registered rule set. A diagram is \term{closed} when it has no \bbox{} and its parameter
+environment binds every free symbol; substituting the binding gives a diagram whose dimensions,
+parameters, and scalar are values. A closed diagram is \term{single-dimensional} when every port
+has one dimension and it has no $B$ or $S$ node. An \term{engine step} applies a registered rule at
+a match its pattern verifies, with its free values set, or identifies two isomorphic diagrams;
+it is forward when it replaces the rule's left side by its right side.
+
+\begin{enumerate}
+\item \emph{Translation.} The translation $\tau$ of \cref{tab:completeness-translation} acts on
+  generators and wires separately and preserves the denotation, scalars included.
+\item \emph{Reachability.} For a closed diagram $\mathcal D$, replace each X spider, $T$, $T_i$,
+  phase vector, $B$, and scalar factor by its paper definition; call the result $\pi(\mathcal D)$,
+  a diagram of $\mathrm{ZXW}_d$ when $\mathcal D$ is single-dimensional of dimension $d$ and of
+  $\mathrm{ZXW}_{\mathrm{qf}}$ otherwise. Each replaced item is the left side of
+  \cmplr{x_spider_definition}, \cmplr{triangle_definition}, \cmplr{triangle_inverse_definition},
+  \cmplr{phase_to_weight}, \cmplr{binder_definition}, or \cmplr{scalar_box}, whose right side is
+  $\tau$ of the definition; one forward step per occurrence rewrites $\mathcal D$ to
+  $\tau(\pi(\mathcal D))$.
+\item \emph{Lifting.} Every axiom $L=R$ of either calculus is a registered rule through $\tau$
+  (\cref{tab:completeness-summary}), and every such rule except \cmplr{qf_s1} has a converse, so a
+  paper step $C[L]\to C[R]$ or $C[R]\to C[L]$ becomes forward engine steps; the step from the right
+  to the left side of the mixed S1 is one reverse step of \cmplr{qf_s1}. Matching is up to the
+  symmetries the papers assume: all ports of a Z spider are interchangeable (flexsymmetry, with
+  \cmplr{qf_z_flex}), the outputs of a W node (with \cmplr{zxw_sym} and \cmplr{qf_w_sym}), and an X
+  spider's inputs and its outputs among themselves. Notations used in a form the pattern does not
+  use ($H^\dagger$, $D$, pink spiders, scalar diagrams) are rewritten by the definitional rules and
+  \cmplr{zxw_p1}; identities a paper step inserts on a wire are the converses of \cmplr{zxw_s2} and
+  \cmplr{zxw_s2_pink}; converses with free variables are applied with the values of the paper's
+  instance through \azx!with NAME=VALUE!, which the pattern verifies.
+\item \emph{Completeness.} For closed $\mathcal D_1$, $\mathcal D_2$ with equal denotations,
+  $\pi(\mathcal D_1)$ and $\pi(\mathcal D_2)$ are equal paper diagrams, so the completeness theorem
+  of [P1] or [P2] gives a paper derivation between them; lifting each step and joining it with the
+  two reachability derivations (the second read backward through the definitional converses) gives
+  an engine derivation from $\mathcal D_1$ to $\mathcal D_2$. For single-dimensional diagrams no
+  step involves \cmplr{qf_s1}, so every step is forward.
+\end{enumerate}
+
+\section{Exhaustive Search}\label{sec:completeness-exhaustive}
+
+\module{archytaszx.rewrite.exhaustive} searches for an engine derivation. \term{Exhaustive search}
+is a fair bidirectional breadth-first enumeration: from the start and from the goal, layer by layer,
+every match of every rule of the rule set (automatic or not, converses included) is applied to
+every diagram of the current layer.
+
+\subsection{State space and deduplication}
+
+The state of a side is a set of \term{reached} diagrams. A record
+\py!_Reached(diagram, view, meet, results)! (frozen, slotted) holds a diagram, its comparison view
+(\py!comparison_view!: spider ports in canonical order, empty parameter environment, simplified
+scalar, the scalar $c\bar c$ for a mixed diagram; \cref{ch:rewriting}), the \term{meet view} on
+which the two sides are compared (the comparison view, or \py!algebraic_view! in algebraic search),
+and the tuple of \py!RewriteResult! records of the rule applications that produced it from the
+side's root.
+
+\begin{signature}
+\py!class _Side(name: str, root: Diagram, values: Sequence[Scalar] | None = None)!\\
+Fields: \py!name!, \py!values! (the algebraic values, or \py!None!); \py!seen: dict[str, list[_Reached]]!
+keyed by \py!view_key(view)!; \py!met: dict[str, list[_Reached]]! keyed by \py!view_key(meet)!;
+\py!frontier: list[_Reached]!; \py!depth: int!. Initially both maps and the frontier hold the root
+record and \py!depth = 0!.
+\begin{itemize}[leftmargin=1.2em]
+\item \py!known(key, view)!: some record under \py!key! in \py!seen! has a view isomorphic to
+  \py!view! (\py!views_isomorphic!, up to spider port order).
+\item \py!lookup(key, meet)!: the first record under \py!key! in \py!met! whose meet view is
+  isomorphic to \py!meet!, else \py!None!.
+\item \py!expand(rules)!: one layer (\cref{alg:completeness-expand}); returns the list of
+  (meet key, record) pairs added, in order.
+\end{itemize}
+\end{signature}
+
+\py!view_key! is the canonical key of a comparison view up to spider port order; two diagrams with
+equal keys are compared by isomorphism, so the key is a bucket and isomorphism decides.
+
+\begin{algorithm}[Expanding one layer]\label{alg:completeness-expand}
+For each record $r$ of the frontier, in order, and each rule of \py!rules!, in order:
+\begin{enumerate}
+\item Let $M$ be the matches that \py!find_matches! of the rule's pattern returns on
+  \py!r.diagram!. If the pattern has
+  \py!candidate_matches!, append, for each $m\in M$, its candidate matches. If the side has values and the
+  pattern has \py!algebraic_matches!, append, for each $m$, those of \py!algebraic_matches(r.diagram, m, values)! not
+  already in $M$. An exception of \py!_SKIPPED! during this step skips the rule for $r$.
+\item For each match: apply the rule (\py!apply!); compute the comparison view and its key; skip the
+  result when \py!known(key, view)!; compute the meet view and its key. An exception of
+  \py!_SKIPPED! skips this match.
+\item Store the new record (results extended by this application) in \py!seen! and \py!met!,
+  append it to the next frontier and to the returned list.
+\end{enumerate}
+Then the frontier becomes the next frontier and \py!depth! increases by $1$ (also when the frontier
+was empty).
+\end{algorithm}
+
+\py!_SKIPPED! is \py!APPLICATION_ERRORS! of \module{archytaszx.rewrite.egraph} (\py!RewriteError!,
+\py!BangBoxError!, \py!DimensionError!, \py!GeneratorError!, \py!GraphError!, \py!PhaseError!,
+\py!ScalarError!, \py!ValidateError!) plus \py!ValueError! and \py!ArithmeticError!; a diagram whose
+construction or key raises one of them, for example a scalar beyond Python's integer conversion
+limit, is skipped. Pruning is per side: a diagram reached on the start side is pruned only against
+the start side's \py!seen!.
+
+\subsection{The search}
+
+\begin{signature}
+\py!exhaustive_search(start: Diagram, goal: Diagram, *, rules: Sequence[Rule] | None = None, on_layer: Callable[[LayerReport], None] | None = None) -> ProofPath!\\
+A derivation between \py!start! and \py!goal! over \py!rules! (default: every rule of \py!RULES!,
+in registry order). Returns only on success; raises \py!ExhaustedError! when both sides are closed.
+\end{signature}
+
+\begin{algorithm}[Fair bidirectional search]\label{alg:completeness-search}
+\begin{enumerate}
+\item Build the sides \code!start! and \code!goal!. If a record of the start side's \py!met! is
+  found by the goal side's \py!lookup!, return the path for that pair (no steps).
+\item Repeat forever: for the start side and then the goal side, expand one layer; for each added
+  (key, record), look it up in the other side; on a hit return the path with the start-side record
+  first. After each side's expansion, call \py!on_layer! with a \py!LayerReport! and, if both
+  frontiers are empty, raise \py!ExhaustedError!.
+\end{enumerate}
+\end{algorithm}
+
+\py!_path(start, goal, left, right)! returns \py!ProofPath(start, goal, forward, backward)! with
+\py!forward = (ProofStep("exhaustive", left.results),)! when \py!left.results! is non-empty (else
+empty) and \py!backward! likewise from the goal-side record: the backward results rewrite the goal
+toward the meeting diagram and are replayed in reverse by the proof certificate (\cref{ch:proofs}).
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class LayerReport!: \py!side: str! (\code!"start"!,
+\code!"goal"!, or \code!"start (bound K)"! / \code!"goal (bound K)"! in algebraic search),
+\py!depth: int! (the side's depth after the layer), \py!reached: int! (records in \py!seen!),
+\py!frontier: int! (records in the new frontier).
+
+\py!class ExhaustedError(Exception)!, raised by \py!_exhausted()! with the message
+\code!"both sides are closed under every rule and never meet"!.
+\end{signature}
+
+\paragraph{Fairness and termination.} Layer $k$ of the start side is expanded before layer $k$ of
+the goal side, and both before layer $k+1$ of either. A derivation of length $n$ whose steps apply
+rules at matches the patterns enumerate (a free variable at its default or at a value its rule's
+candidate generator lists) is found once the start side reaches layer $n$, and once it reaches
+layer $\lceil n/2\rceil$ and the goal side layer $\lfloor n/2\rfloor$ when the last
+$\lfloor n/2\rfloor$ steps use rules with converses. There is no depth cap and no time limit: for
+two diagrams that no enumerated derivation joins and whose reachable sets are infinite, the search
+does not terminate. It ends with \py!ExhaustedError! only when both reachable sets are finite and
+disjoint up to isomorphism.
+
+\subsection{Algebraic search}
+
+\begin{signature}
+\py!algebraic_search(start, goal, *, rules=None, on_layer=None) -> ProofPath!\\
+Iterative deepening over rounds $K=1,2,\dots$. Round $K$ takes the values \py!up_to_level(K)!
+(every algebraic number of level at most $K$, each once, \module{archytaszx.algebra.algebraic}),
+builds fresh sides with these values, checks the roots for a meeting, and then expands both sides
+alternately, with lookups as in \cref{alg:completeness-search}, while the start side's depth is
+below $\lceil K/2\rceil$ and some frontier is non-empty. Meet views are \py!algebraic_view!: the
+comparison view with every spider parameter a weight vector and every value, scalar included, in
+the canonical form of algebraic numbers (a rational, or \py!CRootOf(p, i)! with $p$ the primitive
+minimal polynomial). It never raises \py!ExhaustedError!; without a derivation it runs forever.
+\end{signature}
+
+The level of an algebraic number is the height $\max(|p|,q)$ of a rational $p/q$; $n$ for a
+primitive $n$-th root of unity with $n\ge3$; $1+\max$ of the heights of $a$ and $b$ for $a+bi$ with
+$b\neq0$; and $D+H$ for a root of an irreducible integer polynomial of degree $D\ge2$ with largest
+absolute coefficient $H$. Every algebraic number has a level and each level is finite, so every
+assignment of algebraic values to the free weight-vector variables of a converse occurs in some
+round. In a round, \py!algebraic_matches! sets the free variables that default to a phase vector to
+every weight vector with entries among the values (all $|V|^{d-1}$ vectors per variable); with a
+\py!solve! function and more than one free variable, the first variable ranges over the vectors and
+the rest are solved, or enumerated when \py!solve! returns \py!None!. Building the start or goal side
+raises when \py!algebraic_view! cannot canonicalize a value; \py!prove_exhaustive! checks this first
+and raises \py!ProveGrammarError! \code!"... algebraic search needs concrete dimensions and algebraic parameters: ..."!.
+
+\subsection{Use}
+
+The command \azx!prove exhaustive [algebraic] [against] TARGET! calls \py!prove_exhaustive! of
+\module{archytaszx.semantics.prove}, which runs the interface and oracle refutation rungs, calls
+\py!exhaustive_search! (or \py!algebraic_search!), turns \py!ExhaustedError! into the status
+\texttt{NOT\_FOUND} with reason \code!"exhaustive search: ..."!, and certifies and checks the path
+(\cref{ch:proofs}). Diagrams with discards are first doubled.
+
+\section{Coverage and Limits}\label{sec:completeness-limits}
+
+\begin{itemize}
+\item \emph{Covered.} Closed diagrams: concrete system size (no \bbox{}), concrete dimensions, and
+  parameter values. By \cref{sec:completeness-transfer}, two such diagrams with equal denotations
+  are joined by an engine derivation; \py!algebraic_search! enumerates every derivation whose free
+  values are algebraic, so it finds one whenever such a derivation exists over algebraic
+  parameters.
+\item \emph{Not covered.} \bboxes{} and symbolic dimensions: neither paper proves completeness
+  there, and the \py!concrete_only! rules do not match at a symbolic dimension.
+\item \emph{Free values.} \py!exhaustive_search! applies converses with free variables only at
+  their defaults and at the values of \py!candidates!; a derivation that needs another value, for
+  example a split of a Z box not produced by \py!_single_entry_splits!, is not enumerated.
+\item \emph{Arity enumerators.} A family instance is tried only when its rule's enumerator yields
+  its arities; the mixed rules draw dimensions from the host's port dimensions, \cmplr{zxw_ww_converse}
+  bounds $n$ by the host's node count, and the copy converses bound $n$ by the host's phaseless
+  states. An instance outside these bounds is not reached in one step.
+\item \emph{Converses.} \cmplr{qf_s1}, \cmplr{connective_inverse_bind_first}, and
+  \cmplr{port_box_unfusion} have no converse; a derivation that needs them from right to left on the
+  start side is found only from the goal side.
+\item \emph{Cost.} Every layer applies every rule at every match; the number of reached diagrams
+  grows with the depth without bound. The search has no time or memory limit.
+\end{itemize}
+
+\section{Worked Examples}\label{sec:completeness-examples}
+
+The directory \file{examples/completeness/} holds the lemmas of [P1] and [P2] at concrete
+dimensions as scripts: \file{lemmas/p1_lemma07.azx} to \file{lemmas/p1_lemma48.azx} (with variants
+such as \file{p1_lemma14b.azx}), \file{lemmas/p2_lemmaA03.azx} to \file{lemmas/p2_lemmaA28.azx}, and
+the explicit derivation \file{derivations/p1_lemma38_derivation.azx}. A paper pink spider is
+written as an engine X spider with its normalization $d^{(m+n)/2-1}$ as scalar.
+
+\begin{example}[Lemma 38 of {[P1]} by explicit steps]\label{ex:completeness-l38}
+At $d=3$, a W node with one output on the pink dot effect is the identity. The script
+\begin{lstlisting}[style=azx]
+@rhs =
+    z = Z(1 -> 1, literal 3)
+
+w = W(1 -> 2, literal 3); e = X(1 -> 0, literal 3); wire w.out1 -- e.in0; scalar 3^(-1/2)
+apply w_zero_effect
+apply zxw_s2_converse at 0
+apply w_identity
+prove against @rhs
+\end{lstlisting}
+applies \cmplr{w_zero_effect} (scalar $\sqrt3$, cancelling $3^{-1/2}$, leaving a W node with one
+output), inserts a plain green dot with \cmplr{zxw_s2_converse} (scalar $1$), and removes the W
+node with \cmplr{w_identity}; the shell prints \code!step: w_zero_effect (consumed n0, n1, new n2, scalar sqrt(3))!
+and the proof kernel re-checks the three steps.
+\end{example}
+
+\begin{example}[The same lemma by exhaustive search]\label{ex:completeness-l38x}
+Replacing the three \azx!apply! lines and the last line by \azx!prove exhaustive against @rhs! makes
+the search find a derivation itself; the shell prints
+\code!prove: proved: proved exhaustively in 3 step(s), 2 forward and 1 backward; ...!: the start side
+reached the meeting diagram at depth $2$ and the goal side at depth $1$.
+\end{example}
+
+\begin{example}[Lemma 7 of {[P1]}]\label{ex:completeness-l7}
+\file{lemmas/p1_lemma07.azx} states, at $d=3$ and $j=1$, that the pink $K_1$ state into the Z box
+effect $a=(a_1,a_2)$ is the scalar box $(0,a_2-1)$:
+\begin{lstlisting}[style=azx]
+@lhs =
+    p = X(0 -> 1, literal 3) phase{k: k/3}; z = Z(1 -> 0, literal 3) weight{1: a1, 2: a2}; p -> z
+    scalar 3^(-1/2)
+@rhs =
+    b = Z(0 -> 0, literal 3) weight[literal 3]{1: 0, 2: a2 - 1}
+load @lhs
+prove against @rhs
+certificate kernel
+\end{lstlisting}
+\end{example}

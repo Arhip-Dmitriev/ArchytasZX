@@ -1,0 +1,3057 @@
+\chapter{The Lean Library: Foundations, Generators and Rules}\label{ch:lean-core}
+
+\lstdefinestyle{leancore}{style=lean,
+  literate={→}{{$\to$}}1 {←}{{$\leftarrow$}}1 {≤}{{$\le$}}1 {≥}{{$\ge$}}1 {≠}{{$\ne$}}1
+           {ω}{{$\omega$}}1 {⟩}{{$\rangle$}}1 {⟨}{{$\langle$}}1 {∀}{{$\forall$}}1
+           {∃}{{$\exists$}}1 {λ}{{$\lambda$}}1 {∑}{{$\sum$}}1 {·}{{$\cdot$}}1
+           {ℂ}{{$\mathbb{C}$}}1 {ℕ}{{$\mathbb{N}$}}1 {ℤ}{{$\mathbb{Z}$}}1 {ℚ}{{$\mathbb{Q}$}}1
+           {ℝ}{{$\mathbb{R}$}}1 {↦}{{$\mapsto$}}1 {∘}{{$\circ$}}1
+           {α}{{$\alpha$}}1 {β}{{$\beta$}}1 {π}{{$\pi$}}1 {∈}{{$\in$}}1 {∉}{{$\notin$}}1
+           {×}{{$\times$}}1 {₀}{{$_0$}}1 {₁}{{$_1$}}1 {₂}{{$_2$}}1 {₃}{{$_3$}}1 {₄}{{$_4$}}1
+           {⁻}{{$^{-}$}}1 {¹}{{$^{1}$}}1 {√}{{$\surd$}}1 {∧}{{$\wedge$}}1 {∨}{{$\vee$}}1
+           {¬}{{$\neg$}}1 {↔}{{$\leftrightarrow$}}1 {ε}{{$\varepsilon$}}1 {μ}{{$\mu$}}1
+           {σ}{{$\sigma$}}1 {τ}{{$\tau$}}1 {φ}{{$\varphi$}}1 {ρ}{{$\rho$}}1 {ν}{{$\nu$}}1
+           {δ}{{$\delta$}}1 {θ}{{$\theta$}}1 {ζ}{{$\zeta$}}1 {ι}{{$\iota$}}1 {∏}{{$\prod$}}1
+           {•}{{$\bullet$}}1 {▸}{{$\triangleright$}}1,
+}
+\providecommand{\leanLLone}{\lstinline[style=leancore,frame=none,basicstyle=\ttfamily,%
+  breaklines=true,breakatwhitespace=false]}
+
+This chapter specifies the Lean~4 library that ships inside the ArchytasZX package, in the
+directory \file{archytaszx/lean}. The library defines the semantics of ArchytasZX diagrams as
+labeled tensor networks over $\C$, states every rewrite rule of the engine as a lemma about such
+networks, and supplies the decision tools (exact cyclotomic evaluation, ball arithmetic,
+contraction certificates) that the engine's Lean exporters invoke. The engine is
+Lean-certifying: an exported proof imports these modules and is checked by the Lean
+kernel~\cite{demoura2021lean4} against Mathlib~\cite{mathlib2020}. This chapter covers the
+library's build configuration and module structure, and in full detail the modules that define
+networks, generators, rule lemmas, mixed networks, exact arithmetic, refutation, contraction, and
+the diagram data type with its \bbox{} expansion. The modules for \bbox{} families are specified in
+\cref{ch:lean-boxes}, the path-sum modules in \cref{ch:lean-pathsum}, and the symbolic and linked
+modules in \cref{ch:lean-sym}; the Python side that writes the Lean files is specified in
+\cref{ch:lean-export-net} and \cref{ch:lean-export}.
+
+Throughout, $\N=\{0,1,2,\dots\}$, a \emph{label} is a natural number naming one contracted index,
+and all leg values are natural numbers. For a proposition $P$, $[P]\in\{0,1\}$ is its indicator.
+Lean identifiers appear in typewriter type; every declaration lies in the namespace
+\lean|ArchytasZX|, and every module opens \lean|Complex| and \lean|Finset| unless noted.
+
+%======================================================================
+\section{The library as a whole}\label{sec:lean-core-library}
+
+\subsection{Toolchain, package and build}\label{sec:lean-core-build}
+
+The library is a Lake package. Its four configuration files fix every version.
+
+\begin{description}[style=nextline]
+\item[\file{lean-toolchain}] The single line \code|leanprover/lean4:v4.35.0|: the package builds
+  with Lean~4 version 4.35.0\index{Lean toolchain}. \tool{Elan}{https://github.com/leanprover/elan}
+  reads this file and installs that toolchain.
+\item[\file{lakefile.toml}] The package \code|archytaszx| with \code|defaultTargets = ["ArchytasZX"]|,
+  one requirement and one library:
+\begin{lstlisting}[style=grammar]
+name = "archytaszx"
+defaultTargets = ["ArchytasZX"]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.35.0"
+
+[[lean_lib]]
+name = "ArchytasZX"
+\end{lstlisting}
+\item[\file{lake-manifest.json}] Manifest format \code|1.3.0|, \code|packagesDir| =
+  \code|.lake/packages|, \code|lakeDir| = \code|.lake|, \code|fixedToolchain| = \code|false|. It pins
+  the packages of \cref{tab:lean-core-manifest}; only Mathlib is a direct requirement
+  (\code|inherited| = \code|false|), the others come in through Mathlib.
+\item[\file{ArchytasZX.lean}] The root module. It consists of 87 \lean|import| lines and nothing
+  else; the imported modules and their transitive imports make up all 91 modules in
+  \file{archytaszx/lean/ArchytasZX/}.
+\end{description}
+
+\begin{table}[htbp]
+\centering\small
+\caption{Packages pinned by \texttt{lake-manifest.json}.}\label{tab:lean-core-manifest}
+\begin{tabular}{@{}lllp{4.6cm}@{}}
+\toprule
+Package & Input revision & Pinned commit & Repository \\
+\midrule
+\code|mathlib| & \code|v4.35.0| & \code|56a005855ea1| & \url{https://github.com/leanprover-community/mathlib4} \\
+\code|plausible| & \code|main| & \code|dfa4f38190d0| & \url{https://github.com/leanprover-community/plausible} \\
+\code|LeanSearchClient| & \code|main| & \code|d6b4c7be5be7| & \url{https://github.com/leanprover-community/LeanSearchClient} \\
+\code|importGraph| & \code|main| & \code|a41f0e9a4dea| & \url{https://github.com/leanprover-community/import-graph} \\
+\code|proofwidgets| & \code|main| & \code|df72b022e558| & \url{https://github.com/leanprover-community/ProofWidgets4} \\
+\code|aesop| & \code|master| & \code|4a174c490d87| & \url{https://github.com/leanprover-community/aesop} \\
+\code|Qq| & \code|master| & \code|dce0ad79c486| & \url{https://github.com/leanprover-community/quote4} \\
+\code|batteries| & \code|main| & \code|66e469188fe0| & \url{https://github.com/leanprover-community/batteries} \\
+\code|Cli| & \code|v4.35.0| & \code|c24fe6078c63| & \url{https://github.com/leanprover/lean4-cli} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The full pinned commits are:
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Package & Commit \\
+\midrule
+\code|mathlib| & \code|56a005855ea17e0b0958f73ec801ae140b0a1679| \\
+\code|plausible| & \code|dfa4f38190d07c37e315953e08b90fe2d95b3c24| \\
+\code|LeanSearchClient| & \code|d6b4c7be5be75ec4917c873ac50c756dc1436372| \\
+\code|importGraph| & \code|a41f0e9a4dea23188ea9cc1c41ac9f8bbafe0b93| \\
+\code|proofwidgets| & \code|df72b022e558978a1c50264cfc4d7fec86fa8e04| \\
+\code|aesop| & \code|4a174c490d8707121c4a9290800489f105d85e07| \\
+\code|Qq| & \code|dce0ad79c486cb1fb504af04f953c3466b0c6db8| \\
+\code|batteries| & \code|66e469188fe07963e5cf666c7d4433f45b8131c5| \\
+\code|Cli| & \code|c24fe6078c630e89b489bffe59b3e20ac30d12c8| \\
+\bottomrule
+\end{tabular}
+\end{center}
+Each package's \code|configFile| is \code|lakefile.toml|, except Mathlib's, which is
+\code|lakefile.lean|.
+
+\paragraph{Building.} From \file{archytaszx/lean}, \code|lake build| fetches the pinned packages
+into \file{.lake/packages}, then compiles the default target, the library \code|ArchytasZX|, that is
+the root module and every module it imports. Mathlib's command \code|lake exe cache get|
+downloads Mathlib's compiled files. An exported proof is a Lean source file whose header imports
+the modules it needs (for example \lean|import ArchytasZX| or \lean|import ArchytasZX.PathSumNetW|).
+The engine's checker \py|check(source, path, timeout=1800)| in
+\module{archytaszx.semantics.lean_net} checks such a file in four steps:
+\begin{enumerate}
+\item find \code|lake| on the search path, else at \file{~/.elan/bin/lake}; with neither, raise
+  \py|NetUnsupported("Lean (lake) is not installed")|;
+\item write \py|source| to \py|path| (UTF-8);
+\item if \file{archytaszx/lean/.lake/packages/mathlib} is not a directory, run
+  \code|lake exe cache get| in \file{archytaszx/lean}; on a nonzero exit return
+  \py|(False, stdout + stderr)|;
+\item run \code|lake build| in \file{archytaszx/lean}; on a nonzero exit return
+  \py|(False, stdout + stderr)|; then run \code|lake env lean <absolute path>| there and return
+  \py|(exit code = 0, stdout + stderr)|.
+\end{enumerate}
+Each subprocess has the time limit \py|timeout| seconds. The repository's continuous integration
+does not build the Lean library.
+
+\paragraph{File conventions.} Every module starts with the comment block
+\code|Copyright 2026 Arkhip A. Dmitriev / Licensed under the Apache License, Version 2.0.|, then its
+imports, then a module docstring \code|/-! ... -/| headed by a Markdown title, then
+\lean|namespace ArchytasZX|. Docstrings \code|/-- ... -/| state what each declaration is.
+
+\subsection{Trust base}\label{sec:lean-core-trust}
+
+\begin{itemize}
+\item \textbf{No axioms, no gaps.} No module of \file{archytaszx/lean/ArchytasZX/} declares an
+  \lean|axiom|, and none contains \lean|sorry|, \lean|admit| or \lean|native_decide|. Every theorem
+  therefore rests on the Lean kernel and the axioms of Lean's core library as Mathlib uses them
+  (propositional extensionality, the axiom of choice, quotient soundness); the real and complex
+  numbers of Mathlib are classical.
+\item \textbf{Computation in proofs.} Decidable checks (\lean|isoOK|, \lean|Diagram.check|,
+  \lean|leafOK|, \lean|chainOK|, coefficient-vector reductions) are \lean|Bool| functions; an exported
+  proof discharges a hypothesis \lean|h : f x = true| with \lean|decide| or \lean|rfl|, so the Lean
+  kernel evaluates the check by definitional unfolding.
+\item \textbf{Unsafe code.} Three modules outside this chapter (\texttt{PathSumChain},
+  \texttt{PathSumQuditChain}, \texttt{SymF2Chain}) declare \lean|unsafe| metaprograms of type
+  \lean|MetaM| and attach them with \lean|@[implemented_by]| to the elaboration-time functions that
+  enumerate chain states; these functions run while a proof is elaborated, and the proof terms they
+  help produce are checked by the kernel. No module of this chapter uses \lean|unsafe|.
+\item \textbf{Noncomputable definitions.} Every definition with a complex or real value (tensor
+  entries, sums, evaluations) is \lean|noncomputable|; theorems about them are proved, never
+  evaluated.
+\end{itemize}
+
+\subsection{Module structure}\label{sec:lean-core-modules}
+
+\Cref{tab:lean-core-imports} lists every module of \file{archytaszx/lean/ArchytasZX/} with its
+direct imports, its line count, its number of top-level theorems and of top-level definitions
+(\lean|def|, \lean|abbrev|, \lean|structure|, \lean|inductive|), and the chapter that specifies it.
+Imports from Mathlib are counted, not named, except in \texttt{Net}, which carries all 43
+Mathlib imports of the foundation. The library has 48{,}780 lines, 2{,}335 top-level theorems and
+1{,}155 top-level definitions. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
+of this chapter.
+
+{\small
+\begin{xltabular}{\textwidth}{@{}l>{\raggedright\arraybackslash}Xrrrc@{}}
+\caption{Every module of the library: direct imports (modules of \texttt{ArchytasZX}, then the number
+of Mathlib imports), lines, theorems, definitions, and the specifying chapter: C this chapter,
+B \cref{ch:lean-boxes}, P \cref{ch:lean-pathsum}, S \cref{ch:lean-sym}.}\label{tab:lean-core-imports}\\
+\toprule
+Module & Imports & Lines & Thm. & Def. & Ch. \\
+\midrule
+\endfirsthead
+\toprule
+Module & Imports & Lines & Thm. & Def. & Ch. \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{Assume} & Bundle & 96 & 4 & 4 & C \\
+\texttt{Ball} & Cyclo, 2 Mathlib & 280 & 36 & 4 & C \\
+\texttt{Bialgebra} & ZXRules & 189 & 4 & 0 & C \\
+\texttt{BoxFree} & Induct & 154 & 7 & 0 & B \\
+\texttt{BoxedBridge} & FamK, DiagramBridge & 631 & 27 & 18 & B \\
+\texttt{Bridge} & Expand & 133 & 0 & 16 & B \\
+\texttt{Bundle} & WZ & 1876 & 109 & 46 & B \\
+\texttt{ChainBox} & Bridge & 85 & 2 & 7 & B \\
+\texttt{ChainEvery} & ChainLink & 313 & 26 & 9 & B \\
+\texttt{ChainInduct} & Bundle & 313 & 21 & 5 & B \\
+\texttt{ChainLink} & ChainBox, ChainInduct & 99 & 4 & 5 & B \\
+\texttt{ChainMixed} & ChainInduct & 422 & 27 & 3 & B \\
+\texttt{Closed} & Rules & 152 & 17 & 1 & C \\
+\texttt{Completeness} & Net, Rules, WRules, Closed, ZXRules & 159 & 7 & 0 & C \\
+\texttt{Connective} & WRules & 255 & 10 & 0 & C \\
+\texttt{Contract} & Refute & 502 & 22 & 19 & C \\
+\texttt{Cyclo} & Bundle, 1 Mathlib & 451 & 47 & 11 & C \\
+\texttt{Diagram} & Net & 246 & 6 & 20 & C \\
+\texttt{DiagramBridge} & Diagram & 476 & 17 & 14 & B \\
+\texttt{Digits} & Elim & 196 & 13 & 12 & C \\
+\texttt{Elim} & Bridge, WZ & 331 & 9 & 8 & C \\
+\texttt{Expand} & Diagram & 159 & 0 & 20 & C \\
+\texttt{ExpandFacts} & Digits & 230 & 13 & 2 & C \\
+\texttt{FamBridge} & NetDigits & 268 & 11 & 3 & B \\
+\texttt{FamCheck} & FamBridge & 153 & 8 & 5 & B \\
+\texttt{FamK} & OrderK & 243 & 12 & 2 & B \\
+\texttt{FuseB} & Unfuse & 284 & 14 & 1 & C \\
+\texttt{Gather} & PortBox & 246 & 22 & 1 & C \\
+\texttt{GaussSign} & Cyclo, PathSumQudit & 174 & 8 & 4 & C \\
+\texttt{Hopf} & Bialgebra & 245 & 10 & 0 & C \\
+\texttt{Induct} & NodeBox & 299 & 15 & 5 & B \\
+\texttt{Iso} & Net & 156 & 7 & 5 & C \\
+\texttt{Linked} & Relabel & 272 & 4 & 15 & S \\
+\texttt{LinkedForm} & LinkedSlide, LinkedRegroup & 170 & 12 & 7 & S \\
+\texttt{LinkedGhost} & LinkedForm & 603 & 43 & 10 & S \\
+\texttt{LinkedPeel} & Linked, PortBox & 895 & 49 & 8 & S \\
+\texttt{LinkedRegroup} & Linked & 134 & 6 & 5 & S \\
+\texttt{LinkedSlide} & BoxFree, LinkedPeel, Weights & 576 & 45 & 6 & S \\
+\texttt{LinkedSplice} & LinkedGhost, LinkedPeel & 681 & 37 & 20 & S \\
+\texttt{LinkedSplit} & LinkedPeel, Iso & 1038 & 46 & 9 & S \\
+\texttt{Mixed} & Closed & 210 & 16 & 3 & C \\
+\texttt{Net} & 43 Mathlib & 471 & 20 & 39 & C \\
+\texttt{NetDigits} & Pin & 244 & 6 & 2 & C \\
+\texttt{NodeBox} & Split & 1440 & 85 & 7 & B \\
+\texttt{NodeBridge} & NodeVal & 339 & 15 & 1 & B \\
+\texttt{NodeVal} & Tower & 406 & 34 & 11 & B \\
+\texttt{NumField} & Weights, 4 Mathlib & 110 & 7 & 3 & C \\
+\texttt{Order} & FamCheck & 280 & 20 & 7 & C \\
+\texttt{OrderK} & Order & 246 & 13 & 8 & C \\
+\texttt{Paper} & Net, Rules, Closed, ZXRules, Cyclo & 172 & 12 & 9 & C \\
+\texttt{PathSum} & Sym, Cyclo & 183 & 17 & 2 & P \\
+\texttt{PathSumAmp} & PathSumRules & 1944 & 79 & 85 & P \\
+\texttt{PathSumChain} & PathSumSupport & 307 & 6 & 19 & P \\
+\texttt{PathSumDigits} & PathSumNet, Positional & 929 & 40 & 16 & P \\
+\texttt{PathSumNet} & PathSumRules & 545 & 33 & 14 & P \\
+\texttt{PathSumNetAmp} & PathSumNetW, PathSumAmp & 409 & 19 & 6 & P \\
+\texttt{PathSumNetW} & PathSumW, PathSumChain & 91 & 7 & 3 & P \\
+\texttt{PathSumQudit} & PathSum, 1 Mathlib & 1138 & 68 & 55 & P \\
+\texttt{PathSumQuditChain} & PathSumChain, PathSumQudit & 103 & 3 & 5 & P \\
+\texttt{PathSumQuditDigits} & PathSumQuditNet & 636 & 28 & 12 & P \\
+\texttt{PathSumQuditNet} & PathSumQudit, PathSumDigits, GaussSign, PathSumQuditChain & 462 & 29 & 13 & P \\
+\texttt{PathSumRules} & PathSumSem & 1661 & 72 & 42 & P \\
+\texttt{PathSumSem} & PathSum, Ball & 1761 & 115 & 76 & P \\
+\texttt{PathSumSupport} & PathSumAmp & 58 & 2 & 1 & P \\
+\texttt{PathSumW} & PathSumDigits & 224 & 9 & 3 & P \\
+\texttt{Periodic} & ChainInduct & 42 & 1 & 0 & B \\
+\texttt{PeriodicChain} & Periodic & 301 & 22 & 6 & B \\
+\texttt{Pin} & NodeBridge & 152 & 8 & 4 & C \\
+\texttt{Port} & Bundle & 1116 & 61 & 11 & B \\
+\texttt{PortBox} & Relabel, ExpandFacts & 934 & 63 & 7 & B \\
+\texttt{Positional} & BoxFree, Bundle & 141 & 12 & 3 & C \\
+\texttt{Refute} & Cyclo & 514 & 25 & 32 & C \\
+\texttt{Relabel} & Digits & 135 & 4 & 4 & C \\
+\texttt{Rules} & Iso, 1 Mathlib & 324 & 19 & 0 & C \\
+\texttt{Split} & Gather & 195 & 6 & 2 & C \\
+\texttt{Sym} & Closed & 1032 & 78 & 72 & S \\
+\texttt{SymCanon} & SymNorm & 851 & 35 & 45 & S \\
+\texttt{SymF2} & SymNet & 1231 & 83 & 58 & S \\
+\texttt{SymF2Bridge} & SymF2, DiagramBridge & 160 & 3 & 2 & S \\
+\texttt{SymF2Chain} & SymF2 & 136 & 0 & 7 & S \\
+\texttt{SymNet} & SymCanon & 898 & 40 & 37 & S \\
+\texttt{SymNorm} & Sym, Bundle & 599 & 27 & 18 & S \\
+\texttt{Tower} & Positional & 161 & 11 & 1 & C \\
+\texttt{TreeInduct} & ChainInduct & 330 & 13 & 7 & B \\
+\texttt{Unfuse} & Bundle & 221 & 12 & 0 & C \\
+\texttt{WAssoc} & WRules & 120 & 6 & 2 & C \\
+\texttt{WFuse} & WAssoc, FuseB, NodeBox, Weights & 225 & 10 & 0 & C \\
+\texttt{WRules} & Hopf & 289 & 17 & 1 & C \\
+\texttt{WZ} & Connective & 242 & 6 & 0 & C \\
+\texttt{Weights} & Net, Rules, Closed, ZXRules, Completeness, WZ, Hopf, Connective & 9479 & 213 & 64 & C \\
+\texttt{ZXRules} & Closed & 398 & 28 & 0 & C \\
+\end{xltabular}
+}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1.55cm,y=0.95cm,every node/.style={font=\scriptsize,draw,rounded corners=1pt,inner sep=2pt},>={Stealth[length=1.6mm]}]
+\node (net) at (3,0) {Net};
+\node (iso) at (1,1) {Iso};
+\node (diag) at (5,1) {Diagram};
+\node (rules) at (1,2) {Rules};
+\node (expand) at (5,2) {Expand};
+\node (closed) at (1,3) {Closed};
+\node (zx) at (0,4) {ZXRules};
+\node (mixed) at (2,4) {Mixed};
+\node (bia) at (0,5) {Bialgebra};
+\node (hopf) at (0,6) {Hopf};
+\node (wr) at (0,7) {WRules};
+\node (conn) at (-1,8) {Connective};
+\node (wassoc) at (1,8) {WAssoc};
+\node (compl) at (2,7) {Completeness};
+\node (wz) at (-1,9) {WZ};
+\node (weights) at (1,10) {Weights};
+\node (numf) at (0,11) {NumField};
+\node (bundle) at (-1,10.2) {[Bundle]};
+\node (unf) at (-2,11) {Unfuse};
+\node (fuseb) at (-2,12) {FuseB};
+\node (cyclo) at (3,11) {Cyclo};
+\node (refute) at (3,12) {Refute};
+\node (contract) at (3,13) {Contract};
+\node (ball) at (4.3,12) {Ball};
+\node (paper) at (2,12) {Paper};
+\node (gauss) at (5.2,12.6) {GaussSign};
+\node (assume) at (-3,11) {Assume};
+\draw[->] (net) -- (iso); \draw[->] (net) -- (diag); \draw[->] (iso) -- (rules);
+\draw[->] (diag) -- (expand); \draw[->] (rules) -- (closed); \draw[->] (closed) -- (zx);
+\draw[->] (closed) -- (mixed); \draw[->] (zx) -- (bia); \draw[->] (bia) -- (hopf);
+\draw[->] (hopf) -- (wr); \draw[->] (wr) -- (conn); \draw[->] (wr) -- (wassoc);
+\draw[->] (wr) -- (compl); \draw[->] (conn) -- (wz); \draw[->] (compl) -- (weights);
+\draw[->] (wz) -- (weights); \draw[->] (weights) -- (numf); \draw[->] (wz) -- (bundle);
+\draw[->] (bundle) -- (unf); \draw[->] (unf) -- (fuseb); \draw[->] (bundle) -- (cyclo);
+\draw[->] (cyclo) -- (refute); \draw[->] (refute) -- (contract); \draw[->] (cyclo) -- (ball);
+\draw[->] (cyclo) -- (paper); \draw[->] (cyclo) -- (gauss); \draw[->] (bundle) -- (assume);
+\end{tikzpicture}
+\caption{Import structure of the network and rule-lemma modules of this chapter; an arrow points
+from an imported module to an importing one; bracketed modules belong to \cref{ch:lean-boxes}.
+Further imports are listed in \cref{tab:lean-core-imports}.}\label{fig:lean-core-spine-a}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1.7cm,y=0.9cm,every node/.style={font=\scriptsize,draw,rounded corners=1pt,inner sep=2pt},>={Stealth[length=1.6mm]}]
+\node (expand) at (0,0) {Expand};
+\node (bridge) at (0,1) {[Bridge]};
+\node (elim) at (0,2) {Elim};
+\node (digits) at (0,3) {Digits};
+\node (ef) at (-1,4) {ExpandFacts};
+\node (rel) at (1,4) {Relabel};
+\node (portbox) at (0,5) {[PortBox]};
+\node (gather) at (0,6) {Gather};
+\node (split) at (0,7) {Split};
+\node (nodebox) at (0,8) {[NodeBox]};
+\node (induct) at (0,9) {[Induct, BoxFree]};
+\node (pos) at (2,9.5) {Positional};
+\node (tower) at (2,10.5) {Tower};
+\node (nv) at (2,11.5) {[NodeVal, NodeBridge]};
+\node (pin) at (2,12.5) {Pin};
+\node (nd) at (2,13.5) {NetDigits};
+\node (fam) at (0,13.5) {[FamBridge, FamCheck]};
+\node (order) at (0,14.5) {Order};
+\node (orderk) at (0,15.5) {OrderK};
+\node (wfuse) at (-2,9) {WFuse};
+\draw[->] (expand) -- (bridge); \draw[->] (bridge) -- (elim); \draw[->] (elim) -- (digits);
+\draw[->] (digits) -- (ef); \draw[->] (digits) -- (rel); \draw[->] (ef) -- (portbox);
+\draw[->] (rel) -- (portbox); \draw[->] (portbox) -- (gather); \draw[->] (gather) -- (split);
+\draw[->] (split) -- (nodebox); \draw[->] (nodebox) -- (induct); \draw[->] (induct) -- (pos);
+\draw[->] (pos) -- (tower); \draw[->] (tower) -- (nv); \draw[->] (nv) -- (pin);
+\draw[->] (pin) -- (nd); \draw[->] (nd) -- (fam); \draw[->] (fam) -- (order);
+\draw[->] (order) -- (orderk); \draw[->] (nodebox) -- (wfuse);
+\end{tikzpicture}
+\caption{Import structure of the diagram and \bbox{} expansion modules of this chapter (\texttt{Elim} also imports \texttt{WZ}; \texttt{WFuse} also imports \texttt{WAssoc}, \texttt{FuseB} and \texttt{Weights}; \texttt{Positional} also imports \texttt{Bundle}); bracketed modules belong to \cref{ch:lean-boxes}.}\label{fig:lean-core-spine}
+\end{figure}
+
+\subsection{Relation to the Python engine}\label{sec:lean-core-python}
+
+The library mirrors the engine's data in three layers.
+\begin{enumerate}
+\item \textbf{Generators.} The constructors \lean|Z|, \lean|X|, \lean|F|, \lean|T|, \lean|Ti|,
+  \lean|W|, \lean|B|, \lean|S| of \lean|Kind| (\cref{sec:lean-core-net}) are the engine's
+  generators Z spider, X spider, Fourier box $F$, triangle, inverse triangle, W node, dimension
+  binder $B$ and dimension splitter $S$; the exporter's table \py|_KINDS| maps each engine kind to
+  the constructor of the same name. \lean|I| is the bare wire. \lean|ZW| and \lean|XW| are the
+  Z and X spiders with arbitrary complex coefficients, the engine's weighted Z box and its X
+  counterpart. \lean|ZB|, \lean|XB|, \lean|WB| and \lean|Bun| carry \bbox{} families: spiders whose
+  last ports bundle copies, and copies of a generator along a multiplicity. The discard $G$ has no
+  constructor; a diagram with discards is held as its purification (\cref{sec:lean-core-mixed}).
+\item \textbf{Diagrams.} \lean|Diagram| (\cref{sec:lean-core-diagram}) is the engine's diagram
+  as data, with ports, wires, boundary and \bboxes; \lean|DEqual_iff| equates diagram equality with
+  network equality, so the exporter states its final theorem about diagrams.
+\item \textbf{Rules.} Every rewrite rule the exporter supports has one or more lemmas whose
+  conclusion is a \lean|LocalEq| between the rule's two sides. \Cref{tab:lean-core-rulemap} lists
+  the engine rule names (keys of the exporter's dispatch table \py|_RULES| in
+  \module{archytaszx.semantics.lean_net}) with the lemmas their steps invoke. A rule step becomes
+  \lean|iso| into the shape $C\mathbin{+\!\!+}L$, then \lean|rewrite| with the rule's lemma, then
+  \lean|wire_elim| for each bare wire the step leaves.
+\end{enumerate}
+
+{\small
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{6.9cm}>{\raggedright\arraybackslash}X@{}}
+\caption{Engine rules and the lemmas their exported steps invoke (module in parentheses). A
+converse rule not listed invokes its forward rule's lemma under
+\lean|LocalEq.symm'|.}\label{tab:lean-core-rulemap}\\
+\toprule
+Engine rule & Lemmas \\
+\midrule
+\endfirsthead
+\toprule
+Engine rule & Lemmas \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code|spider_fusion|, \code|z_fusion_prime_d| & \lean|fusionZ|, \lean|fusionX| (Rules); \lean|zcFusion|, \lean|xcFusion| (Weights); \lean|fusionZG|, \lean|fusionXG| (FuseB) for bundled ports \\
+\code|identity_removal| & \lean|identityZ|, \lean|identityX| (Rules) \\
+\code|zx_cap|, \code|zx_cap_swapped| & \lean|cap|, \lean|capSwapped| (ZXRules) \\
+\code|fourier_state_color_change|, \code|..._swapped| & \lean|colorState|, \lean|colorEffect|, \lean|colorStateX|, \lean|colorEffectX| (ZXRules) \\
+\code|state_copy|, \code|state_copy_swapped| & \lean|stateCopy|, \lean|stateCopySwapped| (ZXRules) \\
+\code|triangle_inverse_cancellation| & \lean|triangle|, \lean|triangle'| (ZXRules) \\
+\code|fourier_cancellation| & \lean|fourier4| (ZXRules) \\
+\code|bialgebra|, \code|bialgebra_swapped|, \code|zxw_b2_converse| & \lean|bialgebra|, \lean|bialgebraSwapped| (Bialgebra) \\
+\code|hopf|, \code|hopf_swapped| & \lean|hopf|, \lean|hopfSwapped| (Hopf); \lean|hopfW|, \lean|hopfSwappedW|, \lean|hopfXW|, \lean|hopfSwappedXW|, \lean|hopfWXW|, \lean|hopfSwappedWXW| (Weights) \\
+\code|w_fusion|, \code|qf_wf| & \lean|wFusion| (WRules) \\
+\code|w_identity| & \lean|wIdentity| (WRules) \\
+\code|w_zero_copy|, \code|triangle_zero_state|, \code|zxw_bs0| & \lean|wZeroCopy|, \lean|triZeroState|, \lean|triInvZeroState| (WRules) \\
+\code|triangle_zero_effect| & \lean|triZeroEffect| (WRules) \\
+\code|w_z_effect|, \code|w_zero_effect| & \lean|wZEffect|, \lean|wZeroEffect| (WRules) \\
+\code|connective_states|, \code|connective_states_swapped| & \lean|connStates|, \lean|connEffects|, \lean|connStatesX|, \lean|connEffectsX| (Connective) \\
+\code|connective_inverse|, \code|connective_inverse_bind_first| & \lean|connInverse|, \lean|connInverseBind| (Connective) \\
+\code|wz_bialgebra|, \code|zxw_bzw_converse| & \lean|wzBialgebra| (WZ) \\
+\code|port_box_unfusion| & \lean|unfuseZB|, \lean|unfuseXB|, \lean|unfuseXBi| (Unfuse) \\
+\code|zxw_s2|, \code|zxw_s2_pink| & \lean|identityZ|, \lean|identityX| (Rules), \lean|identityXZ| (Weights) \\
+\code|zxw_s1| & \lean|zcFusionN| (Weights) \\
+\code|zxw_sym|, \code|qf_w_sym| (and converses) & \lean|wPerm| (Completeness) \\
+\code|zxw_aso| (and converse) & \lean|wAso| (Completeness) \\
+\code|qf_z_flex| (and converse) & \lean|zPerm| (Completeness) \\
+\code|zxw_k0| & \lean|kCopy| (Completeness) \\
+\code|zxw_ept|, \code|zxw_zer|, \code|zxw_ad|, \code|zxw_pcy|, \code|zxw_k2| & \lean|zcEpt|, \lean|zcZer|, \lean|zcAd|, \lean|zcPcy|, \lean|zcK2| (Weights) \\
+\code|triangle_definition_converse|, \code|triangle_inverse_definition_converse| & \lean|zcT|, \lean|zcTi| (Weights) \\
+\code|phase_to_weight|, \code|weight_to_phase| & \lean|zcCongr| (Weights) \\
+\code|scalar_box| & \lean|zcScalar| (Weights) \\
+\code|zxw_p1|, \code|zxw_p1_multiplier| & \lean|fourierSq|, \lean|fourierSq'|, \lean|fourierMult| (Weights) \\
+\code|zxw_ta|, \code|zxw_bsj|, \code|zxw_k1|, \code|zxw_d1| & \lean|zxwTA|, \lean|zxwBsj|, \lean|kOne|, \lean|zxwD1| (Weights) \\
+\code|x_spider_definition|, \code|zxw_h1| & \lean|xDef|, \lean|xDefT|, \lean|kjNeg|, \lean|xDefW| (Weights) \\
+\code|binder_definition| & \lean|bindDef|, \lean|bindDef0|, \lean|bindDefP| (Weights) \\
+\code|zxw_vw|, \code|zxw_zv|, \code|zxw_va|, \code|zxw_kz|, \code|zxw_ww|, \code|zxw_hd| (and converses) & \lean|zxwVW|, \lean|zxwZV|, \lean|zxwVA|, \lean|zxwKZ|, \lean|zxwWW|, \lean|zxwHD| (Weights) \\
+\code|qf_mw|, \code|qf_e|, \code|qf_k0|, \code|qf_d1|, \code|qf_va|, \code|qf_hd|, \code|qf_ww|, \code|qf_dd|, \code|qf_bzw|, \code|qf_dzx|, \code|qf_ta|, \code|qf_s1| (and converses) & \lean|qfMW|, \lean|qfE|, \lean|qfK0|, \lean|qfD1|, \lean|qfVA|, \lean|qfHD|, \lean|qfWW|, \lean|qfDD|, \lean|qfBZW|, \lean|qfDZX|, \lean|qfTA|, \lean|qfS1|, \lean|qfS1c| (Weights) \\
+\end{xltabular}
+}
+
+Besides the rule lemmas, the exporters use: \lean|iso|, \lean|iso_scalar| (\texttt{Iso}) to reorder
+nodes and rename summed labels; \lean|rewrite| and \lean|Equal.trans|, \lean|Equal.mul_trans|,
+\lean|Equal.rescale| (\texttt{Net}) to chain steps; \lean|wire_elim| (\texttt{Rules}) to remove bare
+wires; \lean|bunI| (\texttt{FuseB}) and \lean|wFuseZ| (\texttt{WFuse}) for copied bare wires and W
+fusion over bundled ports; \lean|netCoef| and \lean|root_unique| (\texttt{NumField}) for spider
+coefficients given by roots of integer polynomials; \lean|Equal.of_mapDim'| (\texttt{Assume}) for
+dimensions assumed equal; \lean|DEqual_iff| (\texttt{Diagram}) for the restatement over diagrams;
+\lean|refute|, \lean|eval_cyc|, \lean|inRange_of| (\texttt{Refute}) and \lean|eval_ve_at|,
+\lean|eval_ve_groups| (\texttt{Contract}) for refutations; \lean|gauss_rt| (\texttt{GaussSign}) for
+quadratic Gauss sums.
+
+%======================================================================
+\section{Tensor networks (\texttt{Net})}\label{sec:lean-core-net}
+
+\texttt{ArchytasZX.Net} is the foundation: it defines generator kinds, network nodes, networks,
+environments, the tensor of every generator, the evaluation of a network as a sum over its internal
+labels, the equality of scaled networks, and the frame theorem that makes a local equation hold in
+every context. The semantics is the standard one of the qudit ZX calculus and of the ZXW calculus of
+\citet{poor2023zxw} and \citet{wang2023qufinitezxw}: each generator is a tensor with one index per
+port, and a network contracts shared indices~\cite{coecke2011interacting}.
+
+\subsection{Data}\label{sec:lean-core-net-data}
+
+\begin{lstlisting}[style=leancore]
+inductive Kind
+  | Z | X | F | T | Ti | W | B | S | I | ZW
+  | ZB (cs : List (List ℕ)) | XB (co ci : List (List ℕ)) | WB (cs : List (List ℕ))
+  | Bun (m : ℕ) (base : Kind)
+  | XW
+  deriving DecidableEq, Repr
+
+structure Node where
+  kind : Kind
+  outs : List ℕ      -- output port labels
+  ins  : List ℕ      -- input port labels
+  dim  : ℕ           -- dimension index
+  ph   : ℕ           -- phase index (second dimension index of B and S)
+  deriving DecidableEq, Repr
+
+structure Net where
+  nodes : List Node
+  int   : List ℕ     -- summed (internal) labels
+  bnd   : List ℕ     -- boundary labels
+  deriving DecidableEq, Repr
+
+structure Env where
+  dimv  : ℕ → ℕ                       -- dimension of each dimension index
+  phase : ℕ → ℕ → ℝ                   -- phase index, k: phase in turns
+  labs  : List (ℕ × ℕ)                -- (label, dimension index)
+  mult  : ℕ → ℕ := fun _ => 0         -- value of each multiplicity symbol
+  coef  : ℕ → ℕ → ℂ := fun _ _ => 1   -- coefficient index, k: coefficient
+\end{lstlisting}
+
+\begin{definition}[Kinds]\label{def:lean-core-kind}
+A \term{kind} is one of: \lean|Z| (Z spider), \lean|X| (X spider), \lean|F| (Fourier box),
+\lean|T| (triangle), \lean|Ti| (inverse triangle), \lean|W| (W node), \lean|B| (dimension binder),
+\lean|S| (dimension splitter), \lean|I| (bare wire), \lean|ZW| (Z spider with complex
+coefficients), \lean|XW| (X spider with complex coefficients), \lean|ZB cs| (Z spider whose last
+\lean|cs.length| inputs bundle along the chains \lean|cs|), \lean|XB co ci| (X spider whose last
+outputs bundle along \lean|co| and last inputs along \lean|ci|), \lean|WB cs| (W node whose last
+outputs bundle along \lean|cs|), and \lean|Bun m base| (copies of \lean|base| along the
+multiplicity symbol \lean|m|). A \term{chain} is a list of multiplicity symbols, outermost first.
+Equality of kinds and nodes is structural (\lean|DecidableEq|).
+\end{definition}
+
+A node's ports are its outputs followed by its inputs (\lean|Node.labels n = n.outs ++ n.ins|); a
+label shared by several ports is one contracted index. \lean|labelsOf ns| is
+\lean|ns.flatMap Node.labels|. \lean|Node.rename f n| applies \lean|f| to every port label.
+
+\begin{definition}[Label dimension]
+For an environment $E$, \lean|labDim E l = E.dimv ((E.labs.lookup l).getD 0)|: the dimension of
+the index named by the first entry for $l$ in \lean|E.labs|, the index $0$ when $l$ has no entry.
+\lean|labIdx labs l = (labs.lookup l).getD 0| (in \texttt{Iso}) is the index itself.
+\end{definition}
+
+\subsection{Scalars and generator tensors}\label{sec:lean-core-net-tensors}
+
+With $\theta\in\R$ and $d\in\N$,
+\[
+  \mathrm{ex}(\theta)=e^{2\pi i\theta},\qquad
+  \omega_d=\mathrm{om}(d)=e^{2\pi i/d},\qquad
+  F_d[j,k]=\mathrm{fou}(d,j,k)=\frac{\omega_d^{jk}}{\sqrt d}.
+\]
+For $d=0$, Lean's division by zero makes $\omega_0=e^{0}=1$ and $F_0[j,k]=0$. The generator
+entries, for leg values $v_i\in\N$ (not restricted to $[0,d)$; ranges are imposed by evaluation), a
+phase function $\varphi:\N\to\R$ in turns and a coefficient function $c:\N\to\C$:
+\begin{align*}
+\mathrm{tZ}(d,\varphi,v_1\dots v_n)&=\sum_{k<d}[v_1=\dots=v_n=k]\,\mathrm{ex}(\varphi(k)),\\
+\mathrm{tZw}(d,c,v_1\dots v_n)&=\sum_{k<d}[v_1=\dots=v_n=k]\,c(k),\\
+\mathrm{tX}(d,\varphi,o_1\dots o_m;i_1\dots i_n)&=\sum_{k<d}\mathrm{ex}(\varphi(k))
+  \prod_{a}F_d[o_a,k]\prod_{b}\overline{F_d[i_b,k]},\\
+\mathrm{tXw}(d,c,o;i)&=\sum_{k<d}c(k)\prod_{a}F_d[o_a,k]\prod_{b}\overline{F_d[i_b,k]},\\
+\mathrm{tT}(o,i)&=[o=0\lor o=i],\qquad
+\mathrm{tTi}(o,i)=\begin{cases}1&o=i\\-1&o=0\land i\ge 1\land o\ne i\\0&\text{otherwise,}\end{cases}\\
+\mathrm{tW}(d,o_1\dots o_m,i)&=\begin{cases}[o_1=\dots=o_m=0]&i=0\\
+  [i<d]\,[\mathrm{nz}(o)=(i)]&i\ne 0,\end{cases}\\
+\mathrm{tB}(s,t,k,a,b)&=[a<s]\,[b<t]\,[k=at+b],\qquad
+\mathrm{tI}(d,a,b)=[a=b]\,[a<d],
+\end{align*}
+where $\mathrm{nz}(o)$ is the list of the nonzero entries of $o$ in order (\lean|o.filter (· ≠ 0)|).
+So the X spider is the Z spider with $F$ on every output and $\overline{F}$ on every input, the W
+node sends $\ket{0}$ to $\ket{0\cdots0}$ and $\ket{i}$, $0<i<d$, to the sum of the $m$ one-hot
+vectors $\ket{0\cdots i\cdots 0}$, and the binder $B$ maps $\ket{a}\otimes\ket{b}$ to $\ket{at+b}$.
+
+\subsection{Digits and bundled legs}\label{sec:lean-core-net-digits}
+
+A bundled leg carries in one value the values of many copies of a port; the copies are the digits of
+the value.
+\begin{align*}
+\mathrm{digit}(d,i,v)&=\lfloor v/d^i\rfloor\bmod d,\\
+\mathrm{digs}(d,k,v)&=(\mathrm{digit}(d,0,v),\dots,\mathrm{digit}(d,k-1,v)),\\
+\mathrm{digsC}(\mu,d,[\,],v)&=(v),\\
+\mathrm{digsC}(\mu,d,m{::}c,v)&=\mathrm{flatMap}\bigl(\mathrm{digsC}(\mu,d,c,\cdot)\bigr)
+  \bigl(\mathrm{digs}(d^{\prod_{x\in c}\mu(x)},\mu(m),v)\bigr).
+\end{align*}
+Here $\mu$ is \lean|E.mult|. So a value bundling along the chain $m{::}c$ splits into $\mu(m)$ digits
+in base $d^{\prod_c\mu}$, least significant first, and each digit splits further along $c$.
+\begin{itemize}
+\item \lean|tailVals μ d vs cs| is the concatenation over the pairs $(v,c)$ of \lean|zipWith| of
+  $\mathrm{digsC}(\mu,d,c,v)$.
+\item \lean|bundled μ d vs cs| keeps the first $|vs|-|cs|$ values and replaces the last $|cs|$ by
+  \lean|tailVals μ d (last values) cs|.
+\item \lean|Kind.outCs k n| and \lean|Kind.inCs k n| are the chains of the $n$ outputs, inputs of a
+  copied generator: for \lean|XB co _| the outputs get $n-|co|$ empty chains then \lean|co|, for
+  \lean|WB cs| likewise with \lean|cs|, for \lean|ZB cs| the inputs get $n-|cs|$ empty chains then
+  \lean|cs|, for \lean|Bun m b| every chain of \lean|b| gets \lean|m| prepended, and every other
+  case gives $n$ empty chains.
+\item \lean|copyLegs μ d i cs vs| is \lean|zipWith (fun c v => digit (d ^ (c.map μ).prod) i v) cs vs|:
+  digit $i$ of each value in base $d$ to the multiplicities of its chain.
+  \lean|copyOuts E b d i os| and \lean|copyIns E b d i is| apply it with \lean|b.outCs os.length|,
+  \lean|b.inCs is.length|.
+\end{itemize}
+
+\begin{definition}[Tensor of a kind]\label{def:lean-core-tensor}
+\lean|tensor E : Kind → ℕ → ℕ → List ℕ → List ℕ → ℂ| takes a kind, a dimension $d$, a phase index
+$p$ and output and input values:
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Kind and arity & Entry \\
+\midrule
+\lean|Z| & $\mathrm{tZ}(d,\varphi_p,o\mathbin{+\!\!+}i)$, with $\varphi_p=$ \lean|E.phase p| \\
+\lean|X| & $\mathrm{tX}(d,\varphi_p,o;i)$ \\
+\lean|F|, one output $o$, one input $i$ & $F_d[o,i]$ \\
+\lean|T|, \lean|Ti|, one output, one input & $\mathrm{tT}(o,i)$, $\mathrm{tTi}(o,i)$ \\
+\lean|W|, one input $i$ & $\mathrm{tW}(d,o,i)$ \\
+\lean|I|, one output $a$, one input $b$ & $\mathrm{tI}(d,a,b)$ \\
+\lean|ZW|, \lean|XW| & $\mathrm{tZw}(d,c_p,o\mathbin{+\!\!+}i)$, $\mathrm{tXw}(d,c_p,o;i)$, $c_p=$ \lean|E.coef p| \\
+\lean|ZB cs| & $\mathrm{tZ}(d,\varphi_p,o\mathbin{+\!\!+}\mathrm{bundled}(\mu,d,i,cs))$ \\
+\lean|XB co ci| & $\mathrm{tX}(d,\varphi_p,\mathrm{bundled}(\mu,d,o,co);\mathrm{bundled}(\mu,d,i,ci))$ \\
+\lean|WB cs|, one input $w$ & $\mathrm{tW}(d,\mathrm{bundled}(\mu,d,o,cs),w)$ \\
+\lean|Bun m b| & $\prod_{j<\mu(m)}\mathrm{tensor}(E,b,d,p,\mathrm{copyOuts}(E,b,d,j,o),\mathrm{copyIns}(E,b,d,j,i))$ \\
+any other case (wrong arity, \lean|B|, \lean|S|) & $0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{definition}
+
+\begin{definition}[Node value]\label{def:lean-core-val}
+\lean|val E σ n| is the entry of node $n$ under the label assignment $\sigma:\N\to\N$. With
+$d=$ \lean|E.dimv n.dim|, $o=$ \lean|n.outs.map σ|, $i=$ \lean|n.ins.map σ|, it agrees with
+\lean|tensor E n.kind d n.ph o i| on every kind except the binder and splitter, which only
+\lean|val| evaluates: \lean|B| with $o=(k)$, $i=(a,b)$ is $\mathrm{tB}(d,\mathrm{dimv}(n.ph),k,a,b)$,
+and \lean|S| with $o=(a,b)$, $i=(k)$ is $\mathrm{tB}(d,\mathrm{dimv}(n.ph),k,a,b)$; every other arity
+of \lean|B| or \lean|S| is $0$. So for \lean|B| and \lean|S| the field \lean|dim| indexes the first
+factor dimension $s$ and \lean|ph| the second factor dimension $t$; the product leg has dimension
+$st$. Copies of a binder or splitter (\lean|Bun m B|) evaluate to $0$.
+\end{definition}
+
+\subsection{Evaluation and equality}\label{sec:lean-core-net-eval}
+
+\begin{definition}[Sums over labels]
+For $D:\N\to\N$, a label list $ls$, an integrand $f:(\N\to\N)\to\C$ and an assignment $\sigma$,
+\[
+  \mathrm{sumOver}(D,[\,],f,\sigma)=f(\sigma),\qquad
+  \mathrm{sumOver}(D,l{::}ls,f,\sigma)=\sum_{j<D(l)}\mathrm{sumOver}\bigl(D,ls,f,\sigma[l\mapsto j]\bigr).
+\]
+A repeated label is summed once per occurrence, the inner occurrence overwriting the outer.
+\end{definition}
+
+\begin{definition}[Evaluation]\label{def:lean-core-eval}
+\lean|prodVal E ns σ| is $\prod_{n\in ns}\mathrm{val}(E,\sigma,n)$ and
+\[
+  \mathrm{eval}(E,N,\sigma)=\mathrm{sumOver}\bigl(\mathrm{labDim}\,E,\;N.\mathrm{int},\;
+  \mathrm{prodVal}(E,N.\mathrm{nodes}),\;\sigma\bigr).
+\]
+The boundary values are read from $\sigma$; $\sigma$ on labels in neither \lean|int| nor
+\lean|bnd| is read as well, so a label that appears on a node but in neither list acts as a fixed
+boundary value.
+\end{definition}
+
+\begin{definition}[Equality of scaled networks]\label{def:lean-core-equal}
+\lean|InRange E ls σ| holds when $\sigma(l)<\mathrm{labDim}(E,l)$ for every $l\in ls$.
+\begin{lstlisting}[style=leancore]
+def Equal (E : Env) (s₁ : ℂ) (N₁ : Net) (s₂ : ℂ) (N₂ : Net) : Prop :=
+  N₁.bnd.Perm N₂.bnd ∧ ∀ σ, InRange E N₁.bnd σ → s₁ * eval E N₁ σ = s₂ * eval E N₂ σ
+\end{lstlisting}
+That is, $s_1\cdot N_1=s_2\cdot N_2$ as tensors: the boundaries are permutations of each other and
+the scaled entries agree at every in-range boundary assignment.
+\end{definition}
+
+\begin{lemma}[Equality is an equivalence, and scalars chain]
+\begin{itemize}
+\item \lean|InRange.perm|: \lean|a.Perm b → InRange E a σ → InRange E b σ|.
+\item \lean|Equal.refl E s N|, \lean|Equal.symm|, \lean|Equal.trans| (same middle scalar).
+\item \lean|Equal.mul_trans|: from $a X=bY$ and $cY=eZ$, $(ac)X=(be)Z$.
+\item \lean|Equal.rescale|: from $aX=bY$, $a\ne0$ and $sb=ta$, $sX=tY$.
+\end{itemize}
+\end{lemma}
+
+\subsection{Lemmas about sums}\label{sec:lean-core-net-sums}
+
+Fix $D:\N\to\N$. A function $f$ \term{reads} the labels $S$ (\lean|Reads S f|) when
+$f(\tau)=f(\tau')$ for all $\tau,\tau'$ that agree on $S$.
+\begin{itemize}
+\item \lean|sumOver_congr|: if $f(\tau)=g(\tau)$ for every $\tau$ that agrees with $\sigma$ off $ls$
+  and has $\tau(x)<D(x)$ on $ls$, the two sums over $ls$ agree.
+\item \lean|sumOver_ext|: if $f$ reads $S$ and $\sigma,\sigma'$ agree on $S\setminus ls$, the sums at
+  $\sigma$ and $\sigma'$ agree.
+\item \lean|sumOver_append|: $\mathrm{sumOver}(a\mathbin{+\!\!+}b,f)=\mathrm{sumOver}(a,\mathrm{sumOver}(b,f))$.
+\item \lean|mul_sumOver|: $k\cdot\mathrm{sumOver}(ls,f,\sigma)=\mathrm{sumOver}(ls,k f,\sigma)$.
+\item \lean|sumOver_const_mul|: if $g$ reads $S$ and $S\cap ls=\emptyset$,
+  $\mathrm{sumOver}(ls,g f,\sigma)=g(\sigma)\,\mathrm{sumOver}(ls,f,\sigma)$.
+\item \lean|sumOver_perm|: a permutation of $ls$ leaves the sum unchanged (by Fubini,
+  \lean|Finset.sum_comm|, on each adjacent swap).
+\item \lean|sumOver_map|: for an injective $f$ with $D(f(x))=D(x)$ on $ls$,
+  $\mathrm{sumOver}(ls.\mathrm{map}\,f,\tau\mapsto g(\tau\circ f),\sigma)=\mathrm{sumOver}(ls,g,\sigma\circ f)$.
+\end{itemize}
+Node lemmas: \lean|val_reads| (a node's value reads its labels), \lean|prodVal_reads| (reads
+\lean|labelsOf ns|), \lean|prodVal_append| (product over $a\mathbin{+\!\!+}b$),
+\lean|val_rename| ($\mathrm{val}(\sigma,n.\mathrm{rename}\,f)=\mathrm{val}(\sigma\circ f,n)$) and
+\lean|prodVal_rename|.
+
+\subsection{Local equations and the frame theorem}\label{sec:lean-core-net-frame}
+
+\begin{definition}[Local equation]\label{def:lean-core-localeq}
+\begin{lstlisting}[style=leancore]
+def LocalEq (E : Env) (L : List Node) (iL : List ℕ) (R : List Node) (iR : List ℕ)
+    (iface : List ℕ) (kL kR : ℂ) : Prop :=
+  ∀ τ, InRange E iface τ →
+    kL * sumOver (labDim E) iL (prodVal E L) τ = kR * sumOver (labDim E) iR (prodVal E R) τ
+\end{lstlisting}
+In words: the network fragment $L$ with internal labels $iL$, scaled by $k_L$, equals the fragment
+$R$ with internal labels $iR$, scaled by $k_R$, at every assignment in range on the interface labels
+\lean|iface|. Every rule lemma of this library concludes \lean|LocalEq E L iL R iR iface kL kR|;
+most have $k_L=1$, so they read $L=k_R\cdot R$.
+\end{definition}
+
+\begin{theorem}[\lean|frame|]\label{thm:lean-core-frame}
+Let $C$ be a context node list with summed labels $iC$, and suppose
+\lean|LocalEq E L iL R iR iface kL kR|, no label of $C$ lies in $iL$ or $iR$, and every interface
+label lies in $iC$ or in \lean|bnd|. Then for every $\sigma$ in range on \lean|bnd|,
+\[
+  k_L\,\mathrm{eval}(E,\langle C\mathbin{+\!\!+}L,\;iC\mathbin{+\!\!+}iL,\;bnd\rangle,\sigma)
+  =k_R\,\mathrm{eval}(E,\langle C\mathbin{+\!\!+}R,\;iC\mathbin{+\!\!+}iR,\;bnd\rangle,\sigma).
+\]
+\end{theorem}
+\emph{Proof technique.} For $X\in\{L,R\}$ both sides split as
+\[\mathrm{sumOver}\bigl(iC,\ \tau\mapsto
+\mathrm{prodVal}(C,\tau)\cdot\mathrm{sumOver}(iX,\mathrm{prodVal}(X),\tau)\bigr)\]
+by \lean|sumOver_append| and \lean|sumOver_const_mul| (the context reads no label of $iX$); inside the
+outer sum every interface label is in range (summed in $iC$ or fixed on the boundary), so the local
+equation applies pointwise.
+
+\begin{theorem}[\lean|rewrite|]\label{thm:lean-core-rewrite}
+Under the hypotheses of \lean|frame| with $k_L=1$, $k_R=k$, and $s'=s k$:
+\lean|Equal E s ⟨C ++ L, iC ++ iL, bnd⟩ s' ⟨C ++ R, iC ++ iR, bnd⟩|.
+\end{theorem}
+
+\begin{example}[A local equation in context]
+The cap lemma (\cref{sec:lean-core-zxrules}) states
+\lean|LocalEq E [⟨.Z,[w],[],dz,a⟩, ⟨.X,[],[w],dz,b⟩] [w] [] [] iface 1 (rt d)|: a phaseless Z
+state on label $w$ followed by a phaseless X effect on $w$, summed over $w$, is the empty network
+times $\sqrt d$. With a context $C$ that does not mention $w$, \lean|rewrite| with $k=\sqrt d$ turns
+$s\cdot(C\mathbin{+\!\!+}L)$ into $(s\sqrt d)\cdot C$, the summed label list losing $w$.
+\end{example}
+
+%======================================================================
+\section{Isomorphic networks (\texttt{Iso})}\label{sec:lean-core-iso}
+
+\texttt{Iso} decides that one network is another up to a bijective renaming of its summed labels,
+a reordering of its nodes, and the port symmetries of spiders.
+
+\begin{definition}[Renaming]
+\lean|ren π x| for a list of pairs $\pi$ is the second component of the first pair whose first
+component is $x$, and $x$ itself when no pair has first component $x$. \lean|ren_of_not_mem| states
+the latter case; \lean|ren_injective| states that \lean|ren π| is injective when the keys
+$K=\pi.\mathrm{map}\,\mathrm{fst}$ are distinct and $K.\mathrm{map}(\mathrm{ren}\,\pi)$ is a
+permutation of $K$.
+\end{definition}
+
+\begin{definition}[Node equivalence]
+\lean|nodeEquiv n m| is true when $n$ and $m$ have equal kind, dimension index and phase index and
+\begin{itemize}
+\item for \lean|Z| and \lean|ZW|: \lean|n.outs ++ n.ins| is a permutation of \lean|m.outs ++ m.ins|;
+\item for \lean|X| and \lean|XW|: the outputs are permutations of each other and so are the inputs;
+\item for every other kind: the output lists are equal and the input lists are equal.
+\end{itemize}
+\lean|val_nodeEquiv| proves that equivalent nodes have equal values under every assignment.
+\end{definition}
+
+\begin{definition}[\lean|isoOK|]
+Let \lean|Node.none| be the placeholder node \lean|⟨.I, [], [], 0, 0⟩|, $f=\mathrm{ren}\,\pi$, $K$ the keys of $\pi$,
+$A'=A.\mathrm{nodes}.\mathrm{map}(\mathrm{rename}\,f)$ and $P=p.\mathrm{map}(j\mapsto
+A'.\mathrm{getD}\,j\ \mathrm{none})$, \lean|isoOK labs A B π p| is the conjunction of:
+\begin{enumerate}
+\item $K$ has no duplicates;
+\item $K.\mathrm{map}\,f$ is a permutation of $K$;
+\item every label on a node of $A$ is in $A.\mathrm{int}$ or not in $K$ (the renaming touches only
+  summed labels);
+\item every $x\in A.\mathrm{int}$ has \lean|labIdx labs (f x) == labIdx labs x|;
+\item $A.\mathrm{bnd}=B.\mathrm{bnd}$ (as lists);
+\item $B.\mathrm{int}$ is a permutation of $A.\mathrm{int}.\mathrm{map}\,f$;
+\item $P$ is a permutation of $A'$ (so $p$ is a permutation of node positions);
+\item $|P|=|B.\mathrm{nodes}|$;
+\item \lean|nodeEquiv| holds for each pair of \lean|List.zip P B.nodes|.
+\end{enumerate}
+The certificate is $(\pi,p)$: the label renaming and the position in $A'$ of each node of $B$.
+\end{definition}
+
+\begin{theorem}
+\lean|prodVal_equiv|: lists of equal length that are pairwise \lean|nodeEquiv| have equal products.
+\lean|iso_eval|: \lean|isoOK E.labs A B π p = true → eval E A σ = eval E B σ| for every $\sigma$.
+\lean|iso|: under the same hypothesis \lean|Equal E s A s B| for every $s$; \lean|iso_scalar| adds a
+proof $s=s'$ and gives \lean|Equal E s A s' B|.
+\end{theorem}
+\emph{Proof technique.} \lean|iso_eval| permutes the summed labels of $B$ into $A.\mathrm{int}.\mathrm{map}\,f$
+(\lean|sumOver_perm|), rewrites the product of $B$ as the product of the renamed nodes of $A$,
+pulls the renaming out with \lean|sumOver_map|, and closes with \lean|sumOver_ext| because $f$ fixes
+every label of $A$ outside $A.\mathrm{int}$.
+
+%======================================================================
+\section{Generator facts and closed forms (\texttt{Rules}, \texttt{Closed})}\label{sec:lean-core-closed}
+
+\subsection{Phases, roots of unity and the Fourier box}
+
+\texttt{Rules} opens with facts about the scalars (\texttt{Rules} also imports
+the Mathlib module \nolinkurl{Mathlib.RingTheory.RootsOfUnity.Complex}):
+\begin{itemize}
+\item \lean|ex_zero|: $\mathrm{ex}(0)=1$; \lean|ex_add|: $\mathrm{ex}(a+b)=\mathrm{ex}(a)\mathrm{ex}(b)$;
+  \lean|ex_int|: $\mathrm{ex}(a+z)=\mathrm{ex}(a)$ for $z\in\Z$; \lean|ex_congr_int|: $x=y+z$ with
+  $z\in\Z$ gives $\mathrm{ex}(x)=\mathrm{ex}(y)$.
+\item \lean|om_prim|: for $d>0$, $\omega_d$ is a primitive $d$-th root of unity; \lean|conj_om|:
+  $\overline{\omega_d}=\omega_d^{-1}$; \lean|conj_sqrt|, \lean|sqrt_mul_sqrt|: $\sqrt d$ is real and
+  $\sqrt d\sqrt d=d$.
+\item \lean|fou_unitary| ($d>0$, $k,k'<d$): $\sum_{j<d}F_d[j,k]\overline{F_d[j,k']}=[k=k']$.
+  \emph{Technique:} each term is $u^j/d$ with $u=\omega^k\omega^{-k'}$; for $k\ne k'$, $u\ne1$ and
+  $u^d=1$, so the geometric sum vanishes.
+\item \lean|fou_symm|: $F_d[j,k]=F_d[k,j]$.
+\item \lean|tZ_at|: if $j$ is one of the values $vs$, $\mathrm{tZ}(d,\varphi,vs)=[j<d\land\forall v\in vs,
+  v=j]\,\mathrm{ex}(\varphi(j))$; \lean|tZ_perm|: $\mathrm{tZ}$ is invariant under permutation of its
+  values.
+\end{itemize}
+
+\texttt{Closed} defines \lean|rt d = (Real.sqrt d : ℂ)| (an \lean|abbrev|) and proves:
+\begin{itemize}
+\item \lean|rt_ne| ($\sqrt d\ne0$ for $d>0$), \lean|rt_cancel|
+  ($\sqrt d\,(\sqrt d)^{-n}(\sqrt d)^n=\sqrt d$), \lean|nat_inv_mul| ($d^{-1}d=1$), \lean|rt_sq|,
+  \lean|rt_sq'| ($\sqrt d^2=d$), \lean|om_ne_zero|, \lean|om_pow_self| ($\omega_d^d=1$),
+  \lean|om_pow_mod| ($\omega_d^n=\omega_d^{n\bmod d}$), \lean|om_pow_eq_iff|
+  ($\omega_d^a=\omega_d^b\iff a\equiv b\pmod d$).
+\item \lean|om_geom|: for $0<m$, $1<p$, $p\mid m$: $\sum_{j<p}\omega_m^{j(m/p)}=0$.
+\item \lean|char_sum| (the character sum): $\sum_{k<d}\omega_d^{ka}\,\overline{\omega_d}^{kb}=d\,[a\equiv
+  b\pmod d]$.
+\item \lean|prod_fou|: $\prod_{o\in os}F_d[o,k]=\omega_d^{k\sum os}\,(\sqrt d)^{-|os|}$, and
+  \lean|prod_conj_fou| the conjugate form.
+\item \lean|tX_flat| (a phaseless X spider is a scaled delta of sums): if
+  $\mathrm{ex}(\varphi(k))=1$ for all $k<d$,
+  \[\mathrm{tX}(d,\varphi,os;is)=(\sqrt d)^{-(|os|+|is|)}\;d\;\Bigl[\textstyle\sum os\equiv\sum is\pmod d\Bigr].\]
+\item \lean|tZ_one|: a phaseless Z spider on one value $x$ is $[x<d]$.
+\item \lean|fou_sq|: $\sum_{w<d}F_d[x,w]F_d[w,y]=[(x+y)\bmod d=0]$: the Fourier box squared is the
+  antipode (dualiser) $\ket{x}\mapsto\ket{-x}$.
+\item \lean|sum_mod_eq|: $\sum_{w<d}[s\equiv w]\,f(w)=[0<d]\,f(s\bmod d)$.
+\end{itemize}
+
+\subsection{Bare wires}
+
+\begin{theorem}[\lean|wire_elim|]\label{thm:lean-core-wireelim}
+Let a network have nodes $ns_1\mathbin{+\!\!+}\langle\mathtt{I},[a],[b],dz,0\rangle{::}ns_2$, summed
+labels \lean|int| and boundary \lean|bnd|, with $b\in\mathit{int}$, $a\ne b$, $a\in\mathit{int}\cup\mathit{bnd}$
+and both $a$ and $b$ of dimension index $dz$. Then for every $s$
+\[
+  \mathtt{Equal}\;E\;s\;\langle ns_1\mathbin{+\!\!+}\mathtt{I}_{a,b}{::}ns_2,\;\mathit{int},\;\mathit{bnd}\rangle
+  \;s\;\langle(ns_1\mathbin{+\!\!+}ns_2).\mathrm{map}(\mathrm{rename}(\mathrm{ren}[(b,a)])),\;
+  \mathit{int}.\mathrm{erase}\,b,\;\mathit{bnd}\rangle:
+\]
+the wire is removed and its summed end $b$ is renamed to $a$ everywhere.
+\end{theorem}
+
+\section{Spider and ZX rules (\texttt{Rules}, \texttt{ZXRules}, \texttt{Bialgebra}, \texttt{Hopf})}\label{sec:lean-core-zxrules}
+
+Each lemma below is a \lean|LocalEq| (\cref{def:lean-core-localeq}); the statement lists the left
+nodes, the left summed labels, the right nodes and summed labels, and the scalars. A node is written
+$\langle\mathit{kind},\mathit{outs},\mathit{ins},\mathit{dz},\mathit{ph}\rangle$, $d$ abbreviates
+\lean|E.dimv dz|, and ``phaseless $a$'' abbreviates the hypothesis
+\lean|∀ k < E.dimv dz, ex (E.phase a k) = 1|. Unless stated otherwise every named label has
+dimension index $dz$ (hypotheses \lean|labIdx E.labs x = dz|), every boundary label of a fragment
+lies in \lean|iface|, distinct names denote distinct labels where the lemma has a hypothesis saying
+so, and $d>0$ where the proof divides by $d$. These hypotheses are listed in each Lean statement;
+the summaries give the equation. \Cref{fig:lean-core-rules} draws the main ones.
+
+\begin{figure}[htbp]
+\centering
+\begin{tabular}{@{}c@{\qquad}c@{\qquad}c@{}}
+\begin{tikzpicture}[zxd]
+\node[zs] (a) at (0,0) {$a$}; \node[zs] (b) at (0,1) {$b$};
+\draw (a) -- node[right,dimlabel]{$w$} (b);
+\draw (a) -- (-0.4,-0.7); \draw (a) -- (0.4,-0.7);
+\draw (b) -- (-0.4,1.7); \draw (b) -- (0.4,1.7);
+\end{tikzpicture}
+$=$
+\begin{tikzpicture}[zxd]
+\node[zs] (c) at (0,0.5) {$c$};
+\draw (c) -- (-0.4,-0.2); \draw (c) -- (0.4,-0.2);
+\draw (c) -- (-0.4,1.2); \draw (c) -- (0.4,1.2);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zdot] (z) at (0,0) {}; \node[xdot] (x) at (0,1) {};
+\draw (z) -- node[right,dimlabel]{$w$} (x);
+\end{tikzpicture}
+$=\sqrt d$
+&
+\begin{tikzpicture}[zxd]
+\node[xdot] (x) at (0,0) {}; \node[zdot] (z) at (0,0.8) {};
+\draw (x) -- (z); \draw (z) -- (-0.4,1.5); \draw (z) -- (0.4,1.5);
+\end{tikzpicture}
+$=k$
+\begin{tikzpicture}[zxd]
+\node[xdot] (x1) at (-0.3,0.6) {}; \node[xdot] (x2) at (0.3,0.6) {};
+\draw (x1) -- (-0.3,1.3); \draw (x2) -- (0.3,1.3);
+\end{tikzpicture}
+\\[2pt]
+\small\lean|fusionZ| ($e(c)=e(a)e(b)$) & \small\lean|cap| & \small\lean|stateCopy| ($k\sqrt d^{\,n}=\sqrt d$) \\[8pt]
+\begin{tikzpicture}[zxd]
+\node[xdot] (x) at (0,0) {}; \node[zdot] (z) at (0,0.8) {};
+\draw (x) -- (z); \draw (x) -- (-0.4,-0.6); \draw (x) -- (0.4,-0.6);
+\draw (z) -- (-0.4,1.4); \draw (z) -- (0.4,1.4);
+\end{tikzpicture}
+$=\sqrt d$
+\begin{tikzpicture}[zxd]
+\node[zdot] (z1) at (-0.4,0) {}; \node[zdot] (z2) at (0.4,0) {};
+\node[xdot] (x1) at (-0.4,0.9) {}; \node[xdot] (x2) at (0.4,0.9) {};
+\draw (z1) -- (x1); \draw (z1) -- (x2); \draw (z2) -- (x1); \draw (z2) -- (x2);
+\draw (z1) -- (-0.4,-0.6); \draw (z2) -- (0.4,-0.6);
+\draw (x1) -- (-0.4,1.5); \draw (x2) -- (0.4,1.5);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {}; \node[xs] (x) at (0,1.6) {};
+\node[fbox] (f1) at (0.5,0.55) {$F$}; \node[fbox] (f2) at (0.5,1.05) {$F$};
+\draw (z) to[bend left=30] (x);
+\draw (z) -- (f1); \draw (f1) -- (f2); \draw (f2) -- (x);
+\draw (z) -- (0,-0.6); \draw (x) -- (0,2.2);
+\end{tikzpicture}
+$=\dfrac1d$
+\begin{tikzpicture}[zxd]
+\node[zs] (z) at (0,0) {}; \node[xs] (x) at (0,1.2) {};
+\draw (z) -- (0,-0.6); \draw (x) -- (0,1.8);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[tri] (t) at (0,0) {}; \node[trii] (ti) at (0,0.8) {};
+\draw (0,-0.6) -- (t); \draw (t) -- (ti); \draw (ti) -- (0,1.4);
+\end{tikzpicture}
+$=$
+\begin{tikzpicture}[zxd]
+\draw (0,-0.6) -- (0,1.4);
+\end{tikzpicture}
+\\[2pt]
+\small\lean|bialgebra| & \small\lean|hopf| ($kd=1$) & \small\lean|triangle| \\[8pt]
+\begin{tikzpicture}[zxd]
+\node[wnode] (w1) at (0,0) {}; \node[wnode] (w2) at (0.4,0.8) {};
+\draw (0,-0.6) -- (w1); \draw (w1) -- (-0.4,1.5); \draw (w1) -- (w2);
+\draw (w2) -- (0.1,1.5); \draw (w2) -- (0.7,1.5);
+\end{tikzpicture}
+$=$
+\begin{tikzpicture}[zxd]
+\node[wnode] (w) at (0,0.4) {};
+\draw (0,-0.3) -- (w); \draw (w) -- (-0.4,1.2); \draw (w) -- (0,1.2); \draw (w) -- (0.4,1.2);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[snode] (s) at (0,0) {$S$}; \node[bnode] (b) at (0,1) {$B$};
+\draw (0,-0.6) -- (s); \draw (s.north west) -- (b.south west); \draw (s.north east) -- (b.south east);
+\draw (b) -- (0,1.6);
+\end{tikzpicture}
+$=$
+\begin{tikzpicture}[zxd]
+\draw (0,-0.6) -- (0,1.6);
+\end{tikzpicture}
+&
+\begin{tikzpicture}[zxd]
+\node[fbox] (f1) at (0,0) {$F$}; \node[fbox] (f2) at (0,0.55) {$F$};
+\node[fbox] (f3) at (0,1.1) {$F$}; \node[fbox] (f4) at (0,1.65) {$F$};
+\draw (0,-0.5) -- (f1) -- (f2) -- (f3) -- (f4) -- (0,2.15);
+\end{tikzpicture}
+$=$
+\begin{tikzpicture}[zxd]
+\draw (0,-0.5) -- (0,2.15);
+\end{tikzpicture}
+\\[2pt]
+\small\lean|wFusion| & \small\lean|connInverse| & \small\lean|fourier4|
+\end{tabular}
+\caption{Rule lemmas of \cref{sec:lean-core-zxrules,sec:lean-core-wrules} as pictures (inputs at the
+bottom, outputs at the top; small dots are phaseless spiders).}\label{fig:lean-core-rules}
+\end{figure}
+
+\subsection{Fusion and identity (\texttt{Rules})}
+
+\begin{lemma}[\lean|fusionZ|]
+Hypotheses: $w\in o_1\mathbin{+\!\!+}i_1$, $w\in o_2\mathbin{+\!\!+}i_2$, $o_3\mathbin{+\!\!+}i_3$ is a
+permutation of $(o_1\mathbin{+\!\!+}i_1\mathbin{+\!\!+}o_2\mathbin{+\!\!+}i_2)$ with every occurrence of $w$
+removed, $w$ of index $dz$, and $\mathrm{ex}(\varphi_c(k))=\mathrm{ex}(\varphi_a(k))\,\mathrm{ex}(\varphi_b(k))$ for
+$k<d$. Conclusion:
+\[\mathtt{LocalEq}\;[\langle Z,o_1,i_1,dz,a\rangle,\langle Z,o_2,i_2,dz,b\rangle]\;[w]\;
+[\langle Z,o_3,i_3,dz,c\rangle]\;[\,]\;\mathit{iface}\;1\;1.\]
+\end{lemma}
+
+\begin{lemma}[\lean|fusionX|]
+Hypotheses: $d>0$; $w$ occurs exactly once in $o_1$ and not in $i_1$; exactly once in $i_2$ and not in
+$o_2$; $o_3\sim o_1.\mathrm{erase}\,w\mathbin{+\!\!+}o_2$ and $i_3\sim i_1\mathbin{+\!\!+}i_2.\mathrm{erase}\,w$
+($\sim$ is \lean|List.Perm|); phases multiply as in \lean|fusionZ|. Conclusion: two X spiders joined
+by $w$ (an output of the first, an input of the second) fuse into
+$\langle X,o_3,i_3,dz,c\rangle$, scalars $1,1$. \emph{Technique:} each spider is a sum over its
+index $k$; the sum over $w$ of $F[w,k]\overline{F[w,k']}$ is $[k=k']$ by \lean|fou_unitary|.
+\end{lemma}
+
+\lean|map_update_absent| (setting a label absent from a list leaves its values) and
+\lean|prod_update_once| (a product over a list in which $w$ occurs once, at $w\mapsto j$, is $g(j)$
+times the product over the rest) serve the X proofs.
+
+\begin{lemma}[\lean|identityZ|, \lean|identityX|]
+With $(p,q)=(w,x)$ or $(p,q)=(x,w)$ and $a$ phaseless:
+$\langle Z,[p],[q],dz,a\rangle=\langle I,[x],[w],dz,0\rangle$ (no summed labels, scalars $1,1$).
+The X version adds $d>0$ and $p,q\in\mathit{iface}$ of index $dz$; it follows from
+\lean|fou_unitary| and \lean|fou_symm|.
+\end{lemma}
+
+\subsection{\texttt{ZXRules}}
+
+Helpers: \lean|labDim_of| ($\mathrm{labIdx}=dz\Rightarrow\mathrm{labDim}=\mathrm{dimv}\,dz$),
+\lean|rt_inv_mul| ($(\sqrt d)^{-1}d=\sqrt d$), \lean|sum_range_ite_mod|, \lean|sum_range_ite_mod'|,
+\lean|sum_mod0|, \lean|sum_mod0'| (sums of indicators of residues), \lean|prod_ite_zero|
+($\prod_{o\in l}[\tau o=0]c=[\forall o, \tau o=0]c^{|l|}$), \lean|char_sum0|
+($\sum_{k<d}\omega^{ka}=d[a\equiv0]$), \lean|sum_fou_left|, \lean|sum_fou_right|
+($\sum_jF[x,j]=(\sqrt d)^{-1}d[x\equiv0]$), \lean|fou_zero|, \lean|fou_zero'| ($F[x,0]=F[0,x]=(\sqrt
+d)^{-1}$), \lean|tri_sum|, \lean|tri_sum'| ($\sum_j\mathrm{tT}(j,i)\mathrm{tTi}(o,j)=[o=i]$ and the
+reverse, for $o,i<d$), \lean|antipode_iff| ($(j+a)\bmod d=0\iff j=(d-a)\bmod d$ for $a,j<d$),
+\lean|antipode_inj|, \lean|antipode_sq| (the antipode squared is the identity).
+
+\begin{description}[style=nextline,font=\normalfont\ttfamily]
+\item[cap, capSwapped] $[\langle Z,[w],[\,],dz,a\rangle,\langle X,[\,],[w],dz,b\rangle]$, summed $[w]$,
+  equals the empty fragment times $\sqrt d$ ($k_L=1$, $k_R=\sqrt d$); $a$, $b$ phaseless, $d>0$. The
+  swapped form exchanges the colors: $\langle X,[w],[\,]\rangle,\langle Z,[\,],[w]\rangle$.
+\item[colorState, colorEffect] $\langle Z,[w],[\,],dz,a\rangle$ then $\langle F,[x],[w],dz,0\rangle$,
+  summed $[w]$, is $\langle X,[x],[\,],dz,b\rangle$; the effect form is
+  $\langle Z,[\,],[w]\rangle,\langle F,[w],[x]\rangle\mapsto\langle X,[\,],[x]\rangle$; $a,b$ phaseless,
+  $w\ne x$, scalars $1,1$.
+\item[colorStateX, colorEffectX] The same with X and Z exchanged; these add $x\in\mathit{iface}$ of
+  index $dz$.
+\item[stateCopy] $[\langle X,[w],[\,],dz,a\rangle,\langle Z,os,[w],dz,b\rangle]$, summed $[w]$, with
+  $w\notin os$ and every $o\in os$ in \lean|iface| of index $dz$, equals
+  $os.\mathrm{map}(o\mapsto\langle X,[o],[\,],dz,c\rangle)$, scalars $1$ and $k$ where
+  $k\,\sqrt d^{\,|os|}=\sqrt d$; $a,b,c$ phaseless. \lean|stateCopySwapped| exchanges colors.
+\item[triangle, triangle'] $[\langle T,[w],[i]\rangle,\langle Ti,[o],[w]\rangle]$, summed $[w]$, is
+  $\langle I,[x],[y],dz,0\rangle$ with $\{x,y\}=\{o,i\}$ in either order; $w\ne o$, $w\ne i$;
+  \lean|triangle'| has $\mathtt{Ti}$ first: $[\langle Ti,[w],[i]\rangle,\langle T,[o],[w]\rangle]$.
+\item[fourier4] Four Fourier boxes in series $a\to w_1\to w_2\to w_3\to b$, summed $[w_1,w_2,w_3]$,
+  are $\langle Z,[b],[a],dz,c\rangle$ with $c$ phaseless ($F^4=\mathrm{id}$), scalars $1,1$; all six
+  labels distinct as listed in the hypotheses.
+\end{description}
+
+\subsection{\texttt{Bialgebra}}
+
+Helpers \lean|tZ_two|, \lean|tZ_first|: a phaseless Z spider on $[x,y,z]$ (resp.\ $[z,x,y]$) with
+$z<d$ is $[x=z\land y=z]$.
+
+\begin{lemma}[\lean|bialgebra|]
+With $d>0$, $w$ and $n_{00},n_{01},n_{10},n_{11}$ of index $dz$, $[n_{00},n_{01},n_{10},n_{11},a,b,c,e]$
+and $[w,a,b,c,e]$ without duplicates, $a,b,c,e\in\mathit{iface}$ of index $dz$, and all six phases
+phaseless:
+\[\begin{aligned}
+&[\langle X,[w],[a,b],dz,p_x\rangle,\ \langle Z,[c,e],[w],dz,p_z\rangle]\ \text{summed }[w]\\
+&\quad=\sqrt d\cdot[\langle Z,[n_{00},n_{01}],[a]\rangle,\langle Z,[n_{10},n_{11}],[b]\rangle,
+\langle X,[c],[n_{00},n_{10}]\rangle,\langle X,[e],[n_{01},n_{11}]\rangle]\\
+&\qquad\text{summed }[n_{00},n_{01},n_{10},n_{11}].
+\end{aligned}\]
+\lean|bialgebraSwapped| is the same with every color exchanged. \emph{Technique:} both sides reduce
+by \lean|tZ_two| to indicator sums; \lean|tX_flat| writes each X spider as a delta of sums, and the
+scalar $\sqrt d$ balances $(\sqrt d)^{-3}d$ against $((\sqrt d)^{-3}d)^2$.
+\end{lemma}
+
+\subsection{\texttt{Hopf}}
+
+Helpers: \lean|tX_perm| (permuting outputs and inputs of $\mathrm{tX}$), \lean|om_pow_zero_mod|
+($s\equiv0\Rightarrow\omega^{sm}=1$), \lean|tX_antipode_in| and \lean|tX_antipode_out| (two inputs,
+resp.\ outputs, carrying values with $j+j'\equiv0$ drop out of an X spider as the factor $d^{-1}$),
+\lean|tZ_sum_cons| ($\sum_j\mathrm{tZ}(j{::}r)=\mathrm{tZ}(r)$), \lean|tZ_cons_cons|
+($\mathrm{tZ}(j{::}j'{::}r)=[j'=j]\,\mathrm{tZ}(j{::}r)$), \lean|antipode_collapse|
+($\sum_m[(m+j)\equiv0]g(m)=g((d-j)\bmod d)$), \lean|antipode_spec|.
+
+\begin{lemma}[\lean|hopf|]
+Let the Z spider $\langle Z,zo,zi,dz,p_z\rangle$ have legs $zo\mathbin{+\!\!+}zi\sim u{::}v_1{::}(zo'\mathbin{+\!\!+}zi')$,
+the X spider $\langle X,xo,xi,dz,p_x\rangle$ have $xo\sim xo'$ and $xi\sim u{::}v_3{::}xi'$, and let
+$\langle F,[v_2],[v_1]\rangle$, $\langle F,[v_3],[v_2]\rangle$ carry $v_1$ to $v_3$. With
+$[u,v_1,v_2,v_3]$ distinct, of index $dz$, absent from the primed lists, $d>0$ and $k\,d=1$:
+the four nodes summed over $[u,v_1,v_2,v_3]$ equal $k$ times
+$[\langle Z,zo',zi',dz,p_z\rangle,\langle X,xo',xi',dz,p_x\rangle]$ with no summed label. The phases
+are arbitrary. \lean|hopfSwapped| puts the X spider first, with its outputs carrying $u,v_1$ and the
+Z spider's legs carrying $u,v_3$. \emph{Technique:} the Fourier pair is the antipode
+(\lean|fou_sq|); after summing $v_2$ the X spider has two inputs with opposite values, which
+\lean|tX_antipode_in| removes as $d^{-1}$, and the Z spider's two legs on $u$, $v_1$ collapse by
+\lean|tZ_cons_cons| and \lean|tZ_sum_cons|.
+\end{lemma}
+
+%======================================================================
+\section{W, triangle and connective rules}\label{sec:lean-core-wrules}
+
+\subsection{\texttt{WRules}}
+
+\lean|nz l| (an \lean|abbrev|) is \lean|l.filter (· ≠ 0)|. Facts about the W node:
+\lean|nz_nil_iff| ($\mathrm{nz}\,l=[\,]\iff$ all entries are $0$), \lean|tW_eq| (the definition in
+terms of $\mathrm{nz}$), \lean|tW_perm| (invariance under permuting outputs), \lean|nz_cons|,
+\lean|tW_cons_zero| (a zero output drops out), \lean|tW_cons| (for $I\ne0$:
+$\mathrm{tW}(j{::}A,I)=[j=0]\mathrm{tW}(A,I)+[j=I][\mathrm{nz}A=[\,]\land I<d]$),
+\lean|tW_zero_in|, \lean|sum_tW_cons| (summing one output against $g$), \lean|tW_append|
+($\mathrm{tW}(A\mathbin{+\!\!+}B,I)=\mathrm{tW}(A,I)\mathrm{tW}(B,0)+[I\ne0][\mathrm{nz}A=[\,]]\mathrm{tW}(B,I)$
+for $I<d$).
+
+\begin{description}[style=nextline,font=\normalfont\ttfamily]
+\item[wFusion] $[\langle W,o_1,[i]\rangle,\langle W,o_2,[w]\rangle]$, summed $[w]$, with $w$ once in
+  $o_1$, $w\notin o_2$, $w\ne i$, $i\in\mathit{iface}$ of index $dz$, $d>0$, is
+  $\langle W,o_3,[i]\rangle$ with $o_3\sim o_1.\mathrm{erase}\,w\mathbin{+\!\!+}o_2$; scalars $1,1$.
+\item[wIdentity] $\langle W,[p],[q]\rangle=\langle I,[x],[w]\rangle$ with $\{p,q\}$ as in
+  \lean|identityZ|, $p,q\in\mathit{iface}$ of index $dz$.
+\item[wZeroCopy] A phaseless X state $\langle X,[w],[\,],a\rangle$ into $\langle W,os,[w]\rangle$
+  is $os.\mathrm{map}(o\mapsto\langle X,[o],[\,],c\rangle)$ times $k$, $k\sqrt d^{\,|os|}=\sqrt d$.
+\item[triZeroState, triInvZeroState] A phaseless X state into $\langle T,[o],[w]\rangle$ (resp.\
+  $\mathtt{Ti}$) is the X state $\langle X,[o],[\,],a\rangle$; scalars $1,1$.
+\item[triZeroEffect] $[\langle T,[w],[i]\rangle,\langle X,[\,],[w],a\rangle]$ summed $[w]$ is
+  $\sqrt d\cdot\langle Z,[\,],[i],c\rangle$; $a,c$ phaseless.
+\item[wZEffect] $[\langle W,os,[i]\rangle,\langle Z,[\,],[w],a\rangle]$ summed $[w]$, with $w$ once
+  in $os$ and $os'\sim os.\mathrm{erase}\,w$, $v\notin os'$, is
+  $[\langle T,[v],[i]\rangle,\langle W,os',[v]\rangle]$ summed $[v]$; scalars $1,1$.
+\item[wZeroEffect] $[\langle W,os,[i]\rangle,\langle X,[\,],[w],a\rangle]$ summed $[w]$ is
+  $\sqrt d\cdot\langle W,os',[i]\rangle$.
+\end{description}
+
+\subsection{\texttt{WAssoc}: W associativity over groups}
+
+\begin{definition}
+\lean|sumW d M f| sums $f$ over all lists of $M$ values below $d$:
+$\mathrm{sumW}(d,0,f)=f([\,])$, $\mathrm{sumW}(d,M{+}1,f)=\sum_{x<d}\mathrm{sumW}(d,M,xs\mapsto f(x{::}xs))$.
+\lean|wTerm d w xs Bs| is $\prod_j w(x_j)\,\mathrm{tW}(d,B_j,x_j)$ over the zipped lists (the empty
+product $1$ when either list ends).
+\end{definition}
+
+\begin{theorem}[\lean|wAssoc|, \lean|wAssoc_nil|]
+For $d>0$, $w(0)=1$, $i<d$, all group lists $Bs$ and all $A$:
+\[\begin{aligned}
+&\mathrm{sumW}\bigl(d,|Bs|,xs\mapsto\mathrm{tW}(d,A\mathbin{+\!\!+}xs,i)\,\mathrm{wTerm}(d,w,xs,Bs)\bigr)\\
+&\quad=\mathrm{tW}(A,i)\,\mathrm{tW}(\textstyle\bigsqcup Bs,0)+[i\ne0]\,[\mathrm{nz}A=[\,]]\,w(i)\,\mathrm{tW}(\bigsqcup Bs,i),
+\end{aligned}\]
+where $\bigsqcup Bs$ is \lean|Bs.flatten|; with $A=[\,]$ the right side is $w(i)\,\mathrm{tW}(\bigsqcup
+Bs,i)$. Helpers: \lean|sumW_congr|, \lean|sumW_smul|, \lean|nz_append_single|, \lean|tW_zero_ind|.
+Proved by induction on $Bs$ with \lean|tW_append|.
+\end{theorem}
+
+\subsection{\texttt{Connective}: binder and splitter}
+
+Helpers: \lean|pair_iff| ($b<t$: $K=at+b\iff K/t=a\land K\bmod t=b$), \lean|tB_sum|
+($\sum_{a<s}\sum_{b<t}\mathrm{tB}(s,t,K,a,b)=[K<st]$ for $t>0$), \lean|rt_mul|
+($\sqrt{st}=\sqrt s\sqrt t$), \lean|tB_zero| ($\mathrm{tB}(s,t,K,0,0)=[K=0]$).
+In each lemma $ds$, $dt$, $dk$ are dimension indices with \lean|E.dimv dk = E.dimv ds * E.dimv dt|,
+$a$ has index $ds$, $b$ has index $dt$, and the product label has index $dk$.
+\begin{description}[style=nextline,font=\normalfont\ttfamily]
+\item[connStates] $[\langle B,[k],[a,b],ds,dt\rangle,\langle Z,[a],[\,],ds,p_1\rangle,\langle
+  Z,[b],[\,],dt,p_2\rangle]$ summed $[a,b]$ is $\langle Z,[k],[\,],dk,c\rangle$ (all phaseless);
+  scalars $1,1$.
+\item[connEffects] $\langle S,[a,b],[k]\rangle$ with Z effects on $a$, $b$ is the Z effect on $k$.
+\item[connStatesX, connEffectsX] The same with X spiders; the proof uses \lean|rt_mul| and
+  \lean|tB_zero|.
+\item[connInverse] $[\langle S,[a,b],[k_1],ds,dt\rangle,\langle B,[k_2],[a,b],ds,dt\rangle]$ summed
+  $[a,b]$ is $\langle I,[x],[y],dk,0\rangle$ with $\{x,y\}=\{k_1,k_2\}$: $B\circ S=\mathrm{id}$.
+\item[connInverseBind] $[\langle B,[k],[a_1,b_1]\rangle,\langle S,[a_2,b_2],[k]\rangle]$ summed $[k]$
+  is $[\langle I,[x_1],[y_1],ds\rangle,\langle I,[x_2],[y_2],dt\rangle]$ with $\{x_1,y_1\}=\{a_1,a_2\}$
+  and $\{x_2,y_2\}=\{b_1,b_2\}$: $S\circ B=\mathrm{id}\otimes\mathrm{id}$.
+\end{description}
+
+\subsection{\texttt{WZ}: the Z--W bialgebra}
+
+Helpers: \lean|sumOver_zero|; \lean|sumOver_pin| (for distinct labels $ls$ and $f$ mapping $ls$
+outside $ls$: summing $[\forall l\in ls,\tau l=\tau(f l)]\,g(\tau)$ sets each $l$ to
+$\sigma(f l)$); \lean|tW_mul| ($\mathrm{tW}(os,a)\mathrm{tW}(os,b)=[a=b]\mathrm{tW}(os,a)$);
+\lean|tW_prod|; \lean|zip_map_fst|.
+
+\begin{lemma}[\lean|wzBialgebra|]
+A Z spider $\langle Z,[w],zi,dz,p_z\rangle$ with $zi\ne[\,]$ inputs, whose output $w$ feeds
+$\langle W,wo,[w]\rangle$, summed over $[w]$, equals the complete bipartite network
+\[
+ (zi\cdot rows).\mathrm{map}(\langle W,r,[z]\rangle)\ \mathbin{+\!\!+}\ (wo\cdot cols).\mathrm{map}(\langle Z,[o],col,dz,q\rangle)
+\]
+summed over $rows.\mathrm{flatten}$, scalars $1,1$: one W node per input $z$ of the Z spider with
+outputs $r$ (its row), one phaseless Z spider per output $o$ of the W node with inputs $col$ (its
+column). The certificate \lean|pin : List (ℕ × ℕ)| sends each row label to the W output it reaches:
+$rows.\mathrm{flatten}=pin.\mathrm{map\,fst}$ without duplicates, every row maps under
+$\mathrm{ren}\,pin$ to $wo$, the pairs $(e,o)$ over the columns are a permutation of $pin$,
+$|zi|=|rows|$, $|wo|=|cols|$, and the row labels avoid $zi\mathbin{+\!\!+}wo\mathbin{+\!\!+}[w]$. Both
+$p_z$ and $q$ are phaseless and $d>0$.
+\end{lemma}
+
+%======================================================================
+\section{The complete axiomatisation}\label{sec:lean-core-complete}
+
+The engine's rule library for the complete ZXW axiom sets of \citet{poor2023zxw} (cited in the code
+as [P1]) and of the qufinite ZXW calculus of \citet{wang2023qufinitezxw} ([P2], building on
+\citet{wang2021qufinite}) is \module{archytaszx.rewrite.rules_axioms}. Three modules state its rules:
+\texttt{Completeness} for the rules that are permutations or reuse an earlier lemma, \texttt{Paper}
+for the generators in the papers' own conventions, and \texttt{Weights} for everything else.
+Docstrings tag each lemma with the paper and the rule's label in it, for example ``[P1] (Aso)'' or
+``[P2] (2.8)''.
+
+\subsection{\texttt{Completeness}}
+
+\begin{description}[style=nextline,font=\normalfont\ttfamily]
+\item[wPerm] ([P1] (Sym), [P2] (2.10)) For any phase indices $a,b$ and $os\sim os'$:
+  $\langle W,os,[i],dz,a\rangle=\langle W,os',[i],dz,b\rangle$; scalars $1,1$. The W node ignores its
+  phase index.
+\item[zPerm] ([P2] (2.9)) For $os\mathbin{+\!\!+}is\sim os'\mathbin{+\!\!+}is'$:
+  $\langle Z,os,is,dz,a\rangle=\langle Z,os',is',dz,a\rangle$: legs move freely between inputs and
+  outputs.
+\item[wAso] ([P1] (Aso)) Two nestings $[\langle W,o_1,[i]\rangle,\langle W,o_2,[w]\rangle]$ (summed
+  $[w]$) and $[\langle W,p_1,[i]\rangle,\langle W,p_2,[w']\rangle]$ (summed $[w']$) with
+  $o_1.\mathrm{erase}\,w\mathbin{+\!\!+}o_2\sim o_3\sim p_1.\mathrm{erase}\,w'\mathbin{+\!\!+}p_2$ are
+  equal; the proof chains \lean|wFusion| twice.
+\item[tX\_kj] For phases $K_j$, $\mathrm{ex}(\varphi(k))=\omega_d^{kj}$:
+  $\mathrm{tX}(d,\varphi,os;is)=(\sqrt d)^{-(|os|+|is|)}\,d\,[\sum os+j\equiv\sum is\pmod d]$.
+\item[prod\_ite\_val, cancel\_iff] $\prod_{o\in l}[\tau o=v]c=[\forall o,\tau o=v]c^{|l|}$;
+  for $w<d$: $(w+j)\bmod d=0\iff w=(d-j\bmod d)\bmod d$.
+\item[kCopy] ([P1] (K0)) A pink $K_j$ state $\langle X,[w],[\,],a\rangle$ ($\mathrm{ex}(\varphi_a(q))=
+  \omega^{qj}$) into a phaseless $\langle Z,os,[w],b\rangle$ is
+  $os.\mathrm{map}(o\mapsto\langle X,[o],[\,],c\rangle)$ with $c$ also of phases $K_j$, times $k$ where
+  $k\sqrt d^{\,|os|}=\sqrt d$.
+\end{description}
+
+\subsection{\texttt{Paper}: the generators in the papers' conventions}
+
+\texttt{Paper} restates each generator as [P1] or [P2] defines it and proves it equal to the
+ArchytasZX tensor it is translated to, for every $d$. Leg values are read below $d$.
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{4.6cm}@{}}
+\toprule
+Definition & Paper entry & Equality \\
+\midrule
+\lean|paperH d j k| & $\frac{1}{\sqrt d}\,\omega^{jk}$ ([P1] Hadamard box) & \lean|paperH_eq|: $=F_d[j,k]$ \\
+\lean|paperZ d| $\varphi$ \lean|vs| & $\sum_{j<d}\mathrm{ex}(\varphi(j))\prod_v[v=j]$ & \lean|paperZ_eq|: $=\mathrm{tZ}$ \\
+\lean|paperZbox d a vs| & $\sum_{j<d}(j=0\,?\,1:a_j)\prod_v[v=j]$ ([P1] Z box) & \lean|paperZbox_eq|: $=\mathrm{tZw}$ with $c(0)=1$, $c(j)=a_j$ \\
+\lean|paperW d o₁ o₂ i| & $\ket{00}\bra0+\sum_{i=1}^{d-1}(\ket{0i}+\ket{i0})\bra i$ & \lean|paperW_eq|: $=\mathrm{tW}(d,[o_1,o_2],i)$ \\
+\lean|paperT o i| & $[o=i]+[o=0\land1\le i]$ ([P1] (YT)) & \lean|paperT_eq|: $=\mathrm{tT}$ \\
+\lean|paperTi o i| & $[o=i]-[o=0\land1\le i]$ & \lean|paperTi_eq|: $=\mathrm{tTi}$ \\
+\lean|paperSplit d e k i j| & $[i<d][j<e][k=ie+j]$ ([P2] splitter) & \lean|paperSplit_eq|: $=\mathrm{tB}$ (by \lean|rfl|) \\
+\lean|paperPink d j os is| & $[\sum os+j\equiv\sum is\pmod d]$ ([P1] (HZ)) & \lean|pink_eq| \\
+\lean|paperD d o i| & $[(o+i)\bmod d=0]$ ([P1] (Du) dualiser) & \lean|paperD_eq| \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\lean|pink_eq| ($d>0$): $\sqrt d^{\,|os|+|is|}\cdot\mathrm{tX}(d,k\mapsto jk/d,os;is)=d\cdot
+\mathrm{paperPink}(d,j,os,is)$, so the pink $K_j$ spider is $d^{(m+n)/2-1}$ times the X spider with
+phases $jk/d$ turns. \lean|paperD_eq| ($d>0$): $\sum_{k<d}F[o,k]F[k,i]=\mathrm{paperD}(d,o,i)$.
+Helpers: \lean|prod_indicator|, \lean|prod_fou_out|, \lean|prod_fou_in| (the products of $F$ entries
+divided, not multiplied, by powers of $\sqrt d$). The docstring of \texttt{Paper} refers the scalars
+of this translation to section 2 of the engine's completeness document.
+
+\subsection{\texttt{Weights}: rules through coefficient vectors}\label{sec:lean-core-weights}
+
+\texttt{Weights} (9{,}479 lines, 213 theorems, 64 definitions) states every remaining rule of the
+complete axiom sets. Its lemmas are stated for Z and weighted Z spiders alike through their
+coefficient vectors, and for X and weighted X spiders through theirs:
+\[
+\mathrm{zc}(E,n,k)=\begin{cases}1\cdot\mathrm{ex}(\varphi_{n.ph}(k))&n.\mathrm{kind}=\mathtt Z\\
+c_{n.ph}(k)&n.\mathrm{kind}=\mathtt{ZW}\\0&\text{otherwise,}\end{cases}\qquad
+\mathrm{xc}(E,n,k)=\begin{cases}\mathrm{ex}(\varphi_{n.ph}(k))&\mathtt X\\c_{n.ph}(k)&\mathtt{XW}\\0&\text{otherwise,}\end{cases}
+\]
+with predicates \lean|isZc n| (\lean|n.kind == .Z || n.kind == .ZW|) and \lean|isXc n|. The bridge
+lemmas \lean|val_zc| ($\mathrm{val}=\mathrm{tZw}(d,\mathrm{zc}(E,n),\ldots)$ on
+$(outs\mathbin{+\!\!+}ins).\mathrm{map}\,\sigma$) and \lean|val_xc| let one lemma cover both kinds; a
+rule hypothesis is then an equation between coefficient vectors at every $k<d$, for example
+$\mathrm{zc}(m,k)=\mathrm{zc}(n_a,k)\,\mathrm{zc}(n_b,k)$.
+
+\paragraph{Organization.} The file has no sections; it is a sequence of groups, each group
+consisting of value-level helper lemmas, then the definitions that name the rule's node lists and
+summed labels, then one or more \lean|LocalEq| rule lemmas. Its construction scheme is uniform:
+\begin{enumerate}
+\item A rule's sides are given as node lists built by small definitions over records of labels
+  (structures \lean|HdC|, \lean|ZhdC|, \lean|WwG|, \lean|WwC|, \lean|QwC|, \lean|MixL|,
+  \lean|DzC|, \lean|TaC|; list builders \lean|chainNodes|, \lean|chain2Nodes|, \lean|multNodes|,
+  \lean|vNodes|, \lean|vaNodes|, \lean|kzNodes|, \lean|hdNodes|, \lean|zhdNodes|, \lean|wwLeft|,
+  \lean|wwRight|, \lean|qwRight|, \lean|MixL.nodes|, \lean|mixNodes|, \lean|mix3Nodes|,
+  \lean|dzNodes|, \lean|taNodes|, \lean|qddP|) and summed-label builders (\lean|chainLabs|,
+  \lean|chain2Labs|, \lean|vLabs|, \lean|hdInt|, \lean|zhdInt|, \lean|mixLabs|, \lean|mix3Labs|,
+  \lean|dzInLabs|, \lean|dzOutLabs|, \lean|dzLabs|, \lean|taLabs|), so one lemma covers every
+  arity: a list of chains, multipliers or legs of any length.
+\item A \emph{value lemma} evaluates each gadget's internal sum in closed form (for example
+  \lean|multiplier_val|, \lean|vBoxVal|, \lean|kzChainVal|, \lean|hdChainVal|, \lean|dz_chain|,
+  \lean|taLegVal|, \lean|mixSum|), and \emph{sum lemmas} split a sum over the disjoint label groups
+  of independent gadgets into a product (\lean|sumOver_groups|, \lean|sumOver_prodList|,
+  \lean|sumOver_mul_split|, \lean|sumOver_split_mul|) or pin labels to values
+  (\lean|sumOver_pinK|, \lean|sumOver_pinV|, \lean|sumOver_pin2|, \lean|sumOver_pinAll|,
+  \lean|sumOver_allEq|, \lean|sumOver_W|, \lean|sumOver_cols_zero|, \lean|sumOver_cols_hot|).
+\item The rule lemma compares the two closed forms; character sums over $F$ entries close by
+  \lean|fou_unitary|, \lean|char_sum| and the triangle-number identity \lean|om_tri|
+  ($\omega_d^{d(d-1)/2}=(-1)^{d+1}$).
+\end{enumerate}
+Four combinators on local equations serve the exporter:
+\lean|LocalEq.trans'| (chaining two equations with scalars $1,1$), \lean|LocalEq.symm'| (swapping
+sides with their scalars), \lean|LocalEq.flip'| (from $L=s\cdot R$ with $s\ne0$ and $t=s^{-1}$,
+$R=t\cdot L$), and \lean|LocalEq.idR|, \lean|LocalEq.idL|: from an equation with scalars $1,1$, an
+interface label $x$ not summed, a label $a\ne x$ summed on neither side and absent from the right
+side's labels, both of index $dz$, and a phaseless $ph$, the right side $R$ with $x$ renamed to $a$
+followed by the identity spider $\langle Z,[p],[q],dz,ph\rangle$ ($\{p,q\}=\{x,a\}$), summed over
+$iR\mathbin{+\!\!+}[a]$, is still equal to the left side (\lean|idL| does the same on the left).
+
+\paragraph{Gadgets.} The recurring sub-networks, with $d=\mathrm{dimv}\,dz$:
+\begin{itemize}
+\item \emph{Multiplier} $c=(a,ws,b)$: \lean|multNodes dz pz px c = [⟨Z, ws, [a], dz, pz⟩, ⟨X, [b], ws, dz, px⟩]|,
+  a plain green dot from $a$ to the wires $ws$ and a phaseless pink dot from $ws$ to $b$.
+  \lean|multiplier_val| and \lean|multVal|: summed over $ws$ it is
+  $(\sqrt d)^{-(1+|ws|)}\,d\,[b\equiv|ws|\cdot a\pmod d]$, the map $\ket a\mapsto\ket{ea}$ with
+  $e=|ws|$. \lean|multiplierUp_val| and \lean|multT_val| give the transposed multiplier.
+\item \emph{Fourier chains}: \lean|chainNodes dz c| is $F;F;F$ from $c.1$ through $c.2.1.1$,
+  $c.2.1.2$ to $c.2.2$, and \lean|chainVal| its entry; \lean|fou_cube|: $F^3=\overline F$.
+  \lean|chain2Nodes| is $F;F$ (the antipode) with \lean|chain2Val|.
+\item \emph{V box} with front label $u$ and multipliers $ms$: \lean|vNodes dz u o pq pz px m ms| is
+  the Z box $m$ (from $i$ to $u$), the W node $u\to ms.\mathrm{map\,fst}$, the pink dot
+  $ms.\mathrm{map}(c\mapsto c.2.2)\to o$, and the multipliers; \lean|vLabs u ms| lists its summed
+  labels; \lean|vConst d ms| $=\prod_{c}(\sqrt d)^{-(1+|c.2.1|)}d\cdot(\sqrt d)^{-|ms|}\sqrt d$;
+  \lean|vBoxVal|: its entry is $\mathrm{zc}(m,\sigma i)\cdot\mathrm{vConst}\cdot
+  \bigl([\sigma i=0][\sigma o=0]+[\sigma i\ne0]\sum_c[\sigma o\equiv|c.2.1|\,\sigma i]\bigr)$;
+  \lean|vF| is that entry over its constant.
+\item \emph{Mixed-dimensional Z box} ([P2] 2.3.3): each leg is a record
+  \lean|MixL| with fields \lean|a| (pink label), \lean|K| (product label), \lean|v| (leg label),
+  \lean|dr|, \lean|p| (pink dot's dimension and phase index), \lean|dt| (leg dimension index),
+  \lean|out| (output leg through a splitter, else input leg through a binder);
+  \lean|MixL.nodes l| is \lean|[⟨X, [], [a], dr, p⟩, ⟨S, [a, v], [K], dr, dt⟩]| for an output and
+  \lean|[⟨X, [a], [], dr, p⟩, ⟨B, [K], [a, v], dr, dt⟩]| for an input. \lean|mixZ|, \lean|mixZc|,
+  \lean|mix_ok|: the legs and a (weighted) Z box on the product dimension, summed over every
+  $[l.a,l.K]$, equal $\prod_l\sqrt{\mathrm{dimv}\,l.dr}\cdot\mathrm{tZw}(\mathrm{zc}(mb),
+  (\sigma\,l.v)_l)$; \lean|MixOK| and \lean|Mix3OK| collect the side conditions (distinct labels,
+  positive phaseless pink dots, product dimension $=\prod$ leg dimensions for three legs, leg
+  dimension $\le$ box dimension).
+\end{itemize}
+
+\paragraph{Rule lemmas.} \Cref{tab:lean-core-weights} lists every \lean|LocalEq| lemma of
+\texttt{Weights} with the rule it states. Each conclusion is \lean|LocalEq E L iL R iR iface 1 s|
+(or $s,1$ where noted) with the scalar $s$ given by a hypothesis.
+
+{\small
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X@{}}
+\caption{The rule lemmas of \texttt{Weights}.}\label{tab:lean-core-weights}\\
+\toprule
+Lemma & Statement \\
+\midrule
+\endfirsthead
+\toprule
+Lemma & Statement \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\lean|zcCongr| & [P1] green spider: a Z/ZW node equals any Z/ZW node with the same dimension, permuted legs and equal coefficients below $d$ (engine \code|phase_to_weight|, \code|weight_to_phase|). \\
+\lean|zcFusion| & [P1] (S1): two Z/ZW spiders joined by $w$ fuse, $\mathrm{zc}(m,k)=\mathrm{zc}(n_a,k)\mathrm{zc}(n_b,k)$. \\
+\lean|zcFusionN| & (S1) along a list $ws$ of distinct shared wires ($ws\ne[\,]$); the result's legs are the others. \\
+\lean|zcScalar| & A leg-free Z/ZW node is the scalar $s=\sum_{k<d}\mathrm{zc}(n,k)$. \\
+\lean|zcEpt| & [P1] (Ept): the phaseless pink state into a Z effect of coefficient $1$ at $0$ (\lean|tX_zero_state|) is $\sqrt d$. \\
+\lean|zcZer| & [P1] (Zer): the Z state of coefficients $[k=0]$ is the phaseless pink state times $(\sqrt d)^{-1}$. \\
+\lean|zcAd| & [P1] (AD): Z effects $a$, $b$ on the two outputs of a W node are the Z effect with $m_0=a_0b_0$, $m_k=a_kb_0+a_0b_k$. \\
+\lean|zcK2| & [P1] (K2): pink $K_j$ (1$\to$1) into the spider $a$ is the spider $b$ into pink $K_j$, times $s$, when $a_k=s\,b_{(k+j)\bmod d}$ (\lean|tX_shift|: the pink $K_j$ 1$\to$1 entry is $[a+j\equiv b]$). \\
+\lean|zcTi|, \lean|zcT| & [P1] (YT): a W node with a Z effect of coefficients $1,-1,\dots,-1$ (resp.\ $1,\dots,1$) on its first output is $\mathtt{Ti}$ (resp.\ $\mathtt T$). \\
+\lean|zcPcy| & [P1] (Pcy): a Z box $n$ ($n_0=1$) on the input of a W node is copies of it on both outputs. \\
+\lean|fourierSq|, \lean|fourierSq'| & [P1] (P1): $F;F$ is the phaseless pink state with two outputs, the first bent onto the input by a phaseless Z spider; or the pink state on the two outer legs. \\
+\lean|identityXZ| & [P1] (S2): the phaseless pink spider 1$\to$1 is the phaseless green one. \\
+\lean|zxwTA| & [P1] (TA): the pink 1$\to$2 under a W node, crossed into two green dots, is a W node in its place, times $(\sqrt d)^{-1}$ (\lean|collapse4|, \lean|ta_arith|). \\
+\lean|zxwBsj| & [P1] (Bsj): pink $K_j$ into a W node whose first output ends on a green effect is the Z state of coefficients $[k=0\lor k=(d-j)\bmod d]$, times $\sqrt d$. \\
+\lean|kOne| & [P1] (K1): pink $K_j$ (1$\to$1) before a green dot with outputs $os$ is the green dot followed by pink $K_j$ on each output (fresh labels $us$). \\
+\lean|xDef|, \lean|xDefT|, \lean|xDefW| & X spider definition: the X spider is the Z spider (same phase) with $F$ on each output and $F;F;F$ on each input (\lean|xDef|); or the Z spider of the negated phase $\varphi_b(k)=\varphi_a((d-k)\bmod d)$ with $F$ into each input and $F;F;F$ out of each output (\lean|xDefT|); \lean|xDefW| for XW/ZW. \lean|kjNeg|: phases $K_{j'}$, $j'+j\equiv0$, are $K_j$ at $-k$. \\
+\lean|fourierMult| & [P1] (P1): $F;F$ is the multiplier $e=|ws|$ when $e+1\equiv0$, times $s=\sqrt d^{\,e-1}$. \\
+\lean|qfMW| & [P2] (MW): a box $m$ (zero except at $0$ and $d-1$) and the multiplier $e\not\equiv0$ before a W node are the box, the W node and the multiplier $e$ on each output; $s=\sqrt d^{\,e-1}$. \\
+\lean|bindDef|, \lean|bindDef0|, \lean|bindDefP| & [P2] (2.8): the binder $\langle B,[c],[a,b]\rangle$ is the splitter with its three legs bent by phaseless Z spiders; read the other way $\langle S,[a,b],[c]\rangle$ (\lean|bindDef0|, no conditions); or with only the legs whose flag is set bent (\lean|bindDefP|, \lean|bendLeg f l x = if f then x else l|). \\
+\lean|zxwD1|, \lean|qfD1| & [P1]/[P2] (D1): a spider $m$ followed by $F;F$ is $F;F$ followed by the spider $m'$ of reversed coefficients $\mathrm{zc}(m',k)=\mathrm{zc}(m,(d-k)\bmod d)$; \lean|qfD1| for $F;F$ on every input versus every output (\lean|spiderF2|, \lean|sumOver_chains2|). \\
+\lean|zxwVW|, \lean|zxwVW'| & [P1] (VW): a V box into a W node is the W node with a V box on each output (scalar on the right, resp.\ left). \\
+\lean|zxwZV| & [P1] (ZV): a Z state $a$ into a V box is the Z state of coefficients $1$ at $0$ and $a_{d-1}$ elsewhere. \\
+\lean|zxwVA| & [P1] (VA): boxes $b_c$ on a W node's outputs through multipliers into a pink dot are a V box followed by the Z box $A$ (\lean|vaVal|, \lean|vaClosed|). \\
+\lean|qfVA| & [P2] (VA): the same left side is the box $b$, pink $K_{-1}$, a W transpose on a plain green state, pink $K_1$ and the box $A$ (\lean|qfVaR|). \\
+\lean|zxwKZ| & [P1] (KZ): a pink $K_1$ state on a W node whose other outputs meet a pink dot through transposed multipliers $e_c$ is a pink $K_1$ state and pink dot states, times $s$ (\lean|kzVal|, \lean|wKz|, \lean|kz_const|). \\
+\lean|qfHD| & [P2] (HD): the Hadamard decomposition through chains \lean|HdC| (top value $t$, multiplier wires $ws$, green dot $m,w\to y$, $K_{-1}$, W transpose on a green state, $K_c$) is $s\cdot\langle F,[o],[i]\rangle$ (\lean|hdVal|, \lean|hdClosed|, \lean|chainsVal|, \lean|chainsClosed|). \\
+\lean|zxwHD| & [P1] (HD): the same through M boxes (chains \lean|ZhdC|) is $s\cdot\langle F,[o],[i]\rangle$. \\
+\lean|hopfW|, \lean|hopfSwappedW|, \lean|hopfXW|, \lean|hopfSwappedXW|, \lean|hopfWXW|, \lean|hopfSwappedWXW| & (Hopf) with a weighted Z spider, a weighted X spider, or both (helpers \lean|tZw_sum_cons|, \lean|tZw_cons_cons|, \lean|tXw_perm|, \lean|tXw_antipode_in|, \lean|tXw_antipode_out|). \\
+\lean|xcFusion| & Fusion of two X/XW spiders along $w$, coefficients multiplying. \\
+\lean|qfE| & [P2] (E): the pink state of dimension $n$ through the multiplier $e$ and the plain green dot $n\to t$ (binder, weighted Z box, splitter) is $s$ times the pink state of dimension $t$, $s\sqrt n^{\,e}=\sqrt n^{\,3}$. \\
+\lean|qfK0| & [P2] (K0): pink $K_j$ of dimension $m$ into the plain green dot with legs $m,n_1,n_2$ is $s$ times pink $K$ states of dimensions $n_1$, $n_2$. \\
+\lean|zxwWW| & [P1] (WW): two W nodes on a summed $z$ (outputs $xs$ and the $w$ legs of green dots $p,w\to y$), with a W node $u\to ps$, are the crossed W nodes $x_k\to\mathrm{row}_k$, column W nodes $q_c\to\mathrm{col}_c$ and green dots $p,q\to y$ (\lean|wwLeft|, \lean|wwRight|, \lean|wwRows|, \lean|wwB_zero|, \lean|wwB_hot|). \\
+\lean|qfWW| & [P2] (WW): two W nodes on $z$ with outputs $xs$ and $ys$ are the crossed W nodes and column W nodes projected through green dots $q_c\to y_c,s_c$ and a W node $e\to ss$ on a green effect (\lean|qwRight|). \\
+\lean|qfDD| & [P2] (DD): the splitter $k\to(a,b)$ of $mn\to(m,n)$ is the pink dot $k\to(x,y)$ of dimension $mn$, $x$ through the multiplier $n$ into the mixed Z box $z\to a$, and $y$ into the mixed Z box $y\to b$ (\lean|mix2|, \lean|qddP|). \\
+\lean|qfBZW| & [P2] (BZW): W nodes of dimensions $m$ and $n$ into mixed Z boxes $x_c,y_c\to o_c$ are the mixed Z box $u,v\to w$ into the W node of dimension $k$ (\lean|mix3|, \lean|bzwVal|, \lean|sum4_pin|). \\
+\lean|qfDZX| & [P2] (DZX): a pink dot of dimension $mn$ whose legs pass through multipliers $n$ and two-legged mixed Z boxes to dimension $m$ is the pink dot of dimension $m$ (\lean|dzInVal|, \lean|dzOutVal|, \lean|dz_mod|). \\
+\lean|qfTA| & [P2] (TA): a W node of dimension $m$ and a pink dot of dimension $n$ whose legs pass through multipliers $e_c$ into mixed Z boxes are, up to $s$, the same with a W node of dimension $n$ for the pink dot (\lean|taNet|, \lean|ta_id|). \\
+\lean|qfS1|, \lean|qfS1c| & [P2] (S1): mixed-dimensional Z boxes joined along legs $W$ fuse into one box on the remaining legs, entries multiplying (\lean|zz_join|); with every leg joined, the scalar $\sum_ja_jb_j$ times the pink dots' square roots. \\
+\end{xltabular}
+}
+
+\paragraph{Other value lemmas of \texttt{Weights}.} \lean|tZw_at|, \lean|tZw_perm| (the weighted
+analogues of \lean|tZ_at|, \lean|tZ_perm|); \lean|tW_pair| (a two-output W node at $I<d$ is
+$[j_1=I\land j_2=0]+[j_1=0\land j_2=I\land I\ne0]$); \lean|dsum_pick|; \lean|tX_shift|;
+\lean|tX_zero_state|, \lean|tX_zero_effect| (phaseless pink state, effect at $j$: $\sqrt d$ if
+$j=0$); \lean|tX_kj_state|; \lean|tB_zero_left|; \lean|tZ_pair|, \lean|tZ_pair'|, \lean|tZ_three|;
+\lean|val_zc_two|; \lean|fou_neg| ($F[(d-k)\bmod d,x]=\overline{F[k,x]}$); \lean|neg_neg_mod|;
+\lean|mult_neg_iff|; \lean|shift_iff|; \lean|sum_two_points| ($\sum_{j<d}f(j)=f(0)+f(d-1)$ for
+$d>1$ when $f$ vanishes at every other $j<d$); \lean|sum_pin_shift|; \lean|wGreen|, \lean|wGreen'|
+($\sum_g\mathrm{tW}([a,g],b)=[a=0]+[a\ne0][a=b]$); \lean|w_pair_nonzero|; \lean|wsum2|;
+\lean|tW_support| (a W node at $u$ is nonzero only on all-zero outputs with $u=0$, or one nonzero
+output $u<d$); \lean|tW_cons'|; \lean|wPairSum|, \lean|wPairSum_zero|, \lean|wPairSum_hot|;
+\lean|tW_replicateZero|, \lean|tW_single|, \lean|prod_tW_zeros|, \lean|prod_tW_zero_in|,
+\lean|tW_allZero|, \lean|tW_two_nz|; \lean|hot_cons|, \lean|hot_split|, \lean|sum_hot_rows|,
+\lean|prod_isZero|, \lean|prod_one_hot|; \lean|mixLegIn|, \lean|mixLegOut| (a binder, splitter
+with a phaseless pink state, effect summed over $a$: $\sqrt r\,[K=V]$); \lean|wPinkSum|,
+\lean|wMultPinkVal| (W node into gadgets into a pink dot, as a character sum); \lean|prod_om_pow|,
+\lean|prod_vConst|, \lean|vConst_pow| ($\mathrm{vConst}\cdot\sqrt d^{\sum|c.2.1|}=\sqrt d$),
+\lean|vConst_congr|, \lean|vF_congr|; list facts \lean|zip_map_self|, \lean|prod_mapIdx_const|,
+\lean|sum_map_range|, \lean|flatMap_single_snd|, \lean|perm_map_flatMap|, \lean|prod_flatMap'|,
+\lean|prod_ind|, \lean|prod_ite_all|, \lean|prod_map_mul3|, \lean|sum_ind_count|,
+\lean|sum_list_comm|, \lean|filter_single_sum|, \lean|length_filter_fst|, \lean|sum_map_mod|,
+\lean|reads_prod|, \lean|prodVal_flatMap'|, \lean|prodVal_mixL|, \lean|sumOver_fsum|,
+\lean|sumOver_finsum|, \lean|sumOver_chains|, \lean|sumOver_chains'|, \lean|sumOver_mults|;
+\lean|pinAll cs u g σ| ($\sigma$ with each $u(b)$ set to $g(b)$) with \lean|pinAll_update|,
+\lean|pinAll_at|, \lean|pinAll_not|; label-coverage lemmas \lean|vNodes_labels|,
+\lean|vaNodes_labels|, \lean|kzNodes_labels|, \lean|hdNodes_labels|, \lean|zhdNodes_labels|;
+\lean|hdGroup|, \lean|zhdGroup|, \lean|hdAt0|, \lean|hdAtTop|, \lean|zhdAt0|, \lean|zhdAtTop| (one
+chain's contribution at $0$ and at $d-1$); \lean|wwLeftVal|, \lean|wwRightVal|, \lean|wwRows_val|,
+\lean|wwRows_reads|, \lean|qwRightVal|, \lean|sum_tW_zero|, \lean|sum_tW_hot|.
+
+\paragraph{Side conditions.} Every rule lemma of \texttt{Weights} carries, besides the coefficient
+hypotheses, the structural hypotheses of the lemmas of \cref{sec:lean-core-zxrules}: the legs of
+each node as explicit lists (\lean|hl : m.outs ++ m.ins = [o]| and the like), the dimension index
+of each label (\lean|labIdx E.labs x = dz|), the interface labels in \lean|iface|, the distinctness
+of the named labels (\lean|List.Nodup| of a listed tuple), $d>0$, and the phaselessness of every
+plain dot. The exporter proves these hypotheses with \lean|rfl|, \lean|decide| or \lean|simp|.
+
+%======================================================================
+\section{Rules with bundled ports (\texttt{Unfuse}, \texttt{FuseB}, \texttt{WFuse})}\label{sec:lean-core-bundled}
+
+A \bbox{} family is exported as a network whose ports bundle the copies of a port
+(\cref{sec:lean-core-net-digits}); \cref{ch:lean-boxes} specifies that translation (module
+\texttt{Bundle} and its successors). The three modules here state rule lemmas over bundled ports.
+They use the kind builders of \texttt{Bundle}: \lean|zk cs| is \lean|Z| when $cs=[\,]$ and
+\lean|ZB cs| otherwise; \lean|xk co ci| is \lean|X| when both are empty and \lean|XB co ci|
+otherwise.
+
+\subsection{\texttt{Unfuse}: port-box unfusion}
+
+Value lemmas:
+\begin{itemize}
+\item \lean|tZ_split|: $\mathrm{tZ}(d,\varphi,A\mathbin{+\!\!+}B)=\sum_{j<d}\mathrm{tZ}(d,\varphi,A\mathbin{+\!\!+}[j])\cdot
+  \mathrm{tZ}(d,0,j{::}B)$, a Z spider split into two along one shared value, the second phaseless.
+\item \lean|tZ_phaseless|, \lean|tX_phaseless|: a phaseless spider equals the spider of the zero phase
+  function.
+\item \lean|bundled_split|: for $|tl|=|cs|$,
+  $\mathrm{bundled}(\mu,d,(hd\mathbin{+\!\!+}tl).\mathrm{map}\,\sigma,cs)=hd.\mathrm{map}\,\sigma\mathbin{+\!\!+}
+  \mathrm{tailVals}(\mu,d,tl.\mathrm{map}\,\sigma,cs)$; \lean|bundled_one|:
+  $\mathrm{bundled}(\mu,d,[v],[c])=\mathrm{digsC}(\mu,d,c,v)$; \lean|tailVals_absent|.
+\item \lean|fou_unitary'| (the conjugate-first form of \lean|fou_unitary|), \lean|tX_split_out|,
+  \lean|tX_split_in|: an X spider split into two along one output, resp.\ input, the second spider
+  phaseless with that one value as its single input, resp.\ output ($d>0$).
+\end{itemize}
+
+\begin{lemma}[\lean|unfuseZB|, \lean|unfuseXB|, \lean|unfuseXBi|]
+\begin{itemize}
+\item \lean|unfuseZB|: with $|tl|=|cs|$, $y$ of index $dz$ and absent from
+  $os\mathbin{+\!\!+}hd\mathbin{+\!\!+}tl\mathbin{+\!\!+}[b]$, $o_2\mathbin{+\!\!+}i_2\sim os\mathbin{+\!\!+}hd\mathbin{+\!\!+}[y]$, and
+  $c_{ph}$ phaseless:
+  \[\begin{aligned}&\langle \mathtt{ZB}(cs\mathbin{+\!\!+}[c]),os,hd\mathbin{+\!\!+}tl\mathbin{+\!\!+}[b],dz,a\rangle\\
+  &\quad=\bigl[\langle \mathtt{zk}\,cs,o_2,i_2\mathbin{+\!\!+}tl,dz,a\rangle,\ \langle\mathtt{ZB}[c],[\,],[y,b],dz,c_{ph}\rangle\bigr]
+  \text{ summed }[y],\end{aligned}\]
+  scalars $1,1$: the last bundled input $b$ moves onto a new phaseless spider joined to the rest by
+  the plain wire $y$.
+\item \lean|unfuseXB| (last bundled output, $|tl|=|co|$, $o_2\sim hd\mathbin{+\!\!+}[y]$, $d>0$):
+  $\langle\mathtt{XB}(co\mathbin{+\!\!+}[c])\,ci,hd\mathbin{+\!\!+}tl\mathbin{+\!\!+}[b],is\rangle=
+  [\langle\mathtt{xk}\,co\,ci,o_2\mathbin{+\!\!+}tl,is\rangle,\langle\mathtt{XB}[c][\,],[b],[y],c_{ph}\rangle]$
+  summed $[y]$.
+\item \lean|unfuseXBi| (last bundled input, $|tl|=|ci|$, $i_2\sim hd\mathbin{+\!\!+}[y]$, $d>0$):
+  $\langle\mathtt{XB}\,co\,(ci\mathbin{+\!\!+}[c]),os,hd\mathbin{+\!\!+}tl\mathbin{+\!\!+}[b]\rangle=
+  [\langle\mathtt{xk}\,co\,ci,os,i_2\mathbin{+\!\!+}tl\rangle,\langle\mathtt{XB}[\,][c],[y],[b],c_{ph}\rangle]$
+  summed $[y]$.
+\end{itemize}
+These are the lemmas of the engine rule \code|port_box_unfusion|.
+\end{lemma}
+
+\subsection{\texttt{FuseB}: fusion with bundled ports}
+
+Helpers: \lean|perm_update_once|; \lean|tZ_fuse|
+($\sum_j\mathrm{tZ}(\varphi_a,j{::}P)\,\mathrm{tZ}(\varphi_b,j{::}Q)=\mathrm{tZ}(\varphi_c,P\mathbin{+\!\!+}Q)$ when phases
+multiply); \lean|tX_fuse| ($d>0$: $\sum_j\mathrm{tX}(\varphi_a,j{::}P_1;P_2)\,\mathrm{tX}(\varphi_b,Q_1;j{::}Q_2)=
+\mathrm{tX}(\varphi_c,P_1\mathbin{+\!\!+}Q_1;P_2\mathbin{+\!\!+}Q_2)$); \lean|labDim_w|; \lean|tailVals_append_map|;
+\lean|fusionZ_gen|, \lean|fusionX_core|, \lean|fusionX_gen| (the fusions with extra leg values
+$D_1,\dots,D_4$ appended to each spider's lists).
+
+\begin{lemma}[\lean|fusionZG|]
+With $|t_1|=|cs_1|$, $|t_2|=|cs_2|$, $w$ occurring once in $o_1\mathbin{+\!\!+}i_1$ and once in
+$o_2\mathbin{+\!\!+}i_2$, $w\notin t_1\mathbin{+\!\!+}t_2$, $o_3\mathbin{+\!\!+}i_3\sim(o_1\mathbin{+\!\!+}i_1).\mathrm{erase}\,w\mathbin{+\!\!+}
+(o_2\mathbin{+\!\!+}i_2).\mathrm{erase}\,w$, and multiplying phases:
+\[[\langle\mathtt{zk}\,cs_1,o_1,i_1\mathbin{+\!\!+}t_1,a\rangle,\langle\mathtt{zk}\,cs_2,o_2,i_2\mathbin{+\!\!+}t_2,b\rangle]
+\text{ summed }[w]=\langle\mathtt{zk}(cs_1\mathbin{+\!\!+}cs_2),o_3,i_3\mathbin{+\!\!+}(t_1\mathbin{+\!\!+}t_2),c\rangle.\]
+\lean|fusionXG| is the X form: $\mathtt{xk}\,co_1\,ci_1$ with outputs $o_1\mathbin{+\!\!+}to_1$ and inputs
+$i_1\mathbin{+\!\!+}ti_1$, $w$ once in $o_1$ and once in $i_2$, fuse into
+$\mathtt{xk}(co_1\mathbin{+\!\!+}co_2)(ci_1\mathbin{+\!\!+}ci_2)$ with outputs $o_3\mathbin{+\!\!+}(to_1\mathbin{+\!\!+}to_2)$ and inputs
+$i_3\mathbin{+\!\!+}(ti_1\mathbin{+\!\!+}ti_2)$.
+\end{lemma}
+
+\paragraph{Copied bare wires.} \lean|digits_eq|: two values below $d^k$ with equal digits $0..k-1$ are
+equal. \lean|Kind.tower ms| is \lean|I| for $ms=[\,]$ and \lean|Bun m (Kind.tower ms')| for
+$ms=m{::}ms'$; \lean|Kind.tower_cs|: its one output and one input have the chain $ms$.
+\lean|tensor_tower|: for values below $d^{\prod\mu(ms)}$ the tower's tensor is
+$\mathrm{tI}(d^{\prod\mu(ms)},v_x,v_w)$. \lean|bunI|: with
+\lean|E.dimv bz = E.dimv dz ^ (ms.map E.mult).prod|, $d>0$, and $x,w\in\mathit{iface}$ of index $bz$,
+$\langle\mathtt{tower}\,ms,[x],[w],dz,0\rangle=\langle I,[x],[w],bz,0\rangle$: copies of a bare wire
+along $ms$ are one bare wire on the bundled dimension.
+
+\subsection{\texttt{WFuse}: W fusion over a bundled port}
+
+Helpers: \lean|digs_cons_low| ($\mathrm{digs}(d,M{+}1,x+dy)=x{::}\mathrm{digs}(d,M,y)$ for $x<d$);
+\lean|sum_digs| ($\sum_{v<d^M}f(\mathrm{digs}(d,M,v))=\mathrm{sumW}(d,M,f)$: a bundled value is
+summed as its digits); \lean|wTerm_map|; \lean|tailVals_reps|, \lean|bundled_reps| (bundling every
+value along $[m]$ is concatenating their \lean|digs d (μ m)|); \lean|copyLegs_plain|; \lean|tZw_pair|;
+\lean|tW_one|.
+
+\begin{lemma}[\lean|wFuseB|]
+Let $b\in\{\mathtt Z,\mathtt{ZW},\mathtt W\}$ and $w:\N\to\C$ with $w(0)=1$, and let every copy of $b$
+at input $x<d$ satisfy $\mathrm{tensor}(E,b,d,p_b,vs,[x])=w(x)\,\mathrm{tW}(d,vs,x)$ for
+$|vs|=|ys|$. With \lean|E.dimv bz = E.dimv dz ^ ([m].map E.mult).prod|, $t$ of index $bz$, $a,a'$ of
+index $dz$, $t\ne a$, $t\notin ys$, $a'\ne a$, $a'\notin ys$, $d>0$ and
+\lean|E.coef pz k = w k| for $k<d$:
+\[\begin{aligned}&\bigl[\langle\mathtt{WB}\,[[m]],[t],[a],dz,p_w\rangle,\langle\mathtt{Bun}\,m\,b,ys,[t],dz,p_b\rangle\bigr]\text{ summed }[t]\\
+&\quad=\bigl[\langle\mathtt{ZW},[a^{\prime}],[a],dz,p_z\rangle,\langle\mathtt{WB}\,(ys.\mathrm{map}\,(\_\mapsto[m])),ys,[a^{\prime}],dz,p^{\prime}_w\rangle\bigr]
+\text{ summed }[a^{\prime}],\end{aligned}\]
+with interface $a{::}ys$ and scalars $1,1$: a W node whose one bundled output fans into $\mu(m)$
+copies of $b$ is a weighted Z spider before one W node on all the copies' outputs.
+\emph{Technique:} \lean|sum_digs| turns the bundled sum into \lean|sumW|, \lean|wTerm_map| turns the
+copies' product into \lean|wTerm|, and \lean|wAssoc_nil| closes it.
+\end{lemma}
+\lean|wFuseZ| specializes \lean|wFuseB| to a copy that is a Z or weighted Z spider with one output
+$y$, its coefficients those of the weighted Z spider
+(\lean|zc E ⟨b, [y], [t], dz, pb⟩ k = zc E ⟨.ZW, [a'], [a], dz, pz⟩ k| and value $1$ at $k=0$); the
+exporter invokes it for W fusion in families.
+
+%======================================================================
+\section{Mixed networks (\texttt{Mixed})}\label{sec:lean-core-mixed}
+
+A diagram with discards $G$ denotes a completely positive map~\cite{selinger2007cpm}; the library
+holds it as its purification, as in the mixed-state completeness of
+\citet{carette2019mixed}.
+
+\begin{definition}
+\begin{lstlisting}[style=leancore]
+structure MNet where
+  net : Net          -- the purification
+  env : List ℕ       -- the boundary labels its discards end
+  deriving DecidableEq, Repr
+\end{lstlisting}
+\lean|envSum D ls f σ σ'| sums over a value $j<D(l)$ for each $l\in ls$, written into both
+assignments:
+$\mathrm{envSum}(D,[\,],f,\sigma,\sigma')=f(\sigma,\sigma')$ and
+$\mathrm{envSum}(D,l{::}ls,f,\sigma,\sigma')=\sum_{j<D(l)}\mathrm{envSum}(D,ls,f,\sigma[l\mapsto
+j],\sigma'[l\mapsto j])$. The CPM entry at plain boundary values $\sigma$ and conjugate values
+$\sigma'$ is
+\[\begin{aligned}
+ M.\mathrm{cpm}(E,\sigma,\sigma')=\mathrm{envSum}\bigl(&\mathrm{labDim}\,E,\ M.\mathrm{env},\\
+ &(a,b)\mapsto\mathrm{eval}(E,M.\mathrm{net},a)\,\overline{\mathrm{eval}(E,M.\mathrm{net},b)},\ \sigma,\sigma'\bigr).
+\end{aligned}\]
+\end{definition}
+
+\begin{theorem}[Doubling facts]
+\begin{itemize}
+\item \lean|envSum_congr|, \lean|envSum_mul|, \lean|envSum_swap| (congruence under a predicate
+  preserved by in-range updates, scaling, swapping the two assignments); \lean|InRange.update|.
+\item \lean|cpm_pure| (F3): $\langle N,[\,]\rangle.\mathrm{cpm}(\sigma,\sigma')=\mathrm{eval}(N,\sigma)\,
+  \overline{\mathrm{eval}(N,\sigma')}$, by \lean|rfl|.
+\item \lean|Equal.cpm| (F4): from \lean|Equal E s₁ N₁ s₂ N₂| and $\sigma,\sigma'$ in range on
+  $N_1.\mathrm{bnd}$, for every $env$:
+  \[s_1\overline{s_1}\,\langle N_1,env\rangle.\mathrm{cpm}(\sigma,\sigma')=
+  s_2\overline{s_2}\,\langle N_2,env\rangle.\mathrm{cpm}(\sigma,\sigma'):\]
+  a pure equation lifts to every mixed context, its scalar by its squared modulus.
+\item \lean|cpm_phase| (F5): from \lean|Equal E 1 N₁ s N₂| and $s\overline s=1$, the CPMs agree.
+\item \lean|cpm_conj| (F1): if $\mathrm{eval}(N_2,a)=\overline{\mathrm{eval}(N_1,a)}$ for all $a$, then
+  $\langle N_2,env\rangle.\mathrm{cpm}(\sigma,\sigma')=\langle N_1,env\rangle.\mathrm{cpm}(\sigma',\sigma)$.
+\item \lean|cpm_causal| (F6): if the CPM is $[\forall l\in keep,\sigma l=\sigma' l]$ everywhere, it is
+  $1$ wherever the plain and conjugate values agree on $keep$.
+\end{itemize}
+\end{theorem}
+
+The discard rules of \module{archytaszx.rewrite.rules_discard} hold as tensor identities:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Lemma & Identity & Hypotheses \\
+\midrule
+\lean|discard_fourier| & $\sum_{o<d}F[o,i]\,\overline{F[o,i']}=[i=i']$ & $d>0$, $i,i'<d$ \\
+\lean|discard_phase| & $\sum_{o<d}\mathrm{tZ}(\varphi,[o,i])\,\overline{\mathrm{tZ}(\varphi,[o,i'])}=[i=i']$ & $i,i'<d$ \\
+\lean|discard_zero| & $\sum_{o<d}[o=0]\,\overline{[o=0]}=1$ & $d>0$ \\
+\lean|discard_loop| & $\sum_{a<d}\sum_{b<d}\mathrm{tI}(a,b)\,\overline{\mathrm{tI}(a,b)}=d$ & none \\
+\lean|discard_binder| & $\sum_{k<st}\mathrm{tB}(s,t,k,a,b)\,\overline{\mathrm{tB}(s,t,k,a',b')}=[a=a'\land b=b']$ & $a,a'<s$, $b,b'<t$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+with the helpers \lean|ex_mul_conj| ($\mathrm{ex}(\theta)\overline{\mathrm{ex}(\theta)}=1$) and
+\lean|mixed_tZ_leg| ($\mathrm{tZ}(\varphi,[o,i])=[o=i]\,\mathrm{ex}(\varphi(i))$ for $i<d$).
+
+%======================================================================
+\section{Exact arithmetic}\label{sec:lean-core-arith}
+
+The exporters prove scalar identities and refutations by exact computation in cyclotomic fields,
+by enclosures of real numbers, and by one real root of an integer polynomial. Four modules supply
+these tools.
+
+\subsection{\texttt{Cyclo}: coefficient vectors in $\Q(\zeta)$}\label{sec:lean-core-cyclo}
+
+An integer list $l=(l_0,\dots,l_{n-1})$ stands for $\sum_il_i z^i$:
+$\mathrm{cvz}(z,[\,])=0$, $\mathrm{cvz}(z,a{::}l)=a+z\,\mathrm{cvz}(z,l)$ (Horner's rule). The
+operations:
+\begin{itemize}
+\item \lean|addAt l n c|: $c$ added to entry $n$ (unchanged when $n\ge|l|$); \lean|addAt_length|,
+  \lean|cvz_addAt| ($n<|l|$: $\mathrm{cvz}(\mathrm{addAt}(l,n,c))=\mathrm{cvz}(l)+cz^n$),
+  \lean|cvz_replicate|.
+\item \lean|kadd a b|: entrywise sum, the shorter list padded with zeros; \lean|pscale c a|:
+  entrywise $c\cdot$; \lean|pmul a b|: $\mathrm{pmul}([\,],b)=[\,]$,
+  $\mathrm{pmul}(a{::}as,b)=\mathrm{kadd}(\mathrm{pscale}(a,b),0{::}\mathrm{pmul}(as,b))$;
+  \lean|ktrim|: trailing zeros removed.
+\item \lean|pmodStep phi a|: if $|a|<|\phi|$ then $a$; else with $top$ the last entry of $a$,
+  $\mathrm{ktrim}(\mathrm{kadd}(a,\ 0^{|a|-|\phi|}\mathbin{+\!\!+}\mathrm{pscale}(-top,\phi)))$, one step reducing
+  the top coefficient by the monic $\phi$. \lean|pmod phi n a| applies $\mathrm{pmodStep}\circ\mathrm{ktrim}$
+  $n$ times.
+\item Value lemmas: \lean|cvz_kadd|, \lean|cvz_pscale|, \lean|cvz_pmul|, \lean|cvz_ktrim|,
+  \lean|cvz_append_replicate| ($\mathrm{cvz}(0^k\mathbin{+\!\!+}a)=z^k\mathrm{cvz}(a)$),
+  \lean|cvz_pmodStep|, \lean|cvz_pmod| (reduction by a $\phi$ vanishing at $z$ keeps the value),
+  \lean|cvz_zeros|, and \lean|cvz_eq_zero_of_pmod|: if $\mathrm{cvz}(z,\phi)=0$ and
+  $\mathrm{pmod}(\phi,n,a)$ is all zeros, then $\mathrm{cvz}(z,a)=0$.
+\item Polynomials: \lean|pz l| $=\sum_iC(l_i)X^i\in\Q[X]$ with \lean|aeval_pz|, \lean|coeff_pz|,
+  \lean|pz_ne| (nonzero when some entry is nonzero), \lean|degree_pz| (degree $<|l|$).
+\end{itemize}
+
+\begin{theorem}[\lean|cyc_ne|]
+For $M>0$ and an integer list $r$ with $|r|\le\varphi(M)$ (Euler's totient, \lean|M.totient|) and some
+nonzero entry, $\mathrm{cvz}(\omega_M,r)\ne0$. \emph{Technique:} $\mathrm{pz}(r)$ is a nonzero rational
+polynomial of degree $<\varphi(M)$, and the $M$-th cyclotomic polynomial, irreducible over $\Q$ of
+degree $\varphi(M)$, is the minimal polynomial of $\omega_M$ (Mathlib,
+\nolinkurl{Mathlib.RingTheory.Polynomial.Cyclotomic.Roots}).
+\end{theorem}
+
+Scalar lemmas writing constants as powers of $\omega_M$:
+\begin{itemize}
+\item \lean|fsum_list| (a \lean|Finset| sum over $\mathrm{range}\,d$ as a list sum),
+  \lean|pow_mod_of| ($z^M=1\Rightarrow z^n=z^{n\bmod M}$).
+\item \lean|om_sub|: $M=mq\Rightarrow\omega_m=\omega_M^q$; \lean|ex_of|: $\theta=p/M+z$ with $z\in\Z\Rightarrow
+  \mathrm{ex}(\theta)=\omega_M^p$; \lean|I_sub|: $M=4q\Rightarrow i=\omega_M^q$;
+  \lean|rt_sub2|: $M=8q\Rightarrow\sqrt2=\omega_M^q+\omega_M^{7q}$; \lean|rt_sub3|: $M=12q\Rightarrow
+  \sqrt3=\omega_M^q+\omega_M^{11q}$; \lean|rt_sub5|: $M=5q\Rightarrow\sqrt5=1+2\omega_M^q+2\omega_M^{4q}$;
+  \lean|rt_split|: $x=k^2s\Rightarrow\sqrt x=k\sqrt s$; \lean|rt_one|; \lean|rt_prod|:
+  $x=ab\Rightarrow\sqrt x=\sqrt a\sqrt b$; \lean|conj_om_pow|: $\overline{\omega_d}=\omega_d^{d-1}$.
+\item \lean|tWZ d os i : ℤ| is the W entry as an integer, \lean|tWZ_eq| its cast to $\mathrm{tW}$.
+\item Length lemmas: \lean|digs_length|, \lean|digsC_length| ($|\mathrm{digsC}(\mu,d,c,v)|=\prod_c\mu$),
+  \lean|tailVals_length|, \lean|bundled_length|, \lean|outCs_length|, \lean|inCs_length|,
+  \lean|copyOuts_length|, \lean|copyIns_length|; \lean|prod_pow_mul|.
+\item Monomials in atoms: \lean|mono xs ks| $=\prod_ix_i^{k_i}$ (integer exponents, zipped);
+  \lean|mono_nil|, \lean|mono_kadd| (for nonzero atoms), \lean|mono_ktrim|; \lean|ex_zmul|
+  ($\mathrm{ex}(kg)=\mathrm{ex}(g)^k$), \lean|ex_lin|, \lean|ex_atoms|: if
+  $\theta=p/M+z+\sum_ik_ig_i$ then $\mathrm{ex}(\theta)=\omega_M^p\cdot\mathrm{mono}((\mathrm{ex}\,g_i)_i,k)$;
+  \lean|exp_eq_ex|, \lean|ex_atoms_ne|.
+\end{itemize}
+
+\subsection{\texttt{GaussSign}: the sign of the quadratic Gauss sum}
+
+For odd $p$ with $h=(p-1)/2$, the quadratic Gauss sum $G=\sum_{k<p}\left(\frac kp\right)\zeta_p^k$
+satisfies $G^2=(-1)^hp$ and the classical product formula
+$G=\prod_{j<h}(\zeta^{2j+1}-\zeta^{-(2j+1)})$~\cite{berndt1998gauss,landsberg1893gauss}. The module
+derives the sign from these two facts.
+\begin{itemize}
+\item \lean|gneg p| $=|\{j<(p-1)/2:p<2(2j+1)\}|$.
+\item \lean|gfac p a|: the vector of $x^a-x^{p-a}$ of length $p+1$; \lean|gprod p n|:
+  $\prod_{j<n}(x^{2j+1}-x^{p-(2j+1)})$ by \lean|pmul|; \lean|lgVec p|: the Legendre symbols
+  \lean|QSem.lg p k| for $k<p$ (\lean|QSem.lg p a| is $0$ if $a\equiv0$, $1$ if $a^{\lfloor p/2\rfloor}=1$ in
+  $\Zd p$, else $-1$; defined in \texttt{PathSumQudit}).
+\item \lean|cvz_map_range|, \lean|cvz_gfac|, \lean|cvz_gprod| ($2n\le p+1$) evaluate these vectors;
+  \lean|om_factor|: $\omega_p^a-\omega_p^{p-a}=2i\sin(2\pi a/p)$; \lean|sin_sign|: for $0<a<p$,
+  $2a\ne p$, $\sin(2\pi a/p)=(p<2a\,?\,-1:1)\,|\sin(2\pi a/p)|$; \lean|prod_sign|.
+\end{itemize}
+\begin{theorem}[\lean|gauss_sign|, \lean|gauss_rt|]
+\lean|gauss_sign|: for odd $p>0$, if $G=\prod_{j<h}(\omega_p^{2j+1}-\omega_p^{p-(2j+1)})$ and
+$G^2=(-1)^hp$, then $G=i^h(-1)^{\mathrm{gneg}(p)}\sqrt p$. \lean|gauss_rt|: for odd $p>1$ and a step
+count $N$, if
+\[\begin{gathered}\mathrm{pmod}(1^p,N,\mathrm{kadd}(\mathrm{lgVec}\,p,\mathrm{pscale}(-1,\mathrm{gprod}(p,h))))\quad\text{and}\\
+\mathrm{pmod}(1^p,N,\mathrm{kadd}(\mathrm{pmul}(\mathrm{lgVec}\,p,\mathrm{lgVec}\,p),[-(-1)^hp]))\end{gathered}\]
+are all zeros (reductions by $1+x+\dots+x^{p-1}$, written \lean|List.replicate p 1|, checked by
+\lean|decide|), then $\sum_{k<p}\left(\frac kp\right)\omega_p^k=i^h(-1)^{\mathrm{gneg}(p)}\sqrt p$.
+\end{theorem}
+
+\subsection{\texttt{Ball}: ball arithmetic in $\C$}
+
+Enclosures in the style of ball arithmetic~\cite{vanderhoeven2009ball}, with the $\ell^1$ distance
+of real and imaginary parts.
+\begin{definition}
+\lean|Near z x y r| $:\iff|\mathrm{Re}\,z-x|+|\mathrm{Im}\,z-y|\le r$; \leanLLone|NearR a m δ| $:\iff|a-m|\le\delta$.
+\end{definition}
+\begin{itemize}
+\item Complex balls: \lean|near_round| (enlarge to a ball $(x',y',r')$ with
+  $|x-x'|+|y-y'|+r\le r'$), \lean|near_const|, \lean|near_I| ($i$ in $(0,1,0)$), \lean|near_real|,
+  \lean|near_add| (radii add), \lean|near_neg|, \lean|near_sub|, \lean|near_mul|:
+  \[\mathrm{Near}(a,x,y,r),\mathrm{Near}(b,u,v,s)\Rightarrow
+  \mathrm{Near}(ab,\ xu-yv,\ xv+yu,\ (|x|+|y|)s+(|u|+|v|)r+rs),\]
+  using \lean|abs_re_add_abs_im_mul|; \lean|ne_zero_of_near| ($r<|x|$ or $r<|y|$ gives $z\ne0$);
+  \lean|re_pos_of_near| ($r<x$ gives $\mathrm{Re}\,z>0$); \lean|near_ofReal|, \lean|near_rat|,
+  \lean|near_int|.
+\item Exponentials: \lean|cosT A n| $=\sum_{k<n}(-1)^kA^{2k}/(2k)!$ and
+  \lean|sinT A n| $=\sum_{k<n}(-1)^kA^{2k+1}/(2k+1)!$; \lean|partial_eq|, \lean|partial_re_im| (the
+  partial exponential series of $Ai$ up to degree $2n$ is $\mathrm{cosT}+i\,\mathrm{sinT}$);
+  \lean|near_exp|: for $n>0$, $|a-A|\le\varepsilon$ and $|A|\le1$,
+  \[\mathrm{Near}\Bigl(e^{ai},\ \mathrm{cosT}(A,n),\ \mathrm{sinT}(A,n),\
+  2\Bigl(\varepsilon+|A|^{2n}\frac{2n+1}{(2n)!\,2n}\Bigr)\Bigr).\]
+\item Phase bridges: \lean|ex_eq_exp| ($\mathrm{ex}(g)=e^{(2\pi g)i}$), \lean|ex_pow_eight|
+  ($\mathrm{ex}(g)=\mathrm{ex}(g/8)^8$), \lean|om_eq_ex| ($\omega_m^e=\mathrm{ex}(e/m)$), \lean|ex_inv|,
+  \lean|ex_zpow|, \lean|ex_npow|, \lean|rt_inv_ofReal|.
+\item Real balls: \lean|sqrt_near|, \lean|nearR_sqrt| ($0\le m-\delta$, $(m-\delta)^2\le p\le(m+\delta)^2$
+  give $|\sqrt p-m|\le\delta$); \lean|inv_near|, \lean|nearR_inv| ($0<m-\delta$, $1/(m-\delta)\le m'+\delta'$,
+  $m'-\delta'\le1/(m+\delta)$ give $|x^{-1}-m'|\le\delta'$); \lean|pi_near|, \lean|nearR_pi|:
+  $|\pi-3.14159265358979323846|\le10^{-20}$ (from Mathlib's \nolinkurl{Mathlib.Analysis.Real.Pi.Bounds});
+  \lean|nearR_const|, \lean|nearR_round|, \lean|nearR_add|, \lean|nearR_neg|, \lean|nearR_mul|
+  (radius $|m|\varepsilon+|n|\delta+\delta\varepsilon$).
+\item \lean|sqrt_of_sq|: $g^2=p$ and $\mathrm{Re}\,g>0$ give $g=\sqrt p$.
+\end{itemize}
+
+\subsection{\texttt{NumField}: one real root and coefficient congruence}
+
+\begin{itemize}
+\item \lean|pev cs x| $=\sum_kcs_kx^k$ on $\R$ (Horner, constant term first), \lean|pdv cs x| its
+  derivative ($\mathrm{pdv}([\,])=0$, $\mathrm{pdv}(c{::}cs,x)=\mathrm{pev}(cs,x)+x\,\mathrm{pdv}(cs,x)$),
+  \lean|pevC| the same polynomial on $\C$; \lean|hasDerivAt_pev|, \lean|pevC_ofReal|,
+  \lean|pevC_root|.
+\item \lean|root_unique|: if $lo<hi$, $\mathrm{pev}(lo)<0<\mathrm{pev}(hi)$ and $\mathrm{pdv}>0$ on
+  $(lo,hi)$, then exactly one $x\in(lo,hi)$ has $\mathrm{pev}(cs,x)=0$ (\lean|∃!|). The exporter uses it
+  to name a real algebraic phase or coefficient $\theta$ by its polynomial and isolating interval.
+\item \lean|valCoefZ|, \lean|valCoefX|: two Z/ZW (resp.\ X/XW) nodes with equal legs and dimension and
+  equal \lean|zc| (resp.\ \lean|xc|) below $d$ have equal values. \lean|netCoef|: networks with
+  equal \lean|int| and \lean|bnd| whose nodes have pairwise equal values (\lean|List.Forall₂|) are
+  \lean|Equal E 1 A 1 B|.
+\end{itemize}
+
+%======================================================================
+\section{Exact evaluation and refutation}\label{sec:lean-core-refute}
+
+\subsection{\texttt{Refute}: formal sums and evaluation at a point}
+
+\begin{definition}[Formal sums]
+\lean|Terms| is \lean|List (ℤ × ℕ × List ℤ)|; a term $(c,e,k)$ stands for $c\,\zeta^e\,\mathrm{mono}(xs,k)$, and
+\lean|tv z xs t| is the sum of the terms at $\zeta=z$ and atoms $xs$. \lean|tmul a b| multiplies term
+by term ($(c c',e+e',\mathrm{kadd}(k,k'))$); \lean|tc c| is the constant $[(c,0,[\,])]$. Lemmas:
+\lean|tv_cons|, \lean|tv_append|, \lean|tv_tc|, \lean|tv_flatMap|, \lean|tv_mul| (for nonzero
+atoms), \lean|tv_foldr_tmul|.
+\end{definition}
+
+\begin{definition}[Groups]
+\lean|Grp| is \lean|List (List ℤ × List ℤ)|: per atom monomial $k$ one coefficient vector of
+powers of $\zeta$; \lean|gval z xs g| $=\sum_{(k,l)}\mathrm{mono}(xs,k)\,\mathrm{cvz}(z,l)$. \lean|klt| is the
+lexicographic order on monomials ($[\,]<$ any nonempty list; heads compared first).
+\lean|gadd M k e c g| adds $c\zeta^e\,x^k$: into the group of monomial $k$ at entry $e\bmod M$ if
+present, else as a new group $(k,\mathrm{addAt}(0^M,e\bmod M,c))$ inserted before the first group whose
+monomial is greater, so groups stay sorted. \lean|gnorm M t| folds \lean|gadd| over $t$ (right to
+left, each monomial trimmed by \lean|ktrim|) and drops groups whose vector is all zeros. Lemmas:
+\lean|gadd_len|, \lean|gval_gadd| ($\zeta^M=1$), \lean|gval_filter|, \lean|gval_gnorm|
+($\mathrm{gval}(\mathrm{gnorm}(t))=\mathrm{tv}(t)$ when $\zeta^M=1$, $M>0$).
+\lean|ofCoeffs k l i| turns a vector back into terms (nonzero entries only, exponents from $i$),
+\lean|gterms g| the groups into terms, and \lean|compact M t| $=\mathrm{gterms}(\mathrm{gnorm}(M,t))$
+is a formal sum with at most one term per monomial and exponent below $M$; \lean|tv_ofCoeffs|,
+\lean|tv_gterms|, \lean|tv_compact| ($\mathrm{tv}(\omega_M,\cdot)$ is preserved).
+\end{definition}
+
+\begin{definition}[Formal entries of generators]
+A phase table $P:\N\to\N\to\N\times\mathrm{List}\,\Z$ gives for phase index $p$ and $k$ the exponent of
+$\zeta$ and the atom monomial of $\mathrm{ex}(\varphi_p(k))$. With $M$ a multiple of $d$:
+\begin{itemize}
+\item \lean|tZT P d vs|: for each $k<d$ with every value $=k$, the term $(1,P(k))$.
+\item \lean|tXT M P d os is|: for each $k<d$ the term
+  $\bigl(1,\ P(k).1+\tfrac Md\,k\textstyle\sum os+\tfrac Md\,(d-1)\,k\sum is,\ P(k).2\bigr)$, the X entry
+  without its $(\sqrt d)^{-1}$ factors ($\overline\omega=\omega^{d-1}$).
+\item \lean|tensorT S M P|: the formal entry of every kind as in \cref{def:lean-core-tensor}: $F$ is
+  $[(1,\tfrac Md\,oi,[\,])]$; $T$, $Ti$, $W$, $I$ are integer constants; bundled kinds bundle first;
+  \lean|Bun m b| folds \lean|tmul| over the copies; \lean|ZW|, \lean|XW| and all other cases give
+  $[\,]$.
+\item \lean|sqc S k d no ni| counts the $(\sqrt d)^{-1}$ factors: $no+ni$ for \lean|X|, $1$ for
+  \lean|F|, the bundled lengths for \lean|XB|, $\mu(m)\cdot\mathrm{sqc}(b)$ for \lean|Bun m b|, else $0$.
+\item \lean|Kind.noZW|: no \lean|ZW| or \lean|XW|, also under \lean|Bun|.
+\item \lean|isBS n| (binder or splitter), \lean|valBS| (their entries as constants), \lean|valT| (a
+  node's formal entry), \lean|sqN| (its factor count, $0$ for $B$ and $S$).
+\end{itemize}
+A \lean|Shape| is an environment's \lean|dimv|, \lean|labs| and \lean|mult| (\lean|Env.shape|), with
+\lean|Shape.dim S l| the label's dimension.
+\end{definition}
+
+\begin{theorem}[Correctness of formal entries]
+\lean|tZ_cyc|, \lean|tX_cyc|, \lean|tensor_cyc|: if every phase satisfies
+$\mathrm{ex}(\varphi_p(j))=\omega_M^{P(p,j).1}\mathrm{mono}(xs,P(p,j).2)$ for $j<d$, $d\mid M$, $M>0$, the atoms
+are nonzero, and the kind is \lean|noZW|, then
+$\mathrm{tensor}(E,k,d,p,os,is)=(\sqrt d)^{-\mathrm{sqc}}\cdot\mathrm{tv}(\omega_M,xs,\mathrm{tensorT}(\ldots))$.
+\lean|nodeOK S M keys n| checks that $n$ is a binder or splitter, or that it is \lean|noZW|, $M\bmod
+d=0$, and $(n.ph,j)\in keys$ for every $j<d$; \lean|PhOK E M gs P keys| asserts the phase equation for
+every listed key with atoms $\mathrm{ex}(g)$, $g\in gs$ (\lean|PhOK.get| extracts one).
+\lean|val_cyc| and \lean|prodVal_cyc| lift the equation to nodes and products (\lean|prodT| folds
+\lean|tmul| and \lean|compact|).
+\end{theorem}
+
+\begin{definition}[Network entry as groups]
+\lean|sumT M D ls f σ| sums formal sums over the labels, \lean|compact|ing after each label;
+\lean|sumOver_cyc| relates it to \lean|sumOver|. \lean|evalG S M P N σ| $=\mathrm{gnorm}(M,\mathrm{sumT}(M,S.\mathrm{dim},N.\mathrm{int},\mathrm{prodT}(S,M,P,N.\mathrm{nodes}),\sigma))$;
+\lean|sqL S N| lists each node's dimension and factor count and \lean|sqK S N|
+$=\prod(\sqrt{d_n})^{-c_n}$.
+\end{definition}
+
+\begin{theorem}[\lean|eval_cyc|]
+If every node is \lean|nodeOK| and \lean|PhOK| holds, then
+$\mathrm{eval}(E,N,\sigma)=\mathrm{sqK}(E.\mathrm{shape},N)\cdot\mathrm{gval}(\omega_M,(\mathrm{ex}\,g)_{g\in gs},
+\mathrm{evalG}(E.\mathrm{shape},M,P,N,\sigma))$: a network's entry at a concrete environment, computed
+exactly.
+\end{theorem}
+
+\begin{theorem}[Refutation]
+\lean|inRange_of|: a \lean|Bool| check that every label is below its dimension gives
+\lean|InRange|. \lean|refute|: if $\sigma$ is in range on $N_1.\mathrm{bnd}$ and $s_1\mathrm{eval}(N_1,\sigma)\ne
+s_2\mathrm{eval}(N_2,\sigma)$, then $\lnot\,$\lean|Equal E s₁ N₁ s₂ N₂|. \lean|refute_bnd|: boundaries that
+are not permutations of each other refute equality. \lean|assigns D ls| lists every assignment of
+$ls$ below $D$ (other labels $0$); \lean|assigns_cover|: every in-range assignment agrees on $ls$
+with one of them.
+\end{theorem}
+A refutation proof therefore evaluates both sides at one boundary assignment with
+\lean|eval_cyc| (or \lean|eval_ve_at| below), reduces the difference of the group values with
+\lean|pmod|, and concludes it is nonzero with \lean|cyc_ne| or a \lean|Near| enclosure with
+\lean|ne_zero_of_near|.
+
+\subsection{\texttt{Contract}: evaluation by checked contraction}
+
+Summing every internal label of a large network one assignment at a time is exponential in the number
+of labels. \texttt{Contract} certifies a variable-elimination order
+instead~\cite{dechter1999bucket}: factors are tables over small scopes, and each step sums one
+label out of the factors containing it.
+\begin{definition}[Factor tables]
+\begin{lstlisting}[style=leancore]
+inductive FT where
+  | leaf : Terms → FT          -- a formal sum
+  | nil  : FT                  -- end of a level
+  | cons : FT → FT → FT        -- the subtable of the next value, then the rest
+  deriving DecidableEq, Repr
+structure Fac where
+  scope : List ℕ               -- one level per label
+  table : FT
+  deriving DecidableEq, Repr
+\end{lstlisting}
+\lean|FT.node cs| builds a level from the subtables $cs$; \lean|FT.child T k| is the $k$-th subtable
+(\lean|leaf []| when absent); \lean|FT.get σ ls T| reads the levels at the labels $ls$ in order and
+returns the leaf's terms ($[\,]$ when the shape does not match). \lean|Fac.at D F σ| is
+\lean|F.table.get σ F.scope|; \lean|fv z xs D F σ| its value; \lean|fprod| the product of factor
+values; \lean|ffold| the product of factor entries as one formal sum (\lean|tv_ffold|). Lemmas:
+\lean|FT.get_congr|, \lean|fv_reads| (a factor reads its scope), \lean|fprod_reads|,
+\lean|fprod_filter|.
+\end{definition}
+
+\begin{definition}[Checks]
+\begin{itemize}
+\item \lean|leafOK S M P n F|: every label of $n$ is in $F$'s scope, and for every assignment of the
+  scope (\lean|assigns|) the factor's entry equals \leanLLone|compact M (valT S M P τ n)|.
+  \lean|valT_congr|, \lean|leaf_val|.
+\item \lean|elimOK M D l Fs Fs'|: with $ins$ the factors of $Fs$ containing $l$ and $outs$ the
+  others, $Fs'$ is $outs$ followed by one new factor whose scope excludes $l$, is covered by the
+  scopes of $ins$, covers every label of $ins$ other than $l$, and whose entry at every assignment
+  of its scope is \lean|compact M| of $\bigcup_{j<D(l)}\mathrm{ffold}(D,ins,\tau[l\mapsto j])$.
+  \lean|elim_val|: then $\sum_{j<D(l)}\mathrm{fprod}(Fs,\sigma[l\mapsto j])=\mathrm{fprod}(Fs',\sigma)$ for
+  $\sigma$ in range on the scopes of $Fs'$.
+\item \lean|chainOK M D Fs steps final|: the steps $(l,Fs')$ each satisfy \lean|elimOK| in turn and
+  the last list is $final$. \lean|scopesOK U Fs steps|: every label of every factor lies in $U$, is
+  the current step's label, or is eliminated later. \lean|chain_val|:
+  $\mathrm{sumOver}(D,(\text{step labels}).\mathrm{reverse},\mathrm{fprod}(Fs),\sigma)=\mathrm{fprod}(final,\sigma)$.
+\item \lean|prodVal_leaves|, \lean|scopesOK_leaves| connect node products to leaf factors.
+\end{itemize}
+\end{definition}
+
+\begin{theorem}[\lean|eval_ve| and variants]
+If the nodes are \lean|nodeOK|, \lean|PhOK| holds, one leaf factor per node passes \lean|leafOK|,
+$N.\mathrm{int}$ is a permutation of the reversed step labels, the chain passes \lean|chainOK| and
+\lean|scopesOK N.bnd|, and $\sigma$ is in range on the boundary, then
+$\mathrm{eval}(E,N,\sigma)=\mathrm{sqK}(E.\mathrm{shape},N)\cdot\mathrm{fprod}(\omega_M,(\mathrm{ex}\,g),\ldots,final,\sigma)$.
+\begin{itemize}
+\item \lean|eval_ve_new|: the steps give only their new factors $(l,new)$: \lean|elimNew| checks one
+  step, \lean|elimStep l Fs new| $=Fs$ without the factors containing $l$, then $new$;
+  \lean|expand| rebuilds the factor lists; \lean|chainNew| checks the chain; \lean|chainNew_nil|,
+  \lean|chainNew_step|, \lean|elimOK_step|, \lean|chainOK_expand|, \lean|expand_fst| relate the two
+  forms.
+\item \lean|eval_ve_at|: leaves may read the boundary labels from $\sigma$ (\leanLLone|pin U σ τ x| is
+  $\sigma(x)$ for $x\in U$, else $\tau(x)$; \lean|leafAt| replaces \lean|leafOK|; \lean|leaf_val_at|,
+  \lean|prodVal_leaves_at|), provided no boundary label is a step label.
+\item \lean|eval_ve_groups|: $\mathrm{fprod}(final,\sigma)=\mathrm{gval}(\mathrm{gnorm}(M,\mathrm{ffold}(final,\sigma)))$.
+\end{itemize}
+\end{theorem}
+
+%======================================================================
+\section{Diagrams and their meaning (\texttt{Diagram})}\label{sec:lean-core-diagram}
+
+\texttt{Diagram} represents the engine's diagram as data: nodes with the dimension index of every
+port, wires joining two ports, the boundary ports (outputs first), and \bboxes~\cite{carette2022bangboxes}.
+
+\begin{lstlisting}[style=leancore]
+structure Port where            -- one port of a node
+  node : ℕ                      -- node id
+  out  : Bool                   -- output side
+  pos  : ℕ                      -- position on that side
+  deriving DecidableEq, Repr
+
+structure DNode where
+  id : ℕ
+  kind : Kind
+  dim : ℕ                       -- dimension index
+  ph : ℕ                        -- phase index; second dimension index of B, S
+  outs : List ℕ                 -- dimension index of each output port
+  ins : List ℕ                  -- dimension index of each input port
+  deriving DecidableEq, Repr
+
+structure DBox where            -- a !-box
+  id : ℕ
+  mult : ℕ                      -- multiplicity symbol
+  parent : Option ℕ             -- enclosing box
+  nodes : List ℕ                -- node scope
+  ports : List Port             -- port scope
+  deriving DecidableEq, Repr
+
+structure Diagram where
+  nodes : List DNode
+  wires : List (Port × Port)
+  outs : List Port              -- boundary outputs
+  ins : List Port               -- boundary inputs
+  boxes : List DBox := []
+  deriving DecidableEq, Repr
+\end{lstlisting}
+
+A \bbox{} with a nonempty node scope is node-scoped; one with an empty node scope and a nonempty port
+scope is port-scoped. Definitions in the namespace \lean|Diagram|, for a diagram $D$:
+\begin{itemize}
+\item \lean|bnd| $=$ \lean|outs ++ ins|: the boundary slots, slot $i$ the $i$-th port.
+\item \lean|portDim p|: the dimension index of port $p$, read from the first node with id
+  $p.\mathrm{node}$ (\lean|outs.getD pos 0| or \lean|ins.getD pos 0|), $0$ when no node has that id.
+  \lean|wireDim j|: the dimension index of wire $j$'s first port ($0$ out of range).
+  \lean|bdims|: the boundary dimension indices in slot order.
+\item \lean|locate p|: \lean|some (inl i)| for the first boundary slot $i$ holding $p$, otherwise
+  \lean|some (inr j)| for the first wire $j$ with $p$ at either end, otherwise \lean|none|.
+\item \leanLLone|value σ τ p|: $\sigma(i)$ at a boundary slot, $\tau(j)$ on wire $j$, $0$ otherwise.
+\item \lean|DNode.node n f|: the network node of $n$ with output $k$ labeled $f\langle n.id,\mathit{true},k\rangle$
+  and input $k$ labeled $f\langle n.id,\mathit{false},k\rangle$, kind, dimension and phase index copied.
+\end{itemize}
+
+\begin{definition}[Diagram evaluation]
+\[\begin{aligned}
+ D.\mathrm{eval}(E,\sigma)=\mathrm{sumOver}\Bigl(&j\mapsto E.\mathrm{dimv}(D.\mathrm{wireDim}\,j),\
+ [0,\dots,|wires|-1],\\
+ &\tau\mapsto\prod_{n\in D.\mathrm{nodes}}\mathrm{val}\bigl(E,\mathrm{id},n.\mathrm{node}(D.\mathrm{value}\,\sigma\,\tau)\bigr),\
+ \underline0\Bigr):
+\end{aligned}\]
+the sum over a value on every wire of the product of each node's tensor at its port values; a
+boundary port reads slot $i$ of $\sigma$. \lean|D.InRange E σ| holds when
+$\sigma(i)<E.\mathrm{dimv}(\mathrm{bdims}[i])$ for every slot $i$.
+\end{definition}
+
+\begin{definition}[Translation to a network]
+\lean|label off p| is the slot $i$ for a boundary port, $off+j$ for a port on wire $j$, and $0$
+otherwise. The network of the diagram is
+\[\mathtt{toNet}\ off=\bigl\langle D.\mathrm{nodes}.\mathrm{map}(\cdot.\mathrm{node}(\mathrm{label}\,off)),\
+[off,\dots,off+|wires|-1],\ [0,\dots,|bnd|-1]\bigr\rangle.\]
+\lean|okPort p| holds when $p$ is located on a
+slot below $|bnd|$ or a wire below $|wires|$. \lean|check L off| is the conjunction of
+\begin{enumerate}
+\item $|bnd|\le off$;
+\item every port of every node is \lean|okPort|;
+\item the two ends of every wire have equal \lean|portDim|;
+\item $L.\mathrm{lookup}(off+j)=$ \lean|some (wireDim j)| for every wire $j$;
+\item $(L.\mathrm{lookup}\,i)_{i<|bnd|}=$ \lean|bdims.map some|.
+\end{enumerate}
+\end{definition}
+
+\lean|DNode.mapDim f| and \lean|Diagram.mapDim f| read every dimension index through $f$ (the node's
+own, every port's, and for $B$ and $S$ the phase index).
+
+\begin{definition}[Diagram equality]
+\lean|DEqual E s₁ D₁ s₂ D₂| $:\iff D_1.\mathrm{bdims}=D_2.\mathrm{bdims}\land\forall\sigma,\ D_1.\mathrm{InRange}(E,\sigma)\to
+s_1D_1.\mathrm{eval}(E,\sigma)=s_2D_2.\mathrm{eval}(E,\sigma)$.
+\end{definition}
+
+\begin{theorem}
+\lean|sumOver_shift| (summing labels $off+j$ is summing $j$ for integrands that agree on such
+assignments), \lean|node_rename|, \lean|okPort_label| ($a(\mathrm{label}\,off\,p)=\mathrm{value}\,\sigma\,b\,p$ when
+$a(off+j)=b(j)$ and $a(l)=\sigma(l)$ for $l<off$), \lean|eval_toNet|: if
+\lean|D.check E.labs off = true| then $\mathrm{eval}(E,D.\mathrm{toNet}\,off,\sigma)=D.\mathrm{eval}(E,\sigma)$;
+\lean|labDim_bnd|: slot $i$'s network dimension is \lean|E.dimv (bdims.getD i 0)|.
+\lean|DEqual_iff|: if \lean|E.labs = L| and both diagrams pass \lean|check L|, then
+\lean|DEqual E s₁ D₁ s₂ D₂ ↔ Equal E s₁ (D₁.toNet o₁) s₂ (D₂.toNet o₂)|.
+\end{theorem}
+The exporter proves its network equation, then rewrites with \lean|DEqual_iff| (its \lean|check|
+hypotheses by \lean|decide|) to state the final theorem over the two diagrams.
+
+%======================================================================
+\section{Expansion of \texorpdfstring{\bboxes}{!-boxes} (\texttt{Expand})}\label{sec:lean-core-expand}
+
+\lean|Diagram.expand ks D| instantiates every \bbox{}, the box $b$ at the multiplicity
+$k=ks(b.\mathrm{mult})$. It mirrors the engine's expansion (\cref{ch:diagrams}) and is the reference
+against which \cref{ch:lean-boxes} proves bundled networks correct.
+
+\paragraph{Auxiliary definitions.}
+\begin{itemize}
+\item \lean|portKey p| $=(p.\mathrm{node},\ [p.\mathrm{out}],\ p.\mathrm{pos})$ (inputs before outputs);
+  \lean|keyLe| its lexicographic order. \lean|fresh D| $=1+\max$ node id ($1$ for no nodes).
+\item \lean|splice refs old maps|: with $here$ the ports of $refs$ in $old$: $refs$ when $here$ is
+  empty; else, at the index of the first port of $refs$ in $old$, the block
+  $\bigl[\langle\mathrm{lookup}_{mp}(r.\mathrm{node}),r.\mathrm{out},r.\mathrm{pos}\rangle: mp\in maps,\ r\in here\bigr]$
+  (copy by copy, each node id through the copy's map, unmapped ids kept) between the ports before and
+  after that index that are not in $old$.
+\item \lean|scopeBnd D scope|: the boundary ports (inputs, then outputs) on nodes of $scope$,
+  merge-sorted by \lean|keyLe|.
+\item \lean|gather D b|: walks the ancestors of $b$ from its parent upward (at most $|boxes|$ steps);
+  for each ancestor with a nonempty node scope, splices \lean|D.ins| and \lean|D.outs| with
+  $old=$ \lean|scopeBnd| of its nodes and the identity map: each node-box ancestor's boundary ports
+  become one block at the first of them. Port-scoped ancestors are skipped.
+\item \lean|shiftPos g k p| $=p.\mathrm{pos}-c+kc$, $c$ the number of positions $i<p.\mathrm{pos}$ on the same
+  side with $g\langle p.\mathrm{node},p.\mathrm{out},i\rangle$; \lean|growSide g k x out ds| replaces each
+  dimension index at a position $g$ holds by $k$ copies; \lean|growImg g k p| is the $k$ ports
+  $\langle p.\mathrm{node},p.\mathrm{out},\mathrm{shiftPos}+j\rangle_{j<k}$ when $g\,p$, else the one port at
+  \lean|shiftPos|.
+\item For a node box $b$: \lean|cpId D b j x| $=\mathrm{fresh}(D)+j\cdot|b.\mathrm{nodes}|+$ (index of $x$ in
+  the sorted scope); \lean|inS b p| ($p$'s node in the scope); \lean|crossP D b p| ($p$ outside, wired
+  to a port inside); \lean|nimg D b k p|: the $k$ copies $\langle\mathrm{cpId}\,j\,p.\mathrm{node},p.\mathrm{out},p.\mathrm{pos}\rangle$
+  for an inside port, else \lean|growImg (crossP b) k p|; \lean|spliceN D b k refs|: the boundary with
+  its inside ports as one block at the first of them, copy by copy, every other port mapped by
+  \lean|nimg|.
+\end{itemize}
+
+\begin{algorithm}[Box instantiation]\label{alg:lean-core-expand}
+\begin{enumerate}
+\item \lean|copyNodes D b k|: every node in $b$'s scope becomes $k$ copies with ids \lean|cpId|; every
+  other node's sides grow by \lean|growSide (crossP b) k| (a port wired into the box fans out into
+  $k$ ports); every wire $(p,q)$ becomes \lean|(nimg p).zip (nimg q)|; outputs and inputs become
+  \lean|spliceN|; every other box drops $b$'s nodes from its scope, gains all copies when it held any
+  of them, maps its ports through \lean|nimg|, and is removed when both scopes end empty.
+\item \lean|expandNode D b k| $=(\text{if }k=0\text{ then gather}(D,b)\text{ else }D).\mathrm{copyNodes}(b,k)$.
+\item \lean|growPorts D b k| with $g(p)=[p\in b.\mathrm{ports}]$: every node's sides grow by
+  \lean|growSide g k|, wires zip their images under \lean|growImg g k|, outputs and inputs are
+  \lean|flatMap|ped through it, every other box maps its ports and is removed when empty.
+  \lean|expandPort D b k| applies \lean|gather| first when $k=0$.
+\item \lean|expandFuel ks fuel D|: with fuel left, take the leaf boxes (no box has them as parent)
+  and pick the one of least id; none: return $D$; else replace $D$ by \lean|expandNode| (empty port
+  scope) or \lean|expandPort| at $k=ks(b.\mathrm{mult})$ and continue with one less fuel.
+\item \lean|expand ks D| $=$ \lean|expandFuel ks (D.boxes.length + 1) D|.
+\end{enumerate}
+\end{algorithm}
+
+%======================================================================
+\section{Digit sums of boxed diagrams}\label{sec:lean-core-digits}
+
+The modules \texttt{Elim} to \texttt{OrderK} prove that a boxed diagram's bundled network evaluates
+like its expansion. Each states the diagram as a constrained sum over port values or over the digits
+of bundled ports, and relates those sums across the instantiation steps. The box chains they use
+(\lean|walk|, \lean|nodeBoxes|, \lean|portBoxes|, \lean|nodeChain|, \lean|partner|, \lean|tail|,
+\lean|toNetB|, \lean|WF|, \lean|step|, \lean|pick|, \leanLLone|φP|, \lean|gN|) are defined in
+\cref{ch:lean-boxes}; in brief, \lean|D.nodeChain x| lists the multiplicity symbols of the node boxes
+holding $x$, outermost first, and \lean|D.tail q| lists the multiplicities the port $q$ bundles
+beyond its node's own copies (the deeper end's extra node boxes for a wired port, the port boxes for
+a boundary port).
+
+\subsection{\texttt{Elim}: constrained sums over ports}
+
+\begin{itemize}
+\item \lean|Port.code p| $=2\cdot\mathrm{pair}(p.\mathrm{node},\ 2\,p.\mathrm{pos}+[p.\mathrm{out}])$ (Cantor pairing
+  \lean|Nat.pair|), an even label; \lean|Port.decode| inverts it; \lean|decode_code|, \lean|code_inj|,
+  \lean|code_even|. Slot $i$ is the odd label $2i+1$; \lean|slots σ c| is $\sigma(c/2)$ at odd $c$, $0$
+  at even.
+\item \lean|DNode.legs n|: its output ports then its input ports; \lean|Diagram.legs| all of them.
+\item \lean|pins|: each wire's second port pinned to its first, each boundary port to its slot.
+\item \leanLLone|evalG δ nv σ| sums over a value below $\delta(p)$ on every port $p$ (label
+  \lean|p.code|) the product $\prod_n nv(n,\nu\circ\mathrm{code})$ where every pin holds, else $0$.
+\item \lean|checkC|: the wire ends and boundary ports are a permutation of the legs, the legs are
+  distinct, and wire ends have equal dimension index.
+\end{itemize}
+\lean|sumOver_map_on|, \lean|pins_iff|, \lean|lookup_of_mem|, \lean|value_wire|, \lean|value_bnd| lead
+to \lean|evalG_eq|: under the conditions of \lean|checkC| and in-range slots, the constrained sum
+equals the sum over wire values of \lean|Diagram.eval|.
+
+\subsection{\texttt{Digits}: digit sums}
+
+\begin{definition}
+\lean|cidx ks c| lists the copy indices along the chain $c$ in lexicographic order, outermost
+coordinate first: $\mathrm{cidx}([\,])=[[\,]]$, $\mathrm{cidx}(m{::}c)=[i{::}t: i<ks(m),\ t\in\mathrm{cidx}(c)]$.
+\lean|rcidx ks c| $=(\mathrm{cidx}\,ks\,c.\mathrm{reverse}).\mathrm{map\ reverse}$ (innermost coordinate slowest).
+Digit $t$ of port $p$ is the label \lean|dlab p t| $=2\,\mathrm{pair}(p.\mathrm{code},\mathrm{encode}\,t)$, digit $t$ of
+slot $i$ is \lean|slab i t| $=2\,\mathrm{pair}(i,\mathrm{encode}\,t)+1$ (\lean|Encodable.encode| of the list),
+\lean|dport| recovers the port and \lean|slotsD σ| reads slot digits at odd labels.
+\end{definition}
+For a diagram $D$: \lean|legChain p| $=$ \lean|nodeChain p.node ++ tail p|; \lean|dlabs ks| lists every
+port's digits; \lean|dnode ks n t| is copy $t$ of node $n$, each port read as its digits under $t$,
+its tail's digits in \lean|rcidx| order; \leanLLone|pinsD ks ν| says every wire's two ends agree digit by
+digit and every boundary port's digits equal its slot's; \leanLLone|prodD E ks ν| is the product over the
+nodes and their copies ($t\in\mathrm{cidx}(\mathrm{nodeChain})$) of the copies' values, and
+\[\begin{aligned}
+ D.\mathrm{evalD}(E,ks,\sigma)=\mathrm{sumOver}\bigl(&l\mapsto E.\mathrm{dimv}(D.\mathrm{portDim}(\mathrm{dport}\,l)),\
+ D.\mathrm{dlabs}\,ks,\\
+ &\nu\mapsto[\mathrm{pinsD}\,ks\,\nu]\cdot\mathrm{prodD}\,E\,ks\,\nu,\ \mathrm{slotsD}\,\sigma\bigr)
+\end{aligned}\]
+(classical decidability of \lean|pinsD|), the diagram at the multiplicities $ks$ over digits, slot
+$i$'s digit $t$ being $\sigma(i,t)$. Facts: \lean|mem_cidx| (membership iff each coordinate is below
+its multiplicity), \lean|cidx_nodup|, \lean|mem_rcidx|, \lean|rcidx_append_single|,
+\lean|mem_cidx_append|, \lean|mem_cidx_single|, \lean|dlab_inj|, \lean|dlab_ne_slab|,
+\lean|dport_dlab|, \lean|slotsD_slab|, \lean|slotsD_dlab|, \lean|mem_dlabs|. \lean|evalD_relabel|:
+two digit sums agree when the digits of one are an injective relabeling $\rho$ of the other's that
+keeps dimensions, the slots read alike, and pins and products agree under $\rho$.
+
+\subsection{\texttt{ExpandFacts}, \texttt{Relabel}, \texttt{Gather}, \texttt{Split}}
+
+\begin{itemize}
+\item \texttt{ExpandFacts}: \lean|wsum w n| $=\sum_{i<n}w(i)$, \lean|wsum_succ|, \lean|range_blocks|
+  (consecutive blocks of widths $w$ fill $[0,\mathrm{wsum}\,w\,n)$), \lean|find?_unique|,
+  \lean|find?_none|; \lean|walk_eq| and the predicate \lean|ChainOK D pr start L| (every box of $L$ is
+  in $D$ and satisfies $pr$; every box of $D$ satisfying $pr$ whose parent is $start$ or a box of $L$ is
+  in $L$; box $i$'s parent is $start$ for $i=0$, else box $i-1$; the starts are distinct), with
+  \lean|ChainOK.length_le|, \lean|ChainOK.walk| (\lean|walk| returns $L$), \lean|filter_last|,
+  \lean|ChainOK.transport|; \lean|shiftPos_eq|, \lean|growSide_length|, \lean|side_grow|,
+  \lean|legs_grow| (a grown node's legs are the \lean|growImg| images of its legs).
+\item \texttt{Relabel}: \lean|dtup l| (a digit label's copy index), \leanLLone|relab φ l| (a digit label
+  through a map of digits $\varphi:\mathrm{Port}\to\mathrm{List}\,\N\to\mathrm{Port}\times\mathrm{List}\,\N$),
+  \lean|Port.dflt| $=\langle0,\mathit{false},0\rangle$, \leanLLone|bndMap D D' φ σ' i t| (slot digit $(i,t)$ of
+  $D$ read at $D'$'s slot of the image of its port); \leanLLone|evalD_relabelφ|: if $\varphi$ maps the
+  digits of $D$ one to one onto those of $D'$, wires to wires, boundary to boundary, keeping
+  dimensions, and node products agree, then $D'.\mathrm{evalD}(ks',\sigma')=D.\mathrm{evalD}(ks,\mathrm{bndMap}\,\varphi\,\sigma')$.
+\item \texttt{Gather}: \lean|gather| only reorders the boundary (\lean|gather_go|, \lean|gather_eq|,
+  \lean|splice_ident_perm|, \lean|lookup_ident|); congruence lemmas for diagrams with equal nodes,
+  wires and boxes (\lean|walk_congr| through \lean|ChainOK_congr|, \lean|prodD_congr|);
+  \lean|bnd_perm|, \lean|WF_perm_bnd|, \lean|evalD_perm_bnd| (a permuted boundary reads the slots
+  through \lean|bndMap| with the identity map); \lean|portMap D b k σ'| composes the reading through
+  \lean|gather| and \lean|growPorts|; \lean|evalD_expandPort|: instantiating a well-formed leaf port box
+  keeps the digit sum with the slots read through \lean|portMap|, and keeps \lean|WF|.
+\item \texttt{Split}: \leanLLone|φS img g p t| sends digit $t$ of a split port ($g\,p$) to its image number
+  $t.\mathrm{last}$ with $t$ minus its last coordinate, and any other port to its single image;
+  \lean|SplitOK D D' img g ks m| bundles the hypotheses (distinct legs, images partition the new legs,
+  split ports have chain $c\mathbin{+\!\!+}[m]$ and $ks(m)$ distinct images of chain $c$, kept ports one image
+  of the same chain, dimensions kept, wires map to zips of images, boundary to boundary), with
+  \lean|SplitOK.into|, \lean|.onto|, \lean|.inj|; \lean|evalD_split|: then the digit sums agree with the
+  slots read through \leanLLone|bndMap (φS img g)|. Helpers \lean|mem_zip_idx|, \lean|getElem_mem_zip|.
+\end{itemize}
+
+\subsection{\texttt{Positional}, \texttt{Tower}, \texttt{Pin}, \texttt{NetDigits}}
+
+\begin{itemize}
+\item \texttt{Positional}: \lean|size ks c| $=\prod_{m\in c}ks(m)$; \lean|pos ks c t| is $t$'s place
+  in \lean|cidx ks c| ($\mathrm{pos}(m{::}c,i{::}t)=i\cdot\mathrm{size}(c)+\mathrm{pos}(c,t)$, $0$ on empty lists);
+  \lean|size_cons|, \lean|size_append|, \lean|cidx_pos| (positions enumerate $[0,\mathrm{size})$),
+  \lean|pos_lt|, \lean|pos_inj|, \lean|pos_append|, \lean|cidx_length|, \lean|getElem_cidx_pos|;
+  \lean|digit_digit| ($j<k$: $\mathrm{digit}(B,j,\mathrm{digit}(B^k,i,v))=\mathrm{digit}(B,ik+j,v)$);
+  \lean|setDigits ls d v σ| sets label $ls[i]$ to digit $i$ of $v$; \lean|digit_zero_add|,
+  \lean|digit_succ_add|; \lean|sumOver_digits|: a sum over $n$ distinct labels of dimension $d>0$ is
+  one sum over $v<d^n$ with the labels set to the digits of $v$.
+\item \texttt{Tower}: \lean|blkC μ d p cs vs| (every value's block $p$ in base $d$ to its chain's
+  size); \lean|tower_outCsC|, \lean|tower_inCsC| (the chains of \lean|C.foldr Kind.Bun b| are $b$'s with
+  $C$ prepended), \lean|outCs_length_ge|, \lean|inCs_length_ge|, list helpers; \lean|tensor_towerC|:
+  a generator copied along the chain $C$ is the product over $t\in\mathrm{cidx}(C)$ of the generator at
+  every value's block $\mathrm{pos}(C,t)$, for values below $d$ to their chains' sizes; \lean|digsC_pos|:
+  $\mathrm{digsC}(\mu,d,c,w)$ is $[w]$ for $c=[\,]$, else the digits at the places $\mathrm{pos}(c,s)$.
+\item \texttt{Pin}: \lean|dtl|, \lean|wdl| (the digits of the wires' first ends), \lean|rdl| (of the
+  second ends and boundary ports), \lean|pinD| (a boundary digit to its slot digit, any other to its
+  partner's digit), \lean|idxOf?_get|, \lean|mem_rdl|, \lean|mem_wdl|, \lean|pinD_wire|,
+  \lean|pinD_bnd|, \lean|dlabs_perm|; \lean|evalD_pin|: the digit sum is the sum over the first ends'
+  digits alone, the others read through \lean|pinD|.
+\item \texttt{NetDigits}: \lean|sumOver_blocks| (summing labels whose values are numbers of digits is
+  summing the digits), \lean|flatMap_range_off|, \lean|idxOf_cidx|; \lean|NodeS| (a node is plain, a
+  boxed node is no binder or splitter, a node with tails is Z, X or a W node without input tails,
+  boxed or tailed nodes have all ports of the node's dimension, positive dimensions);
+  \lean|label_eq|; \lean|slotDig E β i t| (digit $\mathrm{pos}(\mathrm{legChain},t)$ of $\beta(i)$ in base the
+  slot's dimension); \lean|eval_toNetB| and \lean|eval_toNetB_evalD|: for a well-formed diagram whose
+  nodes satisfy \lean|NodeS| and whose wire labels have dimension $d^{\mathrm{size}(\mathrm{legChain})}$, the
+  bundled network \lean|D.toNetB off| at a bundled boundary assignment $\beta$ (in range) equals
+  \lean|D.evalD E E.mult (D.slotDig E β)|.
+\end{itemize}
+
+\subsection{\texttt{Order}, \texttt{OrderK}: the slot order of the expansion}
+
+\begin{itemize}
+\item \texttt{Order}: \lean|SDom D ks| lists every slot with every copy index of its chain;
+  \leanLLone|ixMap D D' φ x| reads a slot digit of $D$ as one of $D'$ through $\varphi$; \lean|bndMap_ix|;
+  \leanLLone|BndBij D D' ks φ| ($\varphi$ maps boundary digits one to one onto $D'$'s, keeping dimensions,
+  both boundaries without duplicates) and \lean|IxBij D D' ks f| (the same for an index map), with
+  \lean|BndBij.mem|, \lean|.inj'|, \lean|.onto'|, \lean|.dim'|, \lean|.ix|, \lean|IxBij.id|,
+  \lean|IxBij.comp|, \lean|WF.bnd_nodup|, \lean|bij_perm|, \lean|bij_port|, \lean|bij_node|,
+  \lean|idxOf_getElem'|; \lean|stepIx D ks b| (one instantiation step at the index level),
+  \lean|stepMap_ix|, \lean|stepIx_bij|; \lean|bidxFuel| (the composite over \lean|pick| and \lean|step|),
+  \lean|bmapFuel_read|, \lean|bidxFuel_bij|; \lean|bidx D ks x| $=$ \lean|bidxFuel ks (D.boxes.length + 1) D x|,
+  \lean|bmap_read|, \lean|bidx_bij|: for a well-formed $D$, \lean|bidx| is a bijection from $D$'s slot
+  digits onto the expansion's slots, keeping dimensions.
+\item \texttt{OrderK}: the expansion with its boundary in key order. \lean|mpB y o| is the least slot
+  on side $o$ whose node lies in box $y$; \lean|slotSig i| is slot $i$'s key data (the least slots of
+  its node boxes, outermost first, up to the first equal to $i$; then the remaining copy coordinates:
+  the remaining node boxes' outermost first, then the port boxes' innermost first); \lean|keySig|;
+  \lean|keyOf sg i t| $=$ the interleaving of $sg.1$ with $t$, then $i$, then $t$ read at the positions
+  $sg.2$; \lean|lexLe|; \lean|SL ks| (all slot digits, insertion-sorted by \lean|lexLe| of their
+  keys); \lean|expandK D ks| (the expansion with outputs and inputs replaced by the first
+  $|outs|$ and the rest of the key-ordered slots); \lean|readK ks σ'' i t| $=\sigma''(\text{index of }(i,t)\text{ in SL})$.
+  Lemmas \lean|SDom_nodup|, \lean|SDom_boxfree|, \lean|idxOf_map_inj|, \lean|idxOf?_of_mem|,
+  \lean|value_perm|, \lean|eval_perm| (a permuted boundary reads slots through the permutation),
+  \lean|range_getD|, \lean|SL_perm|, \lean|bidx_slot|, \lean|L_perm|, \lean|L_inj|, \lean|bdims_expandK|,
+  and \lean|eval_expandK_evalD|: for a well-formed $D$ and $\sigma''$ in range,
+  $(D.\mathrm{expandK}\,\mu).\mathrm{eval}(E,\sigma'')=D.\mathrm{evalD}(E,\mu,D.\mathrm{readK}\,\mu\,\sigma'')$ with
+  $\mu=$ \lean|E.mult|.
+\end{itemize}
+
+%======================================================================
+\section{Dimensions assumed equal (\texttt{Assume})}\label{sec:lean-core-assume}
+
+A proof may merge dimension indices that hold equal values, for example two symbols the user assumes
+equal. \lean|dimMap ps x| $=(ps.\mathrm{lookup}\,x).\mathrm{getD}\,x$; \lean|Node.mapDim f| maps the node's
+dimension index (and for $B$, $S$ the phase index); \lean|Net.mapDim f| maps every node;
+\lean|mapLabs f labs| maps each label's index; \lean|lookup_mapLabs|; \lean|val_mapDim| (if
+$E.\mathrm{dimv}\circ f=E.\mathrm{dimv}$, values are unchanged).
+
+\begin{theorem}[\lean|Equal.of_mapDim|, \lean|Equal.of_mapDim'|]
+If every pair $(a,b)\in ps$ has $E.\mathrm{dimv}\,b=E.\mathrm{dimv}\,a$, an equation between the merged networks
+$N.\mathrm{mapDim}(\mathrm{dimMap}\,ps)$, $M.\mathrm{mapDim}(\mathrm{dimMap}\,ps)$ in the environment with labels
+$\mathrm{mapLabs}(\mathrm{dimMap}\,ps)$ gives \lean|Equal E s N s' M|. The primed form takes the merged
+environment and networks as named arguments with equations to them.
+\end{theorem}
+%======================================================================
+\section{Lean statements of the principal declarations}\label{sec:lean-core-listings}
+
+This section reproduces, verbatim from the source, the Lean text of the declarations that define the semantics and of the principal lemmas of each module of this chapter: a definition with its body, a theorem with its statement up to (not including) its proof. Together with the summaries of the preceding sections they determine the library up to proofs.
+
+\subsection{\texttt{Net}}
+The definitions that fix the semantics, verbatim.
+\begin{lstlisting}[style=leancore]
+noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List ℕ → ℂ
+  | .Z, d, ph, os, is => tZ d (E.phase ph) (os ++ is)
+  | .X, d, ph, os, is => tX d (E.phase ph) os is
+  | .F, d, _, [o], [i] => fou d o i
+  | .T, _, _, [o], [i] => tT o i
+  | .Ti, _, _, [o], [i] => tTi o i
+  | .W, d, _, os, [i] => tW d os i
+  | .I, d, _, [a], [b] => tI d a b
+  | .ZW, d, ph, os, is => tZw d (E.coef ph) (os ++ is)
+  | .XW, d, ph, os, is => tXw d (E.coef ph) os is
+  | .ZB cs, d, ph, os, is => tZ d (E.phase ph) (os ++ bundled E.mult d is cs)
+  | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
+  | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
+  | .Bun m b, d, ph, os, is => ((List.range (E.mult m)).map fun i =>
+      tensor E b d ph (copyOuts E b d i os) (copyIns E b d i is)).prod
+  | _, _, _, _, _ => 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
+  let d := E.dimv n.dim
+  let os := n.outs.map σ
+  let is := n.ins.map σ
+  match n.kind, os, is with
+  | .Z, os, is => tZ d (E.phase n.ph) (os ++ is)
+  | .X, os, is => tX d (E.phase n.ph) os is
+  | .F, [o], [i] => fou d o i
+  | .T, [o], [i] => tT o i
+  | .Ti, [o], [i] => tTi o i
+  | .W, os, [i] => tW d os i
+  | .B, [k], [a, b] => tB d (E.dimv n.ph) k a b
+  | .S, [a, b], [k] => tB d (E.dimv n.ph) k a b
+  | .I, [a], [b] => tI d a b
+  | .ZW, os, is => tZw d (E.coef n.ph) (os ++ is)
+  | .XW, os, is => tXw d (E.coef n.ph) os is
+  | .ZB cs, os, is => tZ d (E.phase n.ph) (os ++ bundled E.mult d is cs)
+  | .XB co ci, os, is => tX d (E.phase n.ph) (bundled E.mult d os co) (bundled E.mult d is ci)
+  | .WB cs, os, [w] => tW d (bundled E.mult d os cs) w
+  | .Bun m b, os, is => tensor E (.Bun m b) d n.ph os is
+  | _, _, _ => 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+noncomputable def sumOver (D : ℕ → ℕ) : List ℕ → ((ℕ → ℕ) → ℂ) → (ℕ → ℕ) → ℂ
+  | [], f, σ => f σ
+  | l :: ls, f, σ => ∑ j ∈ range (D l), sumOver D ls f (Function.update σ l j)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+noncomputable def eval (E : Env) (N : Net) (σ : ℕ → ℕ) : ℂ :=
+  sumOver (labDim E) N.int (prodVal E N.nodes) σ
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def InRange (E : Env) (ls : List ℕ) (σ : ℕ → ℕ) : Prop := ∀ l ∈ ls, σ l < labDim E l
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem frame (E : Env) (C L R : List Node) (iC iL iR bnd iface : List ℕ) (kL kR : ℂ)
+    (hloc : LocalEq E L iL R iR iface kL kR)
+    (hL : ∀ x ∈ labelsOf C, x ∉ iL) (hR : ∀ x ∈ labelsOf C, x ∉ iR)
+    (hface : ∀ x ∈ iface, x ∈ iC ∨ x ∈ bnd) (σ : ℕ → ℕ) (hσ : InRange E bnd σ) :
+    kL * eval E ⟨C ++ L, iC ++ iL, bnd⟩ σ = kR * eval E ⟨C ++ R, iC ++ iR, bnd⟩ σ
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem rewrite (E : Env) (C L R : List Node) (iC iL iR bnd iface : List ℕ) (s k s' : ℂ)
+    (hloc : LocalEq E L iL R iR iface 1 k)
+    (hL : ∀ x ∈ labelsOf C, x ∉ iL) (hR : ∀ x ∈ labelsOf C, x ∉ iR)
+    (hface : ∀ x ∈ iface, x ∈ iC ∨ x ∈ bnd) (hs : s' = s * k) :
+    Equal E s ⟨C ++ L, iC ++ iL, bnd⟩ s' ⟨C ++ R, iC ++ iR, bnd⟩
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem Equal.mul_trans {E : Env} {a b c e : ℂ} {X Y Z : Net} (h : Equal E a X b Y)
+    (h' : Equal E c Y e Z) : Equal E (a * c) X (b * e) Z
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem Equal.rescale {E : Env} {a b s t : ℂ} {X Y : Net} (h : Equal E a X b Y) (ha : a ≠ 0)
+    (hst : s * b = t * a) : Equal E s X t Y
+\end{lstlisting}
+
+\subsection{\texttt{Iso}}
+\begin{lstlisting}[style=leancore]
+def nodeEquiv (n m : Node) : Bool :=
+  n.kind == m.kind && n.dim == m.dim && n.ph == m.ph &&
+    match n.kind with
+    | .Z | .ZW => (n.outs ++ n.ins).isPerm (m.outs ++ m.ins)
+    | .X | .XW => n.outs.isPerm m.outs && n.ins.isPerm m.ins
+    | _ => n.outs == m.outs && n.ins == m.ins
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def isoOK (labs : List (ℕ × ℕ)) (A B : Net) (π : List (ℕ × ℕ)) (p : List ℕ) : Bool :=
+  let f := ren π
+  let K := π.map Prod.fst
+  let A' := A.nodes.map (Node.rename f)
+  let P := p.map fun j => A'.getD j Node.none
+  decide K.Nodup && (K.map f).isPerm K &&
+    (labelsOf A.nodes).all (fun x => decide (x ∈ A.int) || !decide (x ∈ K)) &&
+    A.int.all (fun x => labIdx labs (f x) == labIdx labs x) &&
+    A.bnd == B.bnd && B.int.isPerm (A.int.map f) && P.isPerm A' &&
+    P.length == B.nodes.length && (List.zip P B.nodes).all fun q => nodeEquiv q.1 q.2
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem iso (E : Env) (s : ℂ) (A B : Net) (π : List (ℕ × ℕ)) (p : List ℕ)
+    (h : isoOK E.labs A B π p = true) : Equal E s A s B
+\end{lstlisting}
+
+\subsection{\texttt{Rules}}
+\begin{lstlisting}[style=leancore]
+theorem wire_elim (E : Env) (s : ℂ) (ns₁ ns₂ : List Node) (int bnd : List ℕ) (a b dz : ℕ)
+    (hb : b ∈ int) (hab : a ≠ b) (ha : a ∈ int ∨ a ∈ bnd)
+    (hda : labIdx E.labs a = dz) (hdb : labIdx E.labs b = dz) :
+    Equal E s ⟨ns₁ ++ ⟨.I, [a], [b], dz, 0⟩ :: ns₂, int, bnd⟩
+      s ⟨(ns₁ ++ ns₂).map (Node.rename (ren [(b, a)])), int.erase b, bnd⟩
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem fusionZ (E : Env) (a b c dz w : ℕ) (o₁ i₁ o₂ i₂ o₃ i₃ iface : List ℕ)
+    (h₁ : w ∈ o₁ ++ i₁) (h₂ : w ∈ o₂ ++ i₂)
+    (hm : (o₃ ++ i₃).Perm ((o₁ ++ i₁ ++ (o₂ ++ i₂)).filter (· ≠ w)))
+    (hw : labIdx E.labs w = dz)
+    (hph : ∀ k < E.dimv dz, ex (E.phase c k) = ex (E.phase a k) * ex (E.phase b k)) :
+    LocalEq E [⟨.Z, o₁, i₁, dz, a⟩, ⟨.Z, o₂, i₂, dz, b⟩] [w] [⟨.Z, o₃, i₃, dz, c⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem fusionX (E : Env) (a b c dz w : ℕ) (o₁ i₁ o₂ i₂ o₃ i₃ iface : List ℕ)
+    (hd : 0 < E.dimv dz) (h₁ : w ∈ o₁) (h₁' : w ∉ o₁.erase w) (h₁i : w ∉ i₁)
+    (h₂ : w ∈ i₂) (h₂' : w ∉ i₂.erase w) (h₂o : w ∉ o₂)
+    (ho : o₃.Perm (o₁.erase w ++ o₂)) (hi : i₃.Perm (i₁ ++ i₂.erase w))
+    (hw : labIdx E.labs w = dz)
+    (hph : ∀ k < E.dimv dz, ex (E.phase c k) = ex (E.phase a k) * ex (E.phase b k)) :
+    LocalEq E [⟨.X, o₁, i₁, dz, a⟩, ⟨.X, o₂, i₂, dz, b⟩] [w] [⟨.X, o₃, i₃, dz, c⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem identityZ (E : Env) (a dz p q w x : ℕ) (iface : List ℕ)
+    (hpq : (p = w ∧ q = x) ∨ (p = x ∧ q = w))
+    (hph : ∀ k < E.dimv dz, ex (E.phase a k) = 1) :
+    LocalEq E [⟨.Z, [p], [q], dz, a⟩] [] [⟨.I, [x], [w], dz, 0⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem identityX (E : Env) (a dz p q w x : ℕ) (iface : List ℕ)
+    (hd : 0 < E.dimv dz) (hpq : (p = w ∧ q = x) ∨ (p = x ∧ q = w))
+    (hface : p ∈ iface ∧ q ∈ iface) (hp : labIdx E.labs p = dz) (hq : labIdx E.labs q = dz)
+    (hph : ∀ k < E.dimv dz, ex (E.phase a k) = 1) :
+    LocalEq E [⟨.X, [p], [q], dz, a⟩] [] [⟨.I, [x], [w], dz, 0⟩] [] iface 1 1
+\end{lstlisting}
+
+\subsection{\texttt{ZXRules}}
+\begin{lstlisting}[style=leancore]
+theorem cap (E : Env) (a b dz w : ℕ) (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1)
+    (hb : ∀ k < E.dimv dz, ex (E.phase b k) = 1) :
+    LocalEq E [⟨.Z, [w], [], dz, a⟩, ⟨.X, [], [w], dz, b⟩] [w] [] [] iface 1 (rt (E.dimv dz))
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem colorState (E : Env) (a b dz w x : ℕ) (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwx : w ≠ x) (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1)
+    (hb : ∀ k < E.dimv dz, ex (E.phase b k) = 1) :
+    LocalEq E [⟨.Z, [w], [], dz, a⟩, ⟨.F, [x], [w], dz, 0⟩] [w] [⟨.X, [x], [], dz, b⟩] [] iface
+      1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem colorStateX (E : Env) (a b dz w x : ℕ) (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwx : w ≠ x) (hx : x ∈ iface) (hxd : labIdx E.labs x = dz)
+    (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) (hb : ∀ k < E.dimv dz, ex (E.phase b k) = 1) :
+    LocalEq E [⟨.X, [w], [], dz, a⟩, ⟨.F, [x], [w], dz, 0⟩] [w] [⟨.Z, [x], [], dz, b⟩] [] iface
+      1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem stateCopy (E : Env) (a b c dz w : ℕ) (os iface : List ℕ) (k : ℂ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwo : w ∉ os)
+    (hos : ∀ o ∈ os, o ∈ iface ∧ labIdx E.labs o = dz)
+    (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) (hb : ∀ k < E.dimv dz, ex (E.phase b k) = 1)
+    (hc : ∀ k < E.dimv dz, ex (E.phase c k) = 1)
+    (hk : k * rt (E.dimv dz) ^ os.length = rt (E.dimv dz)) :
+    LocalEq E [⟨.X, [w], [], dz, a⟩, ⟨.Z, os, [w], dz, b⟩] [w]
+      (os.map fun o => ⟨.X, [o], [], dz, c⟩) [] iface 1 k
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem triangle (E : Env) (dz w o i x y : ℕ) (iface : List ℕ)
+    (hxy : (x = o ∧ y = i) ∨ (x = i ∧ y = o)) (hw : labIdx E.labs w = dz) (hwo : w ≠ o)
+    (hwi : w ≠ i) (ho : o ∈ iface ∧ labIdx E.labs o = dz) (hi : i ∈ iface ∧ labIdx E.labs i = dz) :
+    LocalEq E [⟨.T, [w], [i], dz, 0⟩, ⟨.Ti, [o], [w], dz, 0⟩] [w] [⟨.I, [x], [y], dz, 0⟩] []
+      iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem fourier4 (E : Env) (a b c dz w₁ w₂ w₃ : ℕ) (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (h₁ : labIdx E.labs w₁ = dz) (h₂ : labIdx E.labs w₂ = dz) (h₃ : labIdx E.labs w₃ = dz)
+    (h12 : w₁ ≠ w₂) (h13 : w₁ ≠ w₃) (h23 : w₂ ≠ w₃) (ha1 : a ≠ w₁) (ha2 : a ≠ w₂)
+    (ha3 : a ≠ w₃) (hb1 : b ≠ w₁) (hb2 : b ≠ w₂) (hb3 : b ≠ w₃)
+    (ha : a ∈ iface ∧ labIdx E.labs a = dz) (hb : b ∈ iface ∧ labIdx E.labs b = dz)
+    (hc : ∀ k < E.dimv dz, ex (E.phase c k) = 1) :
+    LocalEq E [⟨.F, [w₁], [a], dz, 0⟩, ⟨.F, [w₂], [w₁], dz, 0⟩, ⟨.F, [w₃], [w₂], dz, 0⟩,
+      ⟨.F, [b], [w₃], dz, 0⟩] [w₁, w₂, w₃] [⟨.Z, [b], [a], dz, c⟩] [] iface 1 1
+\end{lstlisting}
+
+\subsection{\texttt{Bialgebra}}
+\begin{lstlisting}[style=leancore]
+theorem bialgebra (E : Env) (px pz q₁ q₂ q₃ q₄ dz w a b c e n₀₀ n₀₁ n₁₀ n₁₁ : ℕ)
+    (iface : List ℕ) (hd : 0 < E.dimv dz) (hw : labIdx E.labs w = dz)
+    (hn : ∀ n ∈ [n₀₀, n₀₁, n₁₀, n₁₁], labIdx E.labs n = dz)
+    (hnd : [n₀₀, n₀₁, n₁₀, n₁₁, a, b, c, e].Nodup) (hwd : [w, a, b, c, e].Nodup)
+    (hf : ∀ x ∈ [a, b, c, e], x ∈ iface ∧ labIdx E.labs x = dz)
+    (hpx : ∀ k < E.dimv dz, ex (E.phase px k) = 1) (hpz : ∀ k < E.dimv dz, ex (E.phase pz k) = 1)
+    (h₁ : ∀ k < E.dimv dz, ex (E.phase q₁ k) = 1) (h₂ : ∀ k < E.dimv dz, ex (E.phase q₂ k) = 1)
+    (h₃ : ∀ k < E.dimv dz, ex (E.phase q₃ k) = 1) (h₄ : ∀ k < E.dimv dz, ex (E.phase q₄ k) = 1) :
+    LocalEq E [⟨.X, [w], [a, b], dz, px⟩, ⟨.Z, [c, e], [w], dz, pz⟩] [w]
+      [⟨.Z, [n₀₀, n₀₁], [a], dz, q₁⟩, ⟨.Z, [n₁₀, n₁₁], [b], dz, q₂⟩,
+        ⟨.X, [c], [n₀₀, n₁₀], dz, q₃⟩, ⟨.X, [e], [n₀₁, n₁₁], dz, q₄⟩]
+      [n₀₀, n₀₁, n₁₀, n₁₁] iface 1 (rt (E.dimv dz))
+\end{lstlisting}
+
+\subsection{\texttt{Hopf}}
+\begin{lstlisting}[style=leancore]
+theorem hopf (E : Env) (pz px dz u v₁ v₂ v₃ : ℕ) (zo zi xo xi zo' zi' xo' xi' iface : List ℕ)
+    (k : ℂ) (hd : 0 < E.dimv dz) (hz : (zo ++ zi).Perm (u :: v₁ :: (zo' ++ zi')))
+    (hxo : xo.Perm xo') (hxi : xi.Perm (u :: v₃ :: xi')) (hnd : [u, v₁, v₂, v₃].Nodup)
+    (hfree : ∀ x ∈ zo' ++ zi' ++ xo' ++ xi', x ∉ [u, v₁, v₂, v₃])
+    (hdim : ∀ x ∈ [u, v₁, v₂, v₃], labIdx E.labs x = dz) (hk : k * E.dimv dz = 1) :
+    LocalEq E [⟨.Z, zo, zi, dz, pz⟩, ⟨.X, xo, xi, dz, px⟩, ⟨.F, [v₂], [v₁], dz, 0⟩,
+      ⟨.F, [v₃], [v₂], dz, 0⟩] [u, v₁, v₂, v₃] [⟨.Z, zo', zi', dz, pz⟩, ⟨.X, xo', xi', dz, px⟩]
+      [] iface 1 k
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem hopfSwapped (E : Env) (px pz dz u v₁ v₂ v₃ : ℕ)
+    (xo xi zo zi xo' xi' zo' zi' iface : List ℕ) (k : ℂ) (hd : 0 < E.dimv dz)
+    (hxo : xo.Perm (u :: v₁ :: xo')) (hxi : xi.Perm xi')
+    (hz : (zo ++ zi).Perm (u :: v₃ :: (zo' ++ zi'))) (hnd : [u, v₁, v₂, v₃].Nodup)
+    (hfree : ∀ x ∈ zo' ++ zi' ++ xo' ++ xi', x ∉ [u, v₁, v₂, v₃])
+    (hdim : ∀ x ∈ [u, v₁, v₂, v₃], labIdx E.labs x = dz) (hk : k * E.dimv dz = 1) :
+    LocalEq E [⟨.X, xo, xi, dz, px⟩, ⟨.Z, zo, zi, dz, pz⟩, ⟨.F, [v₂], [v₁], dz, 0⟩,
+      ⟨.F, [v₃], [v₂], dz, 0⟩] [u, v₁, v₂, v₃] [⟨.X, xo', xi', dz, px⟩, ⟨.Z, zo', zi', dz, pz⟩]
+      [] iface 1 k
+\end{lstlisting}
+
+\subsection{\texttt{WRules}}
+\begin{lstlisting}[style=leancore]
+theorem wFusion (E : Env) (dz w i : ℕ) (o₁ o₂ o₃ iface : List ℕ)
+    (hw : labIdx E.labs w = dz) (h₁ : w ∈ o₁) (h₁' : w ∉ o₁.erase w) (h₂ : w ∉ o₂)
+    (hwi : w ≠ i) (hi : i ∈ iface ∧ labIdx E.labs i = dz) (hd : 0 < E.dimv dz)
+    (ho : o₃.Perm (o₁.erase w ++ o₂)) :
+    LocalEq E [⟨.W, o₁, [i], dz, 0⟩, ⟨.W, o₂, [w], dz, 0⟩] [w] [⟨.W, o₃, [i], dz, 0⟩] [] iface
+      1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem wIdentity (E : Env) (dz p q w x : ℕ) (iface : List ℕ)
+    (hpq : (p = w ∧ q = x) ∨ (p = x ∧ q = w)) (hface : p ∈ iface ∧ q ∈ iface)
+    (hp : labIdx E.labs p = dz) (hq : labIdx E.labs q = dz) :
+    LocalEq E [⟨.W, [p], [q], dz, 0⟩] [] [⟨.I, [x], [w], dz, 0⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem wZeroCopy (E : Env) (a c dz w : ℕ) (os iface : List ℕ) (k : ℂ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwo : w ∉ os)
+    (hos : ∀ o ∈ os, o ∈ iface ∧ labIdx E.labs o = dz)
+    (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) (hc : ∀ k < E.dimv dz, ex (E.phase c k) = 1)
+    (hk : k * rt (E.dimv dz) ^ os.length = rt (E.dimv dz)) :
+    LocalEq E [⟨.X, [w], [], dz, a⟩, ⟨.W, os, [w], dz, 0⟩] [w]
+      (os.map fun o => ⟨.X, [o], [], dz, c⟩) [] iface 1 k
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem triZeroState (E : Env) (a dz w o : ℕ) (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwo : w ≠ o) (ho : o ∈ iface ∧ labIdx E.labs o = dz)
+    (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) :
+    LocalEq E [⟨.X, [w], [], dz, a⟩, ⟨.T, [o], [w], dz, 0⟩] [w] [⟨.X, [o], [], dz, a⟩] []
+      iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem triZeroEffect (E : Env) (a c dz w i : ℕ) (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwi : w ≠ i) (hi : i ∈ iface ∧ labIdx E.labs i = dz)
+    (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) (hc : ∀ k < E.dimv dz, ex (E.phase c k) = 1) :
+    LocalEq E [⟨.T, [w], [i], dz, 0⟩, ⟨.X, [], [w], dz, a⟩] [w] [⟨.Z, [], [i], dz, c⟩] []
+      iface 1 (rt (E.dimv dz))
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem wZEffect (E : Env) (a dz w i v : ℕ) (os os' iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hv : labIdx E.labs v = dz) (h₁ : w ∈ os)
+    (h₁' : w ∉ os.erase w) (hwi : w ≠ i) (hvi : v ≠ i) (hvo : v ∉ os')
+    (hi : i ∈ iface ∧ labIdx E.labs i = dz) (ho : os'.Perm (os.erase w))
+    (hrest : w ∉ os') (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) :
+    LocalEq E [⟨.W, os, [i], dz, 0⟩, ⟨.Z, [], [w], dz, a⟩] [w]
+      [⟨.T, [v], [i], dz, 0⟩, ⟨.W, os', [v], dz, 0⟩] [v] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem wZeroEffect (E : Env) (a dz w i : ℕ) (os os' iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (h₁ : w ∈ os) (h₁' : w ∉ os.erase w) (hwi : w ≠ i)
+    (hi : i ∈ iface ∧ labIdx E.labs i = dz) (ho : os'.Perm (os.erase w))
+    (ha : ∀ k < E.dimv dz, ex (E.phase a k) = 1) :
+    LocalEq E [⟨.W, os, [i], dz, 0⟩, ⟨.X, [], [w], dz, a⟩] [w] [⟨.W, os', [i], dz, 0⟩] []
+      iface 1 (rt (E.dimv dz))
+\end{lstlisting}
+
+\subsection{\texttt{WAssoc}}
+\begin{lstlisting}[style=leancore]
+noncomputable def sumW (d : ℕ) : ℕ → (List ℕ → ℂ) → ℂ
+  | 0, f => f []
+  | M + 1, f => ∑ x ∈ range d, sumW d M fun xs => f (x :: xs)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+noncomputable def wTerm (d : ℕ) (w : ℕ → ℂ) : List ℕ → List (List ℕ) → ℂ
+  | x :: xs, B :: Bs => w x * tW d B x * wTerm d w xs Bs
+  | _, _ => 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem wAssoc_nil (d : ℕ) (hd : 0 < d) (w : ℕ → ℂ) (hw : w 0 = 1) (i : ℕ) (hi : i < d)
+    (Bs : List (List ℕ)) :
+    sumW d Bs.length (fun xs => tW d xs i * wTerm d w xs Bs) = w i * tW d Bs.flatten i
+\end{lstlisting}
+
+\subsection{\texttt{Connective}}
+\begin{lstlisting}[style=leancore]
+theorem connStates (E : Env) (ds dt dk p₁ p₂ c a b k : ℕ) (iface : List ℕ)
+    (hs : 0 < E.dimv ds) (ht : 0 < E.dimv dt) (hdk : E.dimv dk = E.dimv ds * E.dimv dt)
+    (ha : labIdx E.labs a = ds) (hb : labIdx E.labs b = dt) (hab : a ≠ b) (hak : a ≠ k)
+    (hbk : b ≠ k) (hk : k ∈ iface ∧ labIdx E.labs k = dk)
+    (h₁ : ∀ k < E.dimv ds, ex (E.phase p₁ k) = 1) (h₂ : ∀ k < E.dimv dt, ex (E.phase p₂ k) = 1)
+    (hc : ∀ k < E.dimv dk, ex (E.phase c k) = 1) :
+    LocalEq E [⟨.B, [k], [a, b], ds, dt⟩, ⟨.Z, [a], [], ds, p₁⟩, ⟨.Z, [b], [], dt, p₂⟩] [a, b]
+      [⟨.Z, [k], [], dk, c⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem connInverse (E : Env) (ds dt dk a b k₁ k₂ x y : ℕ) (iface : List ℕ)
+    (ht : 0 < E.dimv dt) (hdk : E.dimv dk = E.dimv ds * E.dimv dt)
+    (hxy : (x = k₁ ∧ y = k₂) ∨ (x = k₂ ∧ y = k₁)) (ha : labIdx E.labs a = ds)
+    (hb : labIdx E.labs b = dt) (hd : [a, b, k₁, k₂].Nodup)
+    (h₁ : k₁ ∈ iface ∧ labIdx E.labs k₁ = dk) (h₂ : k₂ ∈ iface ∧ labIdx E.labs k₂ = dk) :
+    LocalEq E [⟨.S, [a, b], [k₁], ds, dt⟩, ⟨.B, [k₂], [a, b], ds, dt⟩] [a, b]
+      [⟨.I, [x], [y], dk, 0⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem connInverseBind (E : Env) (ds dt dk k a₁ b₁ a₂ b₂ x₁ y₁ x₂ y₂ : ℕ) (iface : List ℕ)
+    (hdk : E.dimv dk = E.dimv ds * E.dimv dt) (hk : labIdx E.labs k = dk)
+    (hk' : k ∉ [a₁, b₁, a₂, b₂])
+    (hxa : (x₁ = a₁ ∧ y₁ = a₂) ∨ (x₁ = a₂ ∧ y₁ = a₁))
+    (hxb : (x₂ = b₁ ∧ y₂ = b₂) ∨ (x₂ = b₂ ∧ y₂ = b₁))
+    (ha₁ : a₁ ∈ iface ∧ labIdx E.labs a₁ = ds) (ha₂ : a₂ ∈ iface ∧ labIdx E.labs a₂ = ds)
+    (hb₁ : b₁ ∈ iface ∧ labIdx E.labs b₁ = dt) (hb₂ : b₂ ∈ iface ∧ labIdx E.labs b₂ = dt) :
+    LocalEq E [⟨.B, [k], [a₁, b₁], ds, dt⟩, ⟨.S, [a₂, b₂], [k], ds, dt⟩] [k]
+      [⟨.I, [x₁], [y₁], ds, 0⟩, ⟨.I, [x₂], [y₂], dt, 0⟩] [] iface 1 1
+\end{lstlisting}
+
+\subsection{\texttt{WZ}}
+\begin{lstlisting}[style=leancore]
+theorem wzBialgebra (E : Env) (pz q dz w : ℕ) (zi wo iface : List ℕ)
+    (rows cols : List (List ℕ)) (pin : List (ℕ × ℕ)) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hzi : zi ≠ []) (hwz : w ∉ zi) (hwo : w ∉ wo)
+    (hrange : ∀ x ∈ zi ++ wo, x ∈ iface ∧ labIdx E.labs x = dz)
+    (hpin : rows.flatten = pin.map Prod.fst) (hnd : rows.flatten.Nodup)
+    (hto : ∀ p ∈ pin, p.2 ∈ wo) (hdisj : ∀ x ∈ zi ++ wo ++ [w], x ∉ rows.flatten)
+    (hcol : ((wo.zip cols).flatMap fun p => p.2.map fun e => (e, p.1)).Perm pin)
+    (hrow : ∀ r ∈ rows, r.map (ren pin) = wo) (hlen : zi.length = rows.length)
+    (hcl : wo.length = cols.length) (hdims : ∀ e ∈ rows.flatten, labIdx E.labs e = dz)
+    (hpz : ∀ k < E.dimv dz, ex (E.phase pz k) = 1) (hq : ∀ k < E.dimv dz, ex (E.phase q k) = 1) :
+    LocalEq E [⟨.Z, [w], zi, dz, pz⟩, ⟨.W, wo, [w], dz, 0⟩] [w]
+      ((zi.zip rows).map (fun p => ⟨.W, p.2, [p.1], dz, 0⟩) ++
+        (wo.zip cols).map (fun p => ⟨.Z, [p.1], p.2, dz, q⟩)) rows.flatten iface 1 1
+\end{lstlisting}
+
+\subsection{\texttt{Completeness}}
+\begin{lstlisting}[style=leancore]
+theorem wPerm (E : Env) (a b dz i : ℕ) (os os' iface : List ℕ) (h : os.Perm os') :
+    LocalEq E [⟨.W, os, [i], dz, a⟩] [] [⟨.W, os', [i], dz, b⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zPerm (E : Env) (a dz : ℕ) (os is os' is' iface : List ℕ)
+    (h : (os ++ is).Perm (os' ++ is')) :
+    LocalEq E [⟨.Z, os, is, dz, a⟩] [] [⟨.Z, os', is', dz, a⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem wAso (E : Env) (dz w w' i : ℕ) (o₁ o₂ p₁ p₂ o₃ iface : List ℕ)
+    (hw : labIdx E.labs w = dz) (h₁ : w ∈ o₁) (h₁' : w ∉ o₁.erase w) (h₂ : w ∉ o₂)
+    (hwi : w ≠ i) (hi : i ∈ iface ∧ labIdx E.labs i = dz) (hd : 0 < E.dimv dz)
+    (ho : o₃.Perm (o₁.erase w ++ o₂))
+    (gw : labIdx E.labs w' = dz) (g₁ : w' ∈ p₁) (g₁' : w' ∉ p₁.erase w') (g₂ : w' ∉ p₂)
+    (gwi : w' ≠ i) (go : o₃.Perm (p₁.erase w' ++ p₂)) :
+    LocalEq E [⟨.W, o₁, [i], dz, 0⟩, ⟨.W, o₂, [w], dz, 0⟩] [w]
+      [⟨.W, p₁, [i], dz, 0⟩, ⟨.W, p₂, [w'], dz, 0⟩] [w'] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem kCopy (E : Env) (a b c dz w j : ℕ) (os iface : List ℕ) (k : ℂ) (hd : 0 < E.dimv dz)
+    (hw : labIdx E.labs w = dz) (hwo : w ∉ os)
+    (hos : ∀ o ∈ os, o ∈ iface ∧ labIdx E.labs o = dz)
+    (ha : ∀ q < E.dimv dz, ex (E.phase a q) = om (E.dimv dz) ^ (q * j))
+    (hb : ∀ q < E.dimv dz, ex (E.phase b q) = 1)
+    (hc : ∀ q < E.dimv dz, ex (E.phase c q) = om (E.dimv dz) ^ (q * j))
+    (hk : k * rt (E.dimv dz) ^ os.length = rt (E.dimv dz)) :
+    LocalEq E [⟨.X, [w], [], dz, a⟩, ⟨.Z, os, [w], dz, b⟩] [w]
+      (os.map fun o => ⟨.X, [o], [], dz, c⟩) [] iface 1 k
+\end{lstlisting}
+
+\subsection{\texttt{Weights}}
+A representative selection; the other rule lemmas of the module follow the same pattern.
+\begin{lstlisting}[style=leancore]
+noncomputable def zc (E : Env) (n : Node) (k : ℕ) : ℂ :=
+  match n.kind with
+  | .Z => 1 * ex (E.phase n.ph k)
+  | .ZW => E.coef n.ph k
+  | _ => 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zcCongr (E : Env) (n m : Node) (iface : List ℕ) (hn : isZc n = true)
+    (hm : isZc m = true) (hd : m.dim = n.dim) (hl : (n.outs ++ n.ins).Perm (m.outs ++ m.ins))
+    (hc : ∀ k < E.dimv n.dim, zc E m k = zc E n k) :
+    LocalEq E [n] [] [m] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zcFusion (E : Env) (na nb m : Node) (dz w : ℕ) (iface : List ℕ) (ha : isZc na = true)
+    (hb : isZc nb = true) (hm : isZc m = true) (hda : na.dim = dz) (hdb : nb.dim = dz)
+    (hdm : m.dim = dz) (h₁ : w ∈ na.outs ++ na.ins) (h₂ : w ∈ nb.outs ++ nb.ins)
+    (hl : (m.outs ++ m.ins).Perm ((na.outs ++ na.ins ++ (nb.outs ++ nb.ins)).filter (· ≠ w)))
+    (hw : labIdx E.labs w = dz)
+    (hc : ∀ k < E.dimv dz, zc E m k = zc E na k * zc E nb k) :
+    LocalEq E [na, nb] [w] [m] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zcScalar (E : Env) (n : Node) (iface : List ℕ) (s : ℂ) (hn : isZc n = true)
+    (ho : n.outs = []) (hi : n.ins = []) (hs : s = ∑ k ∈ range (E.dimv n.dim), zc E n k) :
+    LocalEq E [n] [] [] [] iface 1 s
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zcAd (E : Env) (dz x y i : ℕ) (na nb m : Node) (iface : List ℕ) (ha : isZc na = true)
+    (hb : isZc nb = true) (hm : isZc m = true) (hda : na.dim = dz) (hdb : nb.dim = dz)
+    (hdm : m.dim = dz) (hla : na.outs ++ na.ins = [x]) (hlb : nb.outs ++ nb.ins = [y])
+    (hlm : m.outs ++ m.ins = [i]) (hxy : x ≠ y) (hxi : x ≠ i) (hyi : y ≠ i)
+    (hx : labIdx E.labs x = dz) (hy : labIdx E.labs y = dz)
+    (hi : i ∈ iface ∧ labIdx E.labs i = dz)
+    (h0 : zc E m 0 = zc E na 0 * zc E nb 0)
+    (hc : ∀ k < E.dimv dz, k ≠ 0 → zc E m k = zc E na k * zc E nb 0 + zc E na 0 * zc E nb k) :
+    LocalEq E [⟨.W, [x, y], [i], dz, 0⟩, na, nb] [x, y] [m] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zcK2 (E : Env) (dz p j w w' o i : ℕ) (na nb : Node) (s : ℂ) (iface : List ℕ)
+    (ha : isZc na = true) (hb : isZc nb = true) (hda : na.dim = dz) (hdb : nb.dim = dz)
+    (hla : na.outs ++ na.ins = [o, w]) (hlb : nb.outs ++ nb.ins = [w', i])
+    (hw : labIdx E.labs w = dz) (hw' : labIdx E.labs w' = dz)
+    (ho : o ∈ iface ∧ labIdx E.labs o = dz) (hi : i ∈ iface ∧ labIdx E.labs i = dz)
+    (hwo : w ≠ o) (hwi : w ≠ i) (hw'o : w' ≠ o) (hw'i : w' ≠ i) (hd : 0 < E.dimv dz)
+    (hp : ∀ q < E.dimv dz, ex (E.phase p q) = om (E.dimv dz) ^ (q * j))
+    (hc : ∀ k < E.dimv dz, zc E na k = s * zc E nb ((k + j) % E.dimv dz)) :
+    LocalEq E [⟨.X, [w], [i], dz, p⟩, na] [w] [nb, ⟨.X, [o], [w'], dz, p⟩] [w'] iface 1 s
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zcTi (E : Env) (dz e o i : ℕ) (m : Node) (iface : List ℕ) (hm : isZc m = true)
+    (hdm : m.dim = dz) (hl : m.outs ++ m.ins = [e]) (he : labIdx E.labs e = dz)
+    (ho : o ∈ iface ∧ labIdx E.labs o = dz) (hi : i ∈ iface ∧ labIdx E.labs i = dz)
+    (heo : e ≠ o) (hei : e ≠ i) (h0 : zc E m 0 = 1)
+    (hc : ∀ k < E.dimv dz, k ≠ 0 → zc E m k = -1) :
+    LocalEq E [⟨.W, [e, o], [i], dz, 0⟩, m] [e] [⟨.Ti, [o], [i], dz, 0⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem fourierMult (E : Env) (pz px dz a b w : ℕ) (ws iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hnd : ws.Nodup) (ha : a ∉ ws) (hb : b ∉ ws) (hw : w ≠ a ∧ w ≠ b)
+    (hab : a ∈ iface ∧ labIdx E.labs a = dz) (hbb : b ∈ iface ∧ labIdx E.labs b = dz)
+    (hwl : labIdx E.labs w = dz) (hws : ∀ x ∈ ws, labIdx E.labs x = dz) (hne : ws ≠ [])
+    (he : (ws.length + 1) % E.dimv dz = 0)
+    (hz : ∀ k < E.dimv dz, ex (E.phase pz k) = 1) (hx : ∀ k < E.dimv dz, ex (E.phase px k) = 1)
+    (s : ℂ) (hs : s = rt (E.dimv dz) ^ (ws.length - 1)) :
+    LocalEq E [⟨.F, [w], [a], dz, 0⟩, ⟨.F, [b], [w], dz, 0⟩] [w]
+      [⟨.Z, ws, [a], dz, pz⟩, ⟨.X, [b], ws, dz, px⟩] ws iface 1 s
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem bindDef (E : Env) (ds dt dk a b c x y z p₁ p₂ p₃ : ℕ) (iface : List ℕ)
+    (hdk : E.dimv dk = E.dimv ds * E.dimv dt)
+    (hnd : [x, y, z, a, b, c].Nodup) (hx : labIdx E.labs x = ds) (hy : labIdx E.labs y = dt)
+    (hz : labIdx E.labs z = dk) (ha : a ∈ iface ∧ labIdx E.labs a = ds)
+    (hb : b ∈ iface ∧ labIdx E.labs b = dt) (hc : c ∈ iface ∧ labIdx E.labs c = dk)
+    (h₁ : ∀ k < E.dimv ds, ex (E.phase p₁ k) = 1) (h₂ : ∀ k < E.dimv dt, ex (E.phase p₂ k) = 1)
+    (h₃ : ∀ k < E.dimv dk, ex (E.phase p₃ k) = 1) :
+    LocalEq E [⟨.B, [c], [a, b], ds, dt⟩] []
+      [⟨.S, [x, y], [z], ds, dt⟩, ⟨.Z, [x], [a], ds, p₁⟩, ⟨.Z, [y], [b], dt, p₂⟩,
+        ⟨.Z, [c], [z], dk, p₃⟩] [x, y, z] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem zxwD1 (E : Env) (dz i o w v v' w' : ℕ) (m m' : Node) (iface : List ℕ)
+    (hd : 0 < E.dimv dz) (hm : isZc m = true) (hm' : isZc m' = true) (hdm : m.dim = dz)
+    (hdm' : m'.dim = dz) (hl : m.outs ++ m.ins = [w, i]) (hl' : m'.outs ++ m'.ins = [o, w'])
+    (hnd : [w, v, v', w', i, o].Nodup) (hw : ∀ x ∈ [w, v, v', w'], labIdx E.labs x = dz)
+    (hi : i ∈ iface ∧ labIdx E.labs i = dz) (ho : o ∈ iface ∧ labIdx E.labs o = dz)
+    (hc : ∀ k < E.dimv dz, zc E m' k = zc E m ((E.dimv dz - k) % E.dimv dz)) :
+    LocalEq E [m, ⟨.F, [v], [w], dz, 0⟩, ⟨.F, [o], [v], dz, 0⟩] [w, v]
+      [⟨.F, [v'], [i], dz, 0⟩, ⟨.F, [w'], [v'], dz, 0⟩, m'] [v', w'] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def MixL.nodes (l : MixL) : List Node :=
+  if l.out then [⟨.X, [], [l.a], l.dr, l.p⟩, ⟨.S, [l.a, l.v], [l.K], l.dr, l.dt⟩]
+  else [⟨.X, [l.a], [], l.dr, l.p⟩, ⟨.B, [l.K], [l.a, l.v], l.dr, l.dt⟩]
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem mixZ (E : Env) (dD c : ℕ) (legs : List MixL) (ko ki : List ℕ) (σ : ℕ → ℕ)
+    (hperm : (ko ++ ki).Perm (legs.map MixL.K))
+    (hnd : (legs.flatMap fun l => [l.a, l.K]).Nodup)
+    (hv : ∀ l ∈ legs, l.v ∉ legs.flatMap fun l => [l.a, l.K])
+    (hr : ∀ l ∈ legs, 0 < E.dimv l.dr)
+    (hφ : ∀ l ∈ legs, ∀ k < E.dimv l.dr, ex (E.phase l.p k) = 1)
+    (ha : ∀ l ∈ legs, labDim E l.a = E.dimv l.dr)
+    (hK : ∀ l ∈ legs, σ l.v < labDim E l.K) (hV : ∀ l ∈ legs, σ l.v < E.dimv l.dt) :
+    sumOver (labDim E) (legs.flatMap fun l => [l.a, l.K])
+      (prodVal E (legs.flatMap MixL.nodes ++ [⟨.ZW, ko, ki, dD, c⟩])) σ =
+      (legs.map fun l => rt (E.dimv l.dr)).prod *
+        tZw (E.dimv dD) (E.coef c) (legs.map fun l => σ l.v)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem qfS1 (E : Env) (LA LB LF : List MixL) (mA mB mF : Node) (W : List ℕ) (iface : List ℕ)
+    (s : ℂ) (hA : MixOK E mA LA) (hB : MixOK E mB LB) (hF : MixOK E mF LF)
+    (hW : W ≠ []) (hWnd : W.Nodup) (hWA : ∀ w ∈ W, w ∈ LA.map (·.v))
+    (hWB : ∀ w ∈ W, w ∈ LB.map (·.v))
+    (hWd : ∀ l ∈ LA ++ LB, l.v ∈ W → labDim E l.v = E.dimv l.dt)
+    (hfree : ∀ l ∈ LA ++ LB, l.v ∉ W → l.v ∈ iface ∧ labDim E l.v = E.dimv l.dt)
+    (hFv : (LF.map (·.v)).Perm (((LA ++ LB).filter fun l => l.v ∉ W).map (·.v)))
+    (hFd : ∀ l ∈ LF, ∃ l' ∈ LA ++ LB, l'.v = l.v ∧ E.dimv l'.dt = E.dimv l.dt)
+    (hLF : LF ≠ [])
+    (hAB : ∀ x ∈ labelsOf (LA.flatMap MixL.nodes ++ [mA]), x ∉ LB.flatMap fun l => [l.a, l.K])
+    (hBA : ∀ x ∈ labelsOf (LB.flatMap MixL.nodes ++ [mB]), x ∉ LA.flatMap fun l => [l.a, l.K])
+    (hcA : ∀ j < E.dimv mA.dim, (∃ l ∈ LA, E.dimv l.dt ≤ j) → zc E mA j = 0)
+    (hcB : ∀ j < E.dimv mB.dim, (∃ l ∈ LB, E.dimv l.dt ≤ j) → zc E mB j = 0)
+    (hcF : ∀ j < E.dimv mF.dim, (∀ l ∈ LF, j < E.dimv l.dt) →
+      zc E mF j = if ∀ l ∈ LA ++ LB, j < E.dimv l.dt then zc E mA j * zc E mB j else 0)
+    (hs : s * (LF.map fun l => rt (E.dimv l.dr)).prod =
+      (LA.map fun l => rt (E.dimv l.dr)).prod * (LB.map fun l => rt (E.dimv l.dr)).prod) :
+    LocalEq E ((LA.flatMap MixL.nodes ++ [mA]) ++ (LB.flatMap MixL.nodes ++ [mB]))
+      (W ++ ((LA.flatMap fun l => [l.a, l.K]) ++ LB.flatMap fun l => [l.a, l.K]))
+      (LF.flatMap MixL.nodes ++ [mF]) (LF.flatMap fun l => [l.a, l.K]) iface 1 s
+\end{lstlisting}
+
+\subsection{\texttt{Unfuse}}
+\begin{lstlisting}[style=leancore]
+theorem unfuseZB (E : Env) (cs : List (List ℕ)) (c : List ℕ) (a cph dz y b : ℕ)
+    (os hd tl o₂ i₂ iface : List ℕ) (htl : tl.length = cs.length)
+    (hy : labIdx E.labs y = dz) (hyl : y ∉ os ++ hd ++ tl ++ [b])
+    (hm : (o₂ ++ i₂).Perm (os ++ hd ++ [y]))
+    (hc : ∀ k < E.dimv dz, ex (E.phase cph k) = 1) :
+    LocalEq E [⟨.ZB (cs ++ [c]), os, hd ++ tl ++ [b], dz, a⟩] []
+      [⟨zk cs, o₂, i₂ ++ tl, dz, a⟩, ⟨.ZB [c], [], [y, b], dz, cph⟩] [y] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem unfuseXB (E : Env) (co ci : List (List ℕ)) (c : List ℕ) (a cph dz y b : ℕ)
+    (hd tl is o₂ iface : List ℕ) (htl : tl.length = co.length) (hd0 : 0 < E.dimv dz)
+    (hy : labIdx E.labs y = dz) (hyl : y ∉ hd ++ tl ++ [b] ++ is)
+    (ho : o₂.Perm (hd ++ [y]))
+    (hc : ∀ k < E.dimv dz, ex (E.phase cph k) = 1) :
+    LocalEq E [⟨.XB (co ++ [c]) ci, hd ++ tl ++ [b], is, dz, a⟩] []
+      [⟨xk co ci, o₂ ++ tl, is, dz, a⟩, ⟨.XB [c] [], [b], [y], dz, cph⟩] [y] iface 1 1
+\end{lstlisting}
+
+\subsection{\texttt{FuseB}}
+\begin{lstlisting}[style=leancore]
+theorem fusionZG (E : Env) (cs₁ cs₂ : List (List ℕ)) (a b c dz w : ℕ)
+    (o₁ i₁ t₁ o₂ i₂ t₂ o₃ i₃ iface : List ℕ) (ht₁ : t₁.length = cs₁.length)
+    (ht₂ : t₂.length = cs₂.length)
+    (h₁ : w ∈ o₁ ++ i₁) (h₁' : w ∉ (o₁ ++ i₁).erase w)
+    (h₂ : w ∈ o₂ ++ i₂) (h₂' : w ∉ (o₂ ++ i₂).erase w) (hwt : w ∉ t₁ ++ t₂)
+    (hm : (o₃ ++ i₃).Perm ((o₁ ++ i₁).erase w ++ (o₂ ++ i₂).erase w))
+    (hw : labIdx E.labs w = dz)
+    (hph : ∀ k < E.dimv dz, ex (E.phase c k) = ex (E.phase a k) * ex (E.phase b k)) :
+    LocalEq E [⟨zk cs₁, o₁, i₁ ++ t₁, dz, a⟩, ⟨zk cs₂, o₂, i₂ ++ t₂, dz, b⟩] [w]
+      [⟨zk (cs₁ ++ cs₂), o₃, i₃ ++ (t₁ ++ t₂), dz, c⟩] [] iface 1 1
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem bunI (E : Env) (ms : List ℕ) (dz bz x w : ℕ) (iface : List ℕ)
+    (hb : E.dimv bz = E.dimv dz ^ (ms.map E.mult).prod) (hd : 0 < E.dimv dz)
+    (hx : labIdx E.labs x = bz) (hw : labIdx E.labs w = bz) (hxi : x ∈ iface) (hwi : w ∈ iface) :
+    LocalEq E [⟨Kind.tower ms, [x], [w], dz, 0⟩] [] [⟨.I, [x], [w], bz, 0⟩] [] iface 1 1
+\end{lstlisting}
+
+\subsection{\texttt{WFuse}}
+\begin{lstlisting}[style=leancore]
+theorem wFuseB (E : Env) (b : Kind) (hb : b = .Z ∨ b = .ZW ∨ b = .W) (w : ℕ → ℂ)
+    (dz m bz pw pb pz pw' t a a' : ℕ) (ys : List ℕ)
+    (hd : 0 < E.dimv dz) (hbz : E.dimv bz = E.dimv dz ^ ([m].map E.mult).prod)
+    (ht : labIdx E.labs t = bz)
+    (ha : labIdx E.labs a = dz) (ha' : labIdx E.labs a' = dz)
+    (hta : t ≠ a) (hty : t ∉ ys) (haa : a' ≠ a) (hay : a' ∉ ys)
+    (hcopy : ∀ x < E.dimv dz, ∀ vs : List ℕ, vs.length = ys.length →
+      tensor E b (E.dimv dz) pb vs [x] = w x * tW (E.dimv dz) vs x)
+    (hw0 : w 0 = 1) (hz : ∀ k < E.dimv dz, E.coef pz k = w k) :
+    LocalEq E [⟨.WB [[m]], [t], [a], dz, pw⟩, ⟨.Bun m b, ys, [t], dz, pb⟩] [t]
+      [⟨.ZW, [a'], [a], dz, pz⟩, ⟨.WB (ys.map fun _ => [m]), ys, [a'], dz, pw'⟩] [a']
+      (a :: ys) 1 1
+\end{lstlisting}
+
+\subsection{\texttt{Mixed}}
+\begin{lstlisting}[style=leancore]
+noncomputable def MNet.cpm (E : Env) (M : MNet) (σ σ' : ℕ → ℕ) : ℂ :=
+  envSum (labDim E) M.env (fun a b => eval E M.net a * (starRingEnd ℂ) (eval E M.net b)) σ σ'
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem Equal.cpm {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (h : Equal E s₁ N₁ s₂ N₂)
+    (env : List ℕ) (σ σ' : ℕ → ℕ) (hσ : InRange E N₁.bnd σ) (hσ' : InRange E N₁.bnd σ') :
+    s₁ * (starRingEnd ℂ) s₁ * (MNet.mk N₁ env).cpm E σ σ' =
+      s₂ * (starRingEnd ℂ) s₂ * (MNet.mk N₂ env).cpm E σ σ'
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem cpm_phase {E : Env} {s : ℂ} {N₁ N₂ : Net} (h : Equal E 1 N₁ s N₂)
+    (hs : s * (starRingEnd ℂ) s = 1) (env : List ℕ) (σ σ' : ℕ → ℕ)
+    (hσ : InRange E N₁.bnd σ) (hσ' : InRange E N₁.bnd σ') :
+    (MNet.mk N₁ env).cpm E σ σ' = (MNet.mk N₂ env).cpm E σ σ'
+\end{lstlisting}
+
+\subsection{\texttt{Cyclo}}
+\begin{lstlisting}[style=leancore]
+def pmodStep (phi a : List ℤ) : List ℤ :=
+  if a.length < phi.length then a
+  else match a.getLast? with
+    | some top => ktrim (kadd a (List.replicate (a.length - phi.length) 0 ++ pscale (-top) phi))
+    | none => a
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def pmod (phi : List ℤ) : ℕ → List ℤ → List ℤ
+  | 0, a => a
+  | n + 1, a => pmod phi n (pmodStep phi (ktrim a))
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem cyc_ne (M : ℕ) (hM : 0 < M) (r : List ℤ) (hlen : r.length ≤ M.totient)
+    (hnz : r.any (· ≠ 0) = true) : cvz (om M) r ≠ 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem cvz_eq_zero_of_pmod (z : ℂ) (phi a : List ℤ) (h : cvz z phi = 0) (n : ℕ)
+    (hz : (pmod phi n a).all (· == 0) = true) : cvz z a = 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem ex_atoms (M p : ℕ) (z : ℤ) (gs : List ℝ) (ks : List ℤ) {θ : ℝ} (hM : 0 < M)
+    (h : θ = p / M + z + (List.zipWith (fun (g : ℝ) (k : ℤ) => (k : ℝ) * g) gs ks).sum) :
+    ex θ = om M ^ p * mono (gs.map ex) ks
+\end{lstlisting}
+
+\subsection{\texttt{GaussSign}}
+\begin{lstlisting}[style=leancore]
+theorem gauss_rt (p N : ℕ) (hp : 1 < p) (hodd : p % 2 = 1)
+    (hprod : (pmod (List.replicate p 1) N
+      (kadd (lgVec p) (pscale (-1) (gprod p ((p - 1) / 2))))).all (· == 0) = true)
+    (hsq : (pmod (List.replicate p 1) N
+      (kadd (pmul (lgVec p) (lgVec p)) [-((-1) ^ ((p - 1) / 2) * p)])).all (· == 0) = true) :
+    ∑ k ∈ range p, (QSem.lg p k : ℂ) * om p ^ k = I ^ ((p - 1) / 2) * (-1) ^ gneg p * rt p
+\end{lstlisting}
+
+\subsection{\texttt{Ball}}
+\begin{lstlisting}[style=leancore]
+theorem near_mul {a b : ℂ} {x y r u v s : ℝ} (ha : Near a x y r) (hb : Near b u v s) :
+    Near (a * b) (x * u - y * v) (x * v + y * u) ((|x| + |y|) * s + (|u| + |v|) * r + r * s)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem near_exp (a A ε : ℝ) (n : ℕ) (hn : 0 < n) (ha : |a - A| ≤ ε) (hA : |A| ≤ 1) :
+    Near (Complex.exp ((a : ℂ) * I)) (cosT A n) (sinT A n)
+      (2 * (ε + |A| ^ (2 * n) * (((2 * n).succ : ℝ) * (((2 * n).factorial : ℝ) *
+        ((2 * n : ℕ) : ℝ))⁻¹)))
+\end{lstlisting}
+
+\subsection{\texttt{NumField}}
+\begin{lstlisting}[style=leancore]
+theorem root_unique (cs : List ℤ) (lo hi : ℝ) (hlh : lo < hi) (hlo : pev cs lo < 0) (hhi : 0 < pev cs hi)
+    (hd : ∀ x, lo < x → x < hi → 0 < pdv cs x) :
+    ∃! x, lo < x ∧ x < hi ∧ pev cs x = 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem netCoef (E : Env) (A B : Net) (hi : A.int = B.int) (hb : A.bnd = B.bnd)
+    (h : List.Forall₂ (fun n m => ∀ σ, val E σ n = val E σ m) A.nodes B.nodes) :
+    Equal E 1 A 1 B
+\end{lstlisting}
+
+\subsection{\texttt{Refute}}
+\begin{lstlisting}[style=leancore]
+def gadd (M : ℕ) (k : List ℤ) (e : ℕ) (c : ℤ) : Grp → Grp
+  | [] => [(k, addAt (List.replicate M 0) (e % M) c)]
+  | g :: gs =>
+    if g.1 = k then (g.1, addAt g.2 (e % M) c) :: gs
+    else if klt k g.1 then (k, addAt (List.replicate M 0) (e % M) c) :: g :: gs
+    else g :: gadd M k e c gs
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def tXT (M : ℕ) (P : ℕ → ℕ × List ℤ) (d : ℕ) (os is : List ℕ) : Terms :=
+  (List.range d).map fun k =>
+    (1, (P k).1 + M / d * (k * os.sum) + M / d * ((d - 1) * (k * is.sum)), (P k).2)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def nodeOK (E : Shape) (M : ℕ) (keys : List (ℕ × ℕ)) (n : Node) : Bool :=
+  isBS n || (n.kind.noZW && M % E.dimv n.dim == 0 &&
+    (List.range (E.dimv n.dim)).all fun j => keys.contains (n.ph, j))
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem eval_cyc (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
+    (keys : List (ℕ × ℕ)) (N : Net) (σ : ℕ → ℕ) (hM : 0 < M)
+    (hok : N.nodes.all (nodeOK E.shape M keys) = true) (hph : PhOK E M gs P keys) :
+    eval E N σ = sqK E.shape N * gval (om M) (gs.map ex) (evalG E.shape M P N σ)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem refute {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (σ : ℕ → ℕ) (hin : InRange E N₁.bnd σ)
+    (h : s₁ * eval E N₁ σ ≠ s₂ * eval E N₂ σ) : ¬ Equal E s₁ N₁ s₂ N₂
+\end{lstlisting}
+
+\subsection{\texttt{Contract}}
+\begin{lstlisting}[style=leancore]
+def elimOK (M : ℕ) (D : ℕ → ℕ) (l : ℕ) (Fs Fs' : List Fac) : Bool :=
+  let ins := Fs.filter fun F => F.scope.contains l
+  let outs := Fs.filter fun F => !F.scope.contains l
+  match Fs'.reverse with
+  | [] => false
+  | new :: rest =>
+    rest.reverse == outs && !new.scope.contains l &&
+      (new.scope.all fun x => ins.any fun F => F.scope.contains x) &&
+      (ins.all fun F => F.scope.all fun x => x == l || new.scope.contains x) &&
+      (assigns D new.scope).all fun τ => new.at D τ ==
+        compact M ((List.range (D l)).flatMap fun j => ffold D ins (Function.update τ l j))
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def scopesOK (U : List ℕ) : List Fac → List (ℕ × List Fac) → Bool
+  | Fs, [] => Fs.all fun F => F.scope.all (U.contains ·)
+  | Fs, (l, Fs') :: steps =>
+    (Fs.all fun F => F.scope.all fun x => U.contains x || x == l ||
+      (steps.map Prod.fst).contains x) && scopesOK U Fs' steps
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem eval_ve_at (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ)
+    (keys : List (ℕ × ℕ)) (N : Net) (hM : 0 < M)
+    (hok : N.nodes.all (nodeOK E.shape M keys) = true) (hph : PhOK E M gs P keys)
+    (σ : ℕ → ℕ) (leaves : List Fac) (hlen : leaves.length = N.nodes.length)
+    (hleaf : (N.nodes.zip leaves).all (fun p => leafAt E.shape M P N.bnd σ p.1 p.2) = true)
+    (steps : List (ℕ × Fac)) (final : List Fac)
+    (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainNew M E.shape.dim leaves steps final = true)
+    (hscope : scopesOK N.bnd leaves (expand leaves steps) = true)
+    (hdis : N.bnd.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hσ : ∀ x ∈ N.bnd, σ x < E.shape.dim x) :
+    eval E N σ = sqK E.shape N * fprod (om M) (gs.map ex) E.shape.dim final σ
+\end{lstlisting}
+
+\subsection{\texttt{Diagram}}
+\begin{lstlisting}[style=leancore]
+def check (L : List (ℕ × ℕ)) (off : ℕ) : Bool :=
+  decide (D.bnd.length ≤ off) &&
+  D.nodes.all (fun n => (List.range n.outs.length).all (fun k => D.okPort ⟨n.id, true, k⟩) &&
+    (List.range n.ins.length).all (fun k => D.okPort ⟨n.id, false, k⟩)) &&
+  D.wires.all (fun w => D.portDim w.1 = D.portDim w.2) &&
+  (List.range D.wires.length).all (fun j => L.lookup (off + j) = some (D.wireDim j)) &&
+  decide ((List.range D.bnd.length).map (fun i => L.lookup i) = D.bdims.map some)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem eval_toNet (E : Env) (off : ℕ) (hc : D.check E.labs off = true) (σ : ℕ → ℕ) :
+    ArchytasZX.eval E (D.toNet off) σ = D.eval E σ
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem DEqual_iff {E : Env} {s₁ s₂ : ℂ} {D₁ D₂ : Diagram} {o₁ o₂ : ℕ} {L : List (ℕ × ℕ)}
+    (hL : E.labs = L) (h₁ : D₁.check L o₁ = true) (h₂ : D₂.check L o₂ = true) :
+    DEqual E s₁ D₁ s₂ D₂ ↔ Equal E s₁ (D₁.toNet o₁) s₂ (D₂.toNet o₂)
+\end{lstlisting}
+
+\subsection{\texttt{Expand}}
+The expansion, verbatim.
+\begin{lstlisting}[style=leancore]
+def splice (refs old : List Port) (maps : List (List (ℕ × ℕ))) : List Port :=
+  let here := refs.filter (· ∈ old)
+  if here = [] then refs
+  else
+    let at_ := refs.findIdx (· ∈ old)
+    let block := maps.flatMap fun mp => here.map fun r => ⟨(mp.lookup r.node).getD r.node, r.out, r.pos⟩
+    (refs.take at_).filter (· ∉ old) ++ block ++ (refs.drop at_).filter (· ∉ old)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def gather (D : Diagram) (b : DBox) : Diagram :=
+  go D b.parent D.boxes.length
+where
+  go (D : Diagram) (anc : Option ℕ) : ℕ → Diagram
+  | 0 => D
+  | fuel + 1 =>
+    match anc.bind fun a => D.boxes.find? (·.id = a) with
+    | none => D
+    | some outer =>
+      if outer.nodes = [] then go D outer.parent fuel
+      else
+        let ident := outer.nodes.map fun x => (x, x)
+        let cr := D.scopeBnd outer.nodes
+        go { D with ins := splice D.ins cr [ident], outs := splice D.outs cr [ident] }
+          outer.parent fuel
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def shiftPos (g : Port → Bool) (k : ℕ) (p : Port) : ℕ :=
+  let c := ((List.range p.pos).filter fun i => g ⟨p.node, p.out, i⟩).length
+  p.pos - c + k * c
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def growSide (g : Port → Bool) (k x : ℕ) (out : Bool) (ds : List ℕ) : List ℕ :=
+  ds.zipIdx.flatMap fun (d, i) => if g ⟨x, out, i⟩ then List.replicate k d else [d]
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def growImg (g : Port → Bool) (k : ℕ) (p : Port) : List Port :=
+  if g p then (List.range k).map fun j => ⟨p.node, p.out, shiftPos g k p + j⟩
+  else [⟨p.node, p.out, shiftPos g k p⟩]
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def cpId (D : Diagram) (b : DBox) (j x : ℕ) : ℕ :=
+  D.fresh + j * b.nodes.length + (b.nodes.mergeSort (· ≤ ·)).idxOf x
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def nimg (D : Diagram) (b : DBox) (k : ℕ) (p : Port) : List Port :=
+  if inS b p then (List.range k).map fun j => ⟨D.cpId b j p.node, p.out, p.pos⟩
+  else growImg (D.crossP b) k p
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def spliceN (D : Diagram) (b : DBox) (k : ℕ) (refs : List Port) : List Port :=
+  let here := refs.filter (inS b)
+  if here = [] then refs.flatMap (D.nimg b k)
+  else
+    let at_ := refs.findIdx (inS b)
+    (refs.take at_).flatMap (D.nimg b k) ++
+      (List.range k).flatMap (fun j => here.map fun p => (⟨D.cpId b j p.node, p.out, p.pos⟩ : Port)) ++
+      ((refs.drop at_).filter (!inS b ·)).flatMap (D.nimg b k)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def copyNodes (D : Diagram) (b : DBox) (k : ℕ) : Diagram :=
+  let copies := (List.range k).flatMap fun j => (b.nodes.mergeSort (· ≤ ·)).map (D.cpId b j)
+  { nodes := D.nodes.flatMap fun n =>
+      if n.id ∈ b.nodes then (List.range k).map fun j => { n with id := D.cpId b j n.id }
+      else [{ n with outs := growSide (D.crossP b) k n.id true n.outs,
+                     ins := growSide (D.crossP b) k n.id false n.ins }],
+    wires := D.wires.flatMap fun w => (D.nimg b k w.1).zip (D.nimg b k w.2),
+    outs := D.spliceN b k D.outs, ins := D.spliceN b k D.ins,
+    boxes := ((D.boxes.filter (·.id ≠ b.id)).map fun x =>
+      { x with nodes := x.nodes.filter (· ∉ b.nodes) ++
+                 (if x.nodes.any (· ∈ b.nodes) then copies else []),
+               ports := x.ports.flatMap (D.nimg b k) }).filter fun x => x.nodes ≠ [] ∨ x.ports ≠ [] }
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def growPorts (D : Diagram) (b : DBox) (k : ℕ) : Diagram :=
+  let g := fun (p : Port) => decide (p ∈ b.ports)
+  let img := growImg g k
+  { nodes := D.nodes.map fun n =>
+      { n with outs := growSide g k n.id true n.outs, ins := growSide g k n.id false n.ins },
+    wires := D.wires.flatMap fun w => (img w.1).zip (img w.2),
+    outs := D.outs.flatMap img, ins := D.ins.flatMap img,
+    boxes := ((D.boxes.filter (·.id ≠ b.id)).map fun x => { x with ports := x.ports.flatMap img }).filter
+      fun x => x.nodes ≠ [] ∨ x.ports ≠ [] }
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def expandFuel (ks : ℕ → ℕ) : ℕ → Diagram → Diagram
+  | 0, D => D
+  | fuel + 1, D =>
+    let leaves := D.boxes.filter fun b => !D.boxes.any (·.parent = some b.id)
+    match leaves.foldr (fun b acc => match acc with
+        | none => some b
+        | some c => if b.id < c.id then some b else some c) none with
+    | none => D
+    | some b =>
+      let k := ks b.mult
+      expandFuel ks fuel (if b.ports = [] then D.expandNode b k else D.expandPort b k)
+\end{lstlisting}
+
+\subsection{\texttt{NetDigits}}
+\begin{lstlisting}[style=leancore]
+theorem eval_toNetB_evalD (hW : WF D) (E : Env) (off : ℕ) (hoff : D.bnd.length ≤ off)
+    (hN : ∀ n ∈ D.nodes, D.NodeS E n)
+    (hlab : ∀ j (hj : j < D.wires.length), labDim E (off + j) =
+      E.dimv (D.portDim D.wires[j].1) ^ size E.mult (D.legChain D.wires[j].1))
+    (β : ℕ → ℕ) (hβ : ∀ i (hi : i < D.bnd.length),
+      β i < E.dimv (D.portDim D.bnd[i]) ^ size E.mult (D.legChain D.bnd[i])) :
+    ArchytasZX.eval E (D.toNetB off) β = D.evalD E E.mult (D.slotDig E β)
+\end{lstlisting}
+
+\subsection{\texttt{OrderK}}
+\begin{lstlisting}[style=leancore]
+def slotSig (i : ℕ) : List ℕ × List ℕ :=
+  let q := D.bnd.getD i Port.dflt
+  let bs := D.nodeBoxes q.node
+  let mps := bs.map (D.mpB · (decide (i < D.outs.length)))
+  let r := mps.findIdx (· = i)
+  (mps.take r, List.range' r (bs.length - r) ++ (List.range' bs.length (D.portBoxes q).length).reverse)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def keyOf (sg : List ℕ × List ℕ) (i : ℕ) (t : List ℕ) : List ℕ :=
+  (sg.1.zip t).flatMap (fun p => [p.1, p.2]) ++ [i] ++ sg.2.map (t.getD · 0)
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+def expandK (ks : ℕ → ℕ) : Diagram :=
+  let E := D.expand ks
+  let L := (D.SL ks).map fun x => E.bnd.getD (D.bidx ks x).1 Port.dflt
+  { E with outs := L.take E.outs.length, ins := L.drop E.outs.length }
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+theorem eval_expandK_evalD (hW : WF D) (E : Env) (σ'' : ℕ → ℕ)
+    (hσ : (D.expandK E.mult).InRange E σ'') :
+    (D.expandK E.mult).eval E σ'' = D.evalD E E.mult (D.readK E.mult σ'')
+\end{lstlisting}
+
+\subsection{\texttt{Assume}}
+\begin{lstlisting}[style=leancore]
+theorem Equal.of_mapDim (E : Env) (ps : List (ℕ × ℕ)) (hps : ∀ p ∈ ps, E.dimv p.2 = E.dimv p.1)
+    {s s' : ℂ} {N M : Net}
+    (h : Equal { E with labs
+\end{lstlisting}
+

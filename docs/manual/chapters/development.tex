@@ -1,0 +1,158 @@
+\chapter{Development}\label{ch:development}
+
+This chapter specifies the repository layout, the test suite, the code-quality checks, continuous integration, the tracing module, and the build of this manual.
+
+\section{Repository Layout}\label{sec:dev-layout}
+
+\Cref{tab:dev-layout} lists the top-level directories and files of the repository that belong to the software.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Path & Contents \\
+\midrule
+\file{archytaszx/} & The Python package (\cref{ch:overview}) and, in \file{archytaszx/lean/}, the Lean project (\cref{ch:lean-core}). \\
+\file{benchmarks/} & The benchmark suite (\cref{ch:bench-pipeline,ch:bench-tools}). \\
+\file{tests/} & The test suite (\cref{sec:dev-tests}). \\
+\file{examples/} & Engine scripts (\file{.azx}), their Lean outputs (\file{.lean}), the Python tutorial \file{tutorial.py}, and the directories \file{completeness/}, \file{mixed/}, and \file{restricted/} of further examples. \\
+\file{docs/manual/} & The sources of this manual (\cref{sec:dev-manual}). \\
+\file{pyproject.toml} & Package metadata, dependencies, and the configuration of pytest, ruff, and mypy. \\
+\file{CITATION.cff} & Citation metadata, kept in step with the keywords of \file{pyproject.toml}. \\
+\file{.github/workflows/ci.yml} & The continuous-integration workflow (\cref{sec:dev-ci}). \\
+\file{LICENSE} & The Apache License, Version~2.0. \\
+\bottomrule
+\end{tabularx}
+\caption{Repository layout.}
+\label{tab:dev-layout}
+\end{table}
+
+Every Python source file begins with a twelve-line Apache~2.0 license header.
+
+\section{The Test Suite}\label{sec:dev-tests}
+
+The tests use \tool{pytest}{https://pytest.org} with \tool{pytest-xdist}{https://pytest-xdist.readthedocs.io} for parallel runs. The suite has 143 Python files in \file{tests/} besides \file{__init__.py} and 3{,}061 test functions; parametrization multiplies the number of collected cases.
+
+\subsection{Tiers}\label{sec:dev-tiers}
+
+The suite has two tiers, separated by the marker \texttt{slow}, which marks multi-thousand-seed fuzz sweeps and oracle differentials. The pytest configuration in \file{pyproject.toml} sets \texttt{testpaths = ["tests"]} and the default options \texttt{-m "not slow"}, so a plain \texttt{pytest} runs the default tier only. The commands are:
+\begin{lstlisting}[style=shell]
+pytest                 # default tier
+pytest -m slow         # slow tier only
+pytest -m "" -n auto   # both tiers, one worker per core (as in CI)
+\end{lstlisting}
+Eighteen files contain slow tests; \cref{tab:dev-tests} marks them with an asterisk.
+
+\subsection{Organization}\label{sec:dev-test-organization}
+
+Test files fall into five groups:
+\begin{itemize}
+\item \emph{Unit suites} named after a module (\file{test_dimension.py}, \file{test_match.py}, \file{test_kernel.py}, and so on) test one module's interface, its error contract, and its invariants.
+\item \emph{Oracle suites} (\file{test_phase*_oracle.py} and the files ending in \file{_sweep.py}) check results of the engine against the numeric oracle (\cref{ch:proofs}): a rewrite, a decision, or a derivation passes only if contraction of both sides at concrete values agrees.
+\item \emph{Lean suites} (\file{test_lean_*.py}) export proofs and refutations and, where marked slow, check them with Lean.
+\item \emph{Benchmark suites} (\file{test_bench_*.py}) test parts of the benchmark suite against dense tensors and Qiskit operators.
+\item \emph{Policy suites}: \file{test_docstring_policy.py} (\cref{sec:dev-docstrings}).
+\end{itemize}
+
+The module \file{tests/helpers.py} builds the shared worked example, the GHZ state with a copy, that the oracle and unit suites of diagrams, validation, contraction, matching, and the rewrite engine use. The module \file{tests/dirac_eval.py} evaluates the printer's Dirac syntax tree numerically for comparison with the oracle. The module \file{tests/trust_helpers.py} runs command files in fresh sessions for the trust-mutation script.
+
+\subsection{Standalone Scripts}\label{sec:dev-scripts}
+
+Files whose names begin with an underscore are scripts, run as modules, not collected by pytest:
+\begin{itemize}
+\item \file{_cache_determinism_script.py}, \file{_cross_process_determinism_script.py}, \file{_induction_determinism_script.py}, \file{_strategy_determinism_script.py}, and \file{_symbolic_determinism_script.py} print every key and result promised stable across processes. The corresponding test classes run each script in subprocesses under several values of \texttt{PYTHONHASHSEED} and require identical output.
+\item \file{_bench_subjects_script.py} checks, for every specification equation of the benchmark catalogue at every point with $n \le 3$ and $d \le 4$ in its domain, that the naive circuit equals the specification (\cref{ch:bench-pipeline}); by default with two workers, each capped at 1.5\,GiB.
+\item \file{_bench_suite_script.py} tests the parts \texttt{false}, \texttt{schedule}, \texttt{rivals}, \texttt{stats}, \texttt{resume}, and \texttt{trace} of the benchmark suite; by default with two workers, each capped at 6\,GiB of address space.
+\item \file{_trust_mutations_script.py} produces the mutation table of the Lean export (\cref{sec:dev-mutations}).
+\end{itemize}
+
+\subsection{Trust Mutations}\label{sec:dev-mutations}
+
+The script \texttt{python -m tests.\_trust\_mutations\_script [--quick] [OUT\_DIR]} measures whether Lean rejects wrong exports. Each \emph{mutation} is a deliberate translation bug applied in the worker's memory to the network exporter (the class \py!_Export! of \module{archytaszx.semantics.lean_net}) or to the diagrams the parser returns to the session; installed files are never changed. Every mutation is applied consistently: every network the export builds carries the same bug. The nine mutations are:
+\begin{enumerate}
+\item \emph{swap legs}: the labels of two ports on different nodes exchanged, crossing two wires;
+\item \emph{drop wire}: the lowest internal label cut into two labels, each summed alone;
+\item \emph{swap boundary}: the first two boundary labels exchanged;
+\item \emph{chain off by one}: one bundle layer removed from the first boxed node;
+\item \emph{bundle multiplicity}: the first bundle layer's multiplicity $m$ replaced by $m+1$;
+\item \emph{phase entry}: $1/7$ of a turn added at index~1 to every phase function of the table;
+\item \emph{scalar}: the first scalar the export writes doubled;
+\item \emph{dimension}: the first dimension of the table increased by~1;
+\item \emph{source literal}: the scalar of the first diagram the parser returns doubled.
+\end{enumerate}
+Every exported proof or refutation of every example and battery file (\file{tests/data/trust/*.azx}, and \file{.trust_work/battery*.azx} when present) is then checked by Lean. A rejected export is \texttt{ok}. An accepted export is \texttt{wrong}, unless the accepted theorem depends on more \lean!unproved_*! axioms than the unmutated export, which makes it \texttt{ok}: the mutation surfaced as an unproved step. A mutation with nothing to act on, one that leaves the export unchanged, and one whose export falls back to the opaque form or fails are \texttt{unsupported}.
+
+\subsection{Test Files}\label{sec:dev-test-files}
+
+\Cref{tab:dev-tests} lists every file of \file{tests/} with its number of test functions and its subject. An asterisk marks a file with tests in the slow tier.
+
+{\small
+\input{chapters/development-tests}
+}
+
+\section{Code Quality}\label{sec:dev-quality}
+
+\subsection{Linting and Formatting}\label{sec:dev-ruff}
+
+\tool{Ruff}{https://docs.astral.sh/ruff/} lints and formats the code. Its configuration in \file{pyproject.toml} sets the line length to 100, excludes Markdown files, extends the default rule selection by \texttt{E501} (line too long), and ignores \texttt{UP040}, \texttt{UP046}, and \texttt{UP047}. Both \texttt{ruff check .} and \texttt{ruff format --check .} must pass.
+
+\subsection{Type Checking}\label{sec:dev-mypy}
+
+\tool{mypy}{https://mypy-lang.org} checks \file{archytaszx} and \file{tests} in strict mode for Python~3.12. Missing type information is ignored for the modules \texttt{qiskit}, \texttt{dizx}, and \texttt{scipy} and their submodules; the package \texttt{benchmarks} is followed silently (its errors are not reported when it is imported).
+
+\subsection{Docstring Policy}\label{sec:dev-docstrings}
+
+A docstring states what a thing is or how it works. The suite \file{test_docstring_policy.py} enforces four limits on every Python file of \file{archytaszx/} (excluding \file{__pycache__} and \file{.lake}):
+\begin{enumerate}
+\item a module docstring has at most 55 lines;
+\item every other docstring, module-attribute docstrings included, has at most 25 lines;
+\item docstring and comment lines make up at most 40\,\% of a file's nonblank lines past the twelve-line license header (a file holding only a docstring is exempt);
+\item no docstring or comment contains the words \emph{because}, \emph{rationale}, \emph{the reason}, \emph{reasoning behind}, \emph{was chosen}, \emph{the alternative was}, \emph{which is why}, or \emph{for this reason} (any case, whole words).
+\end{enumerate}
+Here a docstring is any bare string expression in the module, and a comment line is a line whose first nonblank character is \texttt{\#}.
+
+\section{Continuous Integration}\label{sec:dev-ci}
+
+The workflow \file{.github/workflows/ci.yml} runs on every push to the branches \texttt{main} and \texttt{dev} and on every pull request. A newer run on the same Git reference cancels a running one. It has four jobs, each on \texttt{ubuntu-latest}:
+\begin{enumerate}
+\item \texttt{lint}: installs the package with the \texttt{dev} extras on Python~3.12 and runs \texttt{ruff check .} and \texttt{ruff format --check .};
+\item \texttt{typecheck}: installs the package with the \texttt{dev} and \texttt{viz} extras on Python~3.12 and runs \texttt{mypy archytaszx tests};
+\item \texttt{test}: on each of Python~3.12, 3.13, and 3.14 (without stopping the others when one fails), installs the package with the \texttt{dev} and \texttt{viz} extras and runs \texttt{pytest -m "" -n auto}, both tiers across all cores;
+\item \texttt{docs}: builds this manual with \texttt{latexmk} in a full \TeX{} Live installation (\cref{sec:dev-manual}) and fails on any \LaTeX{} error.
+\end{enumerate}
+Continuous integration does not build the Lean library.
+
+\section{Tracing}\label{sec:dev-trace}
+
+The module \module{archytaszx.trace} records named, nested, timed sections of engine work, called \term{spans}. The benchmark suite uses it to attribute time to engine stages (\cref{ch:bench-pipeline}).
+
+\paragraph{Activation.} Tracing is on when the environment variable \texttt{ARCHYTASZX\_TRACE} equals \texttt{1} when the module is imported; the module constant \py!ON! holds the result. With tracing off, \py!span! returns one shared null context manager and \py!traced! returns the decorated function unchanged, so the cost of an instrumented call is one Boolean test.
+
+\paragraph{Data structure.} A span node has a name, an optional string label, accumulated CPU seconds (\py!time.process_time!), accumulated wall seconds (\py!time.perf_counter!), a call count, and children keyed by the pair (name, label) in insertion order. A module-level root node holds the top-level spans. Each thread keeps its own stack of open nodes, starting at the root; a module-level reentrant lock guards the shared tree. Entering a span finds or creates the child of the innermost open node with the same name and label, so repeated calls under one parent merge into one node; leaving it adds the elapsed CPU and wall time and increments the call count, also when the section raises.
+
+\paragraph{Interface.}
+\begin{itemize}
+\item \py!span(name, label=None)!: a context manager timing a section; a label other than \py!None! is converted with \py!str!.
+\item \py!traced(name, label=None)!: a decorator timing every call of a function as span \texttt{name}; when \texttt{label} is given, \py!label(*args, **kwargs)! computes each call's label.
+\item \py!reset()!: drops every recorded span by replacing the root and incrementing a generation counter; each thread's stack restarts at the new root on its next use.
+\item \py!tree()!: the recorded top-level spans as a list of dictionaries with keys \texttt{name}, \texttt{cpu}, \texttt{wall}, \texttt{calls}, \texttt{label} (only when not \py!None!), and \texttt{children} (only when nonempty); times are rounded to six decimal places.
+\item \py!snapshot()!: \py!tree()! with every span still open given its partial CPU and wall seconds so far and the key \texttt{"open": True}. The CPU time of an open span is process CPU time over every thread.
+\item \py!open_path(spans)!: the names of the deepest chain of open spans in a snapshot, each written \texttt{name[label]} when the span has a label; it follows the first open span at each level.
+\end{itemize}
+
+\section{The Manual}\label{sec:dev-manual}
+
+This manual is written in \LaTeX{} and lives in \file{docs/manual/}. Its root file \file{archytaszx.tex} loads the shared preamble \file{preamble.tex} (packages, notation, code-listing languages, and the TikZ styles of ZXW diagrams), the chapters in \file{chapters/}, the appendices in \file{appendices/}, and the bibliography files in \file{bib/}. The bibliography uses natbib with the style \texttt{plainnat}; the index uses \texttt{imakeidx}. To build the manual,
+\begin{lstlisting}[style=shell]
+cd docs/manual
+latexmk            # writes archytaszx.pdf
+latexmk -c         # removes the auxiliary files
+\end{lstlisting}
+The file \file{latexmkrc} selects \texttt{pdflatex}, runs BibTeX, stops at the first error, and names \file{archytaszx.tex} as the default file. The file \file{chapter-draft.tex} builds one chapter alone:
+\begin{lstlisting}[style=shell]
+pdflatex "\def\chapterfile{chapters/rules}\input{chapter-draft}"
+\end{lstlisting}
+References to other chapters remain undefined in such a build.
+
+Every change to the software updates the manual in the same commit.

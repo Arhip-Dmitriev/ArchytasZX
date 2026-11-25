@@ -1,0 +1,2680 @@
+\chapter{Rewriting}\label{ch:rewriting}
+\sloppy
+
+The package \module{archytaszx.rewrite} turns a rule of the ZXW calculus into an operation on a
+\py!Diagram! (\cref{ch:diagrams}). It holds five layers. The \emph{rule layer} defines what a rule
+is: a pattern, a builder, side conditions, quantifiers, dimension guards, and an exact scalar
+(\cref{sec:rewriting-rule}). The \emph{matching layer} locates occurrences of a pattern: a family of
+fixed-shape matchers (\cref{sec:rewriting-fixed}), a generic subgraph matcher driven by a pattern
+diagram (\cref{sec:rewriting-template}), matchers for the W-node and multiplier rules of qufinite
+ZXW (\cref{sec:rewriting-zxw}), and matchers for port-scoped \bboxes{}
+(\cref{sec:rewriting-box}). The \emph{engine layer} applies one match without mutating its input,
+records provenance, and runs strategies (\cref{sec:rewriting-engine}). The \emph{search layer}
+computes normal forms (\cref{sec:rewriting-nf}), saturates an e-graph of diagrams
+(\cref{sec:rewriting-egraph}), runs tactics and bidirectional proof search
+(\cref{sec:rewriting-tactics}), and rewrites the sheets of a scalable diagram
+(\cref{sec:rewriting-sheet}). The \emph{cache layer} memoizes digests, matches, and derived values
+across all of these (\cref{sec:rewriting-cache}).
+
+The rules themselves are defined elsewhere: the rule library and lookup in \cref{ch:rules}, the
+complete axiom set in \cref{ch:completeness}, and the discard rules and exhaustive search in
+\cref{ch:mixed}. The calculus follows Coecke and Duncan~\cite{coecke2011interacting} for ZX,
+Poór et al.~\cite{poor2023zxw} and Wang et al.~\cite{wang2021qufinite,wang2023qufinitezxw} for
+qudit and qufinite ZXW, and Dixon, Duncan, and Kissinger~\cite{dixon2009graphical,kissinger2014pattern}
+for \bboxes{} and their matching.
+
+\begin{table}[ht]
+\centering\small
+\caption{Modules of the rewriting layer.}\label{tab:rewriting-modules}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Module & Content \\
+\midrule
+\file{rule.py} & \py!Rule!, \py!Pattern!, \py!Match!, \py!BuildResult!, side conditions, dimension constraints and guards, errors. \\
+\file{match.py} & Fusion matcher and the fixed-shape matchers: $F^4$, cap, identity, triangle pair, state copy, Hopf, bialgebra, $F$ on a state. \\
+\file{match_template.py} & Generic subgraph matching against a pattern diagram, and the rebuild of a right-hand side. \\
+\file{match_zxw.py} & Matchers for W fusion, W unit, multiplier rules, and the Z--W bialgebra family. \\
+\file{match_box.py} & Matchers for rules that cross a port-scoped \bbox{} boundary. \\
+\file{engine.py} & \py!apply!, \py!RewriteStep!, strategies, the termination guard. \\
+\file{normal_form.py} & The normal-form driver, loop detection, keys, and comparison views. \\
+\file{egraph.py} & The diagram-level e-graph, its scheduler, extraction, and explanations. \\
+\file{tactics.py} & The tactic language and bidirectional proof search. \\
+\file{sheet.py} & Sheet rewrites of scalable diagrams. \\
+\file{cache.py} & Digests, fingerprints, the LRU cache, the match cache, value memos, incremental rematching. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Errors.}
+Every error raised in the package derives from \py!RewriteError!, a subclass of Python's
+\py!Exception!. Two subclasses partition the failures.
+\begin{itemize}
+\item \py!RewriteDomainError!: a value or state lies outside the mathematical domain of the
+  operation. Raised for a match whose side-condition outcomes do not exactly cover, or do not all
+  pass, its rule's conditions; a builder whose introduced scalar disagrees with its rule's; a
+  fusion match that disagrees with a fresh resolution; a phase whose entries fall outside the
+  shared dimension; a wire or boundary entry naming a consumed port absent from the port mapping;
+  and a rewrite that introduces a hard validation issue the input did not carry.
+\item \py!RewriteGrammarError!: a request is malformed independent of mathematics. Raised for a
+  value object built outside its contract, a match handed to a builder that does not take its
+  type, an unevaluable fusion request (equal node ids, an absent node, a wire not in the diagram
+  or not incident on both nodes, an out-of-range port index), a malformed \py!BuildResult!, a port
+  mapping that collapses a wire, and an unknown rule name at lookup.
+\end{itemize}
+
+%======================================================================
+\section{Rules}\label{sec:rewriting-rule}
+
+The module \module{archytaszx.rewrite.rule} defines the value objects of a rewrite. None of them
+performs graph surgery. A \term{rule} is a frozen record whose \emph{pattern} locates occurrences
+in a diagram, whose \emph{builder} constructs the right-hand side at one occurrence, and whose
+metadata (side conditions, quantifiers, dimension guards, scalar) states the conditions and the
+exact scalar of the equation
+\begin{equation}\label{eq:rewriting-rule}
+  \sem{D} \;=\; s \cdot \sem{D'} ,
+\end{equation}
+where $D$ is the matched diagram, $D'$ the rewritten one, and $s$ the scalar the rule introduces.
+The engine (\cref{sec:rewriting-engine}) multiplies $s$ into the diagram's global scalar, so the
+rewritten diagram denotes exactly what the original denotes.
+
+\subsection{Side conditions}
+
+\begin{definition}[Side condition]\label{def:rewriting-sidecond}
+A \term{side condition} is a frozen record \py!SideCondition(name: str, description: str)!. A
+pattern declares an ordered tuple of side conditions once. A \term{side-condition outcome} is a
+frozen record
+\begin{signature}
+\py!SideConditionOutcome(name: str, passed: bool, detail: str, deferred: bool = False)!
+\end{signature}
+holding the result of one named condition against one candidate. The flag \py!deferred! is true
+for an outcome that passed on an assumed rather than a verified dimension equality.
+\end{definition}
+
+A pattern may declare a condition that always passes; it then records a structural fact for the
+certificate. Equality and hashing of both records are field-wise.
+
+\begin{signature}
+\py!check_side_condition_coverage(match: Match, side_conditions: tuple[SideCondition, ...], context: str) -> None!
+\end{signature}
+\begin{algorithm}[Coverage check]\label{alg:rewriting-coverage}
+\leavevmode
+\begin{enumerate}
+\item Collect the outcome names of \py!match.side_condition_outcomes! in order; record every name
+  that occurs twice as a duplicate.
+\item Let \emph{missing} be the declared names absent from the outcomes and \emph{unexpected} the
+  outcome names not declared.
+\item If any of the three sets is nonempty, raise \py!RewriteDomainError! with the message
+  \code!<context>: side_condition_outcomes do not exactly cover the declared side conditions (duplicate=[..], missing=[..], unexpected=[..])!, each list sorted.
+\item Otherwise, if any outcome failed, raise \py!RewriteDomainError! with
+  \code!<context>: match has failing side condition(s) [names]!, the names in outcome order.
+\end{enumerate}
+\end{algorithm}
+Both \py!apply! and each builder call this check first, since a builder can be invoked directly.
+
+\subsection{Dimension constraints}
+
+A rewrite between legs of symbolic dimension can rest on an equality that dimension unification
+(\cref{ch:algebra}) does not prove outright. Such an equality is recorded, never silently
+accepted. \py!Dim.unify! returns one of three outcomes: \emph{success} (possibly with bindings of
+free symbols), \emph{deferred} (undecided), or \emph{failure}.
+
+\begin{definition}[Constraint source]\label{def:rewriting-csource}
+A \term{constraint source} names the check that produced a dimension constraint. It is a frozen
+record \py!ConstraintSource(kind, port_ref=None, node_id=None)! with \py!kind! one of three
+\py!ConstraintSourceKind! members:
+\begin{itemize}
+\item \code!CONNECTING_PAIR! (value \code!"connecting_pair"!): the two ports a consumed wire joins,
+  related to each other. Both references are \py!None!.
+\item \code!SURVIVING_LEG! (\code!"surviving_leg"!): one surviving port, named by \py!port_ref!,
+  related to the running shared dimension. Exactly \py!port_ref! is set.
+\item \code!NODE_PHASE! (\code!"node_phase"!): the phase vector of the node \py!node_id!, related to
+  the running shared dimension. Exactly \py!node_id! is set.
+\end{itemize}
+Any other combination raises \py!RewriteGrammarError! at construction. The class methods
+\py!connecting_pair()!, \py!surviving_leg(port_ref)!, and \py!node_phase(node_id)! build the three
+kinds. The string form is \code!connecting pair!, \code!surviving leg <node>.<direction>[<index>]!,
+or \code!phase on node <node>!.
+\end{definition}
+
+\begin{definition}[Dimension constraint]\label{def:rewriting-dconstraint}
+A \term{dimension constraint} is a frozen record
+\begin{signature}
+\py!DimensionConstraint(assumed: Dim, equal_to: Dim, source: ConstraintSource, outcome: ConstraintOutcome, bound_here: tuple[tuple[str, Dim], ...] = ())!
+\end{signature}
+stating one equality \py!assumed! $=$ \py!equal_to! that a rewrite assumed rather than verified as a
+syntactic identity. \py!ConstraintOutcome! has two members: \code!DEFERRED! (\code!"deferred"!),
+when unification could not decide the equality, and \code!BOUND! (\code!"bound"!), when it
+succeeded only by binding a free symbol. A unification that is a bare syntactic identity is never
+recorded. The field \py!bound_here! holds exactly the bindings this check produced, sorted by
+symbol name; it may bind a symbol to a non-concrete dimension.
+\end{definition}
+
+Construction raises \py!RewriteGrammarError! when \py!outcome! is \code!BOUND! and \py!bound_here!
+is empty, when \py!outcome! is \code!DEFERRED! and \py!bound_here! is nonempty, or when
+\py!bound_here! is not a tuple of \py!(str, Dim)! pairs. The property \py!deferred! is true iff the
+outcome is \code!DEFERRED!. The string form is \code!<assumed> == <equal_to> (<outcome>, <source>)!.
+The property \py!equation! renders both sides through \tool{SymPy}{https://www.sympy.org}~\cite{meurer2017sympy} and returns \code!a = b!, where the
+sides are ordered by the key (side is an integer literal, length, text); a symbolic side therefore
+comes first, and of two symbolic sides the shorter.
+
+\begin{signature}
+\py!assumed(constraints: Iterable[DimensionConstraint]) -> tuple[DimensionConstraint, ...]!
+\end{signature}
+returns the constraints that are not identities, one per equation. Two constraints state the same
+equation when the unordered pair of their sides, each expanded by \py!sympy.expand!, is equal. A
+constraint whose two expanded sides coincide is dropped. The first occurrence of each equation
+survives, in input order.
+
+\subsection{Dimension guards}
+
+\begin{definition}[Dimension guard]\label{def:rewriting-guard}
+A \term{dimension guard}
+\py!DimensionGuard(kind: DimensionGuardKind, value: int | None = None)! is an arithmetic restriction on the dimension $d$ a match resolves to. Its kinds are
+\code!PRIME!, \code!COMPOSITE!, \code!AT_LEAST!, \code!EQUALS!, and \code!DIVISIBLE_BY!. The last
+three require \py!value!; the first two forbid it. A value must be a Python \py!int! (never a
+\py!bool!) and at least $1$. Violations raise \py!RewriteGrammarError!.
+\end{definition}
+
+\py!DimensionGuard.evaluate(dim: Dim | None) -> GuardOutcome! returns \code!UNDECIDED! when
+\py!dim! is \py!None! or not concrete. Otherwise, with $v$ the integer value of \py!dim!, it returns
+\code!PASSED! or \code!FAILED! according to the kind:
+\begin{itemize}
+\item \code!PRIME!: $v$ is prime (SymPy \py!isprime!);
+\item \code!COMPOSITE!: $v \ge 2$ and $v$ is not prime;
+\item \code!AT_LEAST!: $v \ge \mathit{value}$;
+\item \code!EQUALS!: $v = \mathit{value}$;
+\item \code!DIVISIBLE_BY!: $v \bmod \mathit{value} = 0$.
+\end{itemize}
+Thus $d = 1$ fails both \code!PRIME! and \code!COMPOSITE!. The string forms are
+\code!d is prime!, \code!d is composite!, \code!d >= v!, \code!d == v!, and \code!d divisible by v!.
+
+\subsection{Quantifiers}
+
+\py!Quantifiers(leg_counts: tuple[str, ...] = (), dimensions: tuple[str, ...] = ())! names the
+port-count variables and the dimension variables over which a rule's equation is stated. The
+rewriting layer stores this metadata and does not consult it.
+
+\subsection{Matches, patterns, and builders}
+
+\begin{definition}[Match]\label{def:rewriting-match}
+A \term{match} is any object that exposes four read-only properties:
+\py!side_condition_outcomes!, the outcomes of every condition the pattern checked;
+\py!dimension_constraints!, at most one constraint per constraint source;
+\py!all_side_conditions_passed!, true iff every outcome passed (vacuously true for an empty
+tuple); and \py!support_node_ids!, every node id the match reads or rewrites, ascending and
+without repetition. \py!Match! is a structural protocol: each pattern defines its own frozen
+match type and carries its location data there. The engine never reads that data.
+\end{definition}
+
+\begin{definition}[Pattern]\label{def:rewriting-pattern}
+A \term{pattern} is an instance of the abstract class \py!Pattern! with
+\begin{itemize}
+\item \py!locality_radius: int!, default $3$: how many wire hops beyond a match's support the
+  pattern's decision can read;
+\item \py!find_matches(diagram) -> tuple[Match, ...]! (abstract): every occurrence, in a
+  deterministic order; it never mutates the diagram and never returns a candidate with a failed
+  side condition;
+\item \py!order_key(match) -> tuple!: the key by which \py!find_matches! orders its result; the
+  default is the tuple of integer support node ids;
+\item \py!verify(diagram, match) -> bool!: by default, whether \py!find_matches! rediscovers the
+  match;
+\item \py!find_matches_anchored(diagram, anchors: frozenset[NodeId])!: by default, the matches
+  whose support meets \py!anchors!. Subclasses override it to restrict the search itself.
+\end{itemize}
+\end{definition}
+
+The invariant \py!find_matches(D) == tuple(sorted(find_matches(D), key=order_key))! holds for
+every pattern in the package. The anchored search returns the same matches as the full search
+filtered to the anchors' neighborhood, and raises what the full search raises.
+
+\begin{definition}[Build result]\label{def:rewriting-buildresult}
+A \term{builder} is a callable \py!RuleBuilder = Callable[[Diagram, Match], BuildResult]!. It
+receives the engine's working copy and a match, adds the replacement nodes to that copy in place,
+and returns a frozen record
+\begin{signature}
+\py!BuildResult(diagram: Diagram, new_node_ids: tuple[NodeId, ...], consumed_node_ids: tuple[NodeId, ...], consumed_wires: tuple[Wire, ...], port_mapping: Mapping[PortRef, PortRef], scalar_introduced: Scalar, new_wires: tuple[Wire, ...] = (), phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None)!
+\end{signature}
+\begin{itemize}
+\item \py!diagram! is the very working object the builder received (checked by identity).
+\item \py!new_node_ids! lists every created node, in a deterministic order.
+\item \py!consumed_node_ids! and \py!consumed_wires! name what the rewrite removes.
+\item \py!port_mapping! sends each port of a consumed node that some surviving wire or boundary
+  entry uses to its replacement port.
+\item \py!new_wires! joins new nodes to one another; the engine adds them after remapping.
+\item \py!phase_substitutions! records, per consumed node, the bindings the builder substituted
+  into a phase; \py!None! means none.
+\end{itemize}
+A builder never removes matched nodes, never edits the wire set, and never edits boundaries; the
+engine does all three.
+\end{definition}
+
+\subsection{The rule record}
+
+\begin{definition}[Rule]\label{def:rewriting-rulerecord}
+A \py!Rule! is the frozen record
+\begin{signature}
+\py!Rule(name: str, pattern: Pattern, builder: RuleBuilder, side_conditions: tuple[SideCondition, ...], quantifiers: Quantifiers, scalar_introduced: Scalar, scalar_in_dim: Callable[[Dim], Scalar] | None = None, dimension_guards: tuple[DimensionGuard, ...] = (), scalar_in_match: Callable[[Match], Scalar] | None = None, automatic: bool = True)!
+\end{signature}
+\py!name! is the stable identifier a certificate cites. \py!scalar_introduced! is the exact scalar
+(\cref{ch:algebra}) of every application, written in the rule's own dimension symbol when it
+depends on the dimension. \py!automatic! states whether the automatic layers (normal form,
+saturation, tactics) may use the rule.
+\end{definition}
+
+\paragraph{Scalar of an application.}
+\py!scalar_for(dim)! returns \py!scalar_in_dim(dim)! when that function is set and \py!dim! is not
+\py!None!, and \py!scalar_introduced! otherwise. When \py!scalar_in_match! is set, \py!scalar_for!
+raises \py!RewriteGrammarError! (the scalar depends on a matched port count, not on the dimension
+alone). \py!scalar_for_match(match)! returns \py!scalar_in_match(match)! when that function is set,
+and otherwise \py!scalar_for(match.shared_dim)!, with \py!None! when the match has no
+\py!shared_dim! attribute.
+
+\paragraph{Validation.}
+Construction raises \py!RewriteGrammarError! when any of these holds:
+\py!name! is not a nonempty string; \py!pattern! is not a \py!Pattern!; \py!builder! is not
+callable; \py!side_conditions! is not a tuple of \py!SideCondition!; a side-condition name occurs
+twice (message lists the repeated names, sorted); \py!quantifiers! is not a \py!Quantifiers!;
+\py!scalar_introduced! is not a \py!Scalar! (a \py!float! is rejected); \py!dimension_guards! is not
+a tuple of \py!DimensionGuard!; \py!scalar_in_dim! or \py!scalar_in_match! is neither \py!None! nor
+callable; \py!automatic! is not a \py!bool!; the builder carries an attribute
+\py!side_conditions! whose tuple differs from the rule's; or the pattern carries an attribute
+\py!dimension_guards! whose tuple differs from the rule's. The last two checks keep exactly one
+source of truth: a builder or pattern that declares its own conditions or guards must agree with
+the wrapping rule.
+
+%======================================================================
+\section{Fixed-shape matchers}\label{sec:rewriting-fixed}
+
+The module \module{archytaszx.rewrite.match} implements the matchers whose shape is fixed in code.
+Each matcher is a module-level function \py!find_..._matches(diagram, *, anchors=None, ...)!
+together with a \py!Pattern! subclass that delegates to it, passing \py!anchors! from
+\py!find_matches_anchored!. Every matcher reads a diagram and never mutates it. Unless stated
+otherwise a matcher does not require a well-formed diagram and never calls the validator.
+\Cref{fig:rewriting-fixed-shapes} shows the shapes the matchers locate.
+
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[fbox] (f1) at (0,0.6) {$F$}; \node[fbox] (f2) at (0,1.3) {$F$};
+  \node[fbox] (f3) at (0,2.0) {$F$}; \node[fbox] (f4) at (0,2.7) {$F$};
+  \draw[wire] (0,0) -- (f1) -- (f2) -- (f3) -- (f4) -- (0,3.3);
+  \node at (0.7,1.65) {$=$}; \draw[wire] (1.2,0) -- (1.2,3.3);
+\end{tikzpicture}\\(a) $F^4$ cancellation
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0.6) {}; \node[xdot] (e) at (0,1.8) {};
+  \draw[wire] (s) -- (e);
+  \node[dimlabel,right] at (0.05,1.2) {$d$};
+\end{tikzpicture}\\(b) cap: Z state into X effect
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zdot] (z) at (0,1.2) {};
+  \draw[wire] (0,0) -- (z) -- (0,2.4);
+  \node at (0.6,1.2) {$=$}; \draw[wire] (1.1,0) -- (1.1,2.4);
+\end{tikzpicture}\\(c) identity removal
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[tri] (t) at (0,0.8) {}; \node[trii] (ti) at (0,1.7) {};
+  \draw[wire] (0,0) -- (t) -- (ti) -- (0,2.5);
+  \node at (0.6,1.25) {$=$}; \draw[wire] (1.1,0) -- (1.1,2.5);
+\end{tikzpicture}\\(d) $T$ then $T^{-1}$
+\end{minipage}
+
+\bigskip
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0.4) {}; \node[zs] (z) at (0,1.4) {};
+  \draw[wire] (s) -- (z);
+  \draw[wire] (z) -- (-0.5,2.3); \draw[wire] (z) -- (0.5,2.3);
+  \node at (0,2.1) {$\cdots$};
+\end{tikzpicture}\\(e) state copy
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zs] (z) at (0,0.3) {}; \node[xs] (x) at (0,2.6) {};
+  \node[fbox] (f1) at (0.6,1.05) {$F$}; \node[fbox] (f2) at (0.6,1.85) {$F$};
+  \draw[wire] (z) to[bend left=25] (x);
+  \draw[wire] (z) -- (f1) -- (f2) -- (x);
+\end{tikzpicture}\\(f) Hopf pattern
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[xdot] (x) at (0,0.8) {}; \node[zdot] (z) at (0,1.7) {};
+  \draw[wire] (-0.4,0) -- (x); \draw[wire] (0.4,0) -- (x);
+  \draw[wire] (x) -- (z);
+  \draw[wire] (z) -- (-0.4,2.5); \draw[wire] (z) -- (0.4,2.5);
+\end{tikzpicture}\\(g) bialgebra pattern
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zdot] (s) at (0,0.4) {}; \node[fbox] (f) at (0,1.3) {$F$};
+  \draw[wire] (s) -- (f) -- (0,2.2);
+\end{tikzpicture}\\(h) $F$ on a Z state
+\end{minipage}
+\caption{Left-hand shapes of the fixed-shape matchers of \file{match.py}, inputs at the bottom.
+Small dots are phaseless spiders. Each swapped variant exchanges the two colors.}
+\label{fig:rewriting-fixed-shapes}
+\end{figure}
+
+\subsection{Shared predicates}\label{sec:rewriting-fixed-shared}
+
+The following predicates recur in this section and in \cref{sec:rewriting-template,sec:rewriting-zxw}.
+\begin{itemize}
+\item \emph{Registered spider}: a node whose generator type is registered in the generator
+  registry and is named \code!Z! or \code!X! (\cref{ch:diagrams}).
+\item \emph{Phaseless}: the node has no phase vector, or an all-zero one.
+\item \emph{Uniform port dimension}: the set of the dimensions of all ports of the node has exactly
+  one element; a node without ports has none.
+\item \emph{Claims}: the claim count of a port is the number of wires with that port as an
+  endpoint. A port is \emph{claimed exactly once by a wire} when its count is $1$ and no boundary
+  list names it; it is \emph{claimed at most once} when its count plus $1$ if a boundary list
+  names it is at most $1$.
+\item \emph{Node boxes}: the set of node-scoped \bboxes{} whose node scope contains a node.
+  The \term{innermost node-scoped box} of a node is the node-scoped \bbox{} containing it with the
+  smallest node scope, ties broken by the smaller box id; \py!None! when there is none.
+\item \emph{Outside every \bbox{}}: no node of a set lies in a node-scoped \bbox{}, no port of
+  such a node lies in a port-scoped \bbox{}, and no wire joins such a node to a node whose node
+  boxes differ (a \emph{crossing leg}).
+\item \emph{Exhausts a box}: some node-scoped \bbox{} has a nonempty node scope contained in the
+  set of removed nodes.
+\item \emph{Link boxes of a port}: the chain \bboxes{} (\cref{ch:diagrams}) whose link list
+  contains the port.
+\end{itemize}
+
+\paragraph{Anchors.}
+An anchored search restricts candidates to those whose seed nodes meet the $h$-hop closure of the
+anchor set, where $h$ is $0$ for the matchers seeded at a wire and $1$ or $3$ for those that read
+further. The closure of the anchors is computed by breadth-first search over the undirected
+node adjacency and memoized for the last (adjacency map, $h$) pair.
+
+\paragraph{Per-wire-set indexes.}
+The port-to-wire map and the per-port claim count are built once per wire set: each is memoized
+for the last frozen wire set object it was built from, keyed by object identity.
+
+\subsection{Spider fusion}\label{sec:rewriting-fusion}
+
+The fusion pattern locates two spiders of one color joined by a wire whose two ports agree on
+dimension (the spider rule of \cite{coecke2011interacting} and its qudit form \cite{poor2023zxw}).
+A pair joined by $k$ wires yields up to one match per wire, each decided alone; applying one
+fuses across its own wire and leaves the other $k-1$ wires as self-loops on the merged node.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[zxd]
+  \node[zs] (a) at (0,0) {$\alpha$};
+  \node[zs] (b) at (0,1.4) {$\beta$};
+  \draw[wire] (a) -- (b);
+  \draw[wire] (a) -- (-0.5,-0.8); \draw[wire] (a) -- (0.5,-0.8);
+  \draw[wire] (b) -- (-0.5,2.2); \draw[wire] (b) -- (0.5,2.2);
+  \node at (1.4,0.7) {$=$};
+  \node[zs] (c) at (2.6,0.7) {\tiny$\alpha{+}\beta$};
+  \draw[wire] (c) -- (2.1,-0.1); \draw[wire] (c) -- (3.1,-0.1);
+  \draw[wire] (c) -- (2.1,1.5); \draw[wire] (c) -- (3.1,1.5);
+\end{tikzpicture}
+\caption{Spider fusion. The consumed wire joins the two spiders; every other port survives on
+the merged spider.}\label{fig:rewriting-fusion}
+\end{figure}
+
+\begin{definition}[Fusion match]\label{def:rewriting-fusionmatch}
+A \py!FusionMatch(a_id, b_id, wire, shared_dim, side_condition_outcomes, dimension_constraints=(), bindings={})!
+records one occurrence. \py!a_id! is always the lower node id and \py!b_id! the higher.
+\py!shared_dim! is the settled dimension of the merged spider; \py!bindings! is the accumulator of
+every concrete symbol binding the resolution produced. The hash folds \py!bindings! as an unordered
+set of items, so equal matches hash equally within one process. Its support is the two node ids,
+ascending.
+\end{definition}
+
+The fusion pattern declares nine side conditions, in this order (\py!FUSION_SIDE_CONDITIONS!):
+\begin{enumerate}
+\item \code!distinct_nodes!: the endpoints are distinct nodes. Always true; a recorded fact.
+\item \code!same_generator_type!: both nodes carry the identical registered generator type, named
+  \code!Z! or \code!X!.
+\item \code!parallel_wires_become_self_loops!: always true; records the number of other wires
+  joining the pair.
+\item \code!consumed_wire_direction_permitted_for_color!: for X the consumed wire runs from an
+  output port to an input port; for Z any direction combination is permitted.
+\item \code!consumed_ports_singly_claimed!: neither consumed port carries a second wire or appears
+  on a boundary list.
+\item \code!bang_box_scope_agreement!: both nodes have the same innermost node-scoped box (both
+  \py!None!, or the same id).
+\item \code!dimension_agreement!: the two consumed ports, then every surviving port of both nodes,
+  unify against the running shared dimension. A deferred result or a success that binds a symbol
+  is accepted and recorded as a constraint; a failure is a non-match.
+\item \code!phase_dimension_agreement!: every present phase vector unifies with the shared
+  dimension. A deferred result is rejected, and so is a binding to a non-concrete dimension.
+\item \code!dimension_guards_satisfied!: every guard of the rule passes at the settled shared
+  dimension. An undecided guard blocks the match, with \py!deferred! false.
+\end{enumerate}
+
+\begin{signature}
+\py!resolve_fusion_match(diagram, a_id, b_id, wire, *, dimension_guards=(), index=None) -> FusionResolution!
+\end{signature}
+This is the single verification predicate of fusion: the matcher calls it once per candidate,
+and the fusion builder (\cref{ch:rules}) calls it again on the working diagram and builds only
+from its result. It returns a frozen
+\py!FusionResolution(passed, shared_dim, bindings, dimension_constraints, outcomes)!. The
+outcomes always cover the nine condition names in declared order; a condition that an earlier
+failure prevented from running is recorded as failing, with the detail
+\code!not evaluated: <condition> failed first!. When \py!passed! is false, \py!shared_dim! is
+\py!None! and the other two fields are empty.
+
+It raises \py!RewriteGrammarError! when \py!a_id == b_id!, when either node is absent, when the
+wire's endpoint nodes are not exactly $\{a, b\}$, when an endpoint names an out-of-range port, or
+when the wire is not an element of \py!diagram.wires! (a freestanding wire between two real ports
+is rejected).
+
+\begin{algorithm}[Fusion resolution]\label{alg:rewriting-fusion}
+\leavevmode
+\begin{enumerate}
+\item Validate the request as above. Let $r_a$ be the wire endpoint on $a$ and $r_b$ the one on
+  $b$; count the other wires joining $\{a,b\}$.
+\item Record conditions 1 and 3 as passing. Decide condition 2; on failure fail the rest.
+\item Condition 4: the consumed ports have the same direction only if the color is Z. On failure
+  fail the rest.
+\item Condition 5: each consumed port has no other wire claim and no boundary entry. On failure
+  fail the rest.
+\item Condition 6: compare the innermost node-scoped boxes. On failure fail the rest.
+\item Seed the shared dimension $s$ with the dimension of $r_a$ (the lower-id node) and the
+  binding map $\beta$ with $\emptyset$.
+\item If the diagram's parameter environment (\py!Diagram.resolve_dim!) changes either consumed
+  dimension and the resolved pair fails to unify, fail conditions 7 and 8 as a refuted equality.
+\item Repeat at most $32$ passes (\py!_MAX_FIXPOINT_PASSES!):
+  \begin{enumerate}
+  \item Unify the two consumed dimensions, each resolved through the concrete entries of $\beta$,
+    against each other (source \code!CONNECTING_PAIR!).
+  \item For node $a$, then node $b$, for every port other than the consumed one, inputs before
+    outputs and in index order: resolve its dimension through $\beta$ and unify it with $s$
+    (source \code!SURVIVING_LEG!).
+  \item Snapshot $(s,\beta)$ as the port-verified state.
+  \item For the phase of $a$, then of $b$, if present: resolve the phase dimension and unify it
+    with $s$ (source \code!NODE_PHASE!). A deferred result, a failure, or a binding to a
+    non-concrete dimension fails the resolution: condition 7 is reported passing from the
+    port-verified snapshot, condition 8 failing with a cause-specific detail, condition 9 failing.
+  \item After every successful unification that binds: merge the concrete bindings into $\beta$
+    (a rebinding of a symbol to a different concrete value fails the candidate) and substitute
+    them into $s$.
+  \item Stop when a full pass changes neither $s$ nor $\beta$.
+  \end{enumerate}
+  Any unification failure in (a) or (b) fails conditions 7 and 8 with a detail naming the side.
+  When the budget runs out, both fail with a budget-exhaustion detail.
+\item Re-verify from scratch that both consumed dimensions, every surviving port, and every
+  phase, resolved under the final $\beta$, unify with the final $s$ without failure.
+\item Record condition 7 as passing, with \py!deferred! true iff the final record holds a
+  deferred constraint from the connecting pair or a surviving port.
+\item Trial-reattach each present phase to $s$ under $\beta$ (\py!reattach_phase!). If an entry
+  index falls out of range, fail condition 8.
+\item Record condition 8 as passing, listing the bindings that phase checks made.
+\item Evaluate the guards (condition 9). Return \py!passed! true iff it passes.
+\end{enumerate}
+\end{algorithm}
+
+The fixpoint stops only when both $s$ and $\beta$ are stable: stopping on $s$ alone lets a binding
+that touches no symbol of $s$ escape re-checking of earlier ports. Termination follows because
+$\beta$ only grows and draws its keys from the finite set of free symbols of the two nodes.
+
+\paragraph{The constraint record.}
+During resolution the constraints live in a record keyed by constraint source, in first-derivation
+order. A re-check of a source overwrites its entry in place. Its policy over (previous entry, this
+check's result) is:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Previous entry & This check & Effect \\
+\midrule
+none & deferred or bound & record it \\
+none & bare identity & nothing \\
+\code!DEFERRED! & deferred or bound & overwrite at the current operands \\
+\code!DEFERRED! & bare identity & delete the entry \\
+\code!BOUND! & deferred or bound & overwrite \\
+\code!BOUND! & bare identity & keep the bound entry \\
+\bottomrule
+\end{tabular}
+\end{center}
+A bound entry survives a later identity because the identity holds only under that binding. For
+a surviving port or the connecting pair, \py!assumed! is the resolved port dimension; for a
+surviving port and a phase, \py!equal_to! is the shared dimension as of the check; for the
+connecting pair it is the other resolved consumed dimension.
+
+\begin{signature}
+\py!reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> tuple[PhaseVector, Mapping[str, Dim]]!
+\end{signature}
+substitutes the concrete entries of \py!bindings! (as integers) into the phase's entries, then
+builds a new phase vector over \py!shared_dim! with the substituted entries, rule, weights, and
+weight rule. It also returns the subset of \py!bindings! actually used: the names free in some
+entry, extended by the phase's own free symbols when the phase carries a rule or weights. It
+raises \py!PhaseDomainError! when an entry index falls outside \py!shared_dim! (\cref{ch:algebra}).
+
+\begin{signature}
+\py!find_matches(diagram, *, dimension_guards=(), anchors=None) -> tuple[FusionMatch, ...]!
+\end{signature}
+\begin{algorithm}[Fusion matcher]\label{alg:rewriting-findfusion}
+\leavevmode
+\begin{enumerate}
+\item Take the wires in sorted order. Validate both endpoints of every wire, then every boundary
+  entry (inputs first), raising \py!RewriteGrammarError! for an absent node (\code!references node id .. absent from the diagram!) or an out-of-range index (\code!.. is out of range for node ..!).
+\item Group the non-self-loop wires by their unordered endpoint pair.
+\item For each candidate wire: order its endpoints as (lower, higher); skip it if anchors are
+  given and neither endpoint is an anchor; skip it unless both nodes carry one registered Z or X
+  type; call \py!resolve_fusion_match! and keep the candidate iff it passes.
+\item Sort by (lower id, higher id, direction and index of the consumed port on the lower node,
+  direction and index on the higher node), directions compared by their string values.
+\end{enumerate}
+\end{algorithm}
+
+\py!FusionPattern(dimension_guards=())! has locality radius $1$ and orders matches by the key of
+step~4. \py!innermost_node_scope_box(diagram, node_id) -> BangBoxId | None! is public.
+
+
+\paragraph{Detail strings.}
+The \py!detail! of each passing fusion outcome is part of the certificate text. With $a$, $b$ the
+node ids and $r_a$, $r_b$ the consumed ports printed as \py!PortRef! \py!repr!s:
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.34\textwidth}X@{}}
+\toprule
+Condition & Passing detail \\
+\midrule
+\texttt{distinct\_\allowbreak{}nodes} & \code!<a> != <b>! \\
+\texttt{same\_\allowbreak{}generator\_\allowbreak{}type} & \code!both nodes are 'Z'! (or \code!'X'!) \\
+\texttt{parallel\_\allowbreak{}wires\_\allowbreak{}become\_\allowbreak{}self\_\allowbreak{}loops} & \code!N other wire(s) join the two nodes, surviving as self-loop(s) on the merged spider! \\
+\texttt{consumed\_\allowbreak{}wire\_\allowbreak{}direction\_\allowbreak{}permitted\_\allowbreak{}for\_\allowbreak{}color} & \code!<r_a> (direction=<dir>) -> <r_b> (direction=<dir>)!, followed for a same-direction Z wire by a note that it is permitted for Z only \\
+\texttt{consumed\_\allowbreak{}ports\_\allowbreak{}singly\_\allowbreak{}claimed} & \code!neither <r_a> nor <r_b> is claimed by another wire or listed on a boundary! \\
+\texttt{bang\_\allowbreak{}box\_\allowbreak{}scope\_\allowbreak{}agreement} & \code!neither node is inside a bang box! or \code!both nodes are inside bang box <id>! \\
+\texttt{dimension\_\allowbreak{}agreement} & \code!<x> == <y>! for an identity; \code!<x> == <y> (deferred, assumed)!; \code!<x> == <y> (bound: s := v, ...)!; or a note that the binding is non-concrete; followed, when surviving ports recorded constraints, by \code!; surviving leg(s) resolved to shared_dim=<s> with N additional assumed dimension equality/ies! \\
+\texttt{phase\_\allowbreak{}dimension\_\allowbreak{}agreement} & \code!no phase present on either node!, or \code!present phase dimension(s) unify with the resolved shared leg dimension <s>!, followed by \code!; assuming s := v, ...! when phase checks bound symbols \\
+\texttt{dimension\_\allowbreak{}guards\_\allowbreak{}satisfied} & \code!no dimension guards declared!, or \code!dimension guard(s) <g, ...> hold at the matched shared dimension <s>! \\
+\bottomrule
+\end{tabularx}
+\end{center}
+A failing guard outcome reads \code!dimension guard(s) <g, ...> do not hold at the matched shared dimension <s>!;
+an undecided one reads \code!dimension guard(s) <g, ...> cannot be decided at the non-concrete matched shared dimension <s>, so the rewrite is blocked rather than assumed!.
+The connecting-pair failure reads \code!<x> != <y>: the connecting pair does not unify!, and a
+surviving-port failure \code!a surviving leg of the A-side node (<x>) does not unify with shared_dim (<s>)! (B-side likewise).
+
+\begin{example}[Fusion at three dimension pairs]\label{ex:rewriting-fusion}
+Let node $0$ be a Z spider with input dimension $d$ and output dimension $d_a$, and node $1$ a Z
+spider with input dimension $d_b$ and output dimension $d$, the output of $0$ wired to the input of
+$1$, the remaining two ports on the boundary.
+\begin{itemize}
+\item $d_a = d_b = d$: one match with \py!shared_dim! $d$, no bindings, no constraints; the
+  \code!dimension_agreement! detail is \code!d == d!.
+\item $d_a = d$, $d_b = e$: unification binds $d := e$, a non-concrete binding, so it is recorded
+  as the constraint \code!d == e (bound, connecting pair)! with equation \code!d = e!, is not added
+  to the binding map, and leaves \py!shared_dim! at the seed $d$. The detail notes that the binding is
+  non-concrete and left unused.
+\item $d_a = d$, $d_b = 3$: unification binds $d := 3$; the binding enters the map, the shared
+  dimension becomes $3$, every surviving port resolves to $3$, and the match carries
+  \py!bindings = {"d": 3}! and the constraint \code!d == 3 (bound, connecting pair)!.
+\end{itemize}
+Applying \code!spider_fusion! in the first case consumes nodes $0$ and $1$, creates node $2$, and
+maps input $0$ of node $0$ and output $0$ of node $1$ to input $0$ and output $0$ of node $2$; the
+introduced scalar is $1$.
+\end{example}
+
+\subsection{Fourier cancellation}
+
+\py!FOURIER_CHAIN_LENGTH! $=4$: four Fourier boxes in series cancel, since $F^4 = 1$. The pattern
+declares \code!chain_is_series! and \code!same_dimension!.
+
+\begin{algorithm}[$F^4$ matcher]\label{alg:rewriting-f4}
+For every node id in ascending order whose node is a registered Fourier box:
+\begin{enumerate}
+\item Follow the wire on output port $0$; its far endpoint must be input port $0$ of another
+  Fourier box. Append that box unless it is already in the chain. Repeat until the chain holds
+  four boxes or the walk stops.
+\item Discard chains shorter than four.
+\item Take the dimensions of output port $0$ and input port $0$ of each box in chain order. Every
+  dimension that differs syntactically from the first must unify with it; a failure discards the
+  chain, any other non-identity result records a \code!DEFERRED! constraint with source
+  \code!CONNECTING_PAIR!.
+\item Discard the chain when anchors are given and are disjoint from it, or when its four nodes do
+  not share one set of node boxes.
+\item Emit \py!FourierMatch(node_ids, wires, shared_dim, outcomes, constraints)!; the
+  \code!same_dimension! outcome is deferred iff a constraint was recorded.
+\end{enumerate}
+\end{algorithm}
+The matches are ordered by the first node id. A chain of five boxes yields two overlapping
+matches. \py!FourierCancellationPattern! has locality radius $3$.
+
+\subsection{Cap}
+
+\py!find_cap_matches(diagram, *, anchors=None, swapped=False)! locates a phaseless Z state (no
+input, one output) wired into a phaseless X effect (one input, no output), or X into Z when
+\py!swapped!. The function \py!colour_pair(swapped)! returns \code!("Z", "X")!, or
+\code!("X", "Z")! when swapped; every swapped matcher in this section reads its two spider roles
+from it. A wire qualifies when its output-side endpoint is the state, both nodes are distinct and
+registered with the required names and arities, neither carries any phase vector (here a phase
+vector of zeros also disqualifies), each joined port has exactly one wire claim and no boundary
+entry, the two port dimensions are syntactically equal, and both nodes lie outside every \bbox{}.
+Matches are ordered by (state id, effect id); \py!CapPattern(swapped=False)! has radius $1$. Its
+conditions are \code!state_is_a_z_spider!, \code!effect_is_an_x_spider!,
+\code!joined_and_unclaimed!, \code!phaseless!, \code!same_dimension!, and
+\code!outside_every_bang_box! (with the colors exchanged in the first two names when swapped).
+
+\subsection{Identity removal}\label{sec:rewriting-identity}
+
+\py!find_identity_matches(diagram, *, anchors=None)! locates a phaseless spider with one input and
+one output and splices it out. Its conditions are \code!node_is_a_phaseless_spider!,
+\code!one_in_one_out!, \code!not_a_self_loop!, \code!legs_singly_claimed!,
+\code!splice_keeps_two_ports!, \code!same_dimension!, \code!leaves_every_bang_box_populated!,
+\code!no_port_boxed_leg!, and \code!splice_keeps_copies!; a match records all of them as passing
+with the detail \code!re-derived from the diagram!.
+
+\begin{algorithm}[Identity matcher]\label{alg:rewriting-identity}
+For every node in ascending id order:
+\begin{enumerate}
+\item Require a registered phaseless spider (anchored: within one hop of an anchor), with one
+  input and one output and a uniform port dimension $s$.
+\item Require both ports claimed at most once. Let $w_i$, $w_o$ be the wires on the input and the
+  output port. Skip a self-loop ($w_o = w_i$).
+\item Choose the spliced wire: $w_o$ when it exists and either $w_i$ is absent or the output port
+  is no chain link port; otherwise $w_i$; skip if neither exists. The other port is the
+  \emph{surviving} port; the far endpoint of the spliced wire is the \emph{far} port.
+\item Skip when the far port lies on the node itself, when anchors are given and meet neither the
+  node nor the far node, when the surviving port is a boundary slot and the far port's direction
+  differs from the surviving port's, when the surviving port's own neighbor is the far port, or
+  when a port of the node lies in a port-scoped \bbox{}.
+\item Compute the spliced equation: the dimensions of the surviving and far ports must unify. When
+  they are equal, or the surviving port's neighbor already has the surviving dimension, no
+  constraint is recorded; otherwise a deferred result records a \code!DEFERRED! and a binding a
+  \code!BOUND! constraint (source \code!CONNECTING_PAIR!).
+\item When the surviving port has no wire, try to lift the node's box (below). Without a lifted
+  box, skip if removing the node exhausts a node-scoped box, and skip unless the splice keeps
+  copies paired (below).
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{Box lifting.}
+The innermost box $b$ of the node \emph{lifts} to a port-scoped \bbox{} on the far port when $b$
+holds only this node, is not extended, has no child box, the surviving port is a boundary slot,
+the far node is a spider with no port in a port-scoped \bbox{}, the far node's boxes equal the
+node's boxes minus $b$, and $b$'s parent equals the far node's innermost box. The match then
+carries \py!lifted_box = b!.
+
+\paragraph{Copies stay paired.}
+Let $M$ be the node's boxes and, for each wired port, $N$ the far node's boxes minus the link boxes
+of the far port. With \py!own_ports! given (identity removal): if both own ports are link ports
+the splice is rejected; if exactly one is, the neighbor across the other port must exist, meet it
+at no link port, and have boxes exactly $M$. Otherwise the splice is rejected when the two far
+ports share a link box, when some $N \not\subseteq M$, or when $M \neq \emptyset$ and no $N$
+equals $M$.
+
+\py!IdentityMatch(node_id, wire, surviving_ref, far_ref, shared_dim, outcomes, constraints=(), lifted_box=None)!
+has support \{node, both wire endpoints, far node\}. \py!IdentityRemovalPattern! has radius $1$
+and orders by node id.
+
+\subsection{Triangle--inverse cancellation}
+
+\py!find_triangle_matches(diagram, *, anchors=None)! locates a triangle $T$ and an inverse
+triangle $T^{-1}$ (\cref{ch:diagrams}) in series, either order, joined from output port $0$ of the
+first to input port $0$ of the second. Both nodes must be registered, one-in-one-out, with the
+joined ports claimed exactly once by the wire, every port of both nodes of one dimension, and both
+outer ports (input of the first, output of the second) claimed at most once. The spliced wire is
+the second node's output wire when present, otherwise the first node's input wire; neither
+present skips. The far port may not lie on either node, the surviving port's neighbor may not be
+the far port, both nodes must have one innermost box, the pair may not exhaust a node-scoped box,
+the splice must keep copies paired (without \py!own_ports!), and the spliced equation must have a
+solution. Matches are ordered by (first id, second id); the pattern has radius $1$. Its conditions
+are \code!inverse_pair_in_series!, \code!joining_wire_unclaimed!, \code!outer_legs_singly_claimed!,
+\code!splice_keeps_two_ports!, \code!same_dimension!, \code!bang_box_scope_agreement!, and
+\code!leaves_every_bang_box_populated!.
+
+\subsection{State copy}
+
+\py!find_state_copy_matches(diagram, *, anchors=None, swapped=False)! locates a phaseless X state
+(no input, one output) wired into input port $0$ of a phaseless Z spider with exactly one input
+(any number of outputs), or Z into X when swapped. Both joined ports must be claimed exactly once
+by the wire; the state's output and all ports of the spider share one dimension; both nodes lie
+outside every \bbox{}. \py!StateCopyMatch! records \py!output_count!, the spider's number of
+outputs. Ordered by (state id, spider id); radius $1$.
+
+\subsection{Hopf law}
+
+\py!find_hopf_matches(diagram, *, anchors=None, swapped=False)! locates a Z spider and an X spider
+(X and Z when swapped) joined by a direct wire and by a second path through two Fourier boxes in
+series, the qudit Hopf law of~\cite{poor2023zxw}.
+\begin{algorithm}[Hopf matcher]\label{alg:rewriting-hopf}
+For every node $z$ in ascending id order of the upper color, within three hops of an anchor, with a
+uniform port dimension $s$:
+\begin{enumerate}
+\item For each output index $i$ of $z$ whose port is claimed exactly once by a wire: the far port
+  must be an input port, claimed exactly once, of a registered node $x$ of the lower color with
+  uniform dimension $s$.
+\item For each other output index $j$ claimed exactly once: walk two Fourier boxes (each entered
+  at input $0$, one-in-one-out, distinct, with entry and exit claimed exactly once), then the wire
+  from the second box's output to a far port.
+\item Require the far port to be an input port of $x$ different from the direct one and claimed
+  exactly once; both boxes of uniform dimension $s$; any phase on $z$ or $x$ over $s$; all four
+  nodes outside every \bbox{}; and, if anchors are given, one of the four an anchor.
+\end{enumerate}
+\end{algorithm}
+\py!HopfMatch! carries \py!z_id!, \py!x_id!, \py!fourier_ids!, the four wires, \py!z_leg_indices = (i, j)!,
+and \py!x_leg_indices!. Matches are ordered by (z id, x id, z indices, x indices); radius $3$.
+
+\subsection{Bialgebra}
+
+\py!find_bialgebra_matches(diagram, *, anchors=None, swapped=False)! locates a phaseless X spider
+with two inputs and one output whose output port $0$ feeds input port $0$ of a phaseless Z spider
+with one input and two outputs (Z into X when swapped). Both joined ports are claimed exactly once
+by the wire; both nodes have one uniform port dimension, the same for both; both lie outside every
+\bbox{}. Ordered by (two-to-one id, one-to-two id); radius $1$.
+
+\subsection{Fourier box on a state}
+
+\py!find_fourier_state_matches(diagram, *, anchors=None, swapped=False)! locates a one-in-one-out
+Fourier box in series with a phaseless Z spider (X when swapped) that is a state (no inputs, one
+output wired to the box's input $0$) or an effect (one input wired from the box's output $0$).
+The spider's port index is $0$; the joined ports are claimed exactly once by the wire; the box's
+free port is claimed at most once; all ports of both nodes share one dimension; both nodes have one
+innermost box. \py!FourierStateMatch! records \py!free_ref!, the box's other port, and
+\py!is_state!. Ordered by (spider id, box id); radius $1$.
+
+%======================================================================
+\section{Pattern matching against diagrams}\label{sec:rewriting-template}
+
+The module \module{archytaszx.rewrite.match_template} states a rule as an equation between two
+small diagrams, matches either side as a subgraph of a host diagram, and rebuilds the other side in
+its place. Most rules of the complete axiom set (\cref{ch:completeness}) are written this way.
+In code the small diagram is called a \emph{template}; this manual calls it the pattern
+diagram of a side.
+
+\subsection{Pattern diagrams}
+
+\begin{definition}[Template port, node, and diagram]\label{def:rewriting-template}
+A template port \py!TPort = tuple[str, Direction, int]! is (node key, direction, index). A
+template node is a frozen record
+\begin{signature}
+\py!TNode(key: str, gen: GeneratorType, ins: int, outs: int, param: Param = PHASELESS, open: bool = False, pink: bool = False, dim: Dim | None = None, port_dims: tuple[tuple[Dim, ...], tuple[Dim, ...]] | None = None)!
+\end{signature}
+with \py!ins! inputs and \py!outs! outputs. An \py!open! node lets its host node carry further
+ports in its symmetric groups (its \term{rest}); an open node has no terminal port. A \py!pink!
+node is an X spider in the normalization of~\cite{poor2023zxw}, which equals
+$d^{(m+n)/2-1}$ times the engine's X spider of $m$ inputs and $n$ outputs. \py!dim! gives every
+port of the node a dimension other than the template's; \py!port_dims! gives the input and
+output dimensions of a dimension binder B or splitter S port by port.
+\py!leg_dims(default)! returns \py!port_dims! when set, else \py!(dim,)*ins, (dim,)*outs! with
+\py!dim! defaulting to \py!default!.
+
+A \py!Template(nodes, wires=(), terminals={}, bare=(), rest={}, scalar=None)! is a frozen
+record: template nodes, wires between template ports, named terminals (the ports the interface of
+the equation passes through), \py!bare! pairs of terminal names joined directly by a wire (on a
+built side only), \py!rest! mapping each open node of the \emph{other} side to the node of this
+side that receives its rest, and \py!scalar(dim, bindings) -> Scalar!, a factor this side carries.
+\py!Template.node(key)! returns the node with that key or raises \py!RewriteGrammarError!
+(\code!template has no node 'k'!). The first node is the \term{anchor}.
+\end{definition}
+
+\begin{definition}[Side and axiom]\label{def:rewriting-axiom}
+A \py!Side(template, arities=..., min_size=...)! is one side of an equation:
+\begin{itemize}
+\item \py!template(dim: Dim, arities: Mapping[str, int]) -> Template | None!, the pattern
+  diagram at a dimension and arity parameters (such as \code!{"n": 3}!);
+\item \py!arities(diagram, node_id, dim) -> Iterable[Arities]!, the arity assignments a host node
+  can anchor; default \py!({},)!;
+\item \py!min_size(dim) -> int!, a lower bound on the pattern's node count plus wire count;
+  default $0$.
+\end{itemize}
+At construction the \py!template! function is wrapped in a memo keeping its last $256$
+(\py!_TEMPLATE_MEMO!) results keyed by (dimension, sorted arity items), least recently used
+evicted first; an unhashable key bypasses the memo; wrapping is idempotent.
+
+A \py!TemplateAxiom! is the frozen record of an equation $\mathit{left} = \mathit{right}\cdot s$
+applied in one direction:
+\begin{signature}
+\py!TemplateAxiom(name, left: Side, right: Side, scalar=lambda d, b: Scalar.one(), conditions: tuple[Condition, ...] = (), concrete_only: bool = False, description: str = "", quantifiers: tuple[str, ...] = (), free={}, converse_free={}, solve=None, candidates=None)!
+\end{signature}
+\py!scalar(dim, bindings)! is the factor the equation states beyond the sides' own scalars and pink
+normalizations. A \py!Condition(name, description, holds)! is a named predicate
+\py!holds(dim, bindings) -> bool! on the bindings of the matched side. \py!concrete_only!
+restricts matching to concrete dimensions. \py!free! maps each variable the built side reads but
+the matched side does not bind to a default \py!(dim, bindings) -> value!; a user-supplied value
+(the \azx!apply ... with NAME=VALUE! form of \cref{ch:shell}) replaces the default, and the
+conditions then check it. \py!solve(dim, bindings)! returns the free variables the conditions
+determine from the others, or \py!None!. \py!candidates(dim, bindings)! returns further value
+assignments of the free variables, which exhaustive search enumerates.
+\end{definition}
+
+\py!axiom.side_conditions! is \py!TEMPLATE_SIDE_CONDITIONS! followed by one \py!SideCondition!
+per condition. The five template conditions are \code!template_matches!, \code!parameters_match!,
+\code!same_dimension!, \code!outside_every_bang_box!, and \code!right_side_defined!.
+
+\py!axiom.converse(name)! returns the equation read right to left: sides exchanged, scalar
+$s^{-1}$ (a zero scalar raises \py!RewriteDomainError!, \code!a template rule scalar of 0 has no converse!),
+the same conditions, \py!concrete_only!, and quantifiers, the description suffixed with
+\code! Read right to left.!, and \py!free! set to the original \py!converse_free!. The converse
+carries no \py!converse_free!, \py!solve!, or \py!candidates!.
+
+\subsection{Parameters}
+
+A template node's \py!param! is a \py!Param! with three operations:
+\py!match(phase, dim, bindings) -> Bindings | None! extends the bindings by matching the host's
+phase vector, \py!build(dim, bindings) -> PhaseVector | None! constructs the vector, and
+\py!variables()!, \py!binds()! name the variables read and bound. A phase vector \py!None! is the
+zero vector throughout. The default \py!match! builds the vector and compares.
+\begin{itemize}
+\item \py!Fixed(vector)!: \py!vector(dim)!. \py!PHASELESS = Fixed(lambda d: None)!.
+\item \py!Var(name)!: on match, binds \py!name! to the host vector (the zero vector over $d$ when
+  phaseless), or, when already bound, requires the same vector.
+\item \py!Derived(reads, compute)!: matches only when every name of \py!reads! is bound and
+  \py!compute(dim, bindings)! equals the host vector; an \py!ArithmeticError!, \py!ValueError!, or
+  \py!KeyError! in \py!compute! is a non-match.
+\item \py!Kj(name, sign=1, offset=0)!: the vector $K_{\sigma j+o}$ (below). On match it reads
+  $j_h$, the index of the host vector; if \py!name! is bound to $j$ it requires
+  $j_h \equiv \sigma j + o$; otherwise it binds $j = \sigma(j_h - o)$, reduced modulo $d$ at a
+  concrete dimension.
+\end{itemize}
+
+\begin{definition}[The vector $K_j$]\label{def:rewriting-kj}
+For an integer expression $j$ and dimension $d$, $K_j$ is the phase vector with
+$jk/d$ turns at index $k$:
+\[
+  K_j = \bigl(\tfrac{jk}{d}\ \text{turns}\bigr)_{k=1}^{d-1} .
+\]
+\py!k_vector(j, dim)! returns \py!None! when $j \equiv 0$. At a concrete $d=r$ it requires an
+integer $j$ (else \py!RewriteDomainError!), reduces $j_r = j \bmod r$, and returns the explicit
+vector with entry $k$ equal to $(j_r k \bmod r)/r$ turns for $k = 1,\dots,r-1$ (memoized for $512$
+pairs $(j_r, r)$). At a symbolic $d$ it returns the rule vector with entry $j\cdot k/d$ turns.
+\end{definition}
+
+\py!kj_index(phase, dim)! inverts $K$: it returns $0$ for \py!None! or a zero vector and
+\py!None! for a weighted vector. At concrete $d=r$ it reads the turns $t_1$ of entry $1$; when
+$t_1$ is rational and $j = r t_1$ is an integer and $K_j$ equals the vector, it returns
+$j \bmod r$. At symbolic $d$ it requires a rule vector with no explicit entries, computes
+$j = \mathrm{simplify}(t \cdot d / k)$ from the rule's turns $t$, and returns $j$ when $j$ is free of
+the index symbol, integer-valued, and $K_j$ equals the vector.
+
+Two parameters are the \emph{same vector} when they are equal as phase vectors, or, at a concrete
+dimension $r$, when they agree at every index: all of $1,\dots,r-1$ when either carries a rule or a
+weight rule, else the union of their explicit indices. Unweighted entries agree when their turns
+are equal, or, not both rational, when their difference simplifies to an integer. Weighted entries
+agree when their coefficients are equal, or, both constant, when their exact values in
+$\mathbb{Q}(\sqrt2)$ coincide (\cref{ch:algebra}), or when their difference simplifies to $0$. At
+a symbolic dimension only structural equality counts.
+
+\subsection{Port symmetry}
+
+Matching is subgraph matching up to the symmetry of each generator's ports. A node's ports fall
+into \emph{groups} whose members are interchangeable:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Generator & Groups & Open groups \\
+\midrule
+Z spider, discard G & \code!legs! (all inputs and outputs) & \code!legs! \\
+X spider & \code!in! (inputs), \code!out! (outputs) & \code!in!, \code!out! \\
+W node & \code!in!, \code!out! & \code!out! \\
+F, T, $T^{-1}$, B, S, others & one group \code!<direction><index>! per port & none \\
+\bottomrule
+\end{tabular}
+\end{center}
+A host node is \emph{compatible} with a template node when the generator names agree and, for every
+template group, the host group has exactly as many ports, or at least as many when the template
+node is open and the group is one of its open groups; and the host has no group the template
+lacks, unless the template node is open.
+
+A host node can be \emph{placed} at a template node when it is not yet used, is not boxed (it is
+in no node scope and no port of it is in a port scope), is compatible, has the template's port
+dimensions (port by port for \py!port_dims!; otherwise every port of dimension \py!dim! or the
+template dimension, and any phase over the same dimension; a node without ports must carry a phase
+over that dimension), and its phase matches the node's parameter. A \py!RewriteDomainError! during
+the parameter match is a non-match.
+
+\subsection{Subgraph matching}
+
+\begin{signature}
+\py!match_template(diagram, template, anchor: NodeId, dim: Dim, partner=None, boxed=None) -> Iterator[_State]!
+\end{signature}
+enumerates every complete assignment of the pattern diagram with its first node placed at
+\py!anchor!. A state holds the node assignment (key to host id), the used host nodes, the port
+assignment (template port to host port), the used host ports, the matched host wires, and the
+bindings. \py!partner! maps each wired host port to the far endpoint of its wire.
+
+\begin{algorithm}[Subgraph matching]\label{alg:rewriting-subgraph}
+\leavevmode
+\begin{enumerate}
+\item Place the anchor; stop if it cannot be placed.
+\item \emph{Extend}$(S, R)$ with $R$ the unmatched template wires in declaration order:
+  \begin{enumerate}
+  \item If the key (sorted node assignment, used ports, assigned template ports) was seen in this
+    call, return; record it.
+  \item If $R$ is empty, \emph{finish}.
+  \item Pick the first wire of $R$ with a placed endpoint $a$; if there is none, place the first
+    unplaced template node at every host node in ascending id order and extend each placement
+    (a new connected component).
+  \item The host candidates of $a$ are its assigned host port, or the unused host ports of the
+    group of $a$ on its host node. For each candidate $h$ with a far endpoint $f$ that is not used
+    and is not $h$ itself:
+    \begin{itemize}
+    \item if the other endpoint $b$ is placed, require $f$ to lie on $b$'s host node and to be
+      $b$'s assigned port or one of its candidates; assign $a\mapsto h$, $b\mapsto f$, record the
+      wire, and extend;
+    \item otherwise place $b$'s node at $f$'s node, require $f$ to be a candidate of $b$, assign,
+      record, and extend.
+    \end{itemize}
+  \end{enumerate}
+\item \emph{Finish}: if some template node is unplaced, place a new component as in (c) with no
+  wires left. Otherwise, for every node that is not open and every group, pair the unassigned
+  template ports with the unused host ports of the group; the counts must agree, and the host
+  ports are taken in order (node id, direction value, index). Yield the state.
+\end{enumerate}
+\end{algorithm}
+
+The search is a depth-first backtracking over template wires, the anchor-first strategy of
+!-graph matching~\cite{kissinger2014pattern} restricted to fixed arities: a family of patterns
+with arity parameters is matched by trying each arity assignment the side enumerates.
+
+\subsection{The template pattern}
+
+\py!TemplatePattern(axiom)! is a \py!Pattern! of locality radius $8$. Its \py!repr! is
+\code!TemplatePattern('<name>', concrete_axioms=<CONCRETE_AXIOMS>)!.
+
+\paragraph{The concrete switch and resolved views.}
+The module flag \py!CONCRETE_AXIOMS!, default \py!True!, controls two things: when false, a
+\py!concrete_only! axiom finds no matches, and matching reads the host diagram as is. When true,
+matching reads the \emph{resolved view} of the host: the diagram with every dimension symbol bound
+in its parameter environment and occurring in some port or phase dimension substituted
+(\py!Diagram.substitute!), node ids preserved; a diagram with no parameters is its own view.
+Inside a \py!resolved_view_scope()! context, one view is memoized per diagram object.
+
+\begin{algorithm}[Template matcher]\label{alg:rewriting-templatefind}
+\py!find_matches(host)!:
+\begin{enumerate}
+\item Return no match when the axiom is concrete-only and \py!CONCRETE_AXIOMS! is false. Let $D$
+  be the resolved view of the host.
+\item Build the left pattern at symbol $d$ with no arities. If that succeeds and has no nodes, the
+  side is an \emph{insertion}: return the insertion matches (below).
+\item For every node id of $D$ in ascending order as the anchor: let the dimension be that of its
+  first port, or of its phase when portless; skip when absent (in $D$ or in the host), when the
+  axiom is concrete-only and the dimension is symbolic, or when \py!min_size! exceeds the node count
+  plus the wire count of $D$.
+\item For every arity assignment of the side at this anchor: build the pattern (once per dimension
+  and arities within this call) under a \emph{template budget} equal to the node count plus wire
+  count of $D$; a pattern construction that calls \py!check_template_budget(size)! with a larger
+  size raises \py!TemplateTooLarge! and counts as no pattern. Skip an empty pattern or one whose
+  anchor generator differs from the host node's.
+\item For every state of \py!match_template!, convert it to a match (below) and keep the first match
+  per key (support set, matched wire set, arities).
+\item Return the matches sorted by the order key (support ids, arities, sorted wire keys).
+\end{enumerate}
+\end{algorithm}
+
+
+\paragraph{Anchored template search.}
+\py!TemplatePattern.find_matches_anchored(diagram, anchors)! returns the matches whose support
+meets \py!anchors!. It returns no match under the concrete switch as above. It falls back to the
+default (a full scan filtered to the anchors) when the resolved view is a different object than the
+host (the diagram has bound parameters), when the left side is an insertion, or when some pattern
+built for some anchor and arity assignment is \emph{disconnected}: its wires, read undirected, do
+not join all its nodes (checked by a depth-first walk from the first node). Otherwise:
+\begin{enumerate}
+\item Build the plan of (anchor, dimension, arities, pattern) exactly as steps 3 and 4 of
+  \cref{alg:rewriting-templatefind}, and let the reach be the largest node count minus one among the
+  planned patterns.
+\item Compute, by breadth-first search over the partner map from the anchor set, the wire-hop
+  distance of every node at most the reach away.
+\item Run \py!match_template! only from a planned anchor whose distance is at most its pattern's
+  node count minus one; convert and deduplicate as in the full search, with the host dimension equal
+  to the pattern dimension.
+\item Return the matches sorted by the order key whose support meets the anchors.
+\end{enumerate}
+A connected pattern of $n$ nodes spans at most $n-1$ hops from its anchor, so every match whose
+support meets the anchors is found from an anchor within that distance.
+
+\begin{definition}[Template match]\label{def:rewriting-templatematch}
+\py!TemplateMatch(rule_name, arities, nodes, terminals, rest, wires, bindings, shared_dim, side_condition_outcomes, value_dim=None, dimension_constraints=())!
+is a frozen record. \py!arities!, \py!nodes! (key, host id), \py!terminals! (name, host port), and
+\py!bindings! (name, value) are tuples sorted by their first element; \py!rest! lists, per open
+node, its host ports not matched by the pattern; \py!wires! are the matched host wires, sorted.
+\py!shared_dim! is the host dimension of the anchor; \py!value_dim! is the dimension the pattern was
+read at (in the resolved view) when it differs, else \py!None!; \py!template_dim! returns
+\py!value_dim! or \py!shared_dim!. The support is the matched node ids, or, for an insertion on a
+wire, the terminal nodes. \py!binding_map()! returns the bindings as a dictionary.
+\end{definition}
+
+\paragraph{Conversion of a state.}
+A state becomes a match when: no matched node has a wire to a boxed node (checked only when the
+diagram has boxed nodes); every \py!free! default evaluates; the right pattern exists; every bare
+wire of the right side has a solvable spliced equation (the splice chooses the far port of the
+first terminal when that lies off the match and is not the second terminal, else the far port of
+the second, as in the identity matcher); every right-side parameter and scalar evaluates; the left
+side's own scalar is not zero; and every condition holds. An \py!ArithmeticError!,
+\py!ValueError!, \py!KeyError!, or \py!RewriteDomainError! in any of these is a non-match. The
+spliced equations become the match's dimension constraints. All outcomes pass.
+
+\paragraph{Insertion matches.}
+A left side with no nodes inserts its right side.
+\begin{itemize}
+\item With a bare pair $(t_1,t_2)$: one match per unboxed wire (in sorted wire order) and arity
+  assignment, at the dimension of the wire's first endpoint, with terminals $t_1\mapsto$ first
+  endpoint, $t_2\mapsto$ second. Then, when the axiom has no arity parameters (its right side
+  builds at $d$ without arities), one match per boundary port, in order (node id, direction,
+  index), whose node is unboxed and not mixed-only (\cref{ch:mixed}); its \py!nodes! is
+  \py!(("_copy", owner),)! and both terminals map to the boundary port.
+\item Without a bare pair: one match per distinct host dimension, taken from nodes in ascending id
+  order.
+\end{itemize}
+
+\paragraph{Verification.}
+\py!verify(diagram, match)! is true when the match is rediscovered. Otherwise, for an axiom with
+free variables, it looks for a rediscovered match with the same nodes, terminals, rest, wires, and
+arities whose bound (non-free) values agree with the given match and which equals it after
+replacing its bindings; it then checks that every condition holds, every built parameter and
+scalar evaluates, and the right pattern exists.
+
+\py!with_values(diagram, match, values)! sets free variables: it raises \py!RewriteGrammarError!
+for a name that is not free (\code!<rule>: [names] are not free variables of this rule (free: ..)!)
+and \py!RewriteDomainError! (\code!<rule>: the given values do not satisfy the rule's conditions!)
+when the result does not verify. \py!candidate_matches(diagram, match)! returns the match with each
+\py!candidates! assignment that verifies, distinct and different from the input.
+\py!algebraic_matches(diagram, match, values)! applies at a concrete dimension $r$ only: for every
+free variable whose default is a phase vector, it enumerates every weight vector with entries in
+\py!values! at indices $1,\dots,r-1$ (all $|\mathit{values}|^{r-1}$ of them); with \py!solve! set
+and more than one such variable, it enumerates the first variable and asks \py!solve! for the
+rest, enumerating the rest only where \py!solve! returns \py!None! or raises.
+
+\subsection{Scalar and rebuild}
+
+\begin{signature}
+\py!template_scalar(axiom, match, diagram=None) -> Scalar!
+\end{signature}
+returns
+\begin{equation}\label{eq:rewriting-template-scalar}
+  s \;=\; s_{\mathrm{ax}}(d,\beta)\cdot
+  \frac{\prod_{v\in R\text{ pink}} D_v^{\,\ell_v/2-1}}{\prod_{v\in L\text{ pink}} D_v^{\,\ell_v/2-1}}
+  \cdot \frac{s_R(d,\beta)}{s_L(d,\beta)} ,
+\end{equation}
+where $d$ is the pattern dimension, $\beta$ the bindings, $D_v$ the node's own dimension or the
+host dimension, and $\ell_v$ the port count of node $v$: on the left its pattern ports plus its
+rest, on the right its pattern ports plus the rest of every left node it receives. A missing side
+scalar is $1$. A non-\py!TemplateMatch! raises \py!RewriteGrammarError!.
+
+\py!template_builder(axiom)! returns a builder carrying \py!side_conditions = axiom.side_conditions!.
+It raises \py!RewriteGrammarError! for a match of another rule, runs the coverage check, raises
+\py!RewriteDomainError! (\code!<rule>_builder: the match is not among those rediscovered in this diagram!)
+when the match does not verify, and builds.
+
+\begin{algorithm}[Rebuild of the right side]\label{alg:rewriting-rebuild}
+Let $d_v$ be the pattern dimension, $d$ the host dimension, $\beta$ the bindings.
+\begin{enumerate}
+\item A match whose first node key is \code!_copy! is a boundary insertion (below).
+\item For each right node in order: list its ports, inputs then outputs. A Z or discard port that
+  is a terminal mapped to a host boundary entry takes that entry's direction. Append the rest ports
+  of every left node this node receives, keeping each port's direction (a W node takes them as
+  outputs). Build the phase from the parameter at the node's dimension (or $d_v$) and re-express it
+  over $d$ unless the node has its own dimension; a portless Z or X spider without a phase gets the
+  zero vector. Add the node with its port dimensions; map each rest port to its new port.
+\item For each right terminal: when the host terminal port lies off the match, record a wire from
+  it to the new port. When it lies on a consumed node and is a boundary entry whose direction
+  differs from the new port's, insert a one-in-one-out Z spider as an adapter: the boundary maps to
+  the adapter's port of the boundary direction and the adapter's other port is wired to the new
+  port. Otherwise map the host port to the new port.
+\item For each bare pair $(t_1, t_2)$ with host ports $h_1, h_2$ and far ports $f_1, f_2$:
+  if $f_1$ is off the match and differs from $h_2$, consume the wire $(h_1,f_1)$ and map $h_2$ onto
+  $f_1$; else if $f_2$ qualifies symmetrically, consume $(h_2, f_2)$ and map $h_1$ onto $f_2$; a
+  mapping onto a far port of the other direction than a boundary entry's goes through an adapter
+  Z spider. Else, when both $h_1, h_2$ are boundary entries, add a phaseless Z spider with one port
+  per entry, in the entries' directions. Else raise \py!RewriteDomainError!
+  (\code!a bare wire of the right-hand side closes on the match itself!).
+\item New wires are the right pattern's wires, then the adapter and off-match terminal wires.
+\item Rewrite every port-scoped \bbox{} containing a mapped port to contain the mapped image.
+\item Return the build result: consumed nodes (sorted), the matched wires plus the spliced ones,
+  the port mapping, the scalar of \cref{eq:rewriting-template-scalar}.
+\end{enumerate}
+\end{algorithm}
+
+
+\begin{example}[An axiom as two pattern diagrams]\label{ex:rewriting-template}
+The axiom D1 of~\cite{poor2023zxw} states that a Z box with parameter $a$ followed by two Fourier
+boxes equals two Fourier boxes followed by the Z box with the reversed parameter. As pattern
+diagrams, with ports written (key, direction, index):
+\begin{lstlisting}[style=python]
+left = Template(
+    nodes=(TNode("z", Z_SPIDER, 1, 1, Var("a")),
+           TNode("f0", FOURIER_BOX, 1, 1), TNode("f1", FOURIER_BOX, 1, 1)),
+    wires=((("z", OUT, 0), ("f0", IN, 0)), (("f0", OUT, 0), ("f1", IN, 0))),
+    terminals={"in": ("z", IN, 0), "out": ("f1", OUT, 0)})
+right = Template(
+    nodes=(TNode("f0", FOURIER_BOX, 1, 1), TNode("f1", FOURIER_BOX, 1, 1),
+           TNode("z", Z_SPIDER, 1, 1,
+                 Derived(("a",), lambda d, b: reversed_vector(b["a"], d)))),
+    wires=((("f0", OUT, 0), ("f1", IN, 0)), (("f1", OUT, 0), ("z", IN, 0))),
+    terminals={"in": ("f0", IN, 0), "out": ("z", OUT, 0)})
+ZXW_D1 = TemplateAxiom("zxw_d1", Side(lambda d, a: left), Side(lambda d, a: right),
+                       concrete_only=True)
+\end{lstlisting}
+Matching anchors \code!z! at every Z spider with one input and one output whose ports carry one
+concrete dimension; \py!Var("a")! binds its phase vector; the two wires are then followed through
+the partner map to two Fourier boxes. The rebuild adds the two Fourier boxes and the new Z spider,
+maps the host port of terminal \code!in! to input $0$ of the new \code!f0! and that of \code!out! to
+output $0$ of the new \code!z!, and wires the three in series. The identity S2 has a one-node left
+side with terminals \code!in! and \code!out! and a right side with no nodes and
+\py!bare=(("in", "out"),)!; its rebuild splices the far port of \code!in! onto that of \code!out!.
+\end{example}
+
+\paragraph{Boundary insertion.}
+The node owning the boundary port is rebuilt unchanged as a copy; each of its other ports maps to
+the copy's. The right pattern's nodes are added at the port's dimension. Of the two terminal ports,
+the one whose direction equals the boundary port's faces the boundary (the second terminal is
+tried first); the boundary port maps to it, and the copy's port is wired to the other terminal.
+When neither faces the boundary, \py!RewriteDomainError! is raised.
+
+\paragraph{Construction helpers.}
+\py!legs_of(diagram, node_id)! returns (input count, output count); \py!neighbours(diagram, node_id)!
+returns the far node of every wired port in port order, with repetition;
+\py!ranges(*bounds)! is the Cartesian product.
+
+%======================================================================
+\section{W-node and connective matchers}\label{sec:rewriting-zxw}
+
+The module \module{archytaszx.rewrite.match_zxw} implements the fixed-shape matchers for the W
+node, the triangle, and the dimension connectives B and S of qufinite
+ZXW~\cite{wang2023qufinitezxw}. Every pattern here requires its ports to carry exactly (syntactically)
+equal dimensions: the \emph{shared dimension} of a set of nodes is the single element of the set
+of dimensions of all their ports, and a match requires it to exist. A node \emph{is} a generator
+when its type is registered and carries that generator's name. A \emph{phaseless state} of a color
+is a phaseless spider of that color with no input and one output; a \emph{phaseless effect} has one
+input and no output. Each matcher is wrapped in a \py!Pattern! subclass that delegates to it, as in
+\cref{sec:rewriting-fixed}; every match records all of its declared conditions as passing.
+
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w1) at (0,0.6) {}; \node[wnode] (w2) at (-0.4,1.5) {};
+  \draw[wire] (0,0) -- (w1); \draw[wire] (w1) -- (w2); \draw[wire] (w1) -- (0.5,2.3);
+  \draw[wire] (w2) -- (-0.8,2.3); \draw[wire] (w2) -- (-0.1,2.3);
+\end{tikzpicture}\\(a) W fusion
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[xdot] (s) at (0,0.4) {}; \node[wnode] (w) at (0,1.3) {};
+  \draw[wire] (s) -- (w); \draw[wire] (w) -- (-0.45,2.2); \draw[wire] (w) -- (0.45,2.2);
+\end{tikzpicture}\\(b) X state into W
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[tri] (t) at (0,0.9) {}; \node[xdot] (e) at (0,1.9) {};
+  \draw[wire] (0,0) -- (t) -- (e);
+\end{tikzpicture}\\(c) $T$ into X effect
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[snode] (s) at (0,0.6) {S}; \node[bnode] (b) at (0,1.9) {B};
+  \draw[wire] (0,0) -- (s);
+  \draw[wire] ($(s.north)+(-0.2,0)$) -- ($(b.south)+(-0.2,0)$);
+  \draw[wire] ($(s.north)+(0.2,0)$) -- ($(b.south)+(0.2,0)$);
+  \draw[wire] (b) -- (0,2.6);
+\end{tikzpicture}\\(d) S then B
+\end{minipage}
+
+\bigskip
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zdot] (a) at (-0.25,0.4) {}; \node[zdot] (c) at (0.25,0.4) {};
+  \node[bnode] (b) at (0,1.4) {B};
+  \draw[wire] (a) -- ($(b.south)+(-0.25,0)$); \draw[wire] (c) -- ($(b.south)+(0.25,0)$);
+  \draw[wire] (b) -- (0,2.2);
+\end{tikzpicture}\\(e) two Z states into B
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zdot] (z) at (0,0.8) {}; \node[wnode] (w) at (0,1.7) {};
+  \draw[wire] (-0.45,0) -- (z); \draw[wire] (0.45,0) -- (z);
+  \draw[wire] (z) -- (w); \draw[wire] (w) -- (-0.45,2.5); \draw[wire] (w) -- (0.45,2.5);
+\end{tikzpicture}\\(f) W/Z bialgebra
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[wnode] (w) at (0,0.7) {}; \node[zdot] (e) at (-0.45,1.6) {};
+  \draw[wire] (0,0) -- (w); \draw[wire] (w) -- (e); \draw[wire] (w) -- (0.45,2.3);
+\end{tikzpicture}\\(g) W output into Z effect
+\end{minipage}\hfill
+\begin{minipage}[b]{0.23\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zs] (z) at (0,1.0) {};
+  \draw[wire] (-0.5,0) -- (z); \draw[wire] (0.5,0) -- (z); \draw[wire] (z) -- (0,2.0);
+  \draw[bang] (0.25,-0.1) rectangle (0.6,0.55); \node[banglabel] at (0.6,0.55) {$b$};
+\end{tikzpicture}\\(h) port-boxed port
+\end{minipage}
+\caption{Left-hand shapes of the W-node, connective, and port-box matchers. In (h) the dashed
+outline marks the single port that forms the scope of a top-level port-scoped \bbox{}.}
+\label{fig:rewriting-zxw-shapes}
+\end{figure}
+
+The matchers are listed below with their pattern class and locality radius, the shape they locate, their conditions, and the sort key of their result.
+\begin{description}[style=nextline,leftmargin=1.5em]
+\item[\py!find_w_fusion_matches!, \py!WFusionPattern!, 1.] Output port $p$ of a W node with one input wired to the input of a second W node with one input;
+both joined ports claimed exactly once by the wire; one shared dimension; both nodes with one
+innermost node-scoped box; the pair does not exhaust a node-scoped box. \py!WFusionMatch(first_id, second_id, position=p, wire, shared_dim, ...)!. Order (first, second, $p$). Conditions
+\code!two_w_nodes!, \code!joining_wire_unclaimed!, \code!same_dimension!,
+\code!bang_box_scope_agreement!, \code!leaves_every_bang_box_populated!.
+\item[\py!find_w_identity_matches!, \py!WIdentityPattern!, 1.] A W node with one input and one output, uniform dimension, both ports claimed at most once, not a
+self-loop. The output wire is spliced when present, else the input wire. The far port is off the
+node; the surviving port's neighbor is not the far port; the node does not exhaust a node-scoped
+box; no port of the node is port-boxed; the splice keeps copies paired (without \py!own_ports!);
+the spliced equation is solvable. Returns \py!IdentityMatch! records without a lifted box. Order:
+node id.
+\item[\py!find_fed_state_matches(triangle=False)!, \py!FedStatePattern!, 1.] A phaseless X state whose output is wired to input port $0$ of a W node with one input (or, with
+\py!triangle=True!, of a $T$ or $T^{-1}$ with one input and one output); both joined ports claimed
+exactly once; one shared dimension; both nodes outside every \bbox{}.
+\py!FedStateMatch(state_id, target_id, wire, output_count, ...)!. Order (state, target).
+Conditions for W: \code!state_is_a_phaseless_x_spider!, \code!target_is_a_w_node!,
+\code!joined_and_unclaimed!, \code!same_dimension!, \code!outside_every_bang_box!; for triangles
+\code!target_is_a_triangle! replaces the second.
+\item[\py!find_triangle_effect_matches!, \py!TriangleEffectPattern!, 1.] A $T$ with one input and one output whose output feeds a phaseless X effect; joined ports claimed
+exactly once; one shared dimension; outside every \bbox{}. Order (triangle, effect).
+\item[\py!find_connective_inverse_matches(bind_first)!, \py!ConnectiveInversePattern!, 2.] Without \py!bind_first!: an S whose outputs $0$ and $1$ feed inputs $0$ and $1$ of a B. With
+\py!bind_first!: a B whose output $0$ feeds input $0$ of an S. Each joining wire must join exactly
+those ports, each claimed exactly once, with equal dimensions; the outer pairs (input $k$ of the
+first with output $k$ of the second, for $k\in\{0,1\}$ when \py!bind_first!, $k=0$ otherwise)
+have equal dimensions. Each outer pair yields a \py!Splice(wire, surviving_ref, far_ref)!: both
+ports claimed at most once; the second port's wire is consumed when present, else the first's; the
+far port is off the pair and is not the surviving port's neighbor. The far ports are distinct; every
+spliced equation is solvable; both nodes outside every \bbox{}. Order: first id (one candidate per
+first node).
+\item[\py!find_connective_states_matches(swapped)!, \py!ConnectiveStatesPattern!, 1.] A B whose two inputs are each fed by a distinct phaseless Z state, or an S whose two outputs each
+feed a distinct phaseless Z effect (X when swapped). Every connective port and every far port is
+claimed exactly once by its wire; each end's shared dimension equals its connective port's
+dimension; the connective's joint side has exactly one port; all three nodes outside every \bbox{}.
+\py!ConnectiveStatesMatch(connective_id, end_ids, wires, joint_dim, effects, swapped, ...)!. Order:
+connective id.
+\item[\py!find_wz_bialgebra_matches!, \py!WZBialgebraPattern!, 1.] A phaseless Z spider with $n\ge 2$ inputs and one output whose output feeds the input of a W node
+with one input and $m\ge 2$ outputs; joined ports claimed exactly once; one shared dimension;
+outside every \bbox{}. \py!WZBialgebraMatch(z_id, w_id, wire, input_count=n, output_count=m, ...)!.
+Order (Z, W).
+\item[\py!find_w_effect_matches(zero)!, \py!WEffectPattern!, 1.] Output port $p$ of a W node with one input and at least two outputs (at least one when
+\py!zero!) wired to a phaseless Z effect (an X effect when \py!zero!); joined ports claimed exactly
+once; one shared dimension; outside every \bbox{}.
+\py!WEffectMatch(w_id, effect_id, position=p, wire, output_count, zero, ...)!. Order (W, $p$).
+\end{description}
+
+The rules these patterns serve are: W fusion (two W nodes are one), W identity (a one-output W is
+a bare wire), W zero copy (a phaseless X state copies through a W onto every output), triangle zero
+state (a phaseless X state through $T$ or $T^{-1}$ is unchanged), triangle zero effect ($T$ into a
+phaseless X effect is a phaseless Z effect), connective inverse (S then B, or B then S, is the
+identity on the outer ports), connective states (two phaseless states into a B, or an S into two
+effects, are one state or effect on the joint port), the W/Z bialgebra (a phaseless $n$-input Z
+feeding an $m$-output W becomes $n$ W nodes and $m$ Z spiders), and the W effect (a W output into
+a phaseless Z effect is a $T$ before the remaining W; into an X effect, the remaining W alone).
+Their builders and scalars are specified in \cref{ch:rules}.
+
+%======================================================================
+\section{Port-scoped !-box matchers}\label{sec:rewriting-box}
+
+The module \module{archytaszx.rewrite.match_box} holds the matcher for \term{port-box unfusion}:
+a Z or X spider's port that alone forms the scope of a port-scoped \bbox{} moves onto a new
+phaseless spider of the same color, joined to the rest by one wire.
+
+\begin{signature}
+\py!find_port_box_unfusion_matches(diagram, *, anchors=None) -> tuple[PortBoxUnfusionMatch, ...]!
+\end{signature}
+For every \bbox{} in ascending id order, a match requires: the box is port-scoped, has no parent,
+and is no box's parent; its port scope is exactly one port $p$; $p$'s node is a registered Z or X
+spider within one hop of an anchor; the spider has at least three ports; no other \bbox{} has $p$
+in its port scope; the spider has a uniform port dimension; and the spider lies in no node-scoped
+\bbox{}. \py!PortBoxUnfusionMatch(node_id, box_id, boxed=p, shared_dim, ...)! has support
+\py!(node_id,)!. Matches are ordered by (node id, box id); \py!PortBoxUnfusionPattern! has radius
+$1$. Its conditions are \code!node_is_a_spider!, \code!one_leg_port_boxed!,
+\code!two_other_legs!, \code!same_dimension!, and \code!outside_every_bang_box!.
+
+%======================================================================
+\section{Matching across !-box boundaries}\label{sec:rewriting-boxcond}
+
+A rewrite is sound on a diagram with \bboxes{} (\cref{ch:diagrams}) only when it commutes with
+every instantiation of the \bboxes{}~\cite{dixon2009graphical,kissinger2014pattern}. Instead of
+matching inside the instantiated diagram, every matcher checks a subset of five \term{box
+conditions} on the symbolic diagram. \Cref{tab:rewriting-boxcond} states each condition as the code
+enforces it; \cref{tab:rewriting-boxrules} lists which matcher enforces which.
+
+\begin{table}[ht]
+\centering\small
+\caption{Box conditions, as the matchers enforce them.}\label{tab:rewriting-boxcond}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Condition & Requirement on a match \\
+\midrule
+O & No matched node lies in a node-scoped \bbox{}, has a port in a port-scoped \bbox{}, or is
+wired to a node whose set of node boxes differs from its own (\emph{outside every \bbox{}}). \\
+S & All matched nodes have the same innermost node-scoped \bbox{} (smallest node scope, ties by
+id), or none lies in a node-scoped \bbox{}. \\
+N & No node-scoped \bbox{} has a nonempty node scope contained in the set of nodes the
+replacement deletes. \\
+P & No port of the removed node lies in a port-scoped \bbox{}. \\
+L & The splice keeps copies paired (\cref{sec:rewriting-identity}): no neighbor's boxes (minus the
+link boxes of the far port) exceed the removed node's, the two far ports share no link box, and,
+when the node is boxed, some wired neighbor has exactly the node's boxes; or the node's box
+lifts to a port-scoped \bbox{} on the far port. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[ht]
+\centering\small
+\caption{Box conditions per matcher.}\label{tab:rewriting-boxrules}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.42\textwidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Matcher & Conditions \\
+\midrule
+Spider fusion & S \\
+$F^4$ cancellation & all four nodes have equal sets of node boxes \\
+Cap, state copy, Hopf, bialgebra & O \\
+Identity removal & P, L, and N unless the box lifts \\
+Triangle--inverse cancellation & S, N, L (without link-port handling of own ports) \\
+Fourier box on a state & S \\
+W fusion & S, N \\
+W identity & N, P, L (no lift) \\
+Fed state, triangle effect, connective inverse and states, W/Z bialgebra, W effect & O \\
+Port-box unfusion & spider in no node-scoped \bbox{}; the box top-level and childless \\
+Pattern-diagram rules & no matched node in a node scope or with a port in a port scope, and no
+matched node wired to such a node \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The pattern-diagram condition is stronger than O: it excludes a wire to any boxed node, including
+one boxed only through a port-scoped \bbox{}. The \bbox{} conditions of the axiom set and of the
+discard rules are listed with each rule in \cref{ch:rules,ch:mixed}.
+
+
+\begin{example}[Box conditions at work]\label{ex:rewriting-boxcond}
+\Cref{fig:rewriting-boxcond} shows three situations. In (a), spider $u$ lies in a node-scoped
+\bbox{} $b$ and spider $v$ outside it; their innermost boxes differ, so condition S fails and fusion
+does not match: expanding $b$ at multiplicity $k$ would give $k$ copies of $u$, each wired to the
+one $v$, and a single fusion cannot stand for $k$ of them. In (b), identity $u$ is alone in $b$, its
+upper port is a boundary entry, and its lower port is wired to a spider $v$ outside $b$; the
+identity is removed and $b$ \emph{lifts} to a port-scoped \bbox{} on the port of $v$ (condition L,
+lift case), so that every instance has $k$ boundary ports on $v$. In (c), $u$ and $v$ share the
+innermost box $b$; fusion matches (condition S), and each instance fuses $k$ disjoint pairs.
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}[b]{0.3\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zs] (u) at (0,1.6) {$u$}; \node[zs] (v) at (0,0.4) {$v$};
+  \draw[wire] (v) -- (u); \draw[wire] (u) -- (0,2.5); \draw[wire] (0,-0.4) -- (v);
+  \node[bang,fit=(u)] (b) {}; \node[banglabel] at (b.north east) {$b$};
+\end{tikzpicture}\\(a) S fails: no fusion
+\end{minipage}\hfill
+\begin{minipage}[b]{0.3\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zdot] (u) at (0,1.6) {}; \node[zs] (v) at (0,0.4) {$v$};
+  \draw[wire] (v) -- (u); \draw[wire] (u) -- (0,2.5); \draw[wire] (-0.4,-0.4) -- (v);
+  \draw[wire] (0.4,-0.4) -- (v);
+  \node[bang,fit=(u)] (b) {}; \node[banglabel] at (b.north east) {$b$};
+  \node at (0.9,1.0) {$\mapsto$};
+  \node[zs] (w) at (1.8,0.4) {$v$};
+  \draw[wire] (w) -- (1.8,2.5); \draw[wire] (1.4,-0.4) -- (w); \draw[wire] (2.2,-0.4) -- (w);
+  \draw[bang] (1.6,1.1) rectangle (2.0,2.1); \node[banglabel] at (2.0,2.1) {$b$};
+\end{tikzpicture}\\(b) L, lift case
+\end{minipage}\hfill
+\begin{minipage}[b]{0.3\textwidth}\centering
+\begin{tikzpicture}[zxd]
+  \node[zs] (u) at (0,1.6) {$u$}; \node[zs] (v) at (0,0.6) {$v$};
+  \draw[wire] (v) -- (u); \draw[wire] (u) -- (0,2.6); \draw[wire] (0,-0.2) -- (v);
+  \node[bang,fit=(u)(v)] (b) {}; \node[banglabel] at (b.north east) {$b$};
+\end{tikzpicture}\\(c) S holds: fusion
+\end{minipage}
+\caption{Fusion and identity removal near a node-scoped \bbox{} $b$ (dashed). Wires that cross
+the dashed outline end on a variable-arity side of a spider.}
+\label{fig:rewriting-boxcond}
+\end{figure}
+
+\subsection{Declared side conditions}\label{sec:rewriting-declared}
+
+Every fixed-shape pattern declares its side conditions as a module constant. The names and
+descriptions below are the exact data a certificate carries; the order within each constant is
+the order in which a match reports its outcomes. A swapped constant exchanges the colors of its
+first entries and shares the rest. A template axiom reports \py!TEMPLATE_SIDE_CONDITIONS! followed
+by its own conditions (\cref{sec:rewriting-template}).
+
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.42\textwidth}>{\raggedright\arraybackslash}X@{}}
+\caption{Declared side conditions of every fixed-shape and template pattern.}\label{tab:rewriting-declared}\\
+\toprule
+Constant and condition name & Description \\
+\endfirsthead
+\toprule
+Constant and condition name & Description \\
+\endhead
+\multicolumn{2}{@{}l}{\texttt{BIALGEBRA\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{x\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}two\_\allowbreak{}to\_\allowbreak{}one} & an X spider with two inputs, one output, and no phase \\
+\quad\texttt{z\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}one\_\allowbreak{}to\_\allowbreak{}two} & a Z spider with one input, two outputs, and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{BIALGEBRA\_SWAPPED\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{z\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}two\_\allowbreak{}to\_\allowbreak{}one} & a Z spider with two inputs, one output, and no phase \\
+\quad\texttt{x\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}one\_\allowbreak{}to\_\allowbreak{}two} & an X spider with one input, two outputs, and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{CAP\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{state\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}z\_\allowbreak{}spider} & a Z spider with no input and one output \\
+\quad\texttt{effect\_\allowbreak{}is\_\allowbreak{}an\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with one input and no output \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{phaseless} & neither node carries a phase vector \\
+\quad\texttt{same\_\allowbreak{}dimension} & both legs carry one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{CAP\_SWAPPED\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{state\_\allowbreak{}is\_\allowbreak{}an\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with no input and one output \\
+\quad\texttt{effect\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}z\_\allowbreak{}spider} & a Z spider with one input and no output \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{phaseless} & neither node carries a phase vector \\
+\quad\texttt{same\_\allowbreak{}dimension} & both legs carry one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{FOURIER\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{chain\_\allowbreak{}is\_\allowbreak{}series} & four F boxes joined output-to-input in series, each internal node used only there \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the four boxes carries one dimension \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{FOURIER\_STATE\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{spider\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}z\_\allowbreak{}state} & a Z spider with no phase and a single leg \\
+\quad\texttt{fourier\_\allowbreak{}box\_\allowbreak{}on\_\allowbreak{}that\_\allowbreak{}leg} & a registered F box wired to it in series \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{free\_\allowbreak{}leg\_\allowbreak{}singly\_\allowbreak{}claimed} & the F box's other leg carries at most one claim \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{bang\_\allowbreak{}box\_\allowbreak{}scope\_\allowbreak{}agreement} & both nodes' innermost enclosing node-scope bang box, if any, are identical \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{FOURIER\_STATE\_SWAPPED\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{spider\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}state} & an X spider with no phase and a single leg \\
+\quad\texttt{fourier\_\allowbreak{}box\_\allowbreak{}on\_\allowbreak{}that\_\allowbreak{}leg} & a registered F box wired to it in series \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{free\_\allowbreak{}leg\_\allowbreak{}singly\_\allowbreak{}claimed} & the F box's other leg carries at most one claim \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{bang\_\allowbreak{}box\_\allowbreak{}scope\_\allowbreak{}agreement} & both nodes' innermost enclosing node-scope bang box, if any, are identical \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{FUSION\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{distinct\_\allowbreak{}nodes} & recorded fact, never a decision: the two matched nodes are not the same node \\
+\quad\texttt{same\_\allowbreak{}generator\_\allowbreak{}type} & both nodes are the same registered spider color \\
+\quad\texttt{parallel\_\allowbreak{}wires\_\allowbreak{}become\_\allowbreak{}self\_\allowbreak{}loops} & recorded fact, never a decision: every other wire joining the two nodes survives as a self-loop on the merged spider \\
+\quad\texttt{consumed\_\allowbreak{}wire\_\allowbreak{}direction\_\allowbreak{}permitted\_\allowbreak{}for\_\allowbreak{}color} & for X, the consumed wire runs OUTPUT to INPUT; for Z, any direction combination is valid fusion \\
+\quad\texttt{consumed\_\allowbreak{}ports\_\allowbreak{}singly\_\allowbreak{}claimed} & neither consumed port is claimed by a second wire, and neither is listed on either boundary list \\
+\quad\texttt{bang\_\allowbreak{}box\_\allowbreak{}scope\_\allowbreak{}agreement} & both matched nodes' innermost enclosing node-scope bang box, if any, are identical (both unboxed, or the same box) -- Phase 7 \\
+\quad\texttt{dimension\_\allowbreak{}agreement} & the connecting pair and every surviving leg of both nodes unify, in a bounded fixpoint, against the shared dimension -- equal outright, or unify defers or binds a symbol \\
+\quad\texttt{phase\_\allowbreak{}dimension\_\allowbreak{}agreement} & every phase vector present unifies with the resolved shared leg dimension -- equal outright, or unify binds a symbol to a concrete value (never merely defers, and never binds to another still-symbolic Dim -- see the module docstring's 'Dimension constraints' note) \\
+\quad\texttt{dimension\_\allowbreak{}guards\_\allowbreak{}satisfied} & every dimension guard the rule declares holds at the matched shared dimension \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{HOPF\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{z\_\allowbreak{}and\_\allowbreak{}x\_\allowbreak{}spiders} & a registered Z spider and a registered X spider \\
+\quad\texttt{two\_\allowbreak{}paths} & one Z output runs straight into an X input, a second Z output runs into that same X through two Fourier boxes in series \\
+\quad\texttt{path\_\allowbreak{}ports\_\allowbreak{}unclaimed} & every port along the two paths carries exactly one wire \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg along the two paths and both spiders share one dimension \\
+\quad\texttt{phase\_\allowbreak{}dimension\_\allowbreak{}agreement} & each spider's phase vector, if present, is over that dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & none of the four nodes lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{HOPF\_SWAPPED\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{x\_\allowbreak{}and\_\allowbreak{}z\_\allowbreak{}spiders} & a registered X spider and a registered Z spider \\
+\quad\texttt{two\_\allowbreak{}paths} & one X output runs straight into a Z input, a second X output runs into that same Z through two Fourier boxes in series \\
+\quad\texttt{path\_\allowbreak{}ports\_\allowbreak{}unclaimed} & every port along the two paths carries exactly one wire \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg along the two paths and both spiders share one dimension \\
+\quad\texttt{phase\_\allowbreak{}dimension\_\allowbreak{}agreement} & each spider's phase vector, if present, is over that dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & none of the four nodes lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{IDENTITY\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{node\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}spider} & a registered Z or X spider with no phase \\
+\quad\texttt{one\_\allowbreak{}in\_\allowbreak{}one\_\allowbreak{}out} & exactly one input leg and one output leg \\
+\quad\texttt{not\_\allowbreak{}a\_\allowbreak{}self\_\allowbreak{}loop} & no wire joins the node's two legs \\
+\quad\texttt{legs\_\allowbreak{}singly\_\allowbreak{}claimed} & neither leg carries a second wire or a boundary slot alongside one, and at least one leg carries a wire to splice through \\
+\quad\texttt{splice\_\allowbreak{}keeps\_\allowbreak{}two\_\allowbreak{}ports} & the spliced wire's far port is not the surviving leg's own neighbor \\
+\quad\texttt{same\_\allowbreak{}dimension} & both legs carry one dimension \\
+\quad\texttt{leaves\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box\_\allowbreak{}populated} & no node-scope bang box holds the node and nothing else, unless that box lifts to a port-scope box \\
+\quad\texttt{no\_\allowbreak{}port\_\allowbreak{}boxed\_\allowbreak{}leg} & neither leg lies in a port-scope bang box \\
+\quad\texttt{splice\_\allowbreak{}keeps\_\allowbreak{}copies} & no neighbor lies in a node-scope bang box nested inside the node's, and some wired neighbor shares the node's boxes, unless the node's box lifts to a port-scope box: it holds only the node, has no child box, the surviving leg is a boundary slot, and the far port is a spider leg one box out with no port-boxed leg \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{STATE\_COPY\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{state\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with no input, one output, and no phase \\
+\quad\texttt{spider\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}z\_\allowbreak{}spider} & a Z spider with one input and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{STATE\_COPY\_SWAPPED\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{state\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}z\_\allowbreak{}spider} & a Z spider with no input, one output, and no phase \\
+\quad\texttt{spider\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with one input and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{TRIANGLE\_SIDE\_CONDITIONS} (\file{match.py})}\\
+\quad\texttt{inverse\_\allowbreak{}pair\_\allowbreak{}in\_\allowbreak{}series} & a T and a Ti joined output-to-input, either order \\
+\quad\texttt{joining\_\allowbreak{}wire\_\allowbreak{}unclaimed} & neither joined port carries a second claim \\
+\quad\texttt{outer\_\allowbreak{}legs\_\allowbreak{}singly\_\allowbreak{}claimed} & neither outer leg carries a second claim, and at least one carries a wire to splice through \\
+\quad\texttt{splice\_\allowbreak{}keeps\_\allowbreak{}two\_\allowbreak{}ports} & the spliced wire's far port is not the surviving outer leg's own neighbor \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{bang\_\allowbreak{}box\_\allowbreak{}scope\_\allowbreak{}agreement} & both nodes' innermost enclosing node-scope bang box, if any, are identical \\
+\quad\texttt{leaves\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box\_\allowbreak{}populated} & no node-scope bang box holds the pair and nothing else \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{CONNECTIVE\_INVERSE\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{inverse\_\allowbreak{}pair} & an S whose two outputs feed a B's two inputs in order, or a B whose output feeds an S \\
+\quad\texttt{joining\_\allowbreak{}wires\_\allowbreak{}unclaimed} & no joined port carries a second claim \\
+\quad\texttt{matching\_\allowbreak{}dimensions} & each joined pair of legs, and each outer pair, carry one dimension \\
+\quad\texttt{outer\_\allowbreak{}legs\_\allowbreak{}singly\_\allowbreak{}claimed} & no outer leg carries a second claim, and each identity to splice has a wire \\
+\quad\texttt{splice\_\allowbreak{}keeps\_\allowbreak{}two\_\allowbreak{}ports} & no spliced wire's far port is on the pair or is the surviving leg's own neighbor \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{CONNECTIVE\_STATES\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{connective\_\allowbreak{}with\_\allowbreak{}two\_\allowbreak{}ends} & a B whose two inputs are fed by phaseless Z states, or an S whose two outputs feed phaseless Z effects \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & each joining wire's ports carry no second claim \\
+\quad\texttt{matching\_\allowbreak{}dimensions} & each state or effect carries its connective leg's dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & no node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{CONNECTIVE\_STATES\_SWAPPED\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{connective\_\allowbreak{}with\_\allowbreak{}two\_\allowbreak{}ends} & a B whose two inputs are fed by phaseless X states, or an S whose two outputs feed phaseless X effects \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & each joining wire's ports carry no second claim \\
+\quad\texttt{matching\_\allowbreak{}dimensions} & each state or effect carries its connective leg's dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & no node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{TRIANGLE\_EFFECT\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{node\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}triangle} & a registered T with one input and one output \\
+\quad\texttt{effect\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with one input, no output, and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{TRIANGLE\_STATE\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{state\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with no input, one output, and no phase \\
+\quad\texttt{target\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}triangle} & a registered T or Ti, fed at its input \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{WZ\_BIALGEBRA\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{z\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}fan\_\allowbreak{}in} & a phaseless Z spider with at least two inputs and exactly one output \\
+\quad\texttt{w\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}fan\_\allowbreak{}out} & a registered W node with at least two outputs \\
+\quad\texttt{joining\_\allowbreak{}wire\_\allowbreak{}unclaimed} & neither joined port carries a second claim \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of both nodes carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{W\_COPY\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{state\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with no input, one output, and no phase \\
+\quad\texttt{target\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}w\_\allowbreak{}node} & a registered W node, fed at its input \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{W\_FUSION\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{two\_\allowbreak{}w\_\allowbreak{}nodes} & a W output wired into a second W's input \\
+\quad\texttt{joining\_\allowbreak{}wire\_\allowbreak{}unclaimed} & neither joined port carries a second claim \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of both nodes carries one dimension \\
+\quad\texttt{bang\_\allowbreak{}box\_\allowbreak{}scope\_\allowbreak{}agreement} & both nodes' innermost enclosing node-scope bang box, if any, are identical \\
+\quad\texttt{leaves\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box\_\allowbreak{}populated} & no node-scope bang box holds the pair and nothing else \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{W\_IDENTITY\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{node\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}w\_\allowbreak{}node} & a registered W node \\
+\quad\texttt{one\_\allowbreak{}in\_\allowbreak{}one\_\allowbreak{}out} & exactly one input leg and one output leg \\
+\quad\texttt{not\_\allowbreak{}a\_\allowbreak{}self\_\allowbreak{}loop} & no wire joins the node's two legs \\
+\quad\texttt{legs\_\allowbreak{}singly\_\allowbreak{}claimed} & neither leg carries a second wire or a boundary slot alongside one, and at least one leg carries a wire to splice through \\
+\quad\texttt{splice\_\allowbreak{}keeps\_\allowbreak{}two\_\allowbreak{}ports} & the spliced wire's far port is not the surviving leg's own neighbor \\
+\quad\texttt{same\_\allowbreak{}dimension} & both legs carry one dimension \\
+\quad\texttt{leaves\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box\_\allowbreak{}populated} & no node-scope bang box holds the node and nothing else \\
+\quad\texttt{no\_\allowbreak{}port\_\allowbreak{}boxed\_\allowbreak{}leg} & neither leg lies in a port-scope bang box \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{W\_ZERO\_EFFECT\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{node\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}w\_\allowbreak{}node} & a registered W node with at least one output \\
+\quad\texttt{effect\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}x\_\allowbreak{}spider} & an X spider with one input, no output, and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{W\_Z\_EFFECT\_SIDE\_CONDITIONS} (\file{match_zxw.py})}\\
+\quad\texttt{node\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}w\_\allowbreak{}node} & a registered W node with at least two outputs \\
+\quad\texttt{effect\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}phaseless\_\allowbreak{}z\_\allowbreak{}spider} & a Z spider with one input, no output, and no phase \\
+\quad\texttt{joined\_\allowbreak{}and\_\allowbreak{}unclaimed} & one wire joins them and neither port is otherwise used \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the pair carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{PORT\_BOX\_UNFUSION\_SIDE\_CONDITIONS} (\file{match_box.py})}\\
+\quad\texttt{node\_\allowbreak{}is\_\allowbreak{}a\_\allowbreak{}spider} & a registered Z or X spider \\
+\quad\texttt{one\_\allowbreak{}leg\_\allowbreak{}port\_\allowbreak{}boxed} & a top-level port-scope bang box with no children holds exactly this one leg \\
+\quad\texttt{two\_\allowbreak{}other\_\allowbreak{}legs} & the spider has at least two legs besides the boxed one \\
+\quad\texttt{same\_\allowbreak{}dimension} & every leg of the spider carries one dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & the spider lies in no node-scope bang box \\
+\midrule
+\multicolumn{2}{@{}l}{\texttt{TEMPLATE\_SIDE\_CONDITIONS} (\file{match_template.py})}\\
+\quad\texttt{template\_\allowbreak{}matches} & the side's template matches up to leg symmetry \\
+\quad\texttt{parameters\_\allowbreak{}match} & every node's parameter matches its template \\
+\quad\texttt{same\_\allowbreak{}dimension} & every matched leg carries the anchor's dimension \\
+\quad\texttt{outside\_\allowbreak{}every\_\allowbreak{}bang\_\allowbreak{}box} & no matched node or leg lies in a bang box \\
+\quad\texttt{right\_\allowbreak{}side\_\allowbreak{}defined} & every parameter of the built side is defined \\
+\bottomrule
+\end{xltabular}
+
+%======================================================================
+\section{The rewrite engine}\label{sec:rewriting-engine}
+
+The module \module{archytaszx.rewrite.engine} applies one rule at one match and drives repeated
+application. \py!apply! is generic over every rule: it reads only the \py!Match! protocol and the
+\py!BuildResult! record, never a match's rule-specific fields. The module evaluates nothing
+numerically.
+
+\subsection{Applying a rule}
+
+\begin{signature}
+\py!apply(diagram: Diagram, rule: Rule, match: Match, *, input_report: ValidationReport | None = None) -> RewriteResult!
+\end{signature}
+\py!apply! never mutates \py!diagram!. \py!input_report!, when given, is taken as
+\py!validate(diagram)! (\cref{ch:diagrams}). It returns a frozen
+\py!RewriteResult(diagram, new_node_ids, step, report)!, where \py!report! is the validation
+report of the new diagram (excluded from equality).
+
+\begin{algorithm}[Rule application]\label{alg:rewriting-apply}
+\leavevmode
+\begin{enumerate}
+\item \emph{Coverage.} Run \cref{alg:rewriting-coverage} with \py!rule.side_conditions! and context
+  \py!rule.name!.
+\item \emph{Copy.} Let \py!working = diagram.copy()!; the parameter environment rides along.
+\item \emph{Build.} Call \py!rule.builder(working, match)!. Then update chain-\bbox{} links
+  (below).
+\item \emph{Check the build.} Raise \py!RewriteGrammarError! when \py!build_result.diagram! is not
+  \py!working! by identity; when the wire set of \py!working! differs from that of \py!diagram!
+  (the message lists the added and removed wires); when either boundary list differs. Raise
+  \py!RewriteDomainError! when the builder's scalar differs from \py!rule.scalar_for_match(match)!.
+  Raise \py!RewriteGrammarError!, in this order, when: a consumed wire or node is absent; a consumed
+  wire is listed twice; a consumed node is listed twice; a new node id names no node, or a
+  port-mapping value names no real port; a port-mapping value lies on a consumed node; the phase
+  substitutions name an unconsumed node; a node that is neither consumed nor new differs from its
+  original (an in-place edit); a new node id repeats; a new node id already existed in the input; a
+  port-mapping key lies on no consumed node; the port mapping is not injective.
+\item \emph{Remap.} For every wire of \py!working! in sorted order: drop it if consumed; otherwise,
+  if an endpoint lies on a consumed node, replace the endpoint through the port mapping (an
+  unmapped endpoint on a consumed node raises \py!RewriteDomainError!), raise
+  \py!RewriteGrammarError! if both endpoints collapse to one port, and re-add the wire. Then add
+  every new wire, raising \py!RewriteGrammarError! when an endpoint names no real port or lies on a
+  consumed node. Require the wire count to equal (input wire count) $-$ (distinct consumed wires)
+  $+$ (distinct new wires), else raise \py!RewriteGrammarError!. Rebuild both boundary lists
+  through the same endpoint remap, position by position.
+\item \emph{Remove.} Remove the consumed nodes in order; then check far link ends (below).
+\item \emph{Scalar.} Multiply the scalar of \py!working! by the builder's scalar.
+\item \emph{Relative validation.} Validate \py!working!. Translate every hard issue of the input
+  into post-rewrite coordinates and count both sides as multisets of keys
+  (\emph{kind}, \emph{reference}). If the result has a key with a count above the input's, raise
+  \py!RewriteDomainError! (\code!rule '<name>': rewrite introduced hard-error issue kind(s) not present in the input diagram: <kind> at <ref> (xN); ...!), the entries sorted by (kind value,
+  \py!repr! of reference). A diagram that already carries a hard error therefore stays rewritable.
+  Deferred issues never block; the same multiset difference over them yields the removed and
+  introduced deferred issues of the step.
+\item \emph{Provenance.} Return the result with a \py!RewriteStep!.
+\end{enumerate}
+\end{algorithm}
+
+
+\paragraph{Messages.}
+Every message of \py!apply! begins with \code!rule '<name>': !. The checks of steps 4 and 5 produce
+the following texts (abridged after the first clause, which is fixed):
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
+\toprule
+Condition & Message after the rule prefix \\
+\midrule
+result not the working copy & \code!builder returned a BuildResult.diagram that is not the working diagram it was given; ...! \\
+wire set edited & \code!builder mutated the working diagram's wires directly (added [...]; removed [...]); ...! \\
+boundary edited & \code!builder mutated the working diagram's boundary lists directly (inputs .. -> ..; outputs .. -> ..); ...! \\
+scalar mismatch & \code!declares scalar_introduced=<s> at this match's dimension, but its builder returned <s'>! \\
+absent wire or node & \code!match does not belong to the diagram it is applied to (consumed wire(s) absent: [...]; consumed node id(s) absent: [...])! \\
+repeated consumed wire & \code!build_result.consumed_wires names the same wire more than once: [...] -- ...! \\
+repeated consumed node & \code!build_result.consumed_node_ids names the same node id more than once: [...] -- ...! \\
+unreal new node or port & \code!builder-reported BuildResult fields do not name real nodes/ports in the working diagram (...)! \\
+mapping onto a consumed node & \code!builder's port_mapping sends a surviving port onto (...), which lies on a node this rewrite consumes; ...! \\
+foreign phase substitution & \code!build_result.phase_substitutions names node id(s) [...] that this rewrite does not consume; ...! \\
+in-place edit & \code!builder edited the generator type, port dims or phase of pre-existing node(s) [...] in place; ...! \\
+repeated new node & \code!build_result.new_node_ids names the same node id more than once: [...] -- ...! \\
+new node pre-existing & \code!build_result.new_node_ids names node id(s) [...] that already existed in the input diagram; ...! \\
+key off the match & \code!builder's port_mapping keys [...] lie on no consumed node, ...! \\
+not injective & \code!builder's port_mapping is not injective -- ...! \\
+unmapped endpoint & \code!port <ref> is on a consumed node but is absent from the builder's port_mapping; ...! \\
+collapsed wire & \code!port_mapping collapses wire <w> onto a single port <p>; ...! \\
+bad new wire & \code!build_result.new_wires names port <p>, which is not a real port in the working diagram! (or \code!... on a node this rewrite consumes!) \\
+wire count & \code!wire-count postcondition violated after remapping -- expected N wire(s) (M before this rewrite minus K distinct consumed), got N'; ...! \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{example}[Remapping]\label{ex:rewriting-remap}
+In \cref{ex:rewriting-fusion}, the build result of fusion consumes nodes $0$ and $1$ and the wire
+between them, and maps $(0,\mathrm{in},0)\mapsto(2,\mathrm{in},0)$ and
+$(1,\mathrm{out},0)\mapsto(2,\mathrm{out},0)$. Step 5 drops the consumed wire; no other wire
+touches a consumed node; the wire count goes from $1$ to $1-1+0=0$; the boundary lists become
+$((2,\mathrm{in},0))$ and $((2,\mathrm{out},0))$. Step 6 removes nodes $0$ and $1$.
+\end{example}
+
+\paragraph{Issue keys.}
+The key of a validation issue is (kind, reference), where the reference is the issue's port, else
+its wire, else its node id, else \py!None!; messages never enter the key. To translate an input
+issue, a port on a consumed node goes through the port mapping (an unmapped one stays as is and
+matches nothing); a wire translates both endpoints and falls back to the untranslated wire when
+they collapse; a node id on a consumed node becomes the single new node id when exactly one node
+was created, and otherwise stays unchanged. For the deferred issues, the surplus of each key is
+taken from the issues in validation order; a step is \py!deferred_issue_identity_ambiguous! when
+some key's surplus is positive but smaller than its number of issues.
+
+\paragraph{Chain \bboxes{} and links.}
+After the builder runs, \py!_follow_links! examines every \bbox{} of the input in id order, with
+$G$ the consumed nodes. It raises \py!RewriteDomainError! when an extended box (\cref{ch:diagrams})
+no longer exists in \py!working!; when a pair, tree, or fed box has a node in $G$; when the far end
+of a tree box's parent port lies in $G$; when a left or right port of a pair box lies on $G$; when
+the box has a node in $G$, carries an index symbol, and that symbol is free in the introduced
+scalar; and when the far end of a link port lies in $G$ outside the box's node scope, unless the
+rule is \code!identity_removal! or \code!spider_fusion! and the box has no node in $G$. For a
+surviving box whose links touch $G$, each link port on $G$ is replaced by its image under the port
+mapping; an image on $G$ or outside the box's node scope in \py!working! raises
+\py!RewriteDomainError!. After node removal, a link port whose far end was consumed must be a
+boundary slot or wired to a node off its box; otherwise \py!RewriteDomainError! is raised.
+
+\begin{definition}[Rewrite step]\label{def:rewriting-step}
+A \term{rewrite step} is the frozen provenance record
+\begin{signature}
+\py!RewriteStep(rule_name, match, consumed_node_ids, consumed_wires, side_condition_outcomes, dimension_constraints, scalar_introduced, port_mapping, new_node_ids, removed_deferred_issues=(), introduced_deferred_issues=(), phase_substitutions={}, deferred_issue_identity_ambiguous=False)!
+\end{signature}
+\py!match! is stored verbatim, so the step can be replayed by looking up \py!rule_name! and
+applying at the same match without rematching. \py!side_condition_outcomes! and
+\py!dimension_constraints! come from the match; \py!scalar_introduced!, \py!port_mapping!, and the
+node and wire fields from the build result; the deferred-issue fields from step~8.
+\py!phase_substitutions! is empty when the builder supplied \py!None!. The hash folds the port
+mapping and the phase substitutions as unordered sets, so equal steps hash equally within one
+process.
+\end{definition}
+
+A \code!DEFERRED! dimension constraint in a step records an assumption, not a satisfiable
+equation: a surviving port of dimension $d^2$ forced onto a shared $d$ records $d^2 = d$, which
+holds only at $d = 1$. The certificate layer (\cref{ch:proofs}) carries these constraints.
+
+\subsection{Strategies and the termination guard}
+
+\begin{definition}[Termination guard]\label{def:rewriting-guardrec}
+\py!TerminationGuard(max_steps: int, max_nodes: int | None = None, detect_loops: bool = True)! is
+the budget of a strategy loop. \py!max_steps! and \py!max_nodes! are non-negative integers that are
+not \py!bool!; \py!detect_loops! is a \py!bool!; violations raise \py!RewriteGrammarError!.
+\py!DEFAULT_GUARD = TerminationGuard(max_steps=128, max_nodes=None, detect_loops=True)!.
+\end{definition}
+
+\py!StopReason! has four members: \code!FIXPOINT! (no rule matched), \code!STEP_LIMIT!
+(\py!max_steps! rewrites applied), \code!NODE_LIMIT! (more than \py!max_nodes! nodes), and
+\code!LOOP_DETECTED! (a rewrite reproduced a visited diagram). A run returns a frozen
+\py!StrategyOutcome(diagram, steps, stop_reason, scalar_accumulated, steps_attempted)!, where
+\py!scalar_accumulated! is the exact product of the steps' scalars and \py!steps_attempted! counts
+the searches for an applicable rule. \py!TerminationGuardTripped(outcome)!, a \py!RewriteError!,
+carries the outcome a non-strict run would have returned; its message is
+\code!strategy stopped at '<reason>' rather than a fixpoint after N step(s)!.
+
+\begin{signature}
+\py!apply_until_fixpoint(diagram, rules: Sequence[Rule], *, guard=DEFAULT_GUARD, strict=False, cache: RewriteCache | None = None, on_result=None) -> StrategyOutcome!
+\end{signature}
+raises \py!RewriteGrammarError! when \py!guard! is not a \py!TerminationGuard!, \py!cache! is
+neither \py!None! nor a \py!RewriteCache!, or \py!on_result! is neither \py!None! nor callable.
+\begin{algorithm}[Fixpoint strategy]\label{alg:rewriting-fixpoint}
+Let the \emph{loop measure} of a diagram be the triple (wire count, node count, total output count
+of W nodes). Initialize the history with the input's canonical key (\cref{ch:diagrams}) when loop
+detection is on.
+\begin{enumerate}
+\item Count an attempt. If \py!max_nodes! is set and the current node count exceeds it, stop with
+  \code!NODE_LIMIT!. If the step count has reached \py!max_steps!, stop with \code!STEP_LIMIT!.
+\item Find the first applicable rule: for each rule in order, obtain its matches (below). When the
+  diagram has no extended \bbox{}, the first match of the first rule with matches is taken.
+  Otherwise each match is trial-applied in order and the first that does not raise
+  \py!RewriteDomainError! is taken. None found: stop with \code!FIXPOINT!.
+\item Apply it, passing the previous result's validation report as the input report; hand the
+  result to \py!on_result!; append the step; multiply the scalar.
+\item If loop detection is off or the new measure is lexicographically smaller than the previous
+  one, continue. Otherwise look the new canonical key up in the history; if an isomorphic diagram is
+  stored under it, stop with \code!LOOP_DETECTED!; else store the diagram under its key.
+\end{enumerate}
+With \py!strict=True!, any stop other than \code!FIXPOINT! raises \py!TerminationGuardTripped!.
+\end{algorithm}
+The canonical key reads the global scalar, so a cycle that multiplies a factor on each round does
+not register as a loop and runs to the step limit.
+
+\paragraph{Match sources.}
+Without a cache, a rule's matches are \py!rule.pattern.find_matches(diagram)!. With a cache, each
+diagram is fingerprinted once per iteration (\cref{sec:rewriting-cache}); when the cache carries an
+incremental matcher that tracks the rule's pattern (the same object, or an equal pattern of the same
+type with the same pattern key), the matches come from the matcher's rematch of this diagram;
+otherwise from the cache's match memo. A \py!CacheError! from any cache operation is re-raised as
+\py!RewriteGrammarError! with a prefix naming the operation.
+
+\begin{signature}
+\py!toward_normal_form(diagram, *, guard=DEFAULT_GUARD, strict=False, cache=None) -> StrategyOutcome!
+\end{signature}
+runs the fixpoint strategy over \py!normal_form_rules()!: the rules of \py!NORMAL_FORM_RULE_NAMES!
+that \py!lookup_rule! (\cref{ch:rules}) resolves, in this order:
+\code!identity_removal!, \code!triangle_inverse_cancellation!, \code!w_identity!, \code!w_fusion!,
+\code!connective_inverse!, \code!connective_inverse_bind_first!, \code!connective_states!,
+\code!connective_states_swapped!, \code!triangle_zero_state!, \code!triangle_zero_effect!,
+\code!w_zero_effect!, \code!w_z_effect!, \code!fourier_cancellation!,
+\code!fourier_state_color_change!, \code!fourier_state_color_change_swapped!, \code!spider_fusion!,
+\code!hopf!, \code!hopf_swapped!, \code!state_copy!, \code!state_copy_swapped!, \code!w_zero_copy!,
+\code!zx_cap!, \code!zx_cap_swapped!, \code!zxw_ept!, \code!scalar_box!.
+\py!missing_normal_form_rule_names()! returns the names that do not resolve. Every rule of the list
+except \code!scalar_box! and \code!w_z_effect! removes at least one wire; \code!scalar_box! removes a
+node and no wire; \code!w_z_effect! keeps the wire and node counts and removes one W output. The
+bialgebra rules are absent, since they turn two nodes into four.
+
+%======================================================================
+\section{Normal forms}\label{sec:rewriting-nf}
+
+The module \module{archytaszx.rewrite.normal_form} reduces a diagram to the fixpoint of a rule set
+and keys the result so that two reductions can be compared. A normal form here is the output of a
+terminating strategy, not a unique representative: the procedure is sound, and two diagrams with
+the same key are equal, but two equal diagrams can reach different keys.
+
+\begin{definition}[Normal form record]\label{def:rewriting-nfrec}
+\py!NormalForm(source: Diagram, diagram: Diagram, outcome: StrategyOutcome, results: tuple[RewriteResult, ...], key: str)!
+is a frozen record compared by identity. \py!source! is a copy of the input, \py!diagram! the exact
+strategy output (so the recorded results replay onto it id for id), \py!results! every rewrite
+result in application order, and \py!key! the view key of the comparison view of \py!diagram!.
+Construction raises \py!RewriteGrammarError! for a field of the wrong type, checked in declaration
+order. \py!reached_fixpoint! is true iff the stop reason is \code!FIXPOINT!;
+\py!assumed_constraints! is \py!assumed! (\cref{sec:rewriting-rule}) over the dimension
+constraints of every step.
+\end{definition}
+
+\begin{signature}
+\py!normal_form(diagram, *, rules: Sequence[Rule] | None = None, guard=DEFAULT_GUARD, cache: RewriteCache | None = None) -> NormalForm!
+\end{signature}
+\begin{algorithm}[Normal-form driver]\label{alg:rewriting-nf}
+\leavevmode
+\begin{enumerate}
+\item Require a \py!Diagram! (else \py!RewriteGrammarError!, \code!normal_form: diagram must be a Diagram, got <type>!).
+\item Choose the rules: when \py!rules! is \py!None!, \py!normal_form_rules()! for a pure diagram and
+  \py!mixed_normal_form_rules()! for a diagram with a discard (\cref{ch:mixed}): the forward discard
+  rules, in the order of the discard axioms, followed by the normal-form rules. A given \py!rules!
+  must be a non-string sequence of \py!Rule!.
+\item Without a cache, create a \py!RewriteCache! whose incremental matcher tracks every keyable
+  pattern of the rules (\cref{sec:rewriting-cache}).
+\item Run \py!apply_until_fixpoint! on a copy of the source with the guard and cache, collecting
+  every result.
+\item Key the result by \py!view_key(comparison_view(outcome.diagram))!.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Comparison views and keys}
+
+\begin{definition}[Comparison view]\label{def:rewriting-view}
+\py!comparison_view(diagram)! returns a new diagram in which
+\begin{enumerate}
+\item the ports of every Z and X spider are sorted per direction by a node-id-free key (below),
+  unless the diagram carries a \bbox{}, in which case the ports stay as they are;
+\item the parameter environment is empty;
+\item the scalar is replaced by its simplified form, or, for a mixed diagram, by the simplified form
+  of $c\cdot\bar c$, the CPM scalar~\cite{selinger2007cpm}.
+\end{enumerate}
+Simplification failures (\py!ScalarError!) leave the scalar unchanged. Simplified scalars are
+memoized by SymPy expression, the memo cleared once it holds $4096$ entries.
+\end{definition}
+
+The sort key of a spider port $p$ with dimension text $t$ is
+\begin{itemize}
+\item $(0, s, i, t)$ when $p$ is a boundary entry, with $s=0$ for inputs and $1$ for outputs and $i$
+  its first position in that list;
+\item $(2, t, \mathit{index})$ when $p$ is unwired and not on the boundary;
+\item otherwise $(1, t, g, \mathit{dir}, j, m, n, \phi, \mathit{index})$ describing the far port $q$:
+  $g$ its node's generator name, $\mathit{dir}$ its direction value, $j=-1$ if its node is a Z or X
+  spider and $q$'s index otherwise, $m,n$ its node's input and output counts, $\phi$ the digest of
+  its node's phase or \code!"None"!, and finally $p$'s own index.
+\end{itemize}
+Only directions with at least two ports are sorted. The view renumbers nodes in ascending order of
+the original ids and copies wires, boundary lists, scalar, and parameters through the port
+permutation.
+
+\begin{itemize}
+\item \py!view_key(view)! is \py!canonical_key(view, symmetric_legs=True)! (\cref{ch:diagrams}):
+  the canonical key blind to the order of a spider's ports within a direction.
+\item \py!view_form(view)! is \py!canonical_form(view, symmetric_legs=True)!: the key and its
+  profile.
+\item \py!views_isomorphic(a, b)! is \py!isomorphic(a, b, symmetric_legs=True)!.
+\item \py!same_normal_form(a, b)! is true iff both are \py!NormalForm! records (else
+  \py!RewriteGrammarError!), their keys are equal, and their comparison views are isomorphic up to
+  spider port order.
+\item \py!algebraic_view(diagram)! is the comparison view with every phase vector and the scalar
+  in the canonical algebraic form of \cref{ch:algebra} (\py!canonical_vector!,
+  \py!canonical_scalar!).
+\item \py!fused_isomorphic(a, b)! reduces each diagram by spider fusion and identity removal only,
+  then compares comparison views up to spider port order.
+\item \py!isomorphic_up_to_scalar(a, b)! compares copies with an empty parameter environment and
+  scalar $1$.
+\end{itemize}
+
+The decision procedure of \cref{ch:semantics} uses these comparisons as its first rungs.
+
+%======================================================================
+\section{Equality saturation}\label{sec:rewriting-egraph}
+
+The module \module{archytaszx.rewrite.egraph} implements a non-destructive \term{e-graph} over
+whole diagrams with cost-based extraction, after equality saturation~\cite{tate2011eqsat} and the
+egg system~\cite{willsey2021egg}. Unlike a term e-graph, an e-node here is an entire diagram, not
+an operator applied to child classes; there is therefore no congruence closure, and two classes
+merge only when a rewrite joins them. Every equality the e-graph holds is witnessed by stored
+\py!apply! calls, so every extraction carries a replayable rewrite path.
+
+\subsection{E-nodes, classes, and hash-consing}
+
+\begin{definition}[E-node and e-class]\label{def:rewriting-enode}
+An \term{e-node} is a diagram up to isomorphism of its comparison view (\cref{sec:rewriting-nf}).
+E-node ids \py!ENodeId! are consecutive integers from $0$ in insertion order. Each e-node keeps the
+first-seen \emph{representative} exactly as produced, its comparison view, and the profile of that
+view. An \term{e-class} is a block of a union-find partition~\cite{tarjan1975unionfind} of the
+e-nodes; its id \py!EClassId! is the id of its root e-node.
+\end{definition}
+
+\paragraph{Hash-consing.}
+E-nodes are bucketed by view key (\py!view_form!, the canonical key up to spider port order). To find
+the e-node of a view, scan the bucket of its key in insertion order: when the new view or the
+stored one has a profile, the two match iff their profiles are equal; when neither has one, they
+match iff \py!views_isomorphic!. A second memo maps the \emph{exact key} of a diagram (sorted nodes
+with ids, sorted wire keys, both boundary lists, sorted \bboxes{}, scalar, sorted parameters) to its
+e-node, so a result identical to an earlier one, node ids included, skips the view computation.
+
+\paragraph{Union-find.}
+\py!_root(i)! follows parent pointers to the root and then compresses the path, pointing every
+visited node at the root. A union sets the parent of the larger root id to the smaller, so the
+smaller root wins. A new child e-node is inserted with its parent pointer set to the root of its
+parent's class.
+
+\begin{signature}
+\py!class EGraph!
+\end{signature}
+\begin{itemize}
+\item \py!EGraph()!: an empty e-graph. \py!len(g)! is the e-node count.
+\item \py!add(diagram) -> ENodeId!: the e-node already holding an isomorphic view, or a new root
+  e-node holding a copy, appended to \py!roots!.
+\item \py!lookup(diagram) -> ENodeId | None!: the e-node isomorphic under the view, or \py!None!.
+\item \py!find(id)!, \py!class_of(enode)! \py!-> EClassId!: the class root.
+\item \py!equivalent(a, b) -> bool!: whether the two share a class.
+\item \py!members(eclass)!: every e-node of the class, ascending. \py!classes()!: every class id,
+  ascending.
+\item \py!diagram(enode)!: a copy of the representative.
+\item \py!edges!: every stored edge in insertion order, each with a copied result diagram.
+  \py!roots!: every e-node created by \py!add!, in creation order.
+\end{itemize}
+An id that is not an \py!int!, is a \py!bool!, or is out of range raises \py!RewriteGrammarError!
+(\code!<method> must be an int id, got <type>!, \code!<method>: unknown id N!). A non-diagram
+argument raises \py!RewriteGrammarError!. Every diagram, edge, and result the e-graph hands out
+carries a copy of the stored diagram.
+
+\begin{definition}[Edge]\label{def:rewriting-edge}
+An \py!EGraphEdge(parent, child, rule_name, result, kind)! records one \py!apply! call on the
+parent's representative; \py!result! is the \py!RewriteResult!. Its kind (\py!EdgeKind!) is
+\code!TREE! when the edge created its child, whose representative is the result diagram, in the
+parent's class, and \code!MERGE! when the result was view-isomorphic to an e-node in another class
+and the edge unioned the two classes. A result already in the parent's class is counted as
+redundant and not stored. The record validates its field types and compares by identity.
+\end{definition}
+
+\subsection{Saturation}
+
+\begin{definition}[Saturation limits]\label{def:rewriting-limits}
+\py!SaturationLimits! is a frozen record of non-negative integers (a \py!bool! or negative value
+raises \py!RewriteGrammarError!):
+\begin{center}\small
+\begin{tabular}{@{}lrl@{}}
+\toprule
+Field & Default & Meaning \\
+\midrule
+\py!max_iterations! & $6$ & rounds per call \\
+\py!max_enodes! & $512$ & e-nodes in the e-graph \\
+\py!max_applications! & $20000$ & \py!apply! calls per call \\
+\py!node_margin! & $4$ & added to the largest root's node count to form the node bound \\
+\py!match_limit! & $1000$ & backoff threshold base \\
+\py!ban_length! & $5$ & backoff ban length base \\
+\bottomrule
+\end{tabular}
+\end{center}
+\py!DEFAULT_LIMITS = SaturationLimits()!. Two module constants bound the stored size:
+\py!STORED_NODE_BUDGET! $=2^{17}$ nodes across all representatives, and
+\py!STORED_WEIGHT_BUDGET! $=2^{22}$, read as an e-node cap of
+$\max(2, \lfloor 2^{22}/w\rfloor)$ with $w$ the largest \py!diagram_weight! among the roots, at
+least $1$. \py!diagram_weight(diagram)! is the node count plus the number of explicit phase entries
+over all nodes.
+\end{definition}
+
+\py!saturation_rules()! returns every rule of the registry \py!RULES! (\cref{ch:rules}) whose
+\py!automatic! flag is set, in registry order.
+
+\begin{signature}
+\py!EGraph.saturate(rules=None, *, limits=DEFAULT_LIMITS, cache: RewriteCache | None = None) -> SaturationReport!
+\end{signature}
+\begin{algorithm}[Saturation]\label{alg:rewriting-saturate}
+Let $R$ be the rules (default \py!saturation_rules()!), the node bound $\nu$ the largest node count
+among the roots plus \py!node_margin!, and set the e-node cap from the weight budget.
+\begin{enumerate}
+\item An e-node is \emph{pending} when it was never marked expanded, or was marked under a
+  different rule tuple (compared element by element by object identity), or under a smaller node
+  bound than $\nu$.
+\item Loop: collect the pending e-nodes in ascending id. If none, stop with \code!SATURATED!. If
+  \py!max_iterations! rounds have run, stop with \code!ITERATION_LIMIT!. Start a round of the
+  backoff scheduler.
+\item For each pending e-node $i$ in that snapshot: the \emph{due} rules are those of $R$ not yet
+  applied to $i$ in this call and allowed by the scheduler. Expand $i$ with them (below). Mark every
+  due rule that the scheduler did not cut as applied to $i$; when all of $R$ is applied, mark $i$
+  expanded under $(R, \nu)$.
+\item End the scheduler's round.
+\end{enumerate}
+\emph{Expansion} of $i$, for each due rule in order and each of its matches on the representative
+(through the cache's match memo when given) whose side conditions all pass:
+\begin{enumerate}
+\item Count a firing with the scheduler; if it refuses, abandon the rest of this rule's matches.
+\item If \py!max_applications! applications were made, stop with \code!APPLICATION_LIMIT!.
+\item Apply, with the representative's validation report computed once per expansion. An exception
+  of one of the types \py!RewriteError!, \py!BangBoxError!, \py!DimensionError!,
+  \py!GeneratorError!, \py!GraphError!, \py!PhaseError!, \py!ScalarError!, or \py!ValidateError!
+  (\py!APPLICATION_ERRORS!) is recorded as \py!FailedApplication(enode, rule_name, message)! with
+  message \code!<ExceptionType>: <text>!, and the loop continues.
+\item Record the result: if its node count exceeds $\nu$, count it \emph{pruned}. Otherwise find
+  its e-node by exact key, then by view. Not found: if the e-graph holds \py!max_enodes! e-nodes, or
+  the e-node cap, or the stored nodes plus the result's would exceed \py!STORED_NODE_BUDGET!, stop
+  with \code!ENODE_LIMIT!; else insert it in the parent's class with a \code!TREE! edge. Found in the
+  parent's class: count it redundant. Found elsewhere: store a \code!MERGE! edge and union.
+\end{enumerate}
+A cache rejection raises \py!RewriteGrammarError!.
+\end{algorithm}
+
+The three limits stop the run deterministically: the e-node limit before an insertion, the
+application limit before an apply, and the iteration limit before a round.
+
+\paragraph{Backoff scheduler.}
+As in egg, a rule that fires too often within one round is cut for the rest of it and banned for
+a while. Per rule (by object identity) the scheduler keeps $b$, the number of bans so far, and the
+round $u$ until which it is banned. A rule is allowed in round $t$ iff $u < t$. In a round, its
+$c$-th firing is refused, and the rule cut, when $c > \text{\py!match_limit!}\cdot 2^{b}$; a cut
+rule refuses every further firing that round. At the end of round $t$ each cut rule gets
+$u = t + \text{\py!ban_length!}\cdot 2^{b}$ and $b \gets b+1$. A banned or cut rule stays unapplied
+on its e-nodes, which therefore remain pending.
+
+\begin{definition}[Saturation report]\label{def:rewriting-satreport}
+\py!SaturationReport(stop_reason, iterations, enodes_added, merges, applications, redundant, pruned, failed)!
+is a frozen record with field types validated. \py!SaturationStop! has the members
+\code!SATURATED!, \code!ITERATION_LIMIT!, \code!ENODE_LIMIT!, and \code!APPLICATION_LIMIT!;
+\py!saturated! is true iff the stop is \code!SATURATED!.
+\end{definition}
+
+
+\paragraph{Invariants.}
+After every insertion and union the e-graph satisfies:
+\begin{enumerate}
+\item every e-node's representative is unique up to view isomorphism among all representatives;
+\item every class id is the smallest e-node id of its class;
+\item every non-root e-node has exactly one \code!TREE! edge into it, whose parent was in the same
+  class when the edge was stored, so \py!path_from_root! terminates at a root created by \py!add!;
+\item two e-nodes are in one class iff a chain of stored edges, read undirected, joins them;
+\item every stored edge's result is the exact output of \py!apply! on its parent's representative.
+\end{enumerate}
+
+\begin{example}[A merge]\label{ex:rewriting-merge}
+Add $C_3$ and then $C_2$ (\cref{ex:rewriting-chain}) to an empty e-graph: they become root e-nodes
+$0$ and $1$ in classes $0$ and $1$. Saturating with \py!max_iterations=4! stops with
+\code!SATURATED! after $2$ rounds, $1$ e-node added, $1$ merge, $11$ applications, and $9$
+redundant results. Spider fusion on $C_3$ yields a diagram view-isomorphic to e-node $1$, stored as
+the edge (0, 1, \code!spider_fusion!, \code!MERGE!), which unions the two classes into class $0$;
+fusion on $C_2$ then yields the new e-node $2$ by the edge (1, 2, \code!spider_fusion!, \code!TREE!).
+\py!explain(0, 1)! returns the single merge edge.
+\end{example}
+
+\subsection{Extraction and explanation}
+
+A \py!CostFunction! maps a diagram to an \py!int!, a non-NaN \py!float!, or a flat tuple of them
+(\py!bool! excluded). Two are provided: \py!node_count_cost(d)!, the node count, and
+\py!default_cost(d)!, the triple (node count, wire count, number of nodes with a nonzero phase).
+
+\begin{signature}
+\py!EGraph.extract(eclass, cost=default_cost) -> Extraction!
+\end{signature}
+evaluates the cost on a copy of every member's representative, in ascending id, and keeps the
+first strict minimum, so ties go to the lowest e-node id. A non-callable cost, a value of the wrong
+type, or values that are not mutually comparable raise \py!RewriteGrammarError!. The result
+\py!Extraction(eclass, enode, diagram, cost, root, results)! carries the class root, the winning
+e-node, a copy of its representative, its cost, and the path from its root.
+
+\py!EGraph.path_from_root(enode) -> (root, results)! follows \code!TREE! edges back from the e-node
+to the root e-node it descends from and returns their results in forward order; replaying the
+results from the root's representative reproduces the e-node's representative, node ids included.
+
+\py!EGraph.explain(a, b) -> tuple[EGraphEdge, ...] | None! returns \py!()! when $a=b$, \py!None!
+when the two are in different classes, and otherwise a shortest path of stored edges between them,
+read undirected, found by breadth-first search from $a$ over the edges in insertion order. This is
+an explanation in the sense of~\cite{flatt2022proofs}: each edge is one rewrite step between the
+two representatives it joins (in its stored direction).
+
+\begin{signature}
+\py!simplify(diagram, rules=None, *, cost=default_cost, limits=DEFAULT_LIMITS, cache=None) -> tuple[Extraction, SaturationReport]!
+\end{signature}
+adds the diagram to a fresh e-graph, saturates, and extracts its class.
+
+%======================================================================
+\section{Tactics and proof search}\label{sec:rewriting-tactics}
+
+The module \module{archytaszx.rewrite.tactics} provides a small tactic language in the style of
+LCF~\cite{gordon1979lcf} and a layered, optionally bidirectional, breadth-first search that finds a
+derivation between two diagrams. The derivations it finds are certified by the proof layer
+(\cref{ch:proofs}); the search itself only proposes them.
+
+\subsection{Tactics}
+
+\begin{definition}[Tactic]\label{def:rewriting-tactic}
+A \term{tactic} maps a diagram to a lazy, deterministically ordered stream of outcomes. A
+\py!TacticOutcome(diagram, results)! is a frozen record, compared by identity, whose
+\py!results! \emph{chain}: \py!results[0]! is \py!apply! on the input diagram, \py!results[i+1]! is
+\py!apply! on \py!results[i].diagram!, and \py!diagram is results[-1].diagram!; an outcome with no
+results holds the input diagram object itself. Construction raises \py!RewriteGrammarError! when
+\py!diagram! is not the last result's diagram. \py!steps! returns every result's step. No tactic
+mutates a diagram, so the results replay from the input id for id.
+\end{definition}
+
+The abstract class \py!Tactic! has a property \py!name!, a readable expression of the tactic (also
+its \py!repr!), and the methods
+\begin{itemize}
+\item \py!outcomes(diagram, context=None) -> Iterator[TacticOutcome]!: every outcome, lazily, under
+  the context (a fresh one when \py!None!); a non-diagram or non-context raises
+  \py!RewriteGrammarError!;
+\item \py!run(diagram, context=None) -> TacticOutcome | None!: the first outcome, the stream closed
+  afterwards;
+\item \py!all(diagram, context=None, *, limit=None) -> tuple!: the outcomes, at most \py!limit!;
+\item \py!a >> b! for \py!seq(a, b)! and \py!a | b! for \py!first(a, b)!.
+\end{itemize}
+
+\begin{definition}[Tactic context]\label{def:rewriting-tcontext}
+A \py!TacticContext(*, cache=None, max_applications=None)! is the mutable state shared by one run:
+an optional \py!RewriteCache!, an application budget, the count \py!applications! of applications
+charged, and the list \py!failures! of \py!TacticFailure(rule_name, message)! records.
+\py!charge()! raises \py!BudgetExhausted(applications)!, a \py!RewriteError! with message
+\code!application budget exhausted after N application(s)!, when the budget is set and reached, and
+otherwise increments the count. \py!report(diagram)! returns \py!validate(diagram)! memoized per
+diagram object (identity checked); \py!keep_report(diagram, report)! stores one; the memo is cleared
+once it holds $4096$ entries. \py!matches(rule, diagram)! returns the rule's matches through the
+cache when present (a \py!CacheError! becomes \py!RewriteGrammarError!).
+\end{definition}
+
+\paragraph{Primitives.}
+\begin{itemize}
+\item \py!rule(r, *, focus=None)!: \py!r! is a \py!Rule! or a registered name resolved by
+  \py!lookup_rule!. For each match in order whose side conditions all pass and, with a focus, whose
+  support meets the focus: charge the context, apply with the context's input report, and yield one
+  outcome; an exception of \py!APPLICATION_ERRORS! (\cref{sec:rewriting-egraph}) is recorded as a
+  failure and skipped. A focus must be a non-string iterable of \py!int! node ids. Name
+  \code!rule(<name>)! or \code!rule(<name>, focus=[ids])!.
+\item \py!identity()!: one outcome with no results. Name \code!identity!.
+\item \py!fail()!: no outcome. Name \code!fail!.
+\item \py!fixpoint(rules, *, guard=DEFAULT_GUARD)!: one outcome, the \py!apply_until_fixpoint! run
+  over the rules (names resolved), each result charged to the context as it is produced. An
+  exception of \py!APPLICATION_ERRORS! other than \py!BudgetExhausted! is recorded as a failure
+  under the tactic's name, and the outcome holds the results collected so far. Name
+  \code!fixpoint(r1, r2, ...)!.
+\item \py!normalize(*, guard=DEFAULT_GUARD)!: \py!fixpoint! over \py!normal_form_rules()!, named
+  \code!normalize!.
+\end{itemize}
+
+\paragraph{Combinators.}
+\begin{itemize}
+\item \py!seq(t1, ..., tn)!: depth-first bind: for every outcome of $t_1$, every outcome of
+  $\mathrm{seq}(t_2,\dots,t_n)$ on its diagram, results concatenated.
+\item \py!first(t1, ..., tn)!: the outcomes of the first child whose stream yields at least one.
+\item \py!choice(t1, ..., tn)!: every outcome of every child, in child order.
+\item \py!attempt(t)!: \py!first(t, identity())!.
+\item \py!once(t)!: the first outcome of \py!t! only.
+\item \py!repeat(t, *, max_times=128)!: one outcome: take the first outcome of \py!t! repeatedly, at
+  most \py!max_times! times, stopping when there is none, when it has no results, or when its diagram
+  is isomorphic to one already visited (bucketed by \py!canonical_key!, the step not taken).
+\end{itemize}
+\py!seq!, \py!first!, and \py!choice! need at least one tactic and flatten direct children of their
+own kind; every argument must be a \py!Tactic!; violations raise \py!RewriteGrammarError!. The name
+of a combinator is \code!label(child, ...)!, with \code!max_times=N! appended to \code!repeat! when
+it is not $128$.
+
+\paragraph{Move sets.}
+\py!rewrite_tactics(rules=None)! returns one \py!rule! tactic per rule (default
+\py!saturation_rules()!). \py!default_moves()! is \py!(normalize(), *rewrite_tactics())!.
+\py!mixed_moves()! is a fixpoint over \py!mixed_normal_form_rules()! named
+\code!normalize_mixed!, followed by one \py!rule! tactic per discard rule (\cref{ch:mixed}) and per
+saturation rule.
+
+\subsection{Proof search}
+
+\begin{definition}[Search limits]\label{def:rewriting-slimits}
+\py!SearchLimits(max_depth=4, max_states=2048, max_applications=20000, node_margin=4)! is a frozen
+record of non-negative integers: moves per side, distinct states, applications, and the margin of
+the node bound. \py!DEFAULT_SEARCH_LIMITS = SearchLimits()!.
+\end{definition}
+
+\py!SearchStatus! has the members \code!FOUND!, \code!EXHAUSTED!, \code!DEPTH_LIMIT!,
+\code!STATE_LIMIT!, and \code!APPLICATION_LIMIT!. Failing to find a path is a status, never an
+exception.
+
+\begin{definition}[Proof path]\label{def:rewriting-ppath}
+A \py!ProofStep(tactic: str, results)! is one move: the tactic's name and its nonempty chained
+results. A \py!ProofPath(start, goal, forward, backward)! holds moves from \py!start! and from
+\py!goal! whose final diagrams have isomorphic comparison views. Its properties are
+\py!forward_results! and \py!backward_results! (concatenated), \py!forward_meet! and
+\py!backward_meet! (the last result's diagram, or the start or goal), \py!length! (total result
+count), \py!moves! and \py!backward_moves! (tactic names). Every diagram in a path is a copy.
+\end{definition}
+
+\py!SearchResult(status, path, states, expanded, applications, pruned, depth, failures)! has
+\py!path! set exactly when \py!status! is \code!FOUND!; \py!found! tests that.
+
+\begin{signature}
+\py!search(start, goal, *, moves=None, limits=DEFAULT_SEARCH_LIMITS, bidirectional=True, cache=None) -> SearchResult!
+\end{signature}
+\begin{algorithm}[Layered bidirectional search]\label{alg:rewriting-search}
+\leavevmode
+\begin{enumerate}
+\item Validate the arguments (\py!RewriteGrammarError! otherwise). The moves default to
+  \py!default_moves()!. Create a context with budget \py!max_applications!. The node bound is
+  $\max(|N_{\mathit{start}}|, |N_{\mathit{goal}}|) + \text{\py!node_margin!}$.
+\item Insert a copy of \py!start! as a state of side \code!START! at depth $0$. If the comparison
+  view of \py!goal! matches a stored state, return \code!FOUND! with an empty path. Otherwise insert a
+  copy of \py!goal! as a \code!GOAL! state at depth $0$.
+\item For each depth $t = 0, \dots, \text{\py!max_depth!}-1$: for each side (\code!START!, then
+  \code!GOAL! when bidirectional), expand every state of that side at depth $t$ in ascending state id.
+  If no state of the searched sides has depth $t+1$, stop with \code!EXHAUSTED!. After the last depth,
+  stop with \code!DEPTH_LIMIT!.
+\item \emph{Expanding} a state runs every move in order inside a \py!resolved_view_scope!
+  (\cref{sec:rewriting-template}) and, for each outcome: skip it if it has no results; prune it if
+  its node count exceeds the bound; look its comparison view up among the states. A state of the
+  same side drops the outcome. A state of the other side ends the search: the forward chain is the
+  chain of moves from the start root, the backward chain from the goal root, and the new move is
+  appended to the side that produced it. Otherwise, if \py!max_states! states exist, stop with
+  \code!STATE_LIMIT!; else store a new state one layer deeper.
+\item \py!BudgetExhausted! stops with \code!APPLICATION_LIMIT!.
+\end{enumerate}
+\end{algorithm}
+States are hash-consed as in the e-graph: bucketed by view key, and a bucket entry matches when
+both profiles exist and are equal, or, when either profile is missing, when the views are
+isomorphic up to spider port order. The reported \py!depth! is the depth reached: the layer index
+at a meet or a limit, one more than the last expanded layer at exhaustion, and \py!max_depth! at the
+depth limit. With \py!bidirectional=False! the goal state is still stored, so a forward outcome that
+reaches it ends the search with an empty backward chain.
+
+The forward results of a found path replay from \py!start! and the backward results from \py!goal!;
+their final diagrams have isomorphic comparison views. The proof layer turns such a path into a
+certificate by reversing the backward half (\cref{ch:proofs}).
+
+\begin{signature}
+\py!search_for(start, accept, *, moves=None, limits=DEFAULT_SEARCH_LIMITS, cache=None) -> tuple[SearchResult, AcceptedState | None]!
+\end{signature}
+searches forward only for the first diagram, \py!start! included, on which \py!accept! returns a
+value other than \py!None!. \py!accept! is first called on the start copy; then the layers are
+expanded as in \cref{alg:rewriting-search} with node bound $|N_{\mathit{start}}| + $
+\py!node_margin!, and \py!accept! is called on each outcome that reaches a new state, before the
+state limit is checked. A hit returns \py!AcceptedState(path, value)! with a path whose goal is a
+copy of the accepted diagram and whose backward chain is empty.
+
+
+\begin{example}[Chain of identities]\label{ex:rewriting-chain}
+Let $C_n$ be a chain of $n$ phaseless Z spiders of dimension $3$, each with one input and one
+output, wired in series, the first input and the last output on the boundary.
+\begin{itemize}
+\item \py!normal_form(C_3)! reaches a fixpoint after two \code!identity_removal! steps, since that
+  rule precedes \code!spider_fusion! in the normal-form order; the result is a single spider, which
+  identity removal leaves alone because neither of its ports carries a wire to splice through.
+\item \py!simplify(C_3, limits=SaturationLimits(max_iterations=4))! saturates after $3$ rounds with
+  $2$ e-nodes added, $0$ merges, $11$ applications, $9$ redundant results, and $0$ pruned; it
+  extracts e-node $2$ of class $0$ at cost $(1, 0, 0)$, reached from root $0$ by two
+  \code!spider_fusion! results.
+\item \py!search(C_3, C_1)! finds a path at depth $0$ after expanding one state: the forward move
+  \code!normalize! reaches a diagram whose view is isomorphic to the goal's, so the forward chain is
+  \code!("normalize",)!, the backward chain is empty, and the path holds $2$ results.
+\item \py!repeat(rule("spider_fusion"))!, named \code!repeat(rule(spider_fusion))!, takes three
+  fusions on $C_4$ and ends with one node. The tactic
+  \py!seq(rule("spider_fusion"), rule("identity_removal")) | normalize()! is named
+  \code!first(seq(rule(spider_fusion), rule(identity_removal)), normalize)! and yields $4$ outcomes
+  on $C_3$, all from its first branch.
+\end{itemize}
+\end{example}
+
+%======================================================================
+\section{Sheet rewrites}\label{sec:rewriting-sheet}
+
+The module \module{archytaszx.rewrite.sheet} performs rewrites directly on a scalable diagram
+(\py!ScalableDiagram!, \cref{ch:diagrams}): a diagram whose nodes sit in a tree of \emph{scales},
+each a \code!COPIES! scale (its subtree is repeated $m$ times) or a \code!LEGS! scale (the ports
+whose \emph{fan} it is are repeated $m$ times), with multiplicity $m$ a polynomial \py!Mult! in
+multiplicity symbols, and whose boundary lists hold port references and nested \emph{bundles}, one
+per \code!COPIES! scale. Sheet rewrites are the operations of the !-box calculus on such
+\emph{sheets}~\cite{kissinger2014pattern}: they change the scale structure rather than a node
+pattern.
+
+Every operation is pure, refuses an input on which \py!validate_scalable! reports an issue, and
+returns a frozen \py!SheetStep(operation: str, arguments: tuple[tuple[str, object], ...], before, after)!
+whose arguments are normalized and sorted by name and whose \py!after! passes
+\py!validate_scalable!. Before returning, each operation drops from the parameter environment the
+binding of every multiplicity symbol that occurs free in \py!before! but no longer in \py!after!.
+New node ids and scale ids are allocated from the largest existing id plus one, ascending.
+
+\paragraph{Errors.}
+\py!SheetError! derives from \py!RewriteError!. \py!SheetGrammarError! (also a
+\py!RewriteGrammarError!) reports a malformed request: wrong type, unknown id, wrong scale kind, no
+correspondence, an invalid input or result (\code!<op>: input is not valid: <issues>!,
+\code!<op>: result is not valid: ...!). \py!SheetDomainError! (also a \py!RewriteDomainError!)
+reports a value outside an operation's domain, such as a multiplicity that is not $1$. A scale id
+must be an \py!int! naming a scale; a multiplicity argument must be a \py!Mult! or an \py!int!.
+
+\subsection{Dissolve and kill}
+
+\py!dissolve(s, scale)! removes a scale of multiplicity exactly $1$ (else \py!SheetDomainError!),
+keeping its contents. For a \code!COPIES! scale, its nodes and child scales move to its parent,
+and each of its bundles is spliced in place into the enclosing item list. For a \code!LEGS! scale,
+its children move to its parent and every port whose fan it is takes the parent as fan when the
+parent is a \code!LEGS! scale, and no fan otherwise.
+
+\py!kill_scale(s, scale)! removes a scale of multiplicity exactly $0$ (else
+\py!SheetDomainError!) with everything it scales. For \code!COPIES!: every node whose
+\code!COPIES! chain contains the scale, their wires, the subtree's scales, and their bundles and
+port references vanish; emptied bundles are removed. For \code!LEGS!: every port whose fan chain
+contains the scale leaves its node, the later port indices of that direction shifting down; wires
+and boundary references are renumbered accordingly; the subtree's scales vanish; emptied bundles
+are removed.
+
+\subsection{Split and join}
+
+\begin{signature}
+\py!split_scale(s, scale, first: Mult | int, *, dissolve_unit: bool = True) -> SheetStep!
+\end{signature}
+\begin{algorithm}[Divider]\label{alg:rewriting-split}
+For a \code!COPIES! scale $c$ of multiplicity $m$ (another kind raises \py!SheetGrammarError!):
+\begin{enumerate}
+\item Compute $m' = m - \mathit{first}$ by expanding the difference in SymPy and reading it back as
+  a \py!Mult!: every term must have a non-negative integer coefficient and factors that are symbols
+  raised to positive integer powers, else \py!SheetDomainError!. If $\mathit{first} = 0$ or
+  $m' = 0$, raise \py!SheetDomainError! (\code!split_scale: m = first + m' has a zero part!).
+\item Create a sibling \code!COPIES! scale $c'$ of multiplicity $m'$ under $c$'s parent, with the
+  next free scale id; duplicate every scale strictly below $c$ under fresh ids (in ascending id
+  order), with the same kind and multiplicity and mapped parents.
+\item Duplicate every node of $c$'s subtree, in ascending id order, under fresh node ids, with port
+  fans and scale mapped; duplicate every wire whose first endpoint lies in the subtree.
+\item Set $c$'s multiplicity to $\mathit{first}$. On each boundary side, insert directly after every
+  bundle of $c$ its relabeled duplicate.
+\item With \py!dissolve_unit!, dissolve each part of multiplicity exactly $1$, $c'$ first.
+\end{enumerate}
+\end{algorithm}
+The step's arguments are \code!dissolve_unit!, \code!first! (as a \py!Mult!), and \code!scale!.
+
+\begin{signature}
+\py!join_scales(s, first, second) -> SheetStep!
+\end{signature}
+merges two distinct sibling \code!COPIES! scales $c_1, c_2$ into $c_1$, which carries the sum of
+both multiplicities; the $c_2$ subtree is removed. The two subtrees must \emph{correspond}:
+\begin{enumerate}
+\item They hold equally many nodes; paired in ascending id order, each pair agrees on generator
+  type, phase, and port dimensions, and on scale nesting: the scale chain from the node up to its
+  root and the fan chain of every port pair have equal lengths, and their scales are paired
+  position by position into a scale correspondence, which must stay a function.
+\item The paired scales are exactly the two subtrees' scales; below the roots, paired scales agree
+  on kind, multiplicity, and (paired) parent.
+\item The wires of the first subtree, mapped through the node pairing, are exactly the wires of the
+  second.
+\item On each boundary side, in the direct items of the common parent, either neither bundle
+  appears or the bundle of $c_2$ immediately follows that of $c_1$ and equals its relabeled image.
+\end{enumerate}
+Any violation raises \py!SheetGrammarError! naming it.
+
+\subsection{Enclose}
+
+\py!enclose(s, nodes, *, multiplicity=1)! wraps a nonempty set of node ids in a new \code!COPIES!
+scale of multiplicity $1$ (another multiplicity raises \py!SheetDomainError!). Let $P$ be the scale
+of the chosen nodes of least \code!COPIES! depth; all of them must share it. Every deeper chosen node
+must lie in a child \code!COPIES! scale of $P$ all of whose nodes are chosen; those children are
+reparented under the new scale. Every \code!LEGS! scale directly under $P$ that covers only directly
+chosen nodes is reparented; one that covers some but not all raises. No wire may join a chosen node
+to an unchosen one. On each side, the direct items of $P$ that are references to directly chosen
+nodes or bundles of the moved children must form one contiguous run, which becomes the new bundle.
+
+\subsection{Sheet fusion}
+
+\begin{signature}
+\py!fuse_sheet(s, wire: Wire) -> SheetStep!
+\end{signature}
+fuses the two same-color spiders a wire joins, once per copy of their shared scale. The wire must
+belong to the diagram and not be a self-loop. Let $A$ be the endpoint node with the lower id. Both
+nodes must be Z spiders or both X spiders; for X the wire must join ports of different directions;
+both nodes must lie in the same scale; every surviving port, the far consumed port, and every phase
+must carry exactly the dimension of $A$'s consumed port. Violations raise \py!SheetDomainError!.
+The merged node gets a fresh id and the same scale; its inputs are $A$'s surviving inputs then
+$B$'s, its outputs likewise, each keeping its fan; its phase is the sum of both phases (absent ones
+read as zero), or none when both are absent and some port survives, and the zero vector when no
+port survives. Every other wire between the pair becomes a self-loop. When the fusion rule's scalar
+$s_f$ (\cref{ch:rules}) is not $1$, the diagram's scalar is multiplied by $s_f^{\,k}$, where $k$ is
+the concrete size of the scale; a symbolic size raises \py!SheetDomainError!.
+
+\subsection{Registry and replay}
+
+\py!SHEET_OPERATIONS! maps the names \code!dissolve!, \code!enclose!, \code!fuse_sheet!,
+\code!join_scales!, \code!kill_scale!, and \code!split_scale! to their functions.
+\py!replay_sheet_step(step)! re-runs the named operation on \py!step.before! with the recorded
+arguments and returns the fresh step; it raises \py!SheetGrammarError! for a non-step, an unknown
+operation, arguments the function rejects with \py!TypeError!, recorded arguments that are not in
+normalized form, or a result that differs from \py!step.after!.
+
+%======================================================================
+\section{Caches}\label{sec:rewriting-cache}
+
+The module \module{archytaszx.rewrite.cache} memoizes pattern matches, canonical keys, and
+arbitrary derived values, and re-matches a fixed pattern set incrementally after a local edit.
+Every digest is the first $32$ hexadecimal characters of the SHA-256 hash of the UTF-8 \py!repr!
+of a payload, so keys agree across processes. No order in this module comes from set iteration:
+node and box ids are sorted, ports and wires use their sort keys, and enumeration members enter only
+through their value or name. The module never imports the semantics layer.
+
+\paragraph{Errors.}
+\py!CacheError! derives from \py!Exception! (not from \py!RewriteError!).
+\py!CacheGrammarError! reports an argument of the wrong type or shape; \py!CacheDomainError! a
+well-formed argument naming something the diagram does not contain. The engine re-raises either as
+\py!RewriteGrammarError! (\cref{sec:rewriting-engine}).
+
+\subsection{Digests and fingerprints}
+
+For a node $v$ of a diagram, define:
+\begin{itemize}
+\item its \emph{boundary slots}: the tuples (side \code!"in"!/\code!"out"!, direction value, port
+  index, position in the list) of every boundary entry on $v$;
+\item its \emph{membership}: for each \bbox{} in ascending id order, an entry
+  \code!("node", m, c...)! if $v$ is in the node scope and \code!("port", dir, index, m, c...)! for
+  each of its ports in the port scope (sorted), where $m$ is the box's multiplicity \py!repr!,
+  suffixed \code!|sheets! for a sheet box, and $c\ldots$ the same strings for its ancestors,
+  innermost first, the walk stopping at a repeated or missing id;
+\item its \emph{incidence}: for every wire in sorted order and each endpoint on $v$, the tuple (own
+  direction value, own index, far node id, far direction value, far index).
+\end{itemize}
+The \emph{payload} of $v$ is (generator name, input dimension \py!repr!s, output dimension
+\py!repr!s, phase digest or \code!"None"!, sorted boundary slots, sorted membership).
+\py!node_digest(diagram, node_id)! is the digest of the payload; \py!incidence_digest(diagram, node_id)!
+the digest of the sorted incidence. Both raise \py!CacheGrammarError! for a non-diagram and
+\py!CacheDomainError! for an absent node. \py!node_key(node)! is the digest of (generator name,
+input and output dimension \py!repr!s, phase digest), with no ids; \py!diagram_key(diagram)! is
+the fingerprint's global key.
+
+\begin{definition}[Fingerprint]\label{def:rewriting-fingerprint}
+\py!fingerprint(diagram) -> DiagramFingerprint! computes, in one pass, a frozen record
+\begin{signature}
+\py!DiagramFingerprint(nodes: Mapping[NodeId, str], global_key, boundary_key, env_key, boxes_key, match_key, params_key, dangling_boundary_key)!
+\end{signature}
+\begin{itemize}
+\item \py!nodes[v]! $=\mathrm{digest}(\mathrm{digest}(\text{payload}), \mathrm{digest}(\text{sorted incidence}))$;
+\item \py!boundary_key!: digest of the sort keys of both boundary lists;
+\item \py!params_key!: digest of the sorted parameter items;
+\item \py!env_key!: digest of (scalar \py!repr!, sorted parameter items);
+\item \py!boxes_key!: digest of, per box in id order, (id, multiplicity string, ancestor chain,
+  sorted node scope ids, sorted port scope keys, parent id or \py!None!);
+\item \py!dangling_boundary_key!: digest of the boundary entries naming no live node, with side and
+  position;
+\item with body $=$ (boundary key, boxes key, ((id, entry) for every node in id order), sorted wire
+  keys): \py!global_key! $=\mathrm{digest}(\text{env key}, \text{body})$ and
+  \py!match_key! $=\mathrm{digest}(\text{params key}, \text{body})$, the global key with the scalar
+  left out.
+\end{itemize}
+\end{definition}
+The node entries are memoized per (node object id, boundary slots, membership, incidence), the
+stored node object compared by identity; the memo is emptied once it exceeds $2^{16}$ entries.
+
+\py!changed_nodes(other)! returns the node ids present in exactly one of the two fingerprints and
+those whose entries differ. \py!global_change(other)! is true when the boundary, environment, or
+box key differs. \py!match_change(other)! is true when the parameter, box, or dangling-boundary key
+differs. A non-fingerprint argument raises \py!CacheGrammarError!.
+
+
+\paragraph{Internal memos.}
+Three further memos keep repeated scans cheap without changing any result. The incidence of every
+node is computed from the diagram's incident-wire index (\py!incident_state!, \cref{ch:diagrams}):
+the per-node wire ends are memoized per (node id, object identity of its sorted incident-wire
+tuple), the memo emptied at $2^{17}$ entries, and the last call's result is reused for every node
+the index did not touch since. Wire sort keys in the fingerprint body are read from the shared
+\py!WIRE_KEYS! table. The neighbor map of the fixed-shape matchers (\cref{sec:rewriting-fixed}) is
+built once per wire-set snapshot object and shared read-only; it maps only nodes that carry a wire.
+The incremental matcher memoizes each held match's identity (support ids, \py!repr!) per match
+object and keeps only the entries of matches it still holds after each adoption.
+
+\begin{example}[Fingerprint and rematch]\label{ex:rewriting-fp}
+For $C_2$ (\cref{ex:rewriting-chain}) the node entries are \code!7c2d2906565cda78c16fe645074803f7!
+for node $0$ and \code!3f5275ba6cf65b108c6fefe4d15ef919! for node $1$; the global key is
+\code!c86e64fdcaf74954b0966754a0f3cd39! and the match key \code!fcbe3cc382da44820c5b6bbe38a34ed9!.
+Normalizing $C_6$ with a cache whose incremental matcher tracks the patterns of the normal-form
+rules (radius $8$, the template radius) takes five \code!identity_removal! steps and six rematches,
+of which only the first is a full rescan; the last rematch has $2$ dirty nodes and a closure of $2$
+nodes.
+\end{example}
+
+\subsection{The LRU memo}
+
+\py!LruMemo(max_entries, *, counters=None)! is a bounded memo over an insertion-ordered dictionary.
+\py!max_entries! must be an \py!int!, not a \py!bool!, at least $1$ (else \py!CacheGrammarError!).
+\begin{itemize}
+\item \py!get_or_compute(key, compute)!: on a hit, move the key to the most recent end, count a hit,
+  and return the value; on a miss, count a miss, compute, store at the most recent end, and evict
+  least recently used entries, counting each eviction, while more than \py!max_entries! are held. A
+  non-callable \py!compute! raises \py!CacheGrammarError!.
+\item \py!invalidate(key)!, \py!invalidate_where(predicate)!, \py!clear()!: drop entries, counting
+  each as an invalidation, and report whether or how many went.
+\item \py!keys()! (least recent first), \py!len!, and \py!in! (which touches neither recency nor
+  counters).
+\end{itemize}
+\py!CacheStats(hits, misses, evictions, invalidations, unkeyable)! is a frozen snapshot with
+\py!total! $=$ hits $+$ misses and \py!hit_rate! $=$ hits$/$total, or $0.0$ with no lookups.
+
+\subsection{Pattern keys and the match cache}
+
+\py!pattern_key(pattern)! is \code!<module>.<qualname>|<repr>!. When the \py!repr! contains
+\code! object at 0x! (an identity-dependent \py!repr!), the key is \code!<module>.<qualname>|! if
+the pattern carries no state, and the call raises \py!CacheGrammarError! otherwise. A pattern carries
+state when it has an instance dictionary entry, a filled slot in any class of its method resolution
+order, or a class attribute (outside \py!object! and \py!Pattern!) bound to a list, dictionary, set,
+or byte array. Frozen dataclass patterns therefore key by value; \py!TemplatePattern! keys by its
+custom \py!repr!. \py!keyable(pattern)! is whether \py!pattern_key! succeeds.
+
+\py!MatchCache(max_entries=256)! holds two LRU memos sharing one set of counters:
+\begin{itemize}
+\item \py!matches(pattern, diagram, *, fingerprint=None)!: the matches memoized on
+  (pattern key, match key); an unkeyable pattern is scanned without caching and counted as
+  \py!unkeyable!. Since the match key omits the scalar, diagrams that differ only in the scalar share
+  matches.
+\item \py!matches_anchored(pattern, diagram, anchors, *, fingerprint=None)!: the anchored scan,
+  never cached; anchors must be a set of non-\py!bool! integers.
+\item \py!canonical(diagram, *, fingerprint=None)!: \py!canonical_key(diagram)! memoized on the
+  global key.
+\item \py!invalidate(fingerprint)!: drop the matches under its match key and the canonical key under
+  its global key. \py!clear()!: drop everything.
+\end{itemize}
+A missing fingerprint is computed on the spot.
+
+\py!RewriteCache(match_cache=MatchCache(), incremental: IncrementalMatcher | None = None)! is the
+one cache object the engine accepts; it delegates \py!matches!, \py!canonical!, \py!fingerprint!,
+and \py!stats! to the match cache, and \py!clear()! also resets the incremental baseline.
+
+\subsection{Value memo}
+
+\py!ValueMemo(compute, key, max_entries=1024)! memoizes \py!compute(subject)! under the string
+\py!key(subject)! (a non-string key raises \py!CacheGrammarError!). A \tool{NumPy}{https://numpy.org}
+array~\cite{harris2020numpy} is stored as a private copy and handed out as a read-only view; other
+values pass unchanged. It offers \py!get!, \py!key_for!, \py!invalidate!, \py!clear!, \py!stats!,
+\py!max_entries!, and \py!len!. The semantics layer (\cref{ch:semantics}) instantiates it for
+denotations.
+
+\subsection{Incremental rematching}
+
+\py!IncrementalMatcher(patterns, *, cache: MatchCache | None = None)! re-matches a fixed sequence of
+keyable patterns after a local edit, rescanning only the affected region. Its \py!radius! is the
+largest \py!locality_radius! among the patterns ($0$ for none). It keeps a \emph{baseline}: a
+fingerprint, the node adjacency, the box scopes (per box, the descriptor of \py!boxes_key! without
+the id), and the matches per pattern key.
+\py!seed(diagram)! scans every pattern in full (through the match cache when given) and adopts the
+result. \py!reset()! drops the baseline; \py!clear()! also zeroes the counters.
+
+\begin{algorithm}[Incremental rematch]\label{alg:rewriting-rematch}
+\py!rematch(diagram, *, fingerprint=None)!:
+\begin{enumerate}
+\item Without a baseline, or when \py!match_change! holds against it, scan every pattern in full,
+  adopt the result, and count a full rescan.
+\item The \emph{dirty} set is the changed nodes of the fingerprint, plus every node scoped (by node
+  or port scope) by a box whose descriptor is new or changed, plus the node scope of every old box
+  whose descriptor disappeared or changed.
+\item For every radius $r$ in use, the closure $C_r$ is the dirty set grown by $r$ breadth-first hops
+  over the union of the old and the new adjacency.
+\item For each pattern with radius $r$: a baseline match is \emph{retained} when its support is
+  disjoint from $C_r$ and every support node has the same fingerprint entry as in the baseline. The
+  fresh matches are \py!find_matches_anchored(diagram, C_r)!. Retained and fresh matches are merged,
+  deduplicated by identity (support ids, \py!repr!), retained first, and sorted by
+  (\py!order_key!, \py!repr!). When some baseline or fresh match has no integer support or an
+  identity-dependent \py!repr!, or the pattern raises any exception other than \py!CacheError!, that
+  pattern is scanned in full instead.
+\item Adopt the result as the new baseline and update the counters.
+\end{enumerate}
+\end{algorithm}
+\py!IncrementalStats(dirty_nodes, closure_nodes, retained, rescanned, full_rescans, rematches)!
+records the sizes of the last rematch and the running totals of full rescans and rematches.
+
+The normal-form driver equips every run with an incremental matcher over its rules' keyable
+patterns (\cref{sec:rewriting-nf}); the fixpoint strategy then rematches once per step, so a local
+rewrite rescans only the neighborhood of the nodes it changed.
+
+%======================================================================
+\section{Quick reference}\label{sec:rewriting-quickref}
+
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.45\textwidth}>{\raggedright\arraybackslash}X@{}}
+\caption{Public names of the rewriting layer and where they are specified.}\label{tab:rewriting-quickref}\\
+\toprule
+Name & Specified in \\
+\midrule
+\endfirsthead
+\toprule
+Name & Specified in \\
+\midrule
+\endhead
+\multicolumn{2}{@{}l}{\file{rule.py}}\\
+\quad\py!RewriteError!, \py!RewriteDomainError!, \py!RewriteGrammarError! & \Cref{ch:rewriting}, Errors \\
+\quad\py!SideCondition!, \py!SideConditionOutcome!, \py!check_side_condition_coverage! & \Cref{sec:rewriting-rule} \\
+\quad\py!ConstraintSource!, \py!ConstraintOutcome!, \py!DimensionConstraint!, \py!assumed! & \Cref{def:rewriting-csource,def:rewriting-dconstraint} \\
+\quad\py!DimensionGuard!, \py!DimensionGuardKind!, \py!GuardOutcome! & \Cref{def:rewriting-guard} \\
+\quad\py!Quantifiers!, \py!Match!, \py!Pattern!, \py!BuildResult!, \py!RuleBuilder!, \py!Rule! & \Cref{def:rewriting-match,def:rewriting-pattern,def:rewriting-buildresult,def:rewriting-rulerecord} \\
+\multicolumn{2}{@{}l}{\file{match.py}}\\
+\quad\py!FUSION_SIDE_CONDITIONS!, \py!FusionMatch!, \py!FusionResolution!, \py!resolve_fusion_match!, \py!reattach_phase!, \py!find_matches!, \py!FusionPattern!, \py!innermost_node_scope_box! & \Cref{sec:rewriting-fusion} \\
+\quad\py!FOURIER_CHAIN_LENGTH!, \py!FourierMatch!, \py!find_fourier_matches!, \py!FourierCancellationPattern! & \Cref{sec:rewriting-fixed} \\
+\quad\py!colour_pair!, \py!CapMatch!, \py!find_cap_matches!, \py!CapPattern! & \Cref{sec:rewriting-fixed} \\
+\quad\py!IdentityMatch!, \py!find_identity_matches!, \py!IdentityRemovalPattern! & \Cref{sec:rewriting-identity} \\
+\quad\py!TriangleMatch!, \py!StateCopyMatch!, \py!HopfMatch!, \py!BialgebraMatch!, \py!FourierStateMatch! and their finders and patterns & \Cref{sec:rewriting-fixed} \\
+\multicolumn{2}{@{}l}{\file{match_template.py}}\\
+\quad\py!Param!, \py!Fixed!, \py!PHASELESS!, \py!Var!, \py!Derived!, \py!Kj!, \py!k_vector!, \py!kj_index! & \Cref{sec:rewriting-template} \\
+\quad\py!TNode!, \py!Template!, \py!Side!, \py!Condition!, \py!TemplateAxiom!, \py!TemplateTooLarge!, \py!check_template_budget! & \Cref{def:rewriting-template,def:rewriting-axiom} \\
+\quad\py!match_template!, \py!TemplatePattern!, \py!TemplateMatch!, \py!template_scalar!, \py!template_builder! & \Cref{alg:rewriting-subgraph,alg:rewriting-templatefind,alg:rewriting-rebuild} \\
+\quad\py!CONCRETE_AXIOMS!, \py!resolved_view!, \py!resolved_view_scope!, \py!legs_of!, \py!neighbours!, \py!ranges! & \Cref{sec:rewriting-template} \\
+\multicolumn{2}{@{}l}{\file{match_zxw.py}, \file{match_box.py}}\\
+\quad W, triangle, connective, and port-box matchers & \Cref{sec:rewriting-zxw,sec:rewriting-box} \\
+\multicolumn{2}{@{}l}{\file{engine.py}}\\
+\quad\py!apply!, \py!RewriteStep!, \py!RewriteResult! & \Cref{alg:rewriting-apply,def:rewriting-step} \\
+\quad\py!StopReason!, \py!TerminationGuard!, \py!DEFAULT_GUARD!, \py!TerminationGuardTripped!, \py!StrategyOutcome!, \py!apply_until_fixpoint! & \Cref{alg:rewriting-fixpoint} \\
+\quad\py!NORMAL_FORM_RULE_NAMES!, \py!normal_form_rules!, \py!missing_normal_form_rule_names!, \py!toward_normal_form! & \Cref{sec:rewriting-engine} \\
+\multicolumn{2}{@{}l}{\file{normal_form.py}}\\
+\quad\py!NormalForm!, \py!normal_form!, \py!mixed_normal_form_rules!, \py!comparison_view!, \py!algebraic_view!, \py!view_key!, \py!view_form!, \py!views_isomorphic!, \py!same_normal_form!, \py!fused_isomorphic!, \py!isomorphic_up_to_scalar! & \Cref{sec:rewriting-nf} \\
+\multicolumn{2}{@{}l}{\file{egraph.py}}\\
+\quad\py!EGraph!, \py!EGraphEdge!, \py!EdgeKind!, \py!SaturationLimits!, \py!DEFAULT_LIMITS!, \py!SaturationStop!, \py!SaturationReport!, \py!FailedApplication!, \py!Extraction!, \py!saturation_rules!, \py!diagram_weight!, \py!node_count_cost!, \py!default_cost!, \py!simplify!, \py!APPLICATION_ERRORS!, \py!STORED_NODE_BUDGET!, \py!STORED_WEIGHT_BUDGET! & \Cref{sec:rewriting-egraph} \\
+\multicolumn{2}{@{}l}{\file{tactics.py}}\\
+\quad\py!Tactic!, \py!TacticOutcome!, \py!TacticContext!, \py!TacticFailure!, \py!BudgetExhausted!, \py!rule!, \py!identity!, \py!fail!, \py!seq!, \py!first!, \py!choice!, \py!attempt!, \py!once!, \py!repeat!, \py!fixpoint!, \py!normalize!, \py!rewrite_tactics!, \py!default_moves!, \py!mixed_moves! & \Cref{sec:rewriting-tactics} \\
+\quad\py!search!, \py!search_for!, \py!SearchLimits!, \py!SearchStatus!, \py!SearchResult!, \py!ProofStep!, \py!ProofPath!, \py!AcceptedState!, \py!Side! & \Cref{alg:rewriting-search} \\
+\multicolumn{2}{@{}l}{\file{sheet.py}}\\
+\quad\py!SheetError!, \py!SheetGrammarError!, \py!SheetDomainError!, \py!SheetStep!, \py!dissolve!, \py!kill_scale!, \py!split_scale!, \py!join_scales!, \py!enclose!, \py!fuse_sheet!, \py!SHEET_OPERATIONS!, \py!replay_sheet_step! & \Cref{sec:rewriting-sheet} \\
+\multicolumn{2}{@{}l}{\file{cache.py}}\\
+\quad\py!CacheError!, \py!node_digest!, \py!incidence_digest!, \py!fingerprint!, \py!DiagramFingerprint!, \py!node_key!, \py!diagram_key!, \py!LruMemo!, \py!CacheStats!, \py!pattern_key!, \py!keyable!, \py!MatchCache!, \py!ValueMemo!, \py!IncrementalMatcher!, \py!IncrementalStats!, \py!RewriteCache! & \Cref{sec:rewriting-cache} \\
+\bottomrule
+\end{xltabular}

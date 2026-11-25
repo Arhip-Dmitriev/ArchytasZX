@@ -1,0 +1,59 @@
+\documentclass[11pt,oneside]{book}
+\input{preamble}
+
+\title{ArchytasZX\\[0.5ex]\large Reference Manual}
+\author{Arkhip A. Dmitriev}
+\date{Version 2.0.4}
+
+\begin{document}
+\frontmatter
+\maketitle
+\tableofcontents
+
+\mainmatter
+
+\part{Using ArchytasZX}
+\input{chapters/overview}
+\input{chapters/install}
+\input{chapters/shell}
+\input{chapters/language}
+\input{chapters/python-api}
+
+\part{Mathematical Model and Engine}
+\input{chapters/algebra}
+\input{chapters/diagrams}
+\input{chapters/rewriting}
+\input{chapters/rules}
+\input{chapters/mixed}
+\input{chapters/completeness}
+\input{chapters/semantics}
+\input{chapters/proofs}
+\input{chapters/kernel}
+\input{chapters/pictorial}
+
+\part{Lean}
+\input{chapters/lean-library-core}
+\input{chapters/lean-library-boxes}
+\input{chapters/lean-library-pathsum}
+\input{chapters/lean-library-sym}
+\input{chapters/lean-export-net}
+\input{chapters/lean-export}
+
+\part{Benchmarks}
+\input{chapters/benchmarks-pipeline}
+\input{chapters/benchmarks-tools}
+
+\part{Development}
+\input{chapters/development}
+
+\appendix
+\input{appendices/parameters}
+\input{appendices/rule-sets}
+\input{appendices/errors}
+\input{appendices/glossary}
+
+\backmatter
+\bibliographystyle{plainnat}
+\bibliography{bib/core,bib/extra,bib/algebra,bib/diagrams,bib/rewriting,bib/rules,bib/completeness,bib/semantics,bib/proofs,bib/kernel,bib/leanexportnet,bib/leanexport,bib/repl,bib/pictorial,bib/leanlib1,bib/leanlib2,bib/leanlib3,bib/leanlib4,bib/bench1,bib/bench2}
+\printindex
+\end{document}

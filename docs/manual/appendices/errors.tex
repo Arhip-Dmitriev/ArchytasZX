@@ -1,0 +1,223 @@
+\chapter{Exceptions}\label{app:errors}
+
+This appendix lists every exception class of the \texttt{archytaszx} package, grouped by the module that defines it. Most modules follow one pattern: a module base class derived from \py!Exception!, a \emph{grammar} subclass for malformed requests (a wrong type, an unknown name, a malformed structure), and a \emph{domain} subclass for well-formed requests outside the mathematical domain of the operation. Every class of \module{archytaszx.rewrite} derives from \py!RewriteError!. The conditions under which each exception is raised are specified with the operations in the chapters on each module; the benchmark suite's exceptions are specified in \cref{ch:bench-pipeline,ch:bench-tools}.
+
+\section{Public Exception Classes}\label{sec:errors-public}
+
+{\small
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.42\linewidth}X@{}}
+\toprule
+Class (base classes) & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Class (base classes) & Meaning \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+\multicolumn{2}{@{}l}{\module{archytaszx.algebra.algebraic}}\\*
+\texttt{NotAlgebraicError}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & A value with free symbols or no algebraic minimal polynomial. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.algebra.dimension}}\\*
+\texttt{DimensionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{DimensionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{DimensionError})} & A value is outside the mathematical domain of dimensions or exponents. \\
+\texttt{DimensionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DimensionError})} & An expression falls outside the dimension grammar. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.algebra.numfield}}\\*
+\texttt{NumberFieldError}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & A certificate that fails its check, or values with no certificate. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.algebra.pathsum}}\\*
+\texttt{PathSumError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for every error raised by the path-sum modules. \\
+\texttt{PathSumUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{PathSumError})} & A diagram or a sum outside the class the path-sum calculus covers. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.algebra.phase}}\\*
+\texttt{PhaseError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{PhaseDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{PhaseError})} & A value is outside the mathematical domain of phases or phase-vector indices. \\
+\texttt{PhaseGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{PhaseError})} & A value falls outside the grammar this module accepts. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.algebra.scalar}}\\*
+\texttt{ScalarError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{ScalarDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & A value is outside the mathematical domain required by an operation. \\
+\texttt{ScalarGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & A value falls outside the grammar this module accepts. \\
+\texttt{ScalarSumError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & An index sum is malformed, or a bound index is used where a free symbol is required. \\
+\texttt{ScalarBudgetError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & Simplification exceeded its step budget. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.diagram.bangbox}}\\*
+\texttt{BangBoxError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{BangBoxDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{BangBoxError})} & A value is outside the mathematical domain this module accepts. \\
+\texttt{BangBoxGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{BangBoxError})} & A request is malformed: wrong type, an empty or mixed scope, an unknown box or symbol, boxes that are not siblings, or a crossing this phase does not support. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.diagram.generators}}\\*
+\texttt{GeneratorError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{GeneratorDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{GeneratorError})} & A value is outside the mathematical domain a generator policy requires. \\
+\texttt{GeneratorGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{GeneratorError})} & A lookup or registration falls outside the grammar this module accepts. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.diagram.graph}}\\*
+\texttt{GraphError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{GraphDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{GraphError})} & A value or operation is outside the mathematical domain this module accepts. \\
+\texttt{GraphGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{GraphError})} & A request is malformed: wrong type, or a reference to something absent. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.diagram.mixed}}\\*
+\texttt{MixedError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{MixedDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{MixedError})} & A diagram is outside the domain an operation here requires. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.diagram.scalable}}\\*
+\texttt{ScalableError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{ScalableGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalableError})} & A request or structure is malformed: wrong type, unknown id, or invalid nesting. \\
+\texttt{ScalableDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalableError})} & A value is outside the accepted domain, such as an unresolved multiplicity in strip. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.diagram.validate}}\\*
+\texttt{ValidateError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{ValidationFailedError}\newline\hspace*{1em}{\footnotesize(\texttt{ValidateError})} & Raised by validate\_or\_raise when a diagram's report contains an error-level issue. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.repl.commands}}\\*
+\texttt{CommandError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{CommandGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CommandError})} & A malformed command line: unknown option, bad assignment, missing argument. \\
+\texttt{CommandDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CommandError})} & A well-formed command the session or the engine cannot carry out. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.repl.embed}}\\*
+\texttt{AzxError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A piece that cannot be built or compiled. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.repl.parser}}\\*
+\texttt{ParseError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of every error this module raises. \\
+\texttt{ParseGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ParseError})} & The source does not match the grammar of the form it was read as. \\
+\texttt{ParseDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ParseError})} & The source parses, but names a value or a diagram outside the accepted domain. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.repl.printer}}\\*
+\texttt{PrinterError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{PrinterDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{PrinterError})} & A diagram whose Dirac form is undefined: a validate error or a fanned fixed-arity leg. \\
+\texttt{PrinterGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{PrinterError})} & An argument of the wrong type. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.cache}}\\*
+\texttt{CacheError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for every error raised in cache. \\
+\texttt{CacheGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CacheError})} & A cache argument of the wrong type or shape. \\
+\texttt{CacheDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CacheError})} & A well-formed cache argument naming something the diagram does not contain. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.engine}}\\*
+\texttt{TerminationGuardTripped}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A strategy loop hit its TerminationGuard while running with \texttt{strict=True}. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.exhaustive}}\\*
+\texttt{ExhaustedError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Both sides reached every diagram they can without meeting. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.match_template}}\\*
+\texttt{TemplateTooLarge}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A template under construction holds more nodes and wires than the host it is matched against. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.rule}}\\*
+\texttt{RewriteError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised anywhere in rewrite. \\
+\texttt{RewriteDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A value or state is outside the mathematical domain a rewrite operation requires. \\
+\texttt{RewriteGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A rewrite request is malformed independent of mathematical domain. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.sheet}}\\*
+\texttt{SheetError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Base class for all errors raised by this module. \\
+\texttt{SheetGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{SheetError, RewriteGrammarError})} & A request is malformed: wrong type, unknown id, wrong scale kind, or no correspondence. \\
+\texttt{SheetDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{SheetError, RewriteDomainError})} & A value is outside an operation's domain, such as a multiplicity that is not 1. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.rewrite.tactics}}\\*
+\texttt{BudgetExhausted}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A TacticContext's application budget ran out. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.certificate}}\\*
+\texttt{CertificateError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{CertificateDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CertificateError})} & Raised for a value outside the domain a certificate operation is defined on. \\
+\texttt{CertificateGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CertificateError})} & Raised for a malformed certificate request, independent of any diagram's concreteness. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.check}}\\*
+\texttt{CheckError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{CheckDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CheckError})} & The domain half of this module's domain/grammar error split. Currently unraised. \\
+\texttt{CheckGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CheckError})} & A request is malformed: an unknown equality mode, or an incomplete symbol assignment. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.columns}}\\*
+\texttt{ColumnsError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & The column count or the row induction does not apply or does not check. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.contract_numeric}}\\*
+\texttt{ContractError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{ContractDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractError})} & A value is outside the mathematical domain this module requires. \\
+\texttt{ContractGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractError})} & A request is malformed in a way independent of concreteness. \\
+\texttt{ContractValidationError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractDomainError})} & Raised when the diagram fails validate. \\
+\texttt{ContractSizeError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractDomainError})} & Raised when a tensor this module would allocate exceeds the configured size cap. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.contract_symbolic}}\\*
+\texttt{SymbolicContractionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{SymbolicContractionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionError})} & A value is outside the domain an operation requires. \\
+\texttt{SymbolicContractionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionError})} & A diagram is malformed in a way validate() should already have refused. \\
+\texttt{SymbolicContractionValidationError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionDomainError})} & The diagram failed validation. Carries the report. \\
+\texttt{SymbolicContractionUnsupportedError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionDomainError})} & A diagram shape this module does not cover, such as a variable rank. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.decide}}\\*
+\texttt{DecideError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{DecideGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DecideError})} & A request is malformed: a wrong argument type or an out-of-range bound. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.denote}}\\*
+\texttt{DenoteError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{DenoteDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{DenoteError})} & A value is outside the mathematical domain this module requires. \\
+\texttt{DenoteGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DenoteError})} & A request is malformed: an unknown generator name, or a dimension-less node. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.induction}}\\*
+\texttt{InductionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{InductionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{InductionError})} & A value is outside the mathematical domain this module accepts. \\
+\texttt{InductionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{InductionError})} & A request is malformed, independent of any diagram's concreteness. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.induction_kernel}}\\*
+\texttt{NoInductionTheorem}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Why an induction verdict has no kernel theorem. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.interop}}\\*
+\texttt{InteropError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{InteropGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{InteropError})} & A request is malformed: a wrong argument type, a bad limit, or an unknown operation. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.kernel}}\\*
+\texttt{KernelError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A proof piece the kernel does not accept. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_finite}}\\*
+\texttt{FiniteUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & An instance export without a final theorem. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_linked}}\\*
+\texttt{LinkedUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & The diagram or step has no linked-diagram export. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_net}}\\*
+\texttt{NetUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A theorem or diagram outside the tensor-network export. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_restrict}}\\*
+\texttt{RestrictUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & An export whose final theorem the corollary does not read. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_scalar}}\\*
+\texttt{ScalarUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A scalar or identity outside what this module writes or proves. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.lemmas}}\\*
+\texttt{LemmaError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A lemma is unknown, unproved, or has no instance where one was asked for. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.periodic}}\\*
+\texttt{PeriodicError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A side that does not scale by a constant over its index's period. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.prove}}\\*
+\texttt{ProveError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
+\texttt{ProveGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ProveError})} & A request is malformed: a wrong argument type or an out-of-range bound. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.radix_window}}\\*
+\texttt{RadixWindowError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & The radix window does not settle a step; the message names the reason. \\
+\midrule
+\multicolumn{2}{@{}l}{\module{archytaszx.semantics.refute_check}}\\*
+\texttt{RecheckFailed}\newline\hspace*{1em}{\footnotesize(\texttt{NetUnsupported})} & A refutation's evidence does not hold when rechecked. \\
+\end{xltabular}
+}
+
+\section{Internal Control-Flow Signals}\label{sec:errors-internal}
+
+The following classes never leave their module; each carries a search or saturation result to an enclosing handler.
+
+{\small
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.42\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}X@{}}
+\toprule
+Class & Base class & Meaning \\
+\midrule
+
+\texttt{archytaszx.rewrite.\allowbreak{}egraph.\allowbreak{}\_Stop} & \texttt{Exception} & Internal signal ending a saturation run with \texttt{reason}. \\
+\texttt{archytaszx.rewrite.\allowbreak{}tactics.\allowbreak{}\_Found} & \texttt{Exception} & Internal signal carrying the forward and backward step chains of a meet. \\
+\texttt{archytaszx.rewrite.\allowbreak{}tactics.\allowbreak{}\_Accepted} & \texttt{Exception} & Internal signal carrying the step chain to a state the predicate accepted. \\
+\texttt{archytaszx.rewrite.\allowbreak{}tactics.\allowbreak{}\_Limit} & \texttt{Exception} & Internal signal ending a search with \texttt{status}. \\
+\texttt{archytaszx.semantics.\allowbreak{}interop.\allowbreak{}\_OneSided} & \texttt{Exception} & The reference evaluates at a sample and the other side is outside its domain there. \\
+\texttt{archytaszx.semantics.\allowbreak{}lean\_pathsum.\allowbreak{}\_LiftRaises} & \texttt{PathSum\-Unsupported} & A canonical form whose XOR lift raises; it carries both reduced sums. \\
+\texttt{archytaszx.semantics.\allowbreak{}prove.\allowbreak{}\_Stopped} & \texttt{BaseException} & Raised in a layer callback to stop a search another search has made moot. \\
+\bottomrule
+\end{xltabular}
+}

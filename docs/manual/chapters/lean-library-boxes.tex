@@ -1,0 +1,1404 @@
+\chapter{The Lean Library: !-Boxes, Families, Chains and Bridges}\label{ch:lean-boxes}
+
+% A Lean listing style with the Greek letters and symbols this chapter's statements use.
+\lstdefinestyle{leanbox}{
+  style=lean,
+  literate={→}{{$\to$}}1 {←}{{$\leftarrow$}}1 {≤}{{$\le$}}1 {≥}{{$\ge$}}1 {≠}{{$\ne$}}1
+           {ω}{{$\omega$}}1 {⟩}{{$\rangle$}}1 {⟨}{{$\langle$}}1 {∀}{{$\forall$}}1
+           {∃}{{$\exists$}}1 {λ}{{$\lambda$}}1 {∑}{{$\sum$}}1 {·}{{$\cdot$}}1
+           {ℂ}{{$\mathbb{C}$}}1 {ℕ}{{$\mathbb{N}$}}1 {ℤ}{{$\mathbb{Z}$}}1 {ℚ}{{$\mathbb{Q}$}}1
+           {↦}{{$\mapsto$}}1 {⊗}{{$\otimes$}}1 {∘}{{$\circ$}}1 {≫}{{$\gg$}}1
+           {α}{{$\alpha$}}1 {β}{{$\beta$}}1 {π}{{$\pi$}}1 {∈}{{$\in$}}1 {×}{{$\times$}}1
+           {₀}{{$_0$}}1 {₁}{{$_1$}}1 {₂}{{$_2$}}1 {⁻}{{$^{-}$}}1 {¹}{{$^{1}$}}1
+           {√}{{$\surd$}}1 {∧}{{$\wedge$}}1 {∨}{{$\vee$}}1 {¬}{{$\neg$}}1 {↔}{{$\leftrightarrow$}}1
+           {⟶}{{$\longrightarrow$}}1 {ε}{{$\varepsilon$}}1 {μ}{{$\mu$}}1 {σ}{{$\sigma$}}1
+           {τ}{{$\tau$}}1 {ρ}{{$\rho$}}1 {ν}{{$\nu$}}1 {φ}{{$\varphi$}}1 {Δ}{{$\Delta$}}1
+           {∏}{{$\prod$}}1 {∉}{{$\notin$}}1 {▸}{{$\triangleright$}}1 {δ}{{$\delta$}}1
+           {θ}{{$\theta$}}1 {ℝ}{{$\mathbb{R}$}}1 {Φ}{{$\Phi$}}1 {ψ}{{$\psi$}}1 {′}{{$'$}}1,
+}
+\newcommand{\lbx}{\lstinline[style=leanbox,frame=none,basicstyle=\ttfamily,breaklines=true,breakatwhitespace=false]}
+
+This chapter specifies the part of the Lean library \file{archytaszx/lean/ArchytasZX} that gives meaning to symbolic diagrams: diagrams with \bboxes{}~\cite{dixon2009graphical,kissinger2014pattern}, families of networks indexed by multiplicities, chain, tree, and periodic families, and the linear-time bridges that tie the engine's diagram data to the networks the exporters emit. The library is written in \tool{Lean~4}{https://lean-lang.org}~\cite{demoura2021lean4} over \tool{Mathlib}{https://github.com/leanprover-community/mathlib4}~\cite{mathlib2020}. The core definitions it builds on (the generator kinds \lbx!Kind!, the nodes and networks \lbx!Node! and \lbx!Net!, the environment \lbx!Env!, the evaluation \lbx!eval!, the scaled equality \lbx!Equal!, the local equation \lbx!LocalEq!, the rewrite-in-context lemmas \lbx!frame! and \lbx!rewrite!, the engine's diagram data \lbx!Diagram!, and \lbx!DEqual!) are specified in \cref{ch:lean-core}; this chapter recalls them only in the compact form its statements need (\cref{sec:boxes-recall}).
+
+The chapter covers 22 modules. \Cref{tab:boxes-modules} lists them with their direct imports, their subject, and the Python exporter that emits proofs against them. The exporters themselves are specified in \cref{ch:lean-export-net,ch:lean-export}; this chapter states only which definitions and theorems each exporter instantiates and with which arguments.
+
+\begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}p{2.7cm}X>{\raggedright\arraybackslash}p{2.6cm}@{}}
+\caption{Modules of this chapter, in the order of their sections.}\label{tab:boxes-modules}\\
+\toprule
+Module & Imports & Subject & Exporter\\
+\midrule
+\endfirsthead
+\toprule
+Module & Imports & Subject & Exporter\\
+\midrule
+\endhead
+\file{Bundle} & \file{WZ} & families of networks by bundled labels; splitting the last copy; the empty family; renaming, plugging, isomorphism up to bundles & \file{lean_net.py}, \file{lean_sym.py}\\
+\file{Port} & \file{Bundle} & port boxes on networks: the split of equal networks & \file{lean_sym.py}\\
+\file{Bridge} & \file{Expand} & box chains of a diagram; the bundled network \lbx!toNetB! & \file{lean_net.py}\\
+\file{PortBox} & \file{Relabel}, \file{ExpandFacts} & the box invariant \lbx!WF!; instantiating a port box & ---\\
+\file{NodeBox} & \file{Split} & instantiating a node box & ---\\
+\file{Induct} & \file{NodeBox} & instantiating every box & ---\\
+\file{BoxFree} & \file{Induct} & the digit sum of a box-free diagram & ---\\
+\file{NodeVal} & \file{Tower} & leg values of a copy; bundled generators at block values & ---\\
+\file{NodeBridge} & \file{NodeVal} & a bundled node as the product of its copies & ---\\
+\file{FamBridge} & \file{NetDigits} & the expansion through the family's network & ---\\
+\file{FamCheck} & \file{FamBridge} & decidable conditions of the family bridge & \file{lean_net.py}\\
+\file{FamK} & \file{OrderK} & family theorems on the expansions in key order & \file{lean_net.py}\\
+\file{DiagramBridge} & \file{Diagram} & the linear-time check \lbx!bridgeD! of \lbx!toNet! & \file{lean_net.py}\\
+\file{BoxedBridge} & \file{FamK}, \file{DiagramBridge} & the linear-time check \lbx!bridgeB! of \lbx!toNetB! and \lbx!FamOK! & \file{lean_net.py}\\
+\file{ChainInduct} & \file{Bundle} & chain families \lbx!chainNet! and \lbx!chain_equal! & \file{lean_chain.py}\\
+\file{ChainBox} & \file{Bridge} & chain boxes \lbx!DChain! and \lbx!expandChain! & ---\\
+\file{ChainLink} & \file{ChainBox}, \file{ChainInduct} & dropping an identity; the example at $k=2$ & ---\\
+\file{ChainEvery} & \file{ChainLink} & the example at every $k$ & ---\\
+\file{ChainMixed} & \file{ChainInduct} & chain families over mixed wire dimensions & \file{lean_chain.py}\\
+\file{TreeInduct} & \file{ChainInduct} & tree families \lbx!treeNet!, heap order & \file{lean_chain.py}\\
+\file{Periodic} & \file{ChainInduct} & periodic families & ---\\
+\file{PeriodicChain} & \file{Periodic} & closed periodic chain families \lbx!famNet! & \file{lean_periodic.py}\\
+\bottomrule
+\end{xltabular}
+
+The modules form two strands. The \emph{network strand} (\file{Bundle}, \file{Port}, \file{ChainInduct}, \file{ChainMixed}, \file{TreeInduct}, \file{Periodic}, \file{PeriodicChain}) works on \lbx!Net! values alone: a family indexed by a multiplicity is one network whose \emph{bundled} labels carry values below $d^k$, and induction on the multiplicity proceeds by \emph{peeling} one copy. The \emph{diagram strand} (\file{Bridge}, \file{PortBox}, \file{NodeBox}, \file{Induct}, \file{BoxFree}, \file{NodeVal}, \file{NodeBridge}, \file{FamBridge}, \file{FamCheck}, \file{FamK}, \file{DiagramBridge}, \file{BoxedBridge}, \file{ChainBox}, \file{ChainLink}, \file{ChainEvery}) connects the engine's boxed diagrams, as Lean data, to those networks: the instantiation of every \bbox{} (the \emph{expansion}) has the tensor of the family's network at every multiplicity. The theorem that closes the strand, \lbx!DEqual_expandK_of_checks! (\cref{sec:boxes-famk}), turns an equation between two family networks into an equation between the two expansions, with every side condition decided by the Lean kernel.
+
+\section{Recalled Definitions}\label{sec:boxes-recall}
+
+This section fixes the notation of the core library and of the modules outside this chapter that its statements read. Every definition here is restated, not specified; the specification is in \cref{ch:lean-core} and in the chapters that cover \file{Expand}, \file{ExpandFacts}, \file{Digits}, \file{Relabel}, \file{Split}, \file{Gather}, \file{Tower}, \file{Positional}, \file{Order}, \file{OrderK}, \file{NetDigits}, and \file{Iso}.
+
+\subsection{Networks}
+
+A \lbx!Node! is a record $\langle \kappa, o, i, \delta, \phi\rangle$ of a generator kind $\kappa$, a list $o$ of output labels, a list $i$ of input labels, a dimension index $\delta$, and a phase index $\phi$. A \lbx!Net! is a triple $N=\langle\mathit{nodes},\mathit{int},\mathit{bnd}\rangle$ of nodes, summed labels, and boundary labels. An environment \lbx!Env! is a record of a dimension table $\mathit{dimv}:\N\to\N$, a phase table $\mathit{phase}:\N\to\N\to\R$ (turns), a label table $\mathit{labs}:\mathrm{List}(\N\times\N)$ from labels to dimension indices, multiplicity values $\mathit{mult}:\N\to\N$ (default $0$), and coefficient vectors $\mathit{coef}:\N\to\N\to\C$ (default $1$). The dimension of a label and the evaluation are
+\begin{align*}
+\mathit{labIdx}(\mathit{labs},l) &= \text{the first value at key } l \text{ in } \mathit{labs}\text{, else } 0,\\
+\mathit{labDim}_E(l) &= E.\mathit{dimv}(\mathit{labIdx}(E.\mathit{labs},l)),\\
+\mathit{eval}_E(N,\sigma) &= \sum_{\tau \,\equiv\, \sigma \text{ off } N.\mathit{int},\ \tau(l)<\mathit{labDim}_E(l)\ (l\in N.\mathit{int})}\ \prod_{n\in N.\mathit{nodes}} \mathit{val}_E(\tau,n),
+\end{align*}
+where the sum is the nested sum \lbx!sumOver! over the summed labels in list order and $\mathit{val}_E(\tau,n)$ is the generator tensor of $n$ at the leg values $\tau(o)$, $\tau(i)$ (\lbx!tensor!, \cref{ch:lean-core}). The kinds with bundled legs read some legs through the digits of their values: for a chain $c=[m_1,\dots,m_r]$ of multiplicity indices (outermost first),
+\begin{equation}\label{eq:boxes-digsC}
+\begin{aligned}
+\mathit{digsC}_{\mathit{mult},d}([\,],v)&=[v],\\
+\mathit{digsC}_{\mathit{mult},d}(m{::}c,v)&=\mathrm{flatMap}\bigl(\mathit{digs}(d^{\prod_{x\in c}\mathit{mult}(x)},\mathit{mult}(m),v),\ \mathit{digsC}_{\mathit{mult},d}(c,\cdot)\bigr),
+\end{aligned}
+\end{equation}
+with $\mathit{digit}(d,i,v)=\lfloor v/d^i\rfloor \bmod d$ and $\mathit{digs}(d,k,v)=[\mathit{digit}(d,0,v),\dots,\mathit{digit}(d,k-1,v)]$. \lbx!tailVals mult d vs cs! concatenates $\mathit{digsC}(c_j,v_j)$ over the zipped values and chains, and \lbx!bundled mult d vs cs! keeps the first $|vs|-|cs|$ values and replaces the last $|cs|$ by their \lbx!tailVals!. The kinds are \lbx!Z!, \lbx!X!, \lbx!F!, \lbx!T!, \lbx!Ti!, \lbx!W!, \lbx!B!, \lbx!S!, \lbx!I!, \lbx!ZW!, \lbx!XW!, \lbx!ZB cs! (inputs bundled along \lbx!cs!), \lbx!XB co ci!, \lbx!WB cs! (outputs bundled), and \lbx!Bun m b! ($\mathit{mult}(m)$ copies of the kind $b$, copy $i$ reading digit $i$ of each leg in base $d^{\prod \mathit{mult}(\text{rest of the leg's chain})}$). \lbx!Kind.outCs b n! and \lbx!Kind.inCs b n! give the chains of the $n$ output and input legs of a copied generator: \lbx!Bun m b! prepends $m$ to every chain of $b$; \lbx!XB!, \lbx!WB!, \lbx!ZB! pad their chain lists on the left with empty chains to length $n$; every other kind has $n$ empty chains.
+
+\begin{definition}[Scaled equality]\label{def:boxes-equal}
+$\mathit{Equal}_E(s_1,N_1,s_2,N_2)$ holds when $N_1.\mathit{bnd}$ is a permutation of $N_2.\mathit{bnd}$ and $s_1\,\mathit{eval}_E(N_1,\sigma)=s_2\,\mathit{eval}_E(N_2,\sigma)$ for every $\sigma$ with $\sigma(l)<\mathit{labDim}_E(l)$ on every $l\in N_1.\mathit{bnd}$ (\lbx!InRange!). $\mathit{LocalEq}_E(L,i_L,R,i_R,\mathit{iface},k_L,k_R)$ holds when $k_L\sum_{i_L}\prod L=k_R\sum_{i_R}\prod R$ at every assignment in range on $\mathit{iface}$.
+\end{definition}
+
+The core library proves \lbx!Equal.refl!, \lbx!Equal.symm!, \lbx!Equal.trans!, \lbx!Equal.mul_trans! ($\mathit{Equal}(a,X,b,Y)\wedge\mathit{Equal}(c,Y,e,Z)\Rightarrow\mathit{Equal}(ac,X,be,Z)$), \lbx!Equal.rescale!, and the frame lemma: a local equation between node lists $L$, $R$ holds inside any context $C$ whose labels avoid the locally summed labels, the interface labels being summed in the context or on the boundary. \lbx!ren π! is the renaming by a list of pairs, the identity off its keys; \lbx!ren_injective! proves it injective when its keys are distinct and their images a permutation of them. \lbx!nodeEquiv n m! holds when $n$ and $m$ agree up to the leg symmetry of their generator (any permutation of all legs of \lbx!Z!/\lbx!ZW!, of each side of \lbx!X!/\lbx!XW!, none otherwise); \lbx!isoOK labs A B π p! checks that $B$ is $A$ with summed labels renamed by $\pi$ and nodes reordered by the index list $p$, each node equivalent; \lbx!iso! proves $\mathit{Equal}(s,A,s,B)$ from it.
+
+\subsection{Diagrams}
+
+A \lbx!Port! is $\langle\mathit{node},\mathit{out},\mathit{pos}\rangle$. A \lbx!DNode! is $\langle\mathit{id},\kappa,\delta,\phi,\mathit{outs},\mathit{ins}\rangle$ with the dimension index of every output and input leg. A \lbx!DBox! is $\langle\mathit{id},\mathit{mult},\mathit{parent},\mathit{nodes},\mathit{ports}\rangle$: a multiplicity index, an optional parent box id, a node scope, and a port scope. A \lbx!Diagram! has nodes, wires (pairs of ports), boundary outputs and inputs, and boxes; \lbx!bnd = outs ++ ins!. \lbx!portDim p! is the dimension index of the leg $p$ on its node (else $0$); \lbx!locate p! is \lbx!inl i! for the first boundary slot $i$ holding $p$, else \lbx!inr j! for the first wire $j$ with $p$ as an end. \lbx!toNet off! labels slot $i$ by $i$ and wire $j$ by $\mathit{off}+j$; \lbx!check L off! holds when every leg is located, every wire joins two legs of one dimension index, $|\mathit{bnd}|\le\mathit{off}$, and $L$ gives every slot and wire label its dimension index. \lbx!DEqual E s₁ D₁ s₂ D₂! holds when the boundary dimension indices agree and the scaled tensor entries agree at every boundary assignment in range; \lbx!DEqual_iff! equates it to \lbx!Equal! of the two networks under checked labeling.
+
+\subsection{Expansion}\label{sec:boxes-recall-expand}
+
+\lbx!Diagram.expand ks D! instantiates every box $b$ at $k=\mathit{ks}(b.\mathit{mult})$, one leaf box (no box has it as parent) at a time, least id first, with fuel $|D.\mathit{boxes}|+1$ (\lbx!expandFuel!). A box with an empty port scope is a \emph{node box} and is instantiated by \lbx!expandNode!; any other box is a \emph{port box} and is instantiated by \lbx!expandPort!. At $k=0$ both first apply \lbx!gather!, which moves the boundary ports of each enclosing node box into one block at the first of them.
+\begin{itemize}
+\item \lbx!shiftPos g k p! $=p.\mathit{pos}-c+kc$ where $c$ counts the legs before $p$ on its side that $g$ holds; \lbx!growSide g k x out ds! replaces each leg dimension that $g$ holds by $k$ copies; \lbx!growImg g k p! is the list of the $k$ ports $\langle p.\mathit{node},p.\mathit{out},\mathit{shiftPos}+j\rangle$ ($j<k$) when $g(p)$, else the single port at $\mathit{shiftPos}$.
+\item \lbx!growPorts D b k! grows every port of $b.\mathit{ports}$ to $k$ legs in place: nodes by \lbx!growSide!, wires as zips of the two ends' images, boundary as the flattened images, boxes other than $b$ with their ports mapped, empty boxes dropped.
+\item \lbx!cpId D b j x! $=\mathit{fresh}(D)+j\,|b.\mathit{nodes}|+(\text{rank of } x \text{ in sorted } b.\mathit{nodes})$ with $\mathit{fresh}(D)=\max(\text{ids})+1$; \lbx!inS b p! holds when $p$ is on a node of $b$; \lbx!crossP D b p! when $p$ is outside $b$ and wired to a port inside it; \lbx!nimg D b k p! is the list of copies $\langle\mathit{cpId}(j,p.\mathit{node}),p.\mathit{out},p.\mathit{pos}\rangle$ for $p$ inside, else \lbx!growImg (crossP D b) k p!; \lbx!copyNodes D b k! copies $b$'s nodes $k$ times, grows the crossing legs, maps wires by zips of \lbx!nimg!, the boundary by \lbx!spliceN! (the ports inside $b$ become one block, copy by copy, at the first of them), and every other box's node scope by replacing nodes of $b$ with all copies.
+\end{itemize}
+
+\subsection{Digit sums}\label{sec:boxes-recall-digits}
+
+The diagram strand evaluates a boxed diagram at concrete multiplicities without expanding it, by a \emph{digit sum}. \lbx!cidx ks c! is the list of copy indices $t=[t_1,\dots,t_r]$ with $t_i<\mathit{ks}(c_i)$ in lexicographic order; \lbx!rcidx ks c! is the same set with the innermost coordinate slowest; $\mathit{size}(\mathit{ks},c)=\prod_i \mathit{ks}(c_i)$ and $\mathit{pos}(\mathit{ks},c,t)=\sum_i t_i\prod_{j>i}\mathit{ks}(c_j)$ is the place of $t$ in \lbx!cidx!. The chains of a diagram (\cref{sec:boxes-bridge}) are \lbx!nodeChain x! (multiplicity indices of the node boxes holding $x$, outermost first), \lbx!tail p! (the multiplicities a leg bundles beyond its node's own copies), and \lbx!legChain p = nodeChain p.node ++ tail p!. The labels are \lbx!dlab p t!$=2\cdot\mathrm{pair}(\mathit{code}(p),\mathrm{encode}(t))$ (digit $t$ of leg $p$) and \lbx!slab i t!$=2\cdot\mathrm{pair}(i,\mathrm{encode}(t))+1$ (digit $t$ of slot $i$); \lbx!dlabs ks! lists \lbx!dlab p t! for every leg $p$ and every $t\in\mathit{cidx}(\mathit{legChain}\,p)$. Copy $t$ of node $n$, \lbx!dnode ks n t!, is the plain node with each leg $i$ replaced by the labels \lbx!dlab ⟨n.id,o,i⟩ (t ++ s)! for $s\in\mathit{rcidx}(\mathit{tail})$. Then
+\begin{equation}\label{eq:boxes-evalD}
+\mathit{evalD}_{E,\mathit{ks}}(D,\sigma)=\sum_{\nu\text{ on } \mathit{dlabs}}[\mathit{pinsD}(\nu)]\ \prod_{n\in D.\mathit{nodes}}\ \prod_{t\in\mathit{cidx}(\mathit{nodeChain}\,n)}\mathit{val}_E(\nu,\mathit{dnode}(n,t)),
+\end{equation}
+where each digit label of leg $p$ ranges below $E.\mathit{dimv}(\mathit{portDim}\,p)$, $\nu$ reads the slot labels from $\sigma:\N\to\mathrm{List}\,\N\to\N$, and $\mathit{pinsD}(\nu)$ holds when the two legs of every wire agree digit by digit and every boundary leg's digits equal its slot's. \lbx!bndMap D D′ φ σ′! reads $D$'s slot digits from $D'$'s through a map of digits $\varphi$: slot $i$, digit $t$ reads $\sigma'$ at the slot of $(\varphi(\mathit{bnd}_i,t))_1$ in $D'$ and digit $(\varphi(\mathit{bnd}_i,t))_2$. \lbx!φS img g p t! is the map of digits of a split along a leaf box: when $g(p)$, the last coordinate of $t$ picks the image $(\mathit{img}\,p)[\mathit{last}\,t]$ and the rest is kept; otherwise the single image with $t$. \lbx!evalD_split! (\file{Split}) states that splitting legs along a leaf box keeps the digit sum under the hypotheses \lbx!SplitOK!.
+
+\section{Bundles: Families of Networks}\label{sec:boxes-bundle}
+
+\file{Bundle.lean} makes a family of networks indexed by a multiplicity $k$ one network. A \emph{bundle label} of base dimension $d$ carries a value below $d^k$, read as $k$ base-$d$ digits, one per copy. Peeling the last copy turns the network at $k+1$ into the network at $k$ with one more ordinary label per bundle; removing every bundle gives the network at $k=0$. These two facts make the family equal at every $k$ by induction.
+
+\subsection{Digits}
+
+\begin{lemma}[Digit lemmas]\label{lem:boxes-digits}
+For $d>0$, $i<k$, $v<d^k$, $y<d$:
+\begin{gather*}
+\mathit{digit}(d,i,v)<d,\qquad
+\mathit{digit}(d,i,v+d^k y)=\mathit{digit}(d,i,v),\qquad
+\mathit{digit}(d,k,v+d^k y)=y,\\
+\mathit{digs}(d,k+1,v+d^k y)=\mathit{digs}(d,k,v)\mathbin{+\!\!+}[y],\qquad
+\sum_{v<ab}f(v)=\sum_{v<a}\sum_{y<b}f(v+ay).
+\end{gather*}
+\end{lemma}
+These are \lbx!digit_lt!, \lbx!digit_low!, \lbx!digit_top!, \lbx!digs_succ!, and \lbx!sum_range_mul!; \lbx!digs_combine! restates \lbx!digs_succ! with base $B$.
+
+\subsection{Families and their environments}
+
+\begin{definition}[Family]\label{def:boxes-fam}
+A \lbx!Fam! is a record
+\begin{lstlisting}[style=leanbox]
+structure Fam where
+  dims : ℕ → ℕ
+  bund : List (ℕ × ℕ × ℕ)
+  phase : ℕ → ℕ → ℝ
+  labs : List (ℕ × ℕ)
+  coef : ℕ → ℕ → ℂ := fun _ _ => 1
+\end{lstlisting}
+An entry $(i,j,m)\in\mathit{bund}$ declares the dimension index $i$ a \emph{bundle} of the index $j$ along the multiplicity index $m$; the first entry with key $i$ counts. \lbx!dims! gives the value of every plain index, \lbx!phase!, \lbx!labs!, and \lbx!coef! are shared by every member of the family.
+\end{definition}
+
+The chain and root of an index follow \lbx!bund! with fuel:
+\begin{align*}
+\mathit{chainF}(0,i)&=[\,], & \mathit{chainF}(n{+}1,i)&=\begin{cases} m :: \mathit{chainF}(n,j) & \mathit{bund}(i)=(j,m)\\ [\,] & \text{otherwise}\end{cases}\\
+\mathit{rootF}(0,i)&=i, & \mathit{rootF}(n{+}1,i)&=\begin{cases} \mathit{rootF}(n,j) & \mathit{bund}(i)=(j,m)\\ i & \text{otherwise}\end{cases}
+\end{align*}
+and $\mathit{chain}(i)=\mathit{chainF}(i{+}1,i)$, $\mathit{root}(i)=\mathit{rootF}(i{+}1,i)$. \lbx!Fam.wf! holds when every entry $(i,j,m)$ has $j<i$; under it the fuel $i+1$ suffices (\lbx!Fam.chainF_stable!: $\mathit{chainF}(n,i)=\mathit{chain}(i)$ and $\mathit{rootF}(n,i)=\mathit{root}(i)$ for $n\ge i+1$), and
+\[
+\mathit{bund}(i)=(j,m)\ \Rightarrow\ \mathit{chain}(i)=m::\mathit{chain}(j)\ \wedge\ \mathit{root}(i)=\mathit{root}(j)\qquad(\text{\lbx!Fam.chain_some!}).
+\]
+\lbx!Fam.chain_none! gives $\mathit{chain}(i)=[\,]$, $\mathit{root}(i)=i$ when $i$ has no entry, and \lbx!Fam.lt_of_lookup! gives $j<i$.
+
+\begin{definition}[Family environment]\label{def:boxes-famenv}
+At the multiplicities $\mathit{ks}:\N\to\N$,
+\[
+F.\mathit{dimv}_{\mathit{ks}}(i)=\begin{cases}F.\mathit{dims}(i) & i\text{ has no entry in }\mathit{bund},\\ F.\mathit{dims}(\mathit{root}\,i)^{\prod_{x\in\mathit{chain}\,i}\mathit{ks}(x)} & \text{otherwise,}\end{cases}
+\]
+and \lbx!F.env ks! is the environment $\{\mathit{dimv}:=F.\mathit{dimv}_{\mathit{ks}},\ \mathit{phase}:=F.\mathit{phase},\ \mathit{labs}:=F.\mathit{labs},\ \mathit{mult}:=\mathit{ks},\ \mathit{coef}:=F.\mathit{coef}\}$.
+\end{definition}
+\lbx!Fam.dimv_eq! states the uniform form $F.\mathit{dimv}_{\mathit{ks}}(i)=F.\mathit{dims}(\mathit{root}\,i)^{\prod_{\mathit{chain}\,i}\mathit{ks}}$; \lbx!Fam.dimv_congr! makes it depend on $\mathit{ks}$ only on $\mathit{chain}(i)$; \lbx!Fam.dimv_pos! and \lbx!Fam.env_dimv_pos! give positivity from $F.\mathit{dims}(\mathit{root}\,i)>0$; \lbx!Fam.dimv_of! and \lbx!Fam.env_dimv_of! rewrite $F.\mathit{dimv}_{\mathit{ks}}(i)=F.\mathit{dimv}_{\mathit{ks}}(d_z)^{\prod_{ms}\mathit{ks}}$ when $\mathit{chain}(i)=ms$, $\mathit{root}(i)=d_z$ and $d_z$ is plain.
+
+\begin{definition}[Spec]\label{def:boxes-spec}
+A \lbx!Spec! is a family $F$ along one multiplicity index $m$, the other multiplicities held at $\mathit{ks}$. Its environment at $k$ is
+\[
+S.\mathit{at}(k)=F.\mathit{env}(\mathit{ks}[m\mapsto k]).
+\]
+The predicates on a dimension index $i$ and a label $l$ are
+\begin{align*}
+S.\mathit{cur}(i)&\iff \mathit{bund}(i)=(\_,m') \text{ with } m'=m &&\text{($i$ bundles along $m$ outermost)},\\
+S.\mathit{good}(i)&\iff m\notin\mathrm{tail}(\mathit{chain}\,i) &&\text{($m$ occurs at most outermost)},\\
+S.\mathit{isB}(l)&\iff S.\mathit{cur}(\mathit{labIdx}(F.\mathit{labs},l)),\\
+S.\mathit{baseIdx}(l)&=j \text{ when } \mathit{bund}(\mathit{labIdx}\,l)=(j,\_),\ \text{else } 0,\\
+S.\mathit{base}(l)&=F.\mathit{dimv}_{\mathit{ks}}(S.\mathit{baseIdx}\,l).
+\end{align*}
+\end{definition}
+
+Under \lbx!F.wf!:
+\begin{itemize}
+\item \lbx!Spec.dimv_fixed!: if $m\notin\mathit{chain}(i)$ then $(S.\mathit{at}\,k).\mathit{dimv}(i)=F.\mathit{dimv}_{\mathit{ks}}(i)$ for every $k$;
+\item \lbx!Spec.dimv_cur!: if $\mathit{bund}(i)=(j,m)$ and $S.\mathit{good}(i)$ then $(S.\mathit{at}\,k).\mathit{dimv}(i)=F.\mathit{dimv}_{\mathit{ks}}(j)^k$;
+\item \lbx!Spec.chain_cur!, \lbx!Spec.not_mem_of_good!, \lbx!Spec.cur_some!, \lbx!Spec.mult_ne! ($(S.\mathit{at}\,k).\mathit{mult}(j)$ is independent of $k$ for $j\ne m$), \lbx!Spec.mult_self! ($(S.\mathit{at}\,k).\mathit{mult}(m)=k$), \lbx!Spec.dimv_plain! (a plain index keeps $F.\mathit{dims}$);
+\item \lbx!Spec.labDim_bundle!: a good bundle label has $\mathit{labDim}_{S.\mathit{at}\,k}(x)=S.\mathit{base}(x)^k$; \lbx!Spec.labDim_plain!: a good non-bundle label has the same dimension at every $k$; \lbx!Spec.labDim_hat!: when $\mathit{labIdx}(x+H)=S.\mathit{baseIdx}(x)$, the peeled label $x+H$ has dimension $S.\mathit{base}(x)$ at every $k$;
+\item \lbx!Spec.base_pos!: if every entry $(i,j,m)$ along $m$ has $F.\mathit{dimv}_{\mathit{ks}}(j)>0$, then $S.\mathit{base}(x)>0$ for every bundle label.
+\end{itemize}
+
+\subsection{Peeling the last copy}
+
+\begin{definition}[Peel]\label{def:boxes-peel}
+For bundled legs $\mathit{tl}$ with chains $\mathit{cs}$ and an offset $H$,
+\begin{align*}
+\mathit{peel}(m,H,\mathit{tl},\mathit{cs})=\bigl(&[x+H \mid (x,c)\in\mathrm{zip}(\mathit{tl},\mathit{cs}),\ \mathrm{head}(c)=m],\\
+&[\mathrm{tail}(c)\mid (x,c)\in\mathrm{zip}(\mathit{tl},\mathit{cs}),\ \mathrm{head}(c)=m]\bigr).
+\end{align*}
+\lbx!tailOf ls cs! is the last $|cs|$ entries of $ls$ and \lbx!headOf ls cs! the first $|ls|-|cs|$.
+\end{definition}
+
+\begin{definition}[Node and network split]\label{def:boxes-split}
+\lbx!Node.split m H n! is a list of nodes:
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.4cm}>{\raggedright\arraybackslash}p{11.4cm}@{}}
+\toprule
+Kind of $n$ & \lbx!Node.split m H n!\\
+\midrule
+\lbx!ZB cs! & one node, kind \lbx!ZB (cs ++ p.2)!, inputs \lbx!n.ins ++ p.1!, with $p=\mathit{peel}(m,H,\mathit{tailOf}(n.\mathit{ins},\mathit{cs}),\mathit{cs})$\\
+\lbx!XB co ci! & one node, kind \lbx!XB (co ++ p.2) (ci ++ q.2)!, outputs \lbx!n.outs ++ p.1!, inputs \lbx!n.ins ++ q.1!, $p$ and $q$ the peels of the bundled outputs and inputs\\
+\lbx!WB cs! & one node, kind \lbx!WB (cs ++ p.2)!, outputs \lbx!n.outs ++ p.1!\\
+\lbx!Bun m′ b!, $m'=m$ & $[n,\ \langle b,\ n.\mathit{outs}+H,\ n.\mathit{ins}+H,\ n.\mathit{dim},\ n.\mathit{ph}\rangle]$ (the last copy as its own node on the peeled labels)\\
+any other & $[n]$\\
+\bottomrule
+\end{tabular}
+\end{center}
+\lbx!S.expand H ls! follows every bundle label $l$ of $ls$ by $l+H$. \lbx!Net.split S H N! has nodes $\mathrm{flatMap}(\mathit{Node.split}\ m\ H)$ and summed and boundary labels \lbx!S.expand H!. \lbx!S.combine H k τ! puts bundles and peeled labels back together:
+\[
+S.\mathit{combine}(H,k,\tau)(x)=\begin{cases}\tau(x)+S.\mathit{base}(x)^k\,\tau(x+H) & S.\mathit{isB}(x),\\ \tau(x)&\text{otherwise.}\end{cases}
+\]
+\end{definition}
+
+\begin{definition}[Split conditions]\label{def:boxes-splitok}
+\lbx!Kind.ms! lists the multiplicity indices a kind reads (all chains of \lbx!ZB!, \lbx!XB!, \lbx!WB!; $m$ and those of $b$ for \lbx!Bun m b!; none otherwise). \lbx!copyKind b! holds unless $b$ is \lbx!B!, \lbx!S!, or a \lbx!Bun! of them. \lbx!S.legsOK dim ls cs! holds when $|ls|=|cs|$ and every leg $l$ with chain $c$ has $\mathit{chain}(\mathit{labIdx}\,l)=c$ and $\mathit{root}(\mathit{labIdx}\,l)=\mathit{dim}$. \lbx!S.chainsOK cs! holds when $m\notin\mathrm{tail}(c)$ for every $c\in cs$. \lbx!S.nodeOK n! holds when $n.\mathit{dim}$ is plain and
+\begin{itemize}
+\item for \lbx!B! and \lbx!S!: $n.\mathit{ph}$ is plain and every leg label's index is plain;
+\item for \lbx!Bun m′ b!: \lbx!copyKind b!, $m\notin b.\mathit{ms}$, and \lbx!legsOK! of both sides against \lbx!(Bun m′ b).outCs!, \lbx!inCs!;
+\item for every other kind $\kappa$: \lbx!chainsOK! and \lbx!legsOK! of both sides against $\kappa$'s chains.
+\end{itemize}
+\lbx!S.splitOK H N! is the conjunction of: $0<H$; \lbx!F.wf!; index $0$ plain; every node label summed or on the boundary; every label of nodes, summed list and boundary \lbx!good!; every such label below $H$; $N.\mathit{int}$ without duplicates; every bundle label $l$ has $\mathit{labIdx}(l+H)=S.\mathit{baseIdx}(l)$; every node \lbx!nodeOK!.
+\end{definition}
+
+\lbx!SplitData S H! packages $0<H$ and \lbx!F.wf!; \lbx!SplitFacts S H N! packages \lbx!SplitData! with the six other facts, and \lbx!Spec.splitOK_facts! reads them from \lbx!splitOK!.
+
+\begin{lemma}[Splitting sums]\label{lem:boxes-sumOver-expand}
+Under \lbx!SplitData!, for an integrand $f$ that reads only labels below $H$, labels $ls$ below $H$, all good, with hatted indices as above,
+\[
+\textstyle\sum^{S.\mathit{at}(k+1)}_{ls} f\ \bigl(S.\mathit{combine}(H,k,\tau)\bigr)=\sum^{S.\mathit{at}(k)}_{S.\mathit{expand}(H,ls)} \bigl(\rho\mapsto f(S.\mathit{combine}(H,k,\rho))\bigr)\ (\tau).
+\]
+\end{lemma}
+\noindent This is \lbx!sumOver_expand!; it inducts on $ls$, splitting each bundle sum below $B^{k+1}=B^k\cdot B$ by \lbx!sum_range_mul! and updating \lbx!combine! by \lbx!Spec.combine_upd! and \lbx!Spec.combine_upd₂!.
+
+\begin{theorem}[Node split]\label{thm:boxes-val-split}
+\begin{lstlisting}[style=leanbox]
+theorem val_split (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (hn : S.nodeOK n = true)
+    (τ : ℕ → ℕ)
+    (hd' : ∀ l ∈ n.outs ++ n.ins, S.isB l = true → 0 < S.base l)
+    (hr : ∀ l ∈ n.outs ++ n.ins, S.isB l = true → τ l < S.base l ^ k ∧ τ (l + H) < S.base l) :
+    val (S.at (k + 1)) (S.combine H k τ) n = ((Node.split S.m H n).map (val (S.at k) τ)).prod
+\end{lstlisting}
+\end{theorem}
+The proof splits on the kind. For \lbx!ZB!, \lbx!XB!, \lbx!WB! the bundled legs' digits at $k+1$ are a permutation of their digits at $k$ followed by the peeled values (\lbx!Spec.tail_split!, \lbx!Spec.legs_split!), and the spider and W tensors are invariant under that permutation. For \lbx!Bun m b! the product over $k+1$ copies is the product over the first $k$ copies times copy $k$, whose legs read the peeled labels (\lbx!Spec.copy_split!: copy $i<k$ reads the same digits at $k+1$ and $k$, copy $k$ reads $\tau(l+H)$). A node without bundles along $m$ keeps its value (\lbx!Spec.val_still!, from \lbx!val_env!, \lbx!tensor_env!).
+
+\begin{theorem}[Network split]\label{thm:boxes-eval-split}
+For $F$ the facts \lbx!SplitFacts S H N!, every entry along $m$ of positive base, and $\tau$ in range at $k$ on \lbx!S.expand H N.bnd!,
+\[
+\mathit{eval}_{S.\mathit{at}(k+1)}\bigl(N,\ S.\mathit{combine}(H,k,\tau)\bigr)=\mathit{eval}_{S.\mathit{at}(k)}\bigl(\mathit{Net.split}(S,H,N),\ \tau\bigr)\qquad(\text{\lbx!eval_split!}).
+\]
+\end{theorem}
+
+\lbx!Spec.unsplit H k σ! inverts \lbx!combine! on labels below $H$:
+\[
+\mathit{unsplit}(\sigma)(x)=\begin{cases} \sigma(x)\bmod S.\mathit{base}(x)^k & x<H,\ S.\mathit{isB}(x)\\ \sigma(x) & x<H,\ \neg S.\mathit{isB}(x)\\ \lfloor\sigma(x-H)/S.\mathit{base}(x-H)^k\rfloor & x\ge H,\ S.\mathit{isB}(x-H)\\ \sigma(x)&\text{otherwise,}\end{cases}
+\]
+and \lbx!Spec.combine_unsplit! gives $\mathit{combine}(\mathit{unsplit}\,\sigma)(x)=\sigma(x)$ for $x<H$.
+
+\begin{theorem}[Induction step]\label{thm:boxes-of-split}
+\begin{lstlisting}[style=leanbox]
+theorem Equal.of_split (S : Spec) (H k : ℕ) (N M : Net) (hN : S.splitOK H N = true)
+    (hM : S.splitOK H M = true) (hb : ∀ p ∈ S.F.bund, p.2.2 = S.m → 0 < S.F.dimv S.ks p.2.1)
+    {s s' : ℂ}
+    (h : Equal (S.at k) s (N.split S H) s' (M.split S H)) : Equal (S.at (k + 1)) s N s' M
+\end{lstlisting}
+\end{theorem}
+\noindent The boundary permutation of $N$ and $M$ is the filter to labels below $H$ of the split boundaries' permutation (\lbx!expand_filter!). For $\sigma$ in range at $k+1$, $\tau=\mathit{unsplit}(\sigma)$ is in range at $k$, and \lbx!eval_split! with \lbx!combine_unsplit! rewrites both sides.
+
+\subsection{The empty family}
+
+At $m=0$ every bundle along $m$ has dimension $B^0=1$ and is removed.
+\begin{definition}[Zero]\label{def:boxes-zero}
+\lbx!dropM m ls cs! keeps the head legs of $ls$ and the bundled legs whose chain does not start with $m$, with their chains. \lbx!zk!, \lbx!xk!, \lbx!wk! choose \lbx!Z!, \lbx!X!, \lbx!W! for empty chain lists and \lbx!ZB!, \lbx!XB!, \lbx!WB! otherwise. \lbx!Node.zero m n! is
+\begin{itemize}
+\item for \lbx!ZB cs!: \lbx!some! the node with kind \lbx!zk p.2! and inputs \lbx!p.1!, $p=\mathit{dropM}(m,n.\mathit{ins},cs)$; likewise \lbx!XB! on both sides with \lbx!xk! and \lbx!WB! on the outputs with \lbx!wk!;
+\item for \lbx!Bun m′ _!: \lbx!none! when $m'=m$ (zero copies), else \lbx!some n!;
+\item \lbx!some n! for every other kind.
+\end{itemize}
+\lbx!Net.zero S N! has nodes \lbx!filterMap (Node.zero S.m)! and summed and boundary labels without the bundle labels.
+\end{definition}
+
+\begin{theorem}[Base case]\label{thm:boxes-of-zero}
+Under \lbx!splitOK!,
+\[\mathit{eval}_{S.\mathit{at}(0)}(N,\sigma)=\mathit{eval}_{S.\mathit{at}(0)}(\mathit{Net.zero}(S,N),\sigma)\qquad(\text{\lbx!eval_zero!}).\]
+Hence
+\begin{lstlisting}[style=leanbox]
+theorem Equal.of_zero (S : Spec) (H : ℕ) (N M : Net) (hN : S.splitOK H N = true)
+    (hM : S.splitOK H M = true) (hbnd : N.bnd.Perm M.bnd) {s s' : ℂ}
+    (h : Equal (S.at 0) s (N.zero S) s' (M.zero S)) : Equal (S.at 0) s N s' M
+\end{lstlisting}
+\end{theorem}
+\noindent The node values agree by \lbx!val_zero! (a bundle along $m$ contributes no digits at $\mathit{mult}(m)=0$, \lbx!bundled_zero!; a dropped \lbx!Bun! has the empty product $1$); the summed bundle labels have dimension $1$ and no remaining node reads them (\lbx!Node.zero_labels!), so \lbx!sumOver_drop! removes them.
+
+\subsection{Multiplicities as a list}
+\lbx!ksOf l i = l.getD i 0!. \lbx!update_ksOf! gives \lbx!Function.update (ksOf l) m v = ksOf (l.set m v)! for $m<|l|$, so \lbx!Spec.at ⟨F, m, ksOf l⟩ k = F.env (ksOf (l.set m k))! (\lbx!Spec.at_ksOf!). The exported forms are
+\begin{lstlisting}[style=leanbox]
+theorem Equal.of_split_at (F : Fam) (m H k : ℕ) (l : List ℕ) (hm : m < l.length) (N M : Net)
+    (hN : Spec.splitOK ⟨F, m, ksOf l⟩ H N = true) (hM : Spec.splitOK ⟨F, m, ksOf l⟩ H M = true)
+    (hb : ∀ p ∈ F.bund, p.2.2 = m → 0 < F.dimv (ksOf l) p.2.1) {s s' : ℂ}
+    (h : Equal (F.env (ksOf (l.set m k))) s (N.split ⟨F, m, ksOf l⟩ H) s'
+      (M.split ⟨F, m, ksOf l⟩ H)) :
+    Equal (F.env (ksOf (l.set m (k + 1)))) s N s' M
+theorem Equal.of_zero_at (F : Fam) (m H : ℕ) (l : List ℕ) (hm : m < l.length) (N M : Net)
+    (hN : Spec.splitOK ⟨F, m, ksOf l⟩ H N = true) (hM : Spec.splitOK ⟨F, m, ksOf l⟩ H M = true)
+    (hbnd : N.bnd.Perm M.bnd) {s s' : ℂ}
+    (h : Equal (F.env (ksOf (l.set m 0))) s (N.zero ⟨F, m, ksOf l⟩) s'
+      (M.zero ⟨F, m, ksOf l⟩)) :
+    Equal (F.env (ksOf (l.set m 0))) s N s' M
+\end{lstlisting}
+
+\subsection{Renaming, plugging, and isomorphism up to bundles}
+
+\begin{definition}[Renaming]\label{def:boxes-rename}
+\lbx!Net.rename π N! maps every label of $N$ through \lbx!ren π!. \lbx!renameOK labs π N! holds when the keys of $\pi$ are distinct, their images a permutation of them, and every label $x$ of $N$ has $\mathit{labIdx}(\mathit{ren}\,\pi\,x)=\mathit{labIdx}(x)$.
+\end{definition}
+\begin{proposition}[Renaming and plugging]\label{prop:boxes-rename-plug}
+\begin{enumerate}
+\item \lbx!Equal.rename!: \lbx!renameOK E.labs π A!, \lbx!renameOK E.labs π B!, and $\mathit{Equal}_E(s,A,s',B)$ give $\mathit{Equal}_E(s,\mathit{rename}\,A,s',\mathit{rename}\,B)$.
+\item \lbx!Equal.toLocal!: $\mathit{Equal}_E(s,A,s',B)$ gives
+\[\mathit{LocalEq}_E(A.\mathit{nodes},A.\mathit{int},B.\mathit{nodes},B.\mathit{int},A.\mathit{bnd},s,s').\]
+\item \lbx!plug!: a local equation with scalars $k_L$, $k_R$ in a context $C$ (the hypotheses of \lbx!frame!) gives $\mathit{Equal}_E(k_L,\langle C\mathbin{+\!\!+}L,i_C\mathbin{+\!\!+}i_L,\mathit{bnd}\rangle,k_R,\langle C\mathbin{+\!\!+}R,i_C\mathbin{+\!\!+}i_R,\mathit{bnd}\rangle)$.
+\end{enumerate}
+\end{proposition}
+
+\begin{definition}[Node equivalence with bundles]\label{def:boxes-nodeequivB}
+\lbx!tailEquiv a b ca cb! holds when $|ca|\le|a|$, $|cb|\le|b|$, and the zipped bundled legs with their chains of $a$ are a permutation of those of $b$. \lbx!normTail ls cs! makes the bundled legs of empty chain plain: the head legs, then the empty-chain bundled legs, then the others, with the nonempty chains. \lbx!Node.norm! applies \lbx!normTail! to the bundled side(s) of \lbx!ZB!, \lbx!XB!, \lbx!WB! and rebuilds the kind with \lbx!zk!, \lbx!xk!, \lbx!wk!. \lbx!nodeEquivB₀ n m! holds when \lbx!nodeEquiv n m!, or when $n$, $m$ have the same dimension and phase indices and one of:
+\begin{itemize}
+\item \lbx!ZB cs!, \lbx!ZB cs′!: \lbx!tailEquiv! of the inputs and the outputs with head inputs permuted;
+\item \lbx!XB co ci!, \lbx!XB co′ ci′!: \lbx!tailEquiv! on both sides and head legs permuted per side;
+\item \lbx!WB cs!, \lbx!WB cs′!: \lbx!tailEquiv! of the outputs, head outputs permuted, inputs equal;
+\item \lbx!W!, \lbx!W!: outputs permuted, inputs equal;
+\item \lbx!Bun k Z!, \lbx!Bun k Z!: all legs permuted; \lbx!Bun k X!, \lbx!Bun k X!: each side permuted.
+\end{itemize}
+\lbx!nodeEquivB n m = nodeEquivB₀ n.norm m.norm!. \lbx!isoOKB! is \lbx!isoOK! with \lbx!nodeEquivB! in place of \lbx!nodeEquiv! and the boundaries compared up to permutation.
+\end{definition}
+\lbx!val_nodeEquivB! gives $\mathit{val}(\sigma,n)=\mathit{val}(\sigma,m)$ (through \lbx!val_norm!, \lbx!bundled_norm!, \lbx!bundled_perm!); \lbx!prodVal_equivB! lifts it to zipped node lists; and \lbx!isoB E s A B π p (h : isoOKB E.labs A B π p = true) : Equal E s A s B!. \lbx!LocalEq.equivR! and \lbx!LocalEq.equivL! replace the right or left node list of a local equation node for node by \lbx!nodeEquivB!-equivalent nodes.
+
+\subsection{Exporters}\label{sec:boxes-bundle-export}
+\module{archytaszx.semantics.lean_net} emits \lbx!Equal.of_split_at! and \lbx!Equal.of_zero_at! in the methods \py!lift_lemma!, \py!shift_lemma!, \py!induction_lemma!, and \py!lift! of its exporter class: a family theorem along a multiplicity index $m$ is proved by \lbx!induction! on $k$, the \lbx!zero! case by \lbx!Equal.of_zero_at! from an equation between the two \lbx!Net.zero! networks (typically \lbx!Equal.rescale (isoB ...)!), the \lbx!succ! case by \lbx!Equal.of_split_at! from the induction hypothesis rewritten on the split networks, each \lbx!splitOK! side condition by \lbx!decide!. The same module emits \lbx!isoB! (\py!iso_term!, \py!iso_b!), \lbx!plug! and \lbx!Equal.rename! (\py!induction_lemma!), and \lbx!LocalEq.equivR! (\py!_as_r!, when a rule's rewritten nodes differ from the wanted ones only up to \lbx!nodeEquivB!). \module{archytaszx.semantics.lean_sym} emits the same induction in \py!fixed_proof!, \py!shift_proof!, \py!fam!, and \py!tower!, and proves each \lbx!splitOK! through the structure-only family \lbx!FC! (\cref{sec:boxes-port-struct}) by \py!_split_ok!, which writes
+\begin{lstlisting}[style=leanbox]
+(Spec.splitOK_struct _ m _ _ H t (by decide +kernel : Spec.splitOK (SpC m) H t = true))
+\end{lstlisting}
+with \lbx!FC : Fam := { dims := fun _ => 1, bund := bundL, phase := fun _ _ => 0, labs := labs }! and \lbx!SpC m : Spec := ⟨FC, m, ksOf []⟩!.
+
+\section{Port Boxes on Networks}\label{sec:boxes-port}
+
+\file{Port.lean} handles a port-scoped \bbox{} along $m$ at the network level. Such a box bundles boundary legs of Z spiders, X spiders, and W nodes, each such leg's chain being exactly $[m]$. At $m=k\ge1$ the split network, with one more leg per bundle, is the network itself read at an assignment that advances the lowest digit of each X or W bundle by its peeled leg, times a factor of the boundary values alone. Two equal networks with the same port legs therefore have equal splits (\cref{thm:boxes-of-port}), the converse direction of \cref{thm:boxes-of-split}; together they prove a port-box family equal at every $k$ from its value at $k=1$.
+
+\subsection{Advancing the lowest digit}
+
+\begin{definition}[Digit advance]\label{def:boxes-adj}
+$\mathit{adj}(d,v,e)=v-(v\bmod d)+((v\bmod d)+e)\bmod d$.
+\end{definition}
+\lbx!adj_eq! gives $\mathit{adj}(d,v,e)=d\lfloor v/d\rfloor+((v\bmod d)+e)\bmod d$; for $d>0$, \lbx!adj_div! gives $\lfloor\mathit{adj}/d\rfloor=\lfloor v/d\rfloor$, \lbx!adj_mod! gives $\mathit{adj}\bmod d=(v\bmod d+e)\bmod d$, \lbx!adj_lt! keeps $v<d^k$ for $k\ge1$, \lbx!digit_adj_succ! keeps every digit above $0$, \lbx!digit_adj_zero! advances digit $0$, \lbx!digs_adj! combines them, and \lbx!adj_zero! gives $\mathit{adj}(d,v,0)=v$. With $\mathit{rt}(d)=\sqrt d$ (as a complex number) and the unitary Fourier entry $\mathit{fou}(d,j,k)=\omega_d^{jk}/\sqrt d$,
+\begin{equation}\label{eq:boxes-fou-add}
+\mathit{fou}(d,(a+e)\bmod d,\kappa)=\sqrt d\;\mathit{fou}(d,a,\kappa)\,\mathit{fou}(d,e,\kappa)\qquad(\text{\lbx!fou_add_mod!}),
+\end{equation}
+and the same for the conjugates (\lbx!conj_fou_add_mod!, using \lbx!conj_rt!).
+
+\subsection{Port legs and the port factor}
+
+\begin{definition}[Port legs]\label{def:boxes-portlegs}
+\lbx!portLegs m c tl cs! lists $(x,c)$ for every bundled leg $x$ of $\mathit{tl}$ whose chain starts with $m$, in order. \lbx!Node.ports m n! is \lbx!portLegs m 0! of the bundled inputs of a \lbx!ZB!, \lbx!portLegs m 1! of both bundled sides of an \lbx!XB!, \lbx!portLegs m 2! of the bundled outputs of a \lbx!WB!, and empty otherwise; the second component is the \emph{color} $0$ (Z), $1$ (X), or $2$ (W). \lbx!Net.ports m N! concatenates \lbx!Node.ports! over the nodes.
+\end{definition}
+
+\begin{definition}[Port networks]\label{def:boxes-portnet}
+\lbx!portNode S n! holds when every chain of a \lbx!ZB!, \lbx!XB!, or \lbx!WB! that starts with $m$ is exactly $[m]$; when a \lbx!Bun m′ _! has $m'\ne m$ and no bundle label; and when any other node has no bundle label. \lbx!S.portNet N! holds when every node is \lbx!portNode!, the port labels are distinct, and no summed label is a bundle. \lbx!S.portOK X Y! holds when both are \lbx!portNet! and \lbx!X.ports S.m! is a permutation of \lbx!Y.ports S.m!.
+\end{definition}
+
+\begin{definition}[Port factor and advanced assignment]\label{def:boxes-portC}
+For port legs $P$, an environment $E$, and an assignment $\sigma$,
+\[
+\mathit{portC}_E(H,P,\sigma)=\prod_{(x,c)\in P}\begin{cases}\sqrt{\mathit{labDim}_E(x+H)}^{\,-1} & c=1,\\ [\sigma(x)=0\vee\sigma(x+H)=0] & c=2,\\ [\sigma(x+H)=\sigma(x)\bmod \mathit{labDim}_E(x+H)] & \text{otherwise,}\end{cases}
+\]
+\[
+\mathit{portG}_{S,E}(H,P,\sigma)(x)=\begin{cases}\mathit{adj}\bigl(\mathit{labDim}_E(x+H),\sigma(x),\sigma(x+H)\bigr) & S.\mathit{isB}(x)\wedge{}\\ & \quad((x,1)\in P\vee(x,2)\in P),\\ \sigma(x) & \text{otherwise.}\end{cases}
+\]
+\end{definition}
+
+\subsection{One spider's legs}
+The Z spider with one more leg pinned to a value already on it factors:
+\[
+\mathit{tZ}(d,\varphi,y::L)=[y=z]\;\mathit{tZ}(d,\varphi,L)\quad(z\in L)\qquad(\text{\lbx!tZ_cons_of_mem!}),
+\]
+and \lbx!tZ_append_pinned! iterates it over a list of legs, each pinned to a value $g(x)\in L$. A W node is zero when nonzero values occur in two parts of its outputs (\lbx!tW_two!) and ignores trailing zero outputs (\lbx!tW_zeros!).
+
+\lbx!LegFacts S H k dim tl cs! records the facts the port lemmas read of one spider's bundled legs: $|tl|=|cs|$, \lbx!legsOK!, \lbx!chainsOK!, every chain starting with $m$ equal to $[m]$, every leg \lbx!good!, and the hatted index of every bundle leg. Its lemmas are
+\begin{itemize}
+\item \lbx!port_mem! ($k\ge1$): each Z bundle's lowest digit $\tau(x)\bmod F.\mathit{dims}(\mathit{dim})$ is among the bundled values \lbx!tailVals!;
+\item \lbx!port_prod! ($k\ge1$): for a function $f$ with $f((a+e)\bmod d)=r\,f(a)\,f(e)$ and $g$ the advanced assignment on bundles,
+\[
+\prod f\bigl(\mathit{tailVals}(g)\bigr)=\prod_{(x,c)\in\mathit{portLegs}} r\,f(\tau(x+H))\ \cdot\ \prod f\bigl(\mathit{tailVals}(\tau)\bigr);
+\]
+\item \lbx!port_wperm!: when every W port leg has $\tau(x)=0$ or $\tau(x+H)=0$, the bundled values followed by the peeled values are a permutation of the advanced bundled values followed by zeros; \lbx!port_wtwo!: a nonzero W bundle has a nonzero bundled value;
+\item \lbx!port_of_isB!, \lbx!portC_legs!, \lbx!portLegs_isB!, \lbx!legFacts_of! (the plain head legs and the facts of the bundled tail of a spider kind).
+\end{itemize}
+
+\subsection{The port theorems}
+
+\begin{theorem}[Port node]\label{thm:boxes-port-node}
+For $k\ge1$, port legs $P$ with distinct labels containing \lbx!n.ports S.m!, a \lbx!nodeOK! and \lbx!portNode! node $n$ with good labels and hatted indices, $F.\mathit{dims}(n.\mathit{dim})>0$, and $\tau$ in range on the port labels and their peels,
+\begin{align*}
+&\textstyle\prod \mathit{val}_{S.\mathit{at}(k)}\bigl(\tau,\mathit{Node.split}(m,H,n)\bigr)\\
+&\qquad=\mathit{portC}_{S.\mathit{at}(k)}(H,n.\mathit{ports},\tau)\cdot\mathit{val}_{S.\mathit{at}(k)}\bigl(\mathit{portG}(H,P,\tau),n\bigr)\qquad(\text{\lbx!port_node!}).
+\end{align*}
+\end{theorem}
+\noindent For a Z bundle the peeled leg is pinned to the lowest digit (\lbx!tZ_append_pinned!, \lbx!port_mem!); for an X bundle each F factor of the peeled leg combines with the lowest digit by \eqref{eq:boxes-fou-add}, giving $1/\sqrt d$ per leg (\lbx!port_prod!); for a W bundle the peeled leg and the lowest digit are exchanged for the advanced digit and a zero (\lbx!port_wperm!, \lbx!tW_zeros!), and the node is zero when both are nonzero (\lbx!tW_two!).
+
+\begin{theorem}[Port network]\label{thm:boxes-eval-port}
+For $k\ge1$, $F.\mathit{dims}(i)>0$ for all $i$, \lbx!splitOK! and \lbx!portNet! of $N$, and $\sigma$ in range on \lbx!S.expand H N.bnd!,
+\begin{align*}
+&\mathit{eval}_{S.\mathit{at}(k)}(\mathit{Net.split}(S,H,N),\sigma)\\
+&\qquad=\mathit{portC}_{S.\mathit{at}(k)}(H,N.\mathit{ports},\sigma)\cdot\mathit{eval}_{S.\mathit{at}(k)}\bigl(N,\mathit{portG}(H,P,\sigma)\bigr)\qquad(\text{\lbx!eval_port!}).
+\end{align*}
+\end{theorem}
+\noindent No summed label is a bundle, so the split network sums the same labels; the port labels are boundary labels, so \lbx!portC! factors out of the sum (\lbx!portC_reads!, \lbx!portC_flatMap!) and \lbx!portG! commutes with the sum (\lbx!sumOver_comp!).
+
+\begin{theorem}[Equal splits]\label{thm:boxes-of-port}
+\begin{lstlisting}[style=leanbox]
+theorem Equal.of_port (S : Spec) (H k : ℕ) (hk : 1 ≤ k) (hd : ∀ i, 0 < S.F.dims i) (X Y : Net)
+    (hX : S.splitOK H X = true) (hY : S.splitOK H Y = true) (hp : S.portOK X Y = true)
+    {s s' : ℂ} (h : Equal (S.at k) s X s' Y) :
+    Equal (S.at k) s (X.split S H) s' (Y.split S H)
+theorem Equal.of_port_at (F : Fam) (m H k : ℕ) (l : List ℕ) (hm : m < l.length) (hk : 1 ≤ k)
+    (hd : ∀ i, 0 < F.dims i) (N M : Net) (hN : Spec.splitOK ⟨F, m, ksOf l⟩ H N = true)
+    (hM : Spec.splitOK ⟨F, m, ksOf l⟩ H M = true) (hp : Spec.portOK ⟨F, m, ksOf l⟩ N M = true)
+    {s s' : ℂ} (h : Equal (F.env (ksOf (l.set m k))) s N s' M) :
+    Equal (F.env (ksOf (l.set m k))) s (N.split ⟨F, m, ksOf l⟩ H) s'
+      (M.split ⟨F, m, ksOf l⟩ H)
+\end{lstlisting}
+\end{theorem}
+\noindent Both sides are rewritten by \cref{thm:boxes-eval-port} with the same port list \lbx!X.ports S.m! (the port factors agree by \lbx!portC_perm!), and the hypothesis is applied at the advanced assignment, which is in range by \lbx!adj_lt!.
+
+\subsection{Structure-only checks}\label{sec:boxes-port-struct}
+\lbx!Fam.struct F! keeps $F$'s \lbx!bund! and \lbx!labs! and sets $\mathit{dims}\equiv1$, $\mathit{phase}\equiv0$. The chain, root, \lbx!nodeOK!, \lbx!splitOK!, and \lbx!portOK! depend only on the structure: \lbx!Fam.chainF_struct!, \lbx!Fam.rootF_struct!, \lbx!Spec.nodeOK_struct!, and
+\begin{lstlisting}[style=leanbox]
+theorem Spec.splitOK_struct (F : Fam) (m : ℕ) (ks ks' : ℕ → ℕ) (H : ℕ) (N : Net)
+    (h : Spec.splitOK ⟨F.struct, m, ks'⟩ H N = true) : Spec.splitOK ⟨F, m, ks⟩ H N = true
+theorem Spec.portOK_struct (F : Fam) (m : ℕ) (ks ks' : ℕ → ℕ) (X Y : Net)
+    (h : Spec.portOK ⟨F.struct, m, ks'⟩ X Y = true) : Spec.portOK ⟨F, m, ks⟩ X Y = true
+\end{lstlisting}
+The Lean kernel thus decides these checks on a family whose dimension values are the constant $1$, never evaluating symbolic dimensions. \lbx!Equal.congr_s! restates an equation under provably equal scalars and \lbx!Equal.smul c! multiplies both scalars by $c$.
+
+\paragraph{Exporter.} \module{archytaszx.semantics.lean_sym} emits \lbx!Equal.of_port_at! in the method \py!port! of its exporter: a port box along $m$ is proved at $k=0$ by \lbx!Equal.of_zero_at!, at $k=1$ by \lbx!Equal.of_split_at! from the zero case, and at $k\ge2$ by
+\begin{lstlisting}[style=leanbox]
+Equal.congr_s (Equal.smul alt (Equal.of_port_at fam m H ... (Spec.portOK_struct _ m _ _ xt yt
+  (by decide +kernel : Spec.portOK spc xt yt = true)) ih)) (by ring) (by ring)
+\end{lstlisting}
+inside the \lbx!succ! case of \lbx!Equal.of_split_at!. \py!_port_legs! mirrors \lbx!Net.ports! in Python (returning \py!None! when \lbx!portNet! fails); the method raises \py!NetUnsupported! when the two sides' port legs differ.
+
+\section{Boxed Diagrams as Bundled Networks}\label{sec:boxes-bridge}
+
+\file{Bridge.lean} reads a boxed \lbx!Diagram! as one network for the whole family. A node in node boxes becomes a \lbx!Bun! tower along their multiplicities, outermost first; a leg whose wire reaches deeper boxes, or whose boundary port is in port boxes, becomes a bundled leg of a \lbx!ZB!, \lbx!XB!, or \lbx!WB!; and each label's dimension index bundles its plain index along its chain through a table \lbx!bund!.
+
+\subsection{Box chains}
+
+\begin{definition}[Walk and box chains]\label{def:boxes-walk}
+For a predicate $p$ on boxes, fuel $f$, and a start parent $s$,
+\[
+\mathit{walk}(p,0,s)=[\,],\qquad \mathit{walk}(p,f{+}1,s)=\begin{cases}b::\mathit{walk}(p,f,\mathit{some}\ b.\mathit{id}) & b=\text{the first box with}\\ & \quad p(b)\wedge b.\mathit{parent}=s,\\ [\,]&\text{no such box.}\end{cases}
+\]
+With fuel $|D.\mathit{boxes}|$:
+\begin{align*}
+\mathit{nodeBoxes}(x)&=\mathit{walk}(b\mapsto x\in b.\mathit{nodes},\ \cdot,\ \mathit{none}),\\
+\mathit{portBoxes}(q)&=\mathit{walk}(b\mapsto q\in b.\mathit{ports},\ \cdot,\ \text{the last id of } \mathit{nodeBoxes}(q.\mathit{node})),\\
+\mathit{nodeChain}(x)&=[b.\mathit{mult}\mid b\in\mathit{nodeBoxes}(x)],\\
+\mathit{partner}(q)&=\text{the other end of the first wire with } q \text{ as an end},\\
+\mathit{tail}(q)&=\begin{cases}\mathit{drop}_{|a|}(c) & \mathit{partner}(q)=r,\ |a|<|c|,\\ [\,] & \mathit{partner}(q)=r,\ |a|\ge|c|,\\ [b.\mathit{mult}\mid b\in\mathit{portBoxes}(q)] & \text{no partner,}\end{cases}\\
+&\qquad\text{where } a=\mathit{nodeChain}(q.\mathit{node}),\ c=\mathit{nodeChain}(r.\mathit{node}),\\
+\mathit{wireChain}(w)&=\text{the longer of } \mathit{nodeChain}(w_1.\mathit{node}),\ \mathit{nodeChain}(w_2.\mathit{node})\\
+&\qquad(\text{the first on a tie}),\\
+\mathit{bndChain}(q)&=\mathit{nodeChain}(q.\mathit{node})\mathbin{+\!\!+}[b.\mathit{mult}\mid b\in\mathit{portBoxes}(q)].
+\end{align*}
+\end{definition}
+
+\begin{definition}[Bundle indices]\label{def:boxes-dimFor}
+For a table $\mathit{bund}$ of entries $(i,j,m)$, $\mathit{bundIdx}(\mathit{bund},j,m)$ is the first $i$ with $(j,m)$ as its pair, else $0$, and
+\[
+\mathit{dimFor}(\mathit{bund},\mathit{base},[m_1,\dots,m_r])=\mathit{bundIdx}(\cdots\mathit{bundIdx}(\mathit{bundIdx}(\mathit{base},m_r),m_{r-1})\cdots,m_1)
+\]
+(\lbx!List.foldr!, innermost multiplicity applied first).
+\end{definition}
+
+\begin{definition}[Tail order]\label{def:boxes-tailLe}
+\lbx!chainLt! is the lexicographic order on chains with a proper prefix first: $[\,]<b::bs$, $a::as<b::bs$ iff $a<b$ or ($a=b$ and $as<bs$). \lbx!tailLe! orders triples (chain, side, position) lexicographically by \lbx!chainLt!, then side, then position ($\le$).
+\end{definition}
+
+\begin{definition}[Bundled node]\label{def:boxes-bundleNode}
+For a labeled node $n$ and lists $t_O$, $t_I$ of (position, nonempty tail) pairs for its outputs and inputs, \lbx!bundleNode n tO tI! is $n$ when both lists are empty, and otherwise:
+\begin{itemize}
+\item the kept legs $K_O$, $K_I$ are the legs of $n$ whose position has no tail, in order; $s_O$ ($s_I$) is the list of triples $(\text{tail},0,j)$ ($(\text{tail},1,j)$) sorted by \lbx!tailLe! (insertion sort);
+\item \lbx!Z!: kind \lbx!ZB! of the tails of $s_O\mathbin{+\!\!+}s_I$ sorted together, outputs $K_O$, inputs $K_I$ followed by the legs of the sorted triples (an output or input leg by the side tag);
+\item \lbx!X!: kind \lbx!XB (tails of s_O) (tails of s_I)!, outputs $K_O$ then the legs of $s_O$, inputs $K_I$ then the legs of $s_I$;
+\item \lbx!W!: kind \lbx!WB (tails of s_O)!, outputs $K_O$ then the legs of $s_O$;
+\item any other kind: $n$.
+\end{itemize}
+\end{definition}
+
+\begin{definition}[Family network]\label{def:boxes-toNetB}
+\lbx!D.bnode off n! labels $n$ by \lbx!D.label off!, bundles its tails (the legs $j$ with $\mathit{tail}\ne[\,]$) by \lbx!bundleNode!, and replaces the kind $\kappa$ by the tower $\mathrm{foldr}\ \mathrm{Bun}\ \kappa\ (\mathit{nodeChain}\,n)$, so the outermost box is the outermost \lbx!Bun!. Then
+\[
+\mathit{toNetB}(D,\mathit{off})=\bigl\langle[\mathit{bnode}(\mathit{off},n)\mid n\in D.\mathit{nodes}],\ [\mathit{off}+j\mid j<|D.\mathit{wires}|],\ [0,\dots,|D.\mathit{bnd}|-1]\bigr\rangle,
+\]
+and \lbx!D.labsB bund off! lists $(i,\mathit{dimFor}(\mathit{bund},\mathit{portDim}\,q,\mathit{bndChain}\,q))$ for every slot $i$ with port $q$, then $(\mathit{off}+j,\mathit{dimFor}(\mathit{bund},\mathit{portDim}\,w_1,\mathit{wireChain}\,w))$ for every wire $j$.
+\end{definition}
+
+\section{The Box Invariant and Port-Box Instantiation}\label{sec:boxes-portbox}
+
+\file{PortBox.lean} states the box invariant \lbx!WF! that the expansion keeps and proves that instantiating a leaf port box keeps the digit sum \eqref{eq:boxes-evalD}.
+
+\begin{definition}[Box invariant]\label{def:boxes-WF}
+\lbx!WF D! is the structure with fields:
+\begin{center}
+\begin{tabular}{@{}>{\ttfamily}l>{\raggedright\arraybackslash}p{11.6cm}@{}}
+\toprule
+\normalfont Field & Statement\\
+\midrule
+ids & the node ids are distinct\\
+bids & the box ids are distinct\\
+perm & the first wire ends, then the second wire ends, then the boundary, form a permutation of \lbx!D.legs! (every leg exactly once)\\
+kinds & every box has an empty node scope or an empty port scope\\
+nsub & every node of a node scope is a node of $D$\\
+nchain & for every node $x$, \lbx!ChainOK D (x ∈ ·.nodes) none (D.nodeBoxes x)!\\
+nall & every box holding $x$ is in \lbx!D.nodeBoxes x!\\
+pchain & for every boundary port $p$, \lbx!ChainOK! of \lbx!D.portBoxes p! below the last node box of $p$'s node\\
+pall & every box whose port scope holds a boundary port $p$ is in \lbx!D.portBoxes p!\\
+pbnd & every port of a port scope is a boundary port\\
+wpre & the node boxes of a wire's two ends are prefixes one of the other\\
+ne & every box has a nonempty node scope or port scope\\
+wdim & the two ends of every wire have one dimension index\\
+\bottomrule
+\end{tabular}
+\end{center}
+\lbx!ChainOK D pr start L! (\file{ExpandFacts}) holds when every box of $L$ is in $D$ and satisfies $pr$, every box satisfying $pr$ whose parent is $\mathit{start}$ or the id of a box of $L$ is in $L$, the parent of $L_i$ is $\mathit{start}$ for $i=0$ and $\mathit{some}(L_{i-1}.\mathit{id})$ otherwise, and $\mathit{start}$ followed by the ids of $L$ has no duplicates. \lbx!ChainOK.walk! states that such an $L$ is the output of \lbx!walk! with fuel at least $|L|$.
+\end{definition}
+
+\subsection{Growing ports}
+For a port box $b$:
+\begin{itemize}
+\item \lbx!pg b p! holds when $p\in b.\mathit{ports}$; \lbx!pgrow b k n! grows the sides of $n$ by \lbx!growSide (pg b) k!; \lbx!pbox b k x! maps $x$'s port scope through \lbx!growImg (pg b) k!; \lbx!pshift b k p! is $\langle p.\mathit{node},p.\mathit{out},\mathit{shiftPos}(\mathit{pg}\ b,k,p)\rangle$.
+\item The structural equations \lbx!ep_nodes!, \lbx!ep_legs!, \lbx!ep_wires!, \lbx!ep_bnd!, \lbx!ep_boxes!, \lbx!ep_ids! describe \lbx!growPorts! through these maps; \lbx!growImg_of_not!, \lbx!growImg_of_pos!, \lbx!mem_growImg!, \lbx!mem_growImg′! describe the image of one port; \lbx!ep_disj! states that distinct legs grow into disjoint legs.
+\item Under \lbx!WF D!, $b\in D.\mathit{boxes}$, $b.\mathit{nodes}=[\,]$, and $b$ a leaf: the node chains are kept (\lbx!ep_nchain!, \lbx!ep_nodeBoxes!, \lbx!ep_nodeChain!), the port boxes of an image are those of the original without $b$ (\lbx!ep_pchain!, \lbx!ep_portBoxes!), and the multiplicities of the original's port boxes are those of the image followed by $b.\mathit{mult}$ when $p\in b$ (\lbx!ep_portChain!). Wires carry no port of $b$ (\lbx!not_pg_of_wire!), so wires map one to one (\lbx!ep_wires_map!) and partners map by \lbx!pshift! (\lbx!ep_partner!). Hence
+\[
+\mathit{tail}_D(p)=\mathit{tail}_{D'}(q)\mathbin{+\!\!+}[b.\mathit{mult}\mid \mathit{pg}\ b\ p],\qquad \mathit{legChain}_D(p)=\mathit{legChain}_{D'}(q)\mathbin{+\!\!+}[b.\mathit{mult}\mid \mathit{pg}\ b\ p]
+\]
+for every image $q$ of a leg $p$ (\lbx!ep_tail!, \lbx!ep_legChain!), with $D'$ the grown diagram, and the image keeps the dimension index (\lbx!ep_portDim!).
+\end{itemize}
+
+\begin{definition}[Map of digits of a port box]\label{def:boxes-phiP}
+\[
+\varphi_P(b,k,p,t)=\begin{cases}\bigl((\mathit{growImg}(\mathit{pg}\ b,k,p))[\mathit{last}(t)],\ \mathit{dropLast}(t)\bigr) & \mathit{pg}\ b\ p,\\ \bigl(\mathit{head}(\mathit{growImg}(\mathit{pg}\ b,k,p)),\ t\bigr) & \text{otherwise,}\end{cases}
+\]
+with \lbx!Port.dflt = ⟨0, false, 0⟩! as the default.
+\end{definition}
+With $\mathit{ks}(b.\mathit{mult})=k$, $\varphi_P$ sends every digit $(p,t)$, $t\in\mathit{cidx}(\mathit{legChain}\,p)$, to a digit of the image (\lbx!φP_spec!), is onto (\lbx!φP_onto!), and one to one (\lbx!φP_inj!). \lbx!ep_dnode_side! and \lbx!ep_prodD! show that the copies of every grown node read the relabelled digits, so the node products agree.
+
+\begin{theorem}[Port box instantiation]\label{thm:boxes-evalD-growPorts}
+\begin{lstlisting}[style=leanbox]
+theorem evalD_growPorts (hW : WF D) (hb : b ∈ D.boxes)
+    (hbn : b.nodes = []) (hleaf : ∀ y ∈ D.boxes, y.parent ≠ some b.id) (E : Env)
+    (σ' : ℕ → List ℕ → ℕ) :
+    (D.growPorts b (ks b.mult)).evalD E ks σ' =
+      D.evalD E ks (bndMap D (D.growPorts b (ks b.mult)) (φP b (ks b.mult)) σ')
+theorem ep_WF (hW : WF D) (hb : b ∈ D.boxes) (hbn : b.nodes = [])
+    (hleaf : ∀ y ∈ D.boxes, y.parent ≠ some b.id) : WF (D.growPorts b k)
+\end{lstlisting}
+\end{theorem}
+\noindent The first is \lbx!evalD_relabelφ! (\file{Relabel}) with $\varphi=\varphi_P$: every hypothesis of that lemma (into, onto, one to one, dimensions, wires to wires, boundary to boundary, node products) is one of the lemmas above. \lbx!ep_wire_ends! lists the grown wire ends and boundary as the images of the old ones, from which \lbx!ep_WF! derives each field of \lbx!WF!.
+
+\section{Node-Box Instantiation}\label{sec:boxes-nodebox}
+
+\file{NodeBox.lean} proves that copying a leaf node box $b$ keeps the digit sum: digit $u\mathbin{+\!\!+}[j]$ of a leg on a node of $b$ is digit $u$ of the same leg on copy $j$, and digit $v\mathbin{+\!\!+}[j]$ of an outside leg wired into $b$ is digit $v$ of its $j$-th grown leg.
+
+\subsection{Copies and linked chains}
+\lbx!lt_fresh! and \lbx!fresh_le_cpId! place every copy id at or above $\mathit{fresh}(D)$ and every original id below it; \lbx!cpId_inj! makes \lbx!cpId! one to one on $(j,x)$ with $x\in b.\mathit{nodes}$. \lbx!Linked D start L! holds when every box of $L$ is in $D$ and each box's parent is the previous box's id (the first's $\mathit{start}$); \lbx!Linked.of_chain!, \lbx!Linked.dropLast!, \lbx!Linked.take!, \lbx!Linked.snoc!, \lbx!Linked.of_chain_append! build such chains, \lbx!Linked.nodup! makes a chain from \lbx!none! duplicate-free, and \lbx!Linked.eq_of_last! states that two linked chains from \lbx!none! ending in the same box are equal. Under \lbx!WF D! and $b\in D.\mathit{boxes}$:
+\begin{itemize}
+\item \lbx!nodeBoxes_last!: a node of $b$ has node boxes $A\mathbin{+\!\!+}[b]$, the same for all nodes of $b$ (\lbx!nodeBoxes_same!); \lbx!box_scope!: a box holding one node of $b$ holds all of them; \lbx!portBoxes_in!: a port on a node of $b$ is in no port box;
+\item \lbx!tail_in!: a leg on a node of $b$ has empty tail; \lbx!tail_drop!: a wired leg's tail is its partner's node chain without its own length;
+\item \lbx!outside_prefix!: an outside node wired into $b$ sits in boxes that form a prefix of $A$.
+\end{itemize}
+
+\begin{definition}[Copied diagram parts]\label{def:boxes-copy}
+\lbx!ngrow D b k n! grows the legs of $n$ that \lbx!crossP D b! holds to $k$ legs; \lbx!cnode D b k n! is the $k$ copies $\{n\text{ with } \mathit{id}:=\mathit{cpId}(j,n.\mathit{id})\}$ for $n$ in $b$, else $[\mathit{ngrow}\ n]$; \lbx!copies D b k! lists the copy ids, copy by copy, in sorted scope order; \lbx!nbox D b k y! replaces the nodes of $b$ in $y$'s scope by \lbx!copies! (when $y$ holds any) and maps its ports through \lbx!nimg!; \lbx!gN D b p = inS b p || crossP D b p! marks the legs that split.
+\end{definition}
+
+The lemmas of the section group describe \lbx!copyNodes!: nodes (\lbx!cn_nodes!), wires (\lbx!cn_wires!, \lbx!cn_wires_fst!, \lbx!cn_wires_snd!), legs (\lbx!cn_memL!, \lbx!cn_legs_perm!, \lbx!cnode_legs!), distinct ids (\lbx!cn_ids!, \lbx!cn_mem_ids!), disjoint images (\lbx!cn_disj!, \lbx!nimg_nodup!, \lbx!nimg_flat_nodup!), boundary (\lbx!spliceN_perm!, \lbx!cn_bnd_perm!: the boundary is a permutation of the flattened images), boxes (\lbx!cn_boxes!, \lbx!cn_mem_boxes!, \lbx!nbox_out!, \lbx!nbox_copy!, \lbx!nbox_mult!), chains (\lbx!cn_nchain_out!, \lbx!cn_nchain_copy!, \lbx!cn_chain!, \lbx!cn_nodeChain!: an image of a leg inside $b$ has the node chain without its last entry, any other image keeps it), port chains (\lbx!cn_pchain_out!, \lbx!cn_portBoxes_out!, \lbx!cn_pchain_in!, \lbx!cn_portBoxes_in!), partners (\lbx!cn_partner_wire!, \lbx!cn_partner_bnd!, \lbx!cn_partner_leg!), and dimensions (\lbx!cn_portDim!). \lbx!nimg_length! gives $|\mathit{nimg}\,p|=k$ when \lbx!gN!, else $1$, and \lbx!gN_wire! gives both ends of a wire the same \lbx!gN!. For a leaf $b$:
+\begin{align*}
+\mathit{gN}(p)\Rightarrow \exists c,\ &\mathit{legChain}_D(p)=c\mathbin{+\!\!+}[b.\mathit{mult}]\\ &\wedge \forall q\in\mathit{nimg}(p),\ \mathit{legChain}_{D'}(q)=c\qquad(\text{\lbx!cn_legChain_split!}),
+\end{align*}
+and a leg that does not split has one image with the same chain (\lbx!cn_legChain_keep!).
+
+\begin{theorem}[Node box instantiation]\label{thm:boxes-evalD-copyNodes}
+\begin{lstlisting}[style=leanbox]
+theorem cn_split {D : Diagram} {b : DBox} (ks : ℕ → ℕ) (hW : WF D) (hb : b ∈ D.boxes)
+    (hleaf : ∀ y ∈ D.boxes, y.parent ≠ some b.id) (hbp : b.ports = []) :
+    SplitOK D (D.copyNodes b (ks b.mult)) (D.nimg b (ks b.mult)) (D.gN b) ks b.mult
+theorem evalD_copyNodes (D : Diagram) (b : DBox) (ks : ℕ → ℕ) (hW : WF D) (hb : b ∈ D.boxes)
+    (hleaf : ∀ y ∈ D.boxes, y.parent ≠ some b.id) (hbp : b.ports = []) (E : Env)
+    (σ' : ℕ → List ℕ → ℕ) :
+    (D.copyNodes b (ks b.mult)).evalD E ks σ' =
+      D.evalD E ks (bndMap D (D.copyNodes b (ks b.mult)) (φS (D.nimg b (ks b.mult)) (D.gN b)) σ')
+\end{lstlisting}
+\end{theorem}
+\noindent \lbx!evalD_copyNodes! is \lbx!evalD_split! with \lbx!cn_split! and the node-product lemma \lbx!cn_prodD!; the latter rests on \lbx!cn_dnode_out! (an outside node's copy reads the relabelled digits) and \lbx!cn_dnode_copy! (copy $j$ of a node of $b$ is the original's copy $u\mathbin{+\!\!+}[j]$), with \lbx!side_relabel! for one grown side and \lbx!cidx_append_single! ($\mathit{cidx}(c\mathbin{+\!\!+}[m])=\mathrm{flatMap}(u\mapsto[u\mathbin{+\!\!+}[j]\mid j<\mathit{ks}\,m])\,(\mathit{cidx}\,c)$).
+
+\begin{definition}[Node-box slot reading]\label{def:boxes-nodeMap}
+With $D_0=\mathit{gather}(D,b)$ when $k=0$ and $D_0=D$ otherwise,
+\begin{align*}
+\mathit{nodeMap}(D,b,k,\sigma')=\mathit{bndMap}\bigl(&D,D_0,(p,t)\mapsto(p,t),\\ &\mathit{bndMap}(D_0,\mathit{copyNodes}(D_0,b,k),\varphi_S(\mathit{nimg},\mathit{gN}),\sigma')\bigr).
+\end{align*}
+\end{definition}
+
+\begin{theorem}[Expanding a node box]\label{thm:boxes-expandNode}
+For a leaf node box $b$ of a \lbx!WF! diagram,
+\begin{align*}
+&\mathit{evalD}_{E,\mathit{ks}}\bigl(\mathit{expandNode}(D,b,\mathit{ks}\,b.\mathit{mult}),\sigma'\bigr)\\
+&\qquad=\mathit{evalD}_{E,\mathit{ks}}\bigl(D,\mathit{nodeMap}(D,b,\mathit{ks}\,b.\mathit{mult},\sigma')\bigr)\qquad(\text{\lbx!evalD_expandNode!}),
+\end{align*}
+and \lbx!cn_WF! keeps \lbx!WF! under \lbx!copyNodes! for every $k$.
+\end{theorem}
+\noindent At $k=0$, \lbx!gather_eq! (\file{Gather}) writes $D_0$ as $D$ with permuted outputs and inputs, which keeps \lbx!WF! (\lbx!WF_perm_bnd!) and the boxes.
+
+\section{Instantiating Every Box}\label{sec:boxes-induct}
+
+\file{Induct.lean} composes the per-box results into the whole expansion.
+
+\begin{definition}[Pick and step]\label{def:boxes-pick}
+\lbx!D.pick! is the least-id leaf box (the right fold of the leaf list keeping the smaller id), \lbx!none! when there are no boxes. \lbx!D.step ks b! is \lbx!expandNode! when $b.\mathit{ports}=[\,]$, else \lbx!expandPort!, at $\mathit{ks}(b.\mathit{mult})$. \lbx!D.stepMap ks b! is the matching slot reading \lbx!nodeMap! or \lbx!portMap! (\file{Gather}; the port-box analogue of \lbx!nodeMap! with $\varphi_P$).
+\begin{align*}
+\mathit{bmapFuel}(\mathit{ks},0,D,\sigma')&=\sigma',\\
+\mathit{bmapFuel}(\mathit{ks},f{+}1,D,\sigma')&=\sigma'\qquad\text{when } \mathit{pick}(D)=\mathit{none},\\
+\mathit{bmapFuel}(\mathit{ks},f{+}1,D,\sigma')&=\mathit{stepMap}\bigl(D,\mathit{ks},b,\mathit{bmapFuel}(\mathit{ks},f,\mathit{step}(D,\mathit{ks},b),\sigma')\bigr)\\ &\qquad\text{when } \mathit{pick}(D)=b,
+\end{align*}
+and $\mathit{bmap}(D,\mathit{ks},\sigma')=\mathit{bmapFuel}(\mathit{ks},|D.\mathit{boxes}|+1,D,\sigma')$.
+\end{definition}
+
+\lbx!expandFuel_succ! states that \lbx!expandFuel! follows \lbx!pick! and \lbx!step!; \lbx!pick_some! gives a member leaf, \lbx!pick_none! (under \lbx!WF!) an empty box list. \lbx!exists_linked! links every box from \lbx!none! by parents, and \lbx!exists_leaf! finds a leaf in any nonempty \lbx!WF! box list. \lbx!step_facts! gives, for a leaf $b$, the slot equation of one step, \lbx!WF! of the result, and one box fewer; \lbx!pre_facts! covers the gathered diagram.
+
+\begin{theorem}[Expansion]\label{thm:boxes-evalD-expand}
+\begin{lstlisting}[style=leanbox]
+theorem evalD_expand (D : Diagram) (ks : ℕ → ℕ) (E : Env) (hW : WF D) (σ' : ℕ → List ℕ → ℕ) :
+    (D.expand ks).evalD E ks σ' = D.evalD E ks (D.bmap ks σ') ∧ WF (D.expand ks) ∧
+      (D.expand ks).boxes = []
+\end{lstlisting}
+\end{theorem}
+\noindent \lbx!evalD_expandFuel! proves the statement for every fuel above the box count by induction on the fuel.
+
+\section{The Digit Sum of a Box-Free Diagram}\label{sec:boxes-boxfree}
+
+\file{BoxFree.lean}: without boxes every walk is empty (\lbx!walk_nil!), every leg chain is $[\,]$ (\lbx!legChain_nil!), every leg has the single digit $[\,]$ (\lbx!dlabs_nil!: $\mathit{dlabs}=[\mathit{dlab}(p,[\,])\mid p\in\mathit{legs}]$), and every node has the single copy \lbx!n.node (dlab · [])! (\lbx!dnode_nil!). \lbx!sumOver_dim_congr! changes the dimension function on the summed labels, and \lbx!val_node! moves an assignment into the labeling.
+
+\begin{theorem}[Box-free digit sum]\label{thm:boxes-boxfree}
+\begin{lstlisting}[style=leanbox]
+theorem evalD_boxfree (hW : WF D) (E : Env) (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ)
+    (hσ : ∀ i (hi : i < D.bnd.length), σ i [] < E.dimv (D.portDim D.bnd[i])) :
+    D.evalD E ks σ = D.eval E (fun i => σ i [])
+\end{lstlisting}
+with \lbx!hbx : D.boxes = []! as a section variable.
+\end{theorem}
+\noindent The pins of the digit sum fix the second end of every wire to its first and every boundary leg to its slot; the remaining free digits are the first wire ends, which are the wire values of \lbx!Diagram.eval!.
+
+\section{Leg Values of a Copy}\label{sec:boxes-nodeval}
+
+\file{NodeVal.lean} relates the bundled generators of \cref{sec:boxes-bridge}, read at block values, to the copies of the digit sum. Both read permutations of one list of digits.
+
+\begin{definition}[Leg digits of a copy]\label{def:boxes-ldg}
+For legs given as pairs $P$ of (label, tail chain), a node chain $C$, a copy $t\in\mathit{cidx}(\mathit{mult},C)$, a base $d$, and a bundled assignment $\beta$,
+\[
+\mathit{ldg}(\mathit{mult},C,t,d,\beta,P)=\mathrm{flatMap}_{(l,c)\in P}\bigl[\mathit{digit}\bigl(d,\ \mathit{pos}(\mathit{mult},C\mathbin{+\!\!+}c,t\mathbin{+\!\!+}s),\ \beta(l)\bigr)\ \big|\ s\in\mathit{cidx}(\mathit{mult},c)\bigr],
+\]
+and \lbx!ldgR! is the same with $s$ ranging over \lbx!rcidx!. \lbx!blkC mult d p cs vs! (\file{Tower}) is the block-$p$ value of each leg, $\mathit{digit}(d^{\mathit{size}(\mathit{mult},c)},p,v)$ for each chain $c$ and value $v$.
+\end{definition}
+\lbx!ldg_append!, \lbx!ldg_perm!, \lbx!ldgR_perm! (from \lbx!rcidx_perm!), \lbx!ldg_plain! (plain legs read digit $\mathit{pos}(C,t)$), \lbx!blk_plain!, \lbx!blk_append!, and the key identity
+\begin{align*}
+&\mathit{tailVals}\bigl(\mathit{mult},d,\mathit{blkC}(\mathit{mult},d,\mathit{pos}(C,t),\mathit{chains}(P),\beta(\mathit{labels}(P))),\mathit{chains}(P)\bigr)\\
+&\qquad=\mathit{ldg}(\mathit{mult},C,t,d,\beta,P)\qquad(\text{\lbx!tailVals_blk!}, d>0).
+\end{align*}
+\lbx!pairs n l c! lists $(l(j),c(j))$ for $j<n$; \lbx!tls n c! the pairs $(j,c(j))$ with $c(j)\ne[\,]$; \lbx!keepL n l c! the labels of the legs without tail; \lbx!sortT n c s0! the triples $(c(j),s_0,j)$ of \lbx!tls! sorted by \lbx!tailLe!; \lbx!bothZ! the two sides' \lbx!sortT! (tags $0$, $1$) sorted together; \lbx!labZ! the label of a sorted triple. \lbx!keep_tails_perm!, \lbx!side_perm!, \lbx!side_vals!, \lbx!z_vals!, \lbx!bothZ_perm!, \lbx!side_zip! state that the kept legs and the sorted tails of \lbx!bundleNode! are the legs, permuted, and read the same \lbx!ldg! list. \lbx!bundle_Z!, \lbx!bundle_X!, \lbx!bundle_W! give the closed form of \lbx!bundleNode! for each kind.
+
+\lbx!Kind.plain! is false exactly for \lbx!ZB!, \lbx!XB!, \lbx!WB!, \lbx!Bun! (the engine's diagrams carry no bundled kinds); \lbx!plain_outCs!, \lbx!plain_inCs! give it empty chains. \lbx!tower_ne!: a nonempty tower, or a tower over a kind other than \lbx!B!, \lbx!S!, is neither \lbx!B! nor \lbx!S!.
+
+\begin{theorem}[Tower]\label{thm:boxes-val-tower}
+For $C\ne[\,]$ or $b\notin\{\mathrm B,\mathrm S\}$, $E.\mathit{dimv}(\mathit{dim})>0$, and every leg value below $E.\mathit{dimv}(\mathit{dim})^{\mathit{size}(C\mathbin{+\!\!+}c)}$ for its chain $c$,
+\begin{align*}
+&\mathit{val}_E\bigl(\beta,\langle\mathrm{foldr\ Bun}\ b\ C,o,i,\mathit{dim},\phi\rangle\bigr)\\
+&\quad=\prod_{t\in\mathit{cidx}(E.\mathit{mult},C)}\mathit{tensor}_E\bigl(b,d,\phi,\ \mathit{blkC}(\cdot,\mathit{pos}(C,t),b.\mathit{outCs},\beta(o)),\\
+&\hspace{6.5cm}\mathit{blkC}(\cdot,\mathit{pos}(C,t),b.\mathit{inCs},\beta(i))\bigr)
+\end{align*}
+with $d=E.\mathit{dimv}(\mathit{dim})$ (\lbx!val_tower!, from \lbx!tensor_towerC!).
+\end{theorem}
+\lbx!bpairs m! zips a node's legs with its kind's chains, outputs then inputs; \lbx!bpairs_plain! reduces it to \lbx!pairs! for a plain kind without tails. \lbx!Diagram.sidePairs D off n o! is \lbx!pairs! of one side with labels \lbx!D.label off! and tails \lbx!D.tail!; \lbx!Diagram.bnode_eq! writes \lbx!bnode! through \lbx!tls!. \lbx!dnode_side! states that the labels of one side of copy $t$, read through an assignment $\nu$ that reads each digit label's digit of $\beta$, are \lbx!ldgR!. \lbx!ldgR_plain!, \lbx!zip_map_right′!, \lbx!range_of_pairs! are list lemmas for the range hypotheses.
+
+\section{A Bundled Node as Its Copies}\label{sec:boxes-nodebridge}
+
+\begin{definition}[Node conditions]\label{def:boxes-NodeOK}
+\lbx!D.NodeOK E off n β ν! is the structure:
+\begin{center}
+\begin{tabular}{@{}>{\ttfamily}l>{\raggedright\arraybackslash}p{11.8cm}@{}}
+\toprule
+\normalfont Field & Statement\\
+\midrule
+plain & \lbx!n.kind.plain!\\
+boxkind & a node in a node box is neither \lbx!B! nor \lbx!S!\\
+tailkind & a node with a tail is \lbx!Z!, \lbx!X!, or a \lbx!W! whose input has no tail\\
+dims & a node in a node box or with a tail has every leg of dimension index $n.\mathit{dim}$\\
+posd, posn & every leg dimension and $E.\mathit{dimv}(n.\mathit{dim})$ positive\\
+range & $\beta(\mathit{label}\,p)<E.\mathit{dimv}(\mathit{portDim}\,p)^{\mathit{size}(E.\mathit{mult},\mathit{legChain}\,p)}$ for every leg\\
+dig & $\nu(\mathit{dlab}(p,u))=\mathit{digit}(E.\mathit{dimv}(\mathit{portDim}\,p),\mathit{pos}(\mathit{legChain}\,p,u),\beta(\mathit{label}\,p))$ for every leg $p$ and copy $u$\\
+\bottomrule
+\end{tabular}
+\end{center}
+The structural fields form \lbx!NodeS E n! (\file{NetDigits}).
+\end{definition}
+
+\begin{theorem}[Bundled node]\label{thm:boxes-val-bnode}
+\begin{lstlisting}[style=leanbox]
+theorem val_bnode (D : Diagram) (E : Env) (off : ℕ) (n : DNode) (β ν : ℕ → ℕ)
+    (h : D.NodeOK E off n β ν) :
+    val E β (D.bnode off n) =
+      ((cidx E.mult (D.nodeChain n.id)).map fun t => val E ν (D.dnode E.mult n t)).prod
+\end{lstlisting}
+\end{theorem}
+\noindent By cases on \lbx!tailkind!: without tails the node is a tower over its plain kind (\cref{thm:boxes-val-tower}) and each block reads the digits $\nu$ reads (\lbx!dig_side!, \lbx!ldgR_plain!); with tails, \lbx!val_bundle_Z!, \lbx!val_bundle_X!, \lbx!val_bundle_W! evaluate the tower of the bundled kind at block values and permute the legs into \lbx!ldgR! order (spider symmetry; \lbx!tensor_W_perm! for the outputs of W, \lbx!tensor_WB! reduces \lbx!WB! to \lbx!W! at \lbx!bundled! values). \lbx!NodeOK.range_pairs! and \lbx!tail_nil_of! supply the range and tail facts.
+
+\section{The Expansion Through the Family's Network}\label{sec:boxes-fambridge}
+
+\file{FamBridge.lean} proves that the expansion of a boxed diagram at the multiplicities $E.\mathit{mult}$ is the family's network at a packed boundary assignment.
+
+\begin{definition}[Packing]\label{def:boxes-packC}
+\[
+\mathit{packC}(\mathit{ks},d,c,\rho)=\mathrm{ofDigits}_d\bigl[\rho\bigl((\mathit{cidx}\ \mathit{ks}\ c)_j\bigr)\ \big|\ j<\mathit{size}(\mathit{ks},c)\bigr]=\sum_{j<\mathit{size}}\rho((\mathit{cidx})_j)\,d^j,
+\]
+\[
+\mathit{packB}_D(E,\rho)(i)=\begin{cases}\mathit{packC}\bigl(E.\mathit{mult},E.\mathit{dimv}(\mathit{portDim}\,q_i),\mathit{legChain}\,q_i,\rho(i)\bigr) & i<|D.\mathit{bnd}|,\\ 0&\text{otherwise,}\end{cases}
+\]
+with $q_i=D.\mathit{bnd}_i$.
+\end{definition}
+For $\rho<d$ on $\mathit{cidx}(c)$: \lbx!digit_packC! gives $\mathit{digit}(d,\mathit{pos}(c,t),\mathit{packC})=\rho(t)$ and \lbx!packC_lt! gives $\mathit{packC}<d^{\mathit{size}(c)}$; \lbx!packC_congr! makes \lbx!packC! depend on $\rho$ only on $\mathit{cidx}(c)$. \lbx!digit_ofDigits!, \lbx!ofDigits_lt!, \lbx!cidx_getD_pos! are the underlying list facts.
+
+\begin{proposition}[Slot reading]\label{prop:boxes-evalD-slots}
+Under \lbx!WF D!: \lbx!evalD_slots! makes the digit sum depend on $\sigma$ only at the copy indices of each slot's leg chain, and \lbx!evalD_out! makes it $0$ when some slot digit reaches its dimension.
+\end{proposition}
+
+\begin{theorem}[Expansion as the family network]\label{thm:boxes-eval-expand-net}
+\begin{lstlisting}[style=leanbox]
+theorem eval_expand_evalD (hW : WF D) (E : Env) (σ'' : ℕ → ℕ) (hσ : (D.expand E.mult).InRange E σ'') :
+    (D.expand E.mult).eval E σ'' = D.evalD E E.mult (D.bmap E.mult fun j _ => σ'' j)
+theorem eval_expand_net (hW : WF D) (E : Env) (off : ℕ) (hoff : D.bnd.length ≤ off)
+    (hN : ∀ n ∈ D.nodes, D.NodeS E n)
+    (hlab : ∀ j (hj : j < D.wires.length), labDim E (off + j) =
+      E.dimv (D.portDim D.wires[j].1) ^ size E.mult (D.legChain D.wires[j].1))
+    (σ'' : ℕ → ℕ) (hσ : (D.expand E.mult).InRange E σ'')
+    (hin : ∀ i (hi : i < D.bnd.length), ∀ t ∈ cidx E.mult (D.legChain D.bnd[i]),
+      D.bmap E.mult (fun j _ => σ'' j) i t < E.dimv (D.portDim D.bnd[i])) :
+    (D.expand E.mult).eval E σ'' =
+      ArchytasZX.eval E (D.toNetB off) (D.packB E (D.bmap E.mult fun j _ => σ'' j))
+\end{lstlisting}
+\end{theorem}
+\noindent The first composes \cref{thm:boxes-evalD-expand} with \cref{thm:boxes-boxfree}; the second adds \lbx!eval_toNetB! (\file{NetDigits}: the family's network at a bundled assignment $\beta$ is the digit sum at the slot digits of $\beta$), at $\beta=\mathit{packB}$, whose slot digits are the packed ones by \lbx!digit_packC!.
+
+\lbx!D.bndData! lists $(\mathit{portDim}\,q,\mathit{legChain}\,q)$ for every boundary port $q$.
+
+\begin{theorem}[Equal expansions from equal networks]\label{thm:boxes-DEqual-expand-net}
+\lbx!DEqual_expand_of_net!: for \lbx!WF! diagrams $D_1$, $D_2$ with offsets $o_1$, $o_2$ above their slot counts, \lbx!NodeS! nodes, label dimensions as in \lbx!hlab! for both wire sets and for $D_1$'s slots, equal \lbx!bndData!, equal slot readings $\mathit{bmap}_{D_1}=\mathit{bmap}_{D_2}$ on every slot copy, and equal boundary dimension indices of the two expansions,
+\begin{align*}
+&\mathit{Equal}_E(s_1,\mathit{toNetB}(D_1,o_1),s_2,\mathit{toNetB}(D_2,o_2))\\
+&\qquad\Rightarrow\ \mathit{DEqual}_E(s_1,\mathit{expand}(E.\mathit{mult},D_1),s_2,\mathit{expand}(E.\mathit{mult},D_2)).
+\end{align*}
+\end{theorem}
+\noindent At a boundary assignment $\sigma''$ in range, let $\rho_r=\mathit{bmap}_{D_r}(\sigma'')$. If every digit of $\rho_1$ is below its slot's dimension, so is every digit of $\rho_2$ (equal \lbx!bndData! and slot readings), $\mathit{packB}_{D_2}(\rho_2)=\mathit{packB}_{D_1}(\rho_1)$ (\lbx!packC_congr!), this packing is in range (\lbx!packC_lt!), and both sides are \cref{thm:boxes-eval-expand-net} at it. Otherwise some digit of $\rho_1$ and the same digit of $\rho_2$ reach their dimension, and both sides are $0$ by \lbx!eval_expand_evalD! and \lbx!evalD_out!.
+
+\section{Decidable Conditions of the Family Bridge}\label{sec:boxes-famcheck}
+
+\file{FamCheck.lean} restates the hypotheses of \cref{thm:boxes-DEqual-expand-net} as decidable propositions. Every \lbx!ChainOK! is decidable (an instance).
+
+\begin{definition}[Bounded invariants]\label{def:boxes-WFb}
+\lbx!D.WFb! is the conjunction of the 13 fields of \lbx!WF! (\cref{def:boxes-WF}) with every quantifier bounded by a list of the diagram; it is decidable, and \lbx!WF_of_WFb! gives \lbx!WF!. \lbx!D.NodeSb n! is the conjunction of the four structural fields of \lbx!NodeS! (plain, boxkind, tailkind, dims); \lbx!NodeS_of! gives \lbx!NodeS E n! from it when every dimension is positive.
+\end{definition}
+
+\begin{definition}[Family checks]\label{def:boxes-FamOK}
+\begin{align*}
+\mathit{DimOK}(F,\mathit{base},c)\iff{}&F.\mathit{bund}(\mathit{base})=\mathit{none}\\ &\wedge\ \bigl(c=[\,]\ \vee\ (i\text{ has an entry}\wedge\mathit{root}(i)=\mathit{base}\wedge\mathit{chain}(i)=c)\bigr),\\
+&\text{where } i=\mathit{dimFor}(F.\mathit{bund},\mathit{base},c).
+\end{align*}
+\lbx!D.FamOK F off! holds when: \lbx!D.WFb!; $|D.\mathit{bnd}|\le\mathit{off}$; every node \lbx!NodeSb!; every wire $j$ has $F.\mathit{labs}(\mathit{off}+j)=\mathit{dimFor}(F.\mathit{bund},\mathit{portDim}\,w_{j,1},\mathit{legChain}\,w_{j,1})$ with \lbx!DimOK!; every slot $i$ has $F.\mathit{labs}(i)=\mathit{dimFor}(F.\mathit{bund},\mathit{portDim}\,q_i,\mathit{legChain}\,q_i)$ with \lbx!DimOK!. \lbx!OrdAgree D₁ D₂ ks! holds when the two slot readings \lbx!bmap ks! agree on every slot copy for every $\sigma''$ and the two expansions have equal \lbx!bdims!.
+\end{definition}
+\lbx!dimv_dimFor! gives $(F.\mathit{env}\,\mathit{ks}).\mathit{dimv}(\mathit{dimFor}(\mathit{base},c))=(F.\mathit{env}\,\mathit{ks}).\mathit{dimv}(\mathit{base})^{\mathit{size}(\mathit{ks},c)}$ under \lbx!DimOK!, and \lbx!labDim_of! the same for a label. \lbx!Fam.chainF_congr!, \lbx!Fam.rootF_congr!, and \lbx!FamOK_congr! transfer the checks between families with equal \lbx!bund! and \lbx!labs!.
+
+\begin{theorem}[Checked family bridge]\label{thm:boxes-DEqual-expand-checks}
+\begin{lstlisting}[style=leanbox]
+theorem DEqual_expand_of_checks {F : Fam} {D₁ D₂ : Diagram} {o₁ o₂ : ℕ} (ks : ℕ → ℕ) (s₁ s₂ : ℂ)
+    (hc₁ : D₁.FamOK F o₁) (hc₂ : D₂.FamOK F o₂) (hbd : D₁.bndData = D₂.bndData)
+    (hpos : ∀ i, 0 < F.dims i) (hord : OrdAgree D₁ D₂ ks)
+    (hEq : Equal (F.env ks) s₁ (D₁.toNetB o₁) s₂ (D₂.toNetB o₂)) :
+    DEqual (F.env ks) s₁ (D₁.expand ks) s₂ (D₂.expand ks)
+\end{lstlisting}
+\end{theorem}
+
+\section{Family Theorems in Key Order}\label{sec:boxes-famk}
+
+\file{FamK.lean} replaces the slot-reading hypothesis \lbx!OrdAgree! by data the Lean kernel compares directly. \lbx!expandK ks D! (\file{OrderK}) is the expansion with its boundary listed in \emph{key order}: slot $i$'s copy $t$ is placed by the key \lbx!keyOf (slotSig i) i t!, which reads the least slots of $i$'s node boxes (outermost first, up to the first that is $i$ itself) with the copy coordinates in those boxes, then $i$, then the remaining node-box coordinates, then the port-box coordinates innermost first. \lbx!D.keySig! lists \lbx!slotSig i! for every slot; \lbx!D.SL ks! is \lbx!SDom ks! (every slot with every copy index of its leg chain) sorted by \lbx!lexLe! of the keys.
+
+\begin{theorem}[Key-order bridge]\label{thm:boxes-famk}
+\begin{lstlisting}[style=leanbox]
+theorem DEqual_expandK_of_checks {F : Fam} {D₁ D₂ : Diagram} {o₁ o₂ : ℕ} (ks : ℕ → ℕ) (s₁ s₂ : ℂ)
+    (hc₁ : D₁.FamOK F o₁) (hc₂ : D₂.FamOK F o₂) (hbd : D₁.bndData = D₂.bndData)
+    (hks : D₁.keySig = D₂.keySig) (hpos : ∀ i, 0 < F.dims i)
+    (hEq : Equal (F.env ks) s₁ (D₁.toNetB o₁) s₂ (D₂.toNetB o₂)) :
+    DEqual (F.env ks) s₁ (D₁.expandK ks) s₂ (D₂.expandK ks)
+theorem Equal_of_DEqual_expandK {F : Fam} {D₁ D₂ : Diagram} {o₁ o₂ : ℕ} (ks : ℕ → ℕ) (s₁ s₂ : ℂ)
+    (hc₁ : D₁.FamOK F o₁) (hc₂ : D₂.FamOK F o₂) (hbd : D₁.bndData = D₂.bndData)
+    (hks : D₁.keySig = D₂.keySig) (hpos : ∀ i, 0 < F.dims i)
+    (h : DEqual (F.env ks) s₁ (D₁.expandK ks) s₂ (D₂.expandK ks)) :
+    Equal (F.env ks) s₁ (D₁.toNetB o₁) s₂ (D₂.toNetB o₂)
+\end{lstlisting}
+\end{theorem}
+\noindent The proofs go through \lbx!evalD_net! (the digit sum at in-range slot digits is the family network at their packing), \lbx!DEqual_expandK_of_net! (the key-order form of \cref{thm:boxes-DEqual-expand-net}, its slot readings agreeing because \lbx!SDom!, \lbx!SL!, and \lbx!packB! depend only on \lbx!bndData! and \lbx!keySig!: \lbx!bndData_at!, \lbx!SDom_congr!, \lbx!SL_congr!, \lbx!packB_congr!), and, for the converse, \lbx!slotK!:
+\[
+\mathit{slotK}_D(E,\beta,r)=\begin{cases}\mathit{slotDig}_D(E,\beta,i,t) & r<|\mathit{SL}|,\ (i,t)=\mathit{SL}_r,\\ 0&\text{otherwise,}\end{cases}
+\]
+the slot digits of a bundled assignment in key order, with
+\[\mathit{slotDig}_D(E,\beta,i,t)=\mathit{digit}(E.\mathit{dimv}(\mathit{portDim}\,q_i),\mathit{pos}(\mathit{legChain}\,q_i,t),\beta(i)).\] \lbx!slotK_lt! puts it in range, \lbx!slotK_congr! makes it agree on two diagrams with the same \lbx!bndData! and \lbx!keySig!, and
+\[
+\mathit{eval}_E(\mathit{toNetB}(D,\mathit{off}),\beta)=\mathit{eval}_E(\mathit{expandK}(E.\mathit{mult},D),\mathit{slotK}_D(E,\beta))\qquad(\text{\lbx!eval_net_expandK!})
+\]
+for $\beta$ in range. \lbx!slotDig_lt! bounds one slot digit.
+
+\begin{definition}[Family equality of diagrams]\label{def:boxes-DEqualF}
+For environments $E(\sigma)$ and multiplicities $M(\sigma)$ indexed by an assignment $\sigma$ of the multiplicity symbols,
+\begin{align*}
+&\mathit{DEqualF}(E,M,s_1,D_1,s_2,D_2)\\
+&\qquad\iff\forall\sigma,\ \mathit{DEqual}_{E(\sigma)}\bigl(s_1(\sigma),\mathit{expandK}(M\sigma,D_1),s_2(\sigma),\mathit{expandK}(M\sigma,D_2)\bigr).
+\end{align*}
+\end{definition}
+
+\paragraph{Exporter.} \module{archytaszx.semantics.lean_net} restates a family theorem on the engine's boxed diagrams in \py!family_diagrams!. It emits each side's boxed diagram literal and the two facts \lbx!Dx_net : Dx.toNetB off = Nx! and \lbx!Dx_ok : Dx.FamOK FC off! (\py!boxed_literal!, \cref{sec:boxes-bbridge}), compares the Python mirrors of \lbx!keySig! and \lbx!bndData! (\py!_BoxedMirror!) and emits nothing when they differ, and otherwise emits
+\begin{lstlisting}[style=leanbox]
+theorem name_diagrams :
+    ∀ binders, DEqual env sl (Da.expandK ks) sr (Db.expandK ks) := by
+  intro args
+  exact Diagram.DEqual_expandK_of_checks ks _ _
+    (Diagram.FamOK_congr (F := FC) (F' := fam) rfl rfl Da_ok)
+    (Diagram.FamOK_congr (F := FC) (F' := fam) rfl rfl Db_ok)
+    (by decide +kernel) (by decide +kernel) (Fpos ...)
+    (Da_net ▸ Db_net ▸ name args)
+\end{lstlisting}
+with \lbx!ks = ksOf [...]!. For a refutation the statement is negated and the proof applies \lbx!Equal_of_DEqual_expandK! to the hypothesis after rewriting by the two \lbx!_net! facts.
+
+\section{The Linear-Time Diagram Bridge}\label{sec:boxes-dbridge}
+
+\file{DiagramBridge.lean} (namespace \lbx!DBridge!) checks that a network is \lbx!D.toNet off! and that \lbx!D.check L off! holds, in time linear in the diagram, by one \lbx!decide! of a Boolean function on packed numbers.
+
+\begin{definition}[Keys and packed wires]\label{def:boxes-pkey}
+\begin{gather*}
+\mathit{pkey}(P,p)=\bigl(2\,p.\mathit{node}+[\neg p.\mathit{out}]\bigr)P+p.\mathit{pos},\\
+\mathit{packW}(P,K,[w_0,\dots,w_{n-1}])=\sum_{j<n}\bigl(\mathit{pkey}(P,w_{j,1})+2^K\mathit{pkey}(P,w_{j,2})\bigr)2^{2Kj}.
+\end{gather*}
+\lbx!wireHas K WB j k! holds when entry $j$ of $\mathit{WB}$, $e=\lfloor\mathit{WB}/2^{2Kj}\rfloor\bmod 2^{2K}$, has $e\bmod 2^K=k$ or $\lfloor e/2^K\rfloor=k$.
+\end{definition}
+\lbx!pkey_inj! makes keys injective on positions below $P$; \lbx!pair_lt! and \lbx!packW_get! read entry $j$ back when every key is below $2^K$; \lbx!wireHas_ok! turns a hit into an end of wire $j$.
+
+\begin{definition}[Leg location]\label{def:boxes-legOK}
+\lbx!ends D = D.bnd ++ D.wires.flatMap fun w => [w.1, w.2]!. \lbx!legOK P K off WB D p l! holds when $l<\mathit{off}$ and $D.\mathit{bnd}[l]=p$, or $l\ge\mathit{off}$, $l-\mathit{off}<|D.\mathit{wires}|$, and \lbx!wireHas K WB (l - off) (pkey P p)!.
+\end{definition}
+When the ends are distinct, a boundary port is located at its slot (\lbx!locate_bnd!) and a wire end at its wire (\lbx!locate_wire!), so \lbx!locate_of_leg! turns \lbx!legOK! into $\mathit{label}(\mathit{off},p)=l$, \lbx!okPort p!, and $p\in\mathit{ends}$.
+
+\begin{definition}[Increasing lists, masks, tables]\label{def:boxes-incr}
+\lbx!incrL l! holds when $l$ is strictly increasing (\lbx!incr_ok!, \lbx!incrL_ok!: then duplicate-free). \lbx!nodupB ls m! scans $ls$ with a bit mask $m$, failing when a number's bit is set and otherwise setting it (the mask is matched as \lbx!0! or \lbx!m′ + 1! before the next step, so the kernel reduces it); \lbx!nodupB_ok! gives no duplicates. $\mathit{ent}(b,T,l)=\lfloor T/2^{bl}\rfloor\bmod 2^b$ is entry $l$ of a table of $b$-bit entries. $\mathit{inQ}(n_b,\mathit{off},W,l)\iff l<n_b\vee\mathit{off}\le l<\mathit{off}+W$. \lbx!labsOK b T nb off W L! holds when the keys of $L$ increase, every key in \lbx!inQ! has value $\mathit{ent}(b,T,\cdot)$, and exactly $n_b+W$ keys are in \lbx!inQ!; \lbx!labs_lookup! then gives $L(l)=\mathit{ent}(b,T,l)$ for every $l$ in \lbx!inQ! (with $n_b\le\mathit{off}$).
+\end{definition}
+
+\begin{definition}[Diagram bridge]\label{def:boxes-bridgeD}
+\lbx!DBridge.legs n! lists the output then input ports of $n$. \lbx!nodeOKD P K b off WB T D n m! holds when $m$ has $n$'s kind, dimension and phase index, as many outputs and inputs, and each leg $k$ of $n$ is \lbx!legOK! at the matching label of $m$, with dimension index $\mathit{ent}(b,T,\text{label})$. \lbx!bridgeD P K b off WB T D N L! is the conjunction:
+\begin{enumerate}
+\item $|D.\mathit{bnd}|\le\mathit{off}$;
+\item the node ids increase (\lbx!incrL!);
+\item every node has at most $P$ outputs and $P$ inputs;
+\item every end has position below $P$ and key below $2^K$;
+\item the keys of the ends are distinct (\lbx!nodupB! from mask $0$);
+\item $\mathit{packW}(P,K,D.\mathit{wires})=\mathit{WB}$;
+\item the total leg count equals $|\mathit{ends}\,D|$;
+\item \lbx!labsOK b T |D.bnd| off |D.wires| L!;
+\item $N.\mathit{int}=[\mathit{off}+j\mid j<|D.\mathit{wires}|]$ and $N.\mathit{bnd}=[0,\dots,|D.\mathit{bnd}|-1]$;
+\item $|N.\mathit{nodes}|=|D.\mathit{nodes}|$ and every zipped pair is \lbx!nodeOKD!.
+\end{enumerate}
+\end{definition}
+
+\begin{theorem}[Diagram bridge]\label{thm:boxes-bridgeD}
+\begin{lstlisting}[style=leanbox]
+theorem bridgeD_ok (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (ℕ × ℕ))
+    (h : bridgeD P K b off WB T D N L = true) :
+    D.check L off = true ∧ D.toNet off = N
+\end{lstlisting}
+\end{theorem}
+\noindent The increasing ids make the legs distinct (\lbx!legs_nodup!); with condition 7 and the distinct ends, the legs are exactly the ends (a duplicate-free list of the same length contained in it), so every end is located where \lbx!legOK! found it; \lbx!portDim_leg! and \lbx!labs_lookup! give the dimension indices.
+
+\paragraph{Exporter.} \module{archytaszx.semantics.lean_net}, in \py!diagram_literal!, emits for a literal diagram \lbx!Dx! and its network \lbx!Nx!:
+\begin{lstlisting}[style=leanbox]
+def WBx : ℕ := 0x...
+def LTx : ℕ := 0x...
+theorem Dx_bd : DBridge.bridgeD P K b off WBx LTx Dx Nx labs = true := by decide +kernel
+theorem Dx_net : Dx.toNet off = Nx := (DBridge.bridgeD_ok ... Dx_bd).2
+theorem Dx_chk : Dx.check labs off = true := (DBridge.bridgeD_ok ... Dx_bd).1
+\end{lstlisting}
+The Python mirror \py!_bridge_plan(d, net, off, legs, labs, order=None)! returns \py!None! (and the exporter falls back to \lbx!theorem Dx_net : Dx.toNet off = Nx := by decide +kernel!) when the slot count exceeds \py!off!, the node ids do not increase, the network's summed labels are not $\mathit{off},\dots,\mathit{off}+|\mathit{wires}|-1$ or its boundary not $0,\dots,|\mathit{bnd}|-1$, the node counts differ, an end repeats, a leg is not at its stated label or a label gets two dimension indices, the leg count differs from the end count, or the label table disagrees on a slot or wire label. Otherwise it returns $(P,K,\mathit{WB},b,T)$ with $P=\max(1,\text{the largest side length})$, $K=\max(1,\text{the largest key's bit length})$, $\mathit{WB}=\mathit{packW}$ of the wires in their sort order, $b=\max(1,\text{the largest dimension index's bit length})$, and $T=\sum_l \mathit{dim}(l)\,2^{bl}$.
+
+\section{The Linear-Time Boxed Bridge}\label{sec:boxes-bbridge}
+
+\file{BoxedBridge.lean} (namespace \lbx!BBridge!) checks \lbx!D.toNetB off = N! and \lbx!D.FamOK F off! through \lbx!bridgeD! on the plain network $N_p$ (\lbx!D.toNet off!). Box membership is read from bit masks, box chains are compared by box ids, the other end of a wire leg from the packed wires, each leg's dimension index from the table $T$, and each label's bundled dimension index in $F.\mathit{labs}$ from a second table $T_B$ of $b'$-bit entries.
+
+\subsection{Masks, walks, and chains}
+$\mathit{maskOf}([\,])=0$, $\mathit{maskOf}(x::l)=2^x\mathbin{|}\mathit{maskOf}(l)$ (\lbx!testBit_maskOf!: bit $x$ is set iff $x\in l$). \lbx!bmask MS y! is the mask stored for box id $y.\mathit{id}$ in the table $\mathit{MS}$ (else $0$); \lbx!masksOK MS D! holds when every box's stored mask is \lbx!maskOf! of its node scope (\lbx!bmask_ok!). \lbx!walk_congr! makes \lbx!walk! depend on its predicate only on the boxes; \lbx!walk_sub! puts its output in the boxes, satisfying the predicate. \lbx!parOK start L! states the parent links; \lbx!walk_parOK!, \lbx!parOK_get!, \lbx!walk_parent! derive them for a walk. \lbx!chainB D pr start L! holds when $\mathit{start}$ followed by the ids of $L$ is duplicate-free and every box satisfying $pr$ whose parent is among them has its id among the ids of $L$; \lbx!chainB_ok! gives \lbx!ChainOK! of a walk's output from it (with distinct box ids, \lbx!eq_of_id!, \lbx!mem_of_id!), \lbx!ChainOK_congr! changes the predicate, and \lbx!prefix_of_ids! turns a prefix of id lists into a prefix of box lists. \lbx!nodeBoxesF!, \lbx!portBoxesF!, \lbx!nodeChainF! are \lbx!nodeBoxes!, \lbx!portBoxes!, \lbx!nodeChain! with the node predicate read from the masks; \lbx!nodeBoxes_eq!, \lbx!portBoxes_eq!, \lbx!nodeChain_eq! equate them under \lbx!masksOK!.
+
+\subsection{Partners and tails}
+\lbx!pkey_node!: $\lfloor\lfloor\mathit{pkey}(P,p)/P\rfloor/2\rfloor=p.\mathit{node}$ for $p.\mathit{pos}<P$. \lbx!otherNode P K WB j k! is the node of the end of wire $j$ other than the key $k$, read from entry $j$ of $\mathit{WB}$. \lbx!tailF P K off WB MS D q l! is $[\,b.\mathit{mult}\mid b\in\mathit{portBoxesF}(q)]$ for $l<\mathit{off}$, else the partner's \lbx!nodeChainF! without the length of $q$'s own when longer, else $[\,]$. \lbx!partner_wire! and \lbx!partner_bnd! compute \lbx!partner! for distinct ends; \lbx!tail_eq! equates \lbx!D.tail q! with \lbx!tailF! for a leg found by \lbx!legOK!. \lbx!bridgeD_facts! unpacks ten facts of \lbx!bridgeD!, among them the permutation of the legs onto the ends and $\mathit{portDim}(p)=\mathit{ent}(b,T,\mathit{label}\,p)$ for every end.
+
+\subsection{The bundled network}
+\lbx!tlF P K off WB MS D x out ls! lists $(j,\mathit{tailF}(\langle x,\mathit{out},j\rangle,ls_j))$ with nonempty tail; \lbx!bnodeF P K off WB MS D n m! is \lbx!bundleNode m (tlF ... true m.outs) (tlF ... false m.ins)! with the kind replaced by the tower along \lbx!nodeChainF MS D n.id!. \lbx!tl_eq! and \lbx!BBridge.bnode_eq! equate them with \lbx!D.tail! and \lbx!D.bnode off n! for a node whose legs pass \lbx!legOK!.
+
+\begin{definition}[Family checks past the plain bridge]\label{def:boxes-famB}
+\lbx!nodeSB n c tO tI! decides \lbx!NodeSb! from the node chain $c$ and side tails; \lbx!labB b′ TB F l base c! holds when $\mathit{ent}(b',T_B,l)=\mathit{dimFor}(F.\mathit{bund},\mathit{base},c)$ and \lbx!DimOK F base c!; \lbx!wtail MS D w! is the tail of a wire's first end. \lbx!famB P K b b′ off WB T TB MN MS D Np F! is the conjunction of: \lbx!masksOK!; distinct box ids; every box a node box or a port box; \lbx!maskOf! of the node ids equal to $\mathit{MN}$; every scope node a node (bit of $\mathit{MN}$); \lbx!chainB! of every node's \lbx!nodeBoxesF!; every box holding $x$ among $x$'s \lbx!nodeBoxesF! ids; \lbx!chainB! of every boundary port's \lbx!portBoxesF!; every port box of a boundary port among its \lbx!portBoxesF!; every scope port a boundary port; the node-box id lists of every wire's ends prefixes one of the other; every box nonempty; \lbx!nodeSB! of every node with its \lbx!tlF! tails read off $N_p$; \lbx!labsOK b′ TB |D.bnd| off |D.wires| F.labs!; \lbx!labB! of every wire label $\mathit{off}+j$ with base $\mathit{ent}(b,T,\mathit{off}+j)$ and chain $\mathit{nodeChainF}(w_{j,1})\mathbin{+\!\!+}\mathit{wtail}(w_j)$; \lbx!labB! of every slot $i$ with base $\mathit{ent}(b,T,i)$ and chain $\mathit{nodeChainF}(q_i)\mathbin{+\!\!+}[\,\text{multiplicities of } \mathit{portBoxesF}(q_i)]$.
+\end{definition}
+
+\begin{definition}[Boxed bridge]\label{def:boxes-bridgeB}
+\lbx!plainL b T nb off W! is the label table $[(l,\mathit{ent}(b,T,l))]$ over the slots $0,\dots,n_b-1$ and the wire labels $\mathit{off},\dots,\mathit{off}+W-1$.
+\begin{lstlisting}[style=leanbox]
+def bridgeB (P K b b' off WB T TB MN : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram) (N Np : Net)
+    (F : Fam) : Bool :=
+  bridgeD P K b off WB T D Np (plainL b T D.bnd.length off D.wires.length) &&
+    famB P K b b' off WB T TB MN MS D Np F &&
+    decide (N = ⟨(D.nodes.zip Np.nodes).map (fun q => bnodeF P K off WB MS D q.1 q.2),
+      Np.int, Np.bnd⟩)
+\end{lstlisting}
+\end{definition}
+
+\begin{theorem}[Boxed bridge]\label{thm:boxes-bridgeB}
+\begin{lstlisting}[style=leanbox]
+theorem bridgeB_ok (P K b b' off WB T TB MN : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram)
+    (N Np : Net) (F : Fam) (h : bridgeB P K b b' off WB T TB MN MS D N Np F = true) :
+    D.toNetB off = N ∧ D.FamOK F off
+\end{lstlisting}
+\end{theorem}
+\noindent \lbx!bridgeD_ok! gives $N_p=\mathit{toNet}(D,\mathit{off})$, hence the plain labeling; the masks turn every \lbx!F!-suffixed function into the original (\lbx!nodeBoxes_eq! and the others), \lbx!chainB_ok! gives the chain fields of \lbx!WFb!, and \lbx!bnode_eq! gives the nodes of \lbx!toNetB! (\lbx!zip_map_self!, \lbx!flatMap_ends_perm!, \lbx!perm_ends! align the lists).
+
+\paragraph{Exporter.} \py!boxed_literal! in \module{archytaszx.semantics.lean_net} emits the boxed diagram literal and, when \py!boxed_plan! succeeds, the declarations \lbx!NPx! (the plain network), \lbx!WBx!, \lbx!LTx! ($b$-bit dimension indices), \lbx!LBx! ($b'$-bit bundled indices), \lbx!MNx! (node-id mask), \lbx!MSx! (box id and node mask pairs), and
+\begin{lstlisting}[style=leanbox]
+theorem Dx_bb : BBridge.bridgeB P K b b' off WBx LTx LBx MNx MSx Dx Nx NPx FC = true := by
+  decide +kernel
+theorem Dx_net : Dx.toNetB off = Nx := (BBridge.bridgeB_ok ... Dx_bb).1
+theorem Dx_ok : Dx.FamOK FC off := (BBridge.bridgeB_ok ... Dx_bb).2
+\end{lstlisting}
+When \py!boxed_plan! returns \py!None! it emits \lbx!Dx.toNetB off = Nx! and \lbx!Dx.FamOK FC off! by \lbx!decide +kernel! instead. \py!boxed_plan! builds the plain network (slot $i$ labeled $i$, a wire end labeled $\mathit{off}+j$ at its first wire), runs \py!_bridge_plan! on it, requires the family label table to give exactly the slot and wire labels, sets $b'=\max(1,\text{largest bundled index's bit length})$ and $T_B=\sum_l \mathit{idx}(l)2^{b'l}$, the box masks $\sum_{x\in\text{scope}}2^x$, and $\mathit{MN}=\sum_{x\in\text{nodes}}2^x$.
+
+\section{Chain Families}\label{sec:boxes-chain}
+
+A \emph{chain} is a node box whose copies are wired in sequence: copy $j$'s link-out port meets copy $j+1$'s link-in port. \file{ChainInduct.lean} proves two chain families equal at every copy count from the base case and the equation of each copy pair, at the level of networks. \file{ChainBox.lean}, \file{ChainLink.lean}, and \file{ChainEvery.lean} define chain boxes on diagrams and connect their expansion to the network family for one example; \file{ChainMixed.lean} lifts the induction to labels of mixed dimensions.
+
+\subsection{Relabelled networks}
+\lbx!Net.mapL f N! maps every label of $N$ (node legs, summed, boundary) through $f$. For injective $f$ that keeps every label's dimension,
+\[
+\mathit{eval}_E(\mathit{mapL}\,f\,N,\sigma)=\mathit{eval}_E(N,\sigma\circ f)\qquad(\text{\lbx!eval_mapL!}),
+\]
+and \lbx!Equal.mapL! moves an equation through $f$. \lbx!Equal.mapL2! uses one renaming per side, $f$ on $A$ and $g$ on $B$, given that both are injective and keep dimensions, agree on $A.\mathit{bnd}$, and every node label of $B$ is summed or on the boundary. \lbx!labelsOf_rename! commutes labels and renaming; \lbx!eval_perm_net! keeps the value under permuted nodes and summed labels; \lbx!Equal.reorder! and \lbx!Equal.reorderL! permute the right or left network's nodes, summed labels, and boundary; \lbx!Equal.congr_scalar! restates scalars. \lbx!labDim_two!: when $E.\mathit{dimv}(k)=2^{\max(k,1)}$ and every listed index is at most $1$, all labels have one dimension.
+
+\subsection{The chain network}
+
+\begin{definition}[Chain network]\label{def:boxes-chainNet}
+For a level stride $W$, cut labels $\mathit{cut}$, a base network, and copies $\mathit{copy}:\N\to\mathrm{Net}$,
+\begin{align*}
+\mathit{chainNet}(0)&=\mathit{base},\\
+\mathit{chainNet}(k{+}1)&=\bigl\langle C.\mathit{nodes}\mathbin{+\!\!+}N_k.\mathit{nodes},\ \ C.\mathit{int}\mathbin{+\!\!+}c_k\mathbin{+\!\!+}N_k.\mathit{int},\\
+&\qquad\ \mathrm{filter}_{\notin c_k}(N_k.\mathit{bnd})\mathbin{+\!\!+}\mathrm{filter}_{\notin c_k}(C.\mathit{bnd})\bigr\rangle,
+\end{align*}
+where $N_k=\mathit{chainNet}(k)$, $C=\mathit{mapL}(\cdot+kW)(\mathit{copy}\ k)$, and $c_k=[x+kW\mid x\in\mathit{cut}]$. Copy $k$ is shifted to level $k$, and the cut labels at level $k$, shared by $N_k$'s boundary and copy $k$'s link-in legs, become summed. Copy $k$'s link-out legs carry the labels $\mathit{cut}+W$ at its own level, which are the cut labels of level $k+1$.
+\end{definition}
+
+\begin{definition}[Label conditions]\label{def:boxes-baseOK}
+\lbx!baseOK W cut base! holds when every label of the base and every cut label is below $W$ and no summed base label is a cut label. \lbx!copyOK W cut copy! holds when every label of the copy is a cut label or in $[W,2W)$, and every summed copy label is in $[W,\infty)$ and not a cut label shifted by $W$. \lbx!perIdx tab d i = tab.getD (i % tab.length) d! reads a periodic table; \lbx!perIdx_all! proves a property of every entry from its entries below the period.
+\end{definition}
+
+\lbx!chain_bounds!: under \lbx!baseOK! and \lbx!copyOK! of every copy, every label of $\mathit{chainNet}(k)$ is below $kW+W$, and no summed label is a cut label shifted by $kW$. \lbx!copy_off!, \lbx!net_off!, \lbx!face_left!, \lbx!face_right! supply the disjointness and interface hypotheses of \lbx!plug!; \lbx!mem_labels_mapL!, \lbx!mem_chain_succ!, \lbx!mem_all_of_nodes!, \lbx!mem_all_of_int!, \lbx!mem_all_of_bnd! locate labels.
+
+\begin{theorem}[Chain induction]\label{thm:boxes-chain-equal}
+\begin{lstlisting}[style=leanbox]
+theorem chain_equal (E : Env) (W : ℕ) (cut : List ℕ) (bO : Net) (cO : ℕ → Net) (bX : Net)
+    (cX : ℕ → Net) (hD : ∀ x y, labDim E x = labDim E y)
+    (hbO : baseOK W cut bO = true) (hcO : ∀ i, copyOK W cut (cO i) = true)
+    (hbX : baseOK W cut bX = true) (hcX : ∀ i, copyOK W cut (cX i) = true)
+    (s t : ℂ) (a b : ℕ → ℂ) (h0 : Equal E s bO t bX) (h1 : ∀ i, Equal E (a i) (cO i) (b i) (cX i)) :
+    ∀ k, Equal E (s * ∏ i ∈ range k, a i) (chainNet W cut bO cO k)
+      (t * ∏ i ∈ range k, b i) (chainNet W cut bX cX k)
+\end{lstlisting}
+\end{theorem}
+\noindent Induction on $k$. At $k+1$, the copy equation shifted to level $k$ (\lbx!Equal.mapL!, every label of one dimension by \lbx!hD!) is plugged twice by \lbx!plug!: first the induction hypothesis in the context of the left copy, then the shifted copy equation in the context of the right network at $k$; \lbx!Equal.mul_trans! chains them and \lbx!Finset.prod_range_succ! regroups the scalars.
+
+\subsection{Chain boxes}
+
+\begin{definition}[Chain box]\label{def:boxes-DChain}
+\begin{lstlisting}[style=leanbox]
+structure DChain where
+  box : DBox
+  links : List (Port × Port)
+\end{lstlisting}
+A link $l=(l_1,l_2)$ joins copy $j$'s port $l_1$ to copy $j+1$'s port $l_2$. Each link port of the template is wired to a port outside the box; a link port on the boundary goes through an identity node first. \lbx!onLink c w! holds when an end of $w$ is a link port. \lbx!cpPort D b j p! is $\langle\mathit{cpId}(b,j,p.\mathit{node}),p.\mathit{out},p.\mathit{pos}\rangle$. With $P=\mathit{partner}(l_1)$ and $Q=\mathit{partner}(l_2)$ (both defined; otherwise no wire),
+\[
+\mathit{linkWires}(D,c,k,l)=\begin{cases}[(Q,P)] & k=0,\\ (Q,\mathit{cp}_0\,l_2)::[(\mathit{cp}_j\,l_1,\mathit{cp}_{j+1}\,l_2)\mid j<k-1]\mathbin{+\!\!+}[(\mathit{cp}_{k-1}\,l_1,P)] & k\ge1,\end{cases}
+\]
+and \lbx!expandChain D c k! is \lbx!copyNodes! of $c.\mathit{box}$ at $k$ applied to $D$ without its link wires, with \lbx!linkWires! of every link appended to its wires.
+\end{definition}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[zxd]
+  \node[fbox] (h) at (0,0) {I$_0$};
+  \node[zs] (z) at (0,1.2) {1};
+  \node[fbox] (t) at (0,2.4) {I$_2$};
+  \draw[wire] (0,-0.8) -- (h);
+  \draw[wire] (h) -- node[right,dimlabel]{$l_2$} (z);
+  \draw[wire] (z) -- node[right,dimlabel]{$l_1$} (t);
+  \draw[wire] (t) -- (0,3.2);
+  \draw[wire] (z) to[out=30,in=-90] (1,3.2);
+  \node[bang,fit=(z)] (bb) {};
+  \node[banglabel] at (bb.north west) {$k$};
+  \node at (0,-1.1) {\scriptsize in};
+  \node at (0,3.5) {\scriptsize out$_1$};
+  \node at (1,3.5) {\scriptsize out$_0$};
+\end{tikzpicture}
+\qquad\qquad
+\begin{tikzpicture}[zxd]
+  \node[fbox] (h) at (0,0) {I$_0$};
+  \node[zs] (z3) at (0,1.2) {3};
+  \node[zs] (z4) at (0,2.4) {4};
+  \node[fbox] (t) at (0,3.6) {I$_2$};
+  \draw[wire] (0,-0.8) -- (h);
+  \draw[wire] (h) -- (z3);
+  \draw[wire] (z3) -- (z4);
+  \draw[wire] (z4) -- (t);
+  \draw[wire] (t) -- (0,4.4);
+  \draw[wire] (z3) to[out=20,in=-90] (1,4.4);
+  \draw[wire] (z4) to[out=20,in=-90] (1.6,4.4);
+\end{tikzpicture}
+\caption{The chain of \texttt{ChainBoxExample}: the template with the Z spider~1 in a node box of multiplicity $k$, its output~0 ($l_1$) linked to its input~0 ($l_2$), between identities~0 and~2 (left), and \texttt{expandChain D c 2} (right): copies~3 and~4, their second outputs on the boundary in copy order before the tail identity's output.}\label{fig:boxes-chain-example}
+\end{figure}
+
+\begin{example}[One-spider chain]\label{ex:boxes-chainbox}
+In namespace \lbx!ChainBoxExample!, $D$ has nodes $\langle0,\mathrm I\rangle$, $\langle1,\mathrm Z\rangle$ (two outputs, one input), $\langle2,\mathrm I\rangle$, all of dimension index $0$; wires $(\langle0,\mathrm{out},0\rangle,\langle1,\mathrm{in},0\rangle)$ and $(\langle1,\mathrm{out},0\rangle,\langle2,\mathrm{in},0\rangle)$; outputs $\langle1,\mathrm{out},1\rangle$, $\langle2,\mathrm{out},0\rangle$; input $\langle0,\mathrm{in},0\rangle$; and the box $\langle0,0,\mathit{none},[1],[\,]\rangle$. The chain is $c=\langle\text{that box},[(\langle1,\mathrm{out},0\rangle,\langle1,\mathrm{in},0\rangle)]\rangle$ (\cref{fig:boxes-chain-example}). \lbx!expand_two! states by \lbx!decide +kernel! that \lbx!D.expandChain c 2! has nodes $0$, $3$, $4$, $2$ (copies $3=\mathit{cpId}(0,1)$ and $4=\mathit{cpId}(1,1)$), wires $0\to3\to4\to2$ on outputs $0$ and inputs $0$, outputs $\langle3,\mathrm{out},1\rangle$, $\langle4,\mathrm{out},1\rangle$, $\langle2,\mathrm{out},0\rangle$, input $\langle0,\mathrm{in},0\rangle$, and no boxes; \lbx!expand_zero! states that at $k=0$ the only wire is $(\langle0,\mathrm{out},0\rangle,\langle2,\mathrm{in},0\rangle)$.
+\end{example}
+
+\subsection{Linking the expansion to the chain network}
+
+\lbx!swapTo a b x! is $b$ when $x=a$, else $x$. \lbx!val_ident! evaluates an identity node.
+\begin{proposition}[Dropping an identity]\label{prop:boxes-dropIdentity}
+\begin{lstlisting}[style=leanbox]
+theorem Equal.dropIdentity (E : Env) (C : List Node) (iC bnd : List ℕ) (a b d : ℕ)
+    (hd : labDim E b ≤ E.dimv d) (hda : labDim E a = E.dimv d) (hab : a ≠ b) (hb : b ∈ bnd)
+    (hbC : b ∉ iC) :
+    Equal E 1 ⟨C ++ [⟨.I, [b], [a], d, 0⟩], iC ++ [a], bnd⟩ 1
+      ⟨C.map (Node.rename (swapTo a b)), iC, bnd⟩
+\end{lstlisting}
+\end{proposition}
+
+For the example (\lbx!ChainBoxExample!, \file{ChainLink.lean}): \lbx!E! gives every index dimension $2$, no phases, and no label table; \lbx!base! is $\langle[\langle\mathrm I,[5],[3]\rangle],[\,],[3,5]\rangle$ (the head identity from the input $3$ to the cut label $5$); every copy is $\langle[\langle\mathrm Z,[105,150],[5]\rangle],[\,],[5,105,150]\rangle$ (the spider from the cut label $5$ to the next cut $105$ and its own output $150$); $\pi$ is the relabelling $0{\leftrightarrow}150$, $1{\leftrightarrow}250$, $2{\leftrightarrow}205$, $10{\leftrightarrow}5$, $11{\leftrightarrow}105$. \lbx!net_two! computes \lbx!(D.expandChain c 2).toNet 10!, and
+\begin{align*}
+\mathit{Equal}_E\bigl(&1,\ \mathit{rename}_\pi(\mathit{toNet}(\mathit{expandChain}(D,c,2),10)),\\ &1,\ \mathit{chainNet}(100,[5],\mathit{base},\mathit{copy},2)\bigr)\qquad(\text{\lbx!expand_two_chainNet!}),
+\end{align*}
+by dropping the tail identity and \lbx!iso!.
+
+\file{ChainEvery.lean} gives the same at every $k$. \lbx!nodesK k! is the head identity $0$, the copies $3+j$ ($j<k$), and the tail identity $2$; \lbx!wiresK k! chains them head to tail; \lbx!closedK k! is the box-free diagram at $k+1$ copies with outputs $\langle3+j,\mathrm{out},1\rangle$ ($j\le k$) then $\langle2,\mathrm{out},0\rangle$ and input $\langle0,\mathrm{in},0\rangle$. \lbx!D0_eq! states that $D$ without link wires has no wires, \lbx!cpId_D0! that copy $j$ of node $1$ has id $3+j$, and
+\[
+\mathit{expandChain}(D,c,k+1)=\mathit{closedK}(k)\qquad(\text{\lbx!expand_closed!}).
+\]
+\lbx!bK k i! and \lbx!wK k i! name slot $i$ and wire $i$ of \lbx!closedK k!; \lbx!bnd_closed!, \lbx!wires_closed!, \lbx!bK_inj!, \lbx!locate_slot!, \lbx!locate_wire!, \lbx!not_bnd!, and the \lbx!label_*! lemmas compute every label. \lbx!netK o k! is the closed form of the network:
+\begin{align*}
+\mathit{netK}(o,k)=\bigl\langle&[\langle\mathrm I,[o],[k{+}2]\rangle]\mathbin{+\!\!+}[\langle\mathrm Z,[o{+}j{+}1,j],[o{+}j]\rangle\mid j\le k]\mathbin{+\!\!+}[\langle\mathrm I,[k{+}1],[o{+}k{+}1]\rangle],\\ &[o{+}j\mid j\le k]\mathbin{+\!\!+}[o{+}k{+}1],\ [0,\dots,k{+}2]\bigr\rangle,
+\end{align*}
+with \lbx!net_closed : (closedK k).toNet o = netK o k!. The relabelling onto the chain scheme is
+\[
+f_K(o,k,x)=\begin{cases}150+100x & x\le k,\\ 105+100k & x=k+1,\\ 3 & x=k+2,\\ 5+100(x-o) & o\le x\le o+k,\\ 100x+7&\text{otherwise,}\end{cases}
+\]
+injective for $o\ge k+3$ (\lbx!fK_inj!; \lbx!fK_slot!, \lbx!fK_wire!, \lbx!fK_tail!, \lbx!fK_head!). \lbx!cpN i! is copy $i$ at level $i$; \lbx!cn_nodes!, \lbx!cn_int!, \lbx!cn_bnd! give \lbx!chainNet 100 [5] base copy m! in closed form, and
+\begin{lstlisting}[style=leanbox]
+theorem expand_chainNet (k o : ℕ) (ho : k + 3 ≤ o) :
+    Equal E 1 (((D.expandChain c (k + 1)).toNet o).mapL (fK o k)) 1
+      (chainNet 100 [5] base copy (k + 1))
+\end{lstlisting}
+
+\subsection{Mixed wire dimensions}\label{sec:boxes-chainmixed}
+
+\file{ChainMixed.lean} drops the hypothesis of \cref{thm:boxes-chain-equal} that every label has one dimension.
+
+\lbx!sumOver_dims! changes the dimension function on the summed labels; \lbx!tensor_relabs!, \lbx!val_relabs!, \lbx!prodVal_relabs! state that node values ignore the label table, and
+\begin{align*}
+&\mathit{Equal}_E(s,A,s',B)\wedge\bigl(\forall l\in A.\mathit{int}\mathbin{+\!\!+}A.\mathit{bnd},B.\mathit{int}:\ \mathit{labDim}_{E[\mathit{labs}:=L]}(l)=\mathit{labDim}_E(l)\bigr)\\
+&\qquad\Rightarrow\mathit{Equal}_{E[\mathit{labs}:=L]}(s,A,s',B)\qquad(\text{\lbx!Equal.relabs!}).
+\end{align*}
+\lbx!eval_mapL_on!, \lbx!Equal.mapL_on!, \lbx!Equal.mapL2_on! are the forms of \lbx!eval_mapL!, \lbx!Equal.mapL!, \lbx!Equal.mapL2! that require dimensions kept only on the summed and boundary labels.
+
+\begin{theorem}[Bounded chain induction]\label{thm:boxes-chain-equal-le}
+\lbx!chain_equal_le!: \cref{thm:boxes-chain-equal} for $k\le K$, with \lbx!hD! replaced by: for every $i<K$ and every label $x$ of copy $i$ on either side, $\mathit{labDim}_E(x+iW)=\mathit{labDim}_E(x)$, and with the copy equations required only for $i<K$.
+\end{theorem}
+
+\begin{definition}[Labels by level]\label{def:boxes-lvEnv}
+For a label table $C$ (copy labels in $[W,2W)$) and $B$ (base labels below $W$),
+\begin{gather*}
+\mathit{lvl}(W,C,i)=[(x+iW,d)\mid(x,d)\in C],\\ \mathit{lvls}(W,C,0)=[\,],\qquad \mathit{lvls}(W,C,K{+}1)=\mathit{lvls}(W,C,K)\mathbin{+\!\!+}\mathit{lvl}(W,C,K),
+\end{gather*}
+and \lbx!lvEnv E W C B K! is $E$ with $\mathit{labs}:=\mathit{lvls}(W,C,K)\mathbin{+\!\!+}B$.
+\end{definition}
+\lbx!lookup_none_of!, \lbx!lookup_app_none!, \lbx!lookup_app_some!, \lbx!lookup_lvl!, \lbx!mem_lvls!, \lbx!step_le!, \lbx!lookup_lvls! compute lookups; \lbx!lv_hi! gives $\mathit{labDim}(x+iW)=E.\mathit{dimv}(C(x))$ for $x\in[W,2W)$, $i<K$; \lbx!lv_lo! gives $\mathit{labDim}(x)=E.\mathit{dimv}(B(x))$ for $x<W$; \lbx!lv_one! makes every label below $2W$ keep its dimension for every $K\ge1$. Hence \lbx!Equal.lvK! moves an equation on labels below $2W$ from $K=1$ to every $K\ge1$, \lbx!Equal.lvBase! moves a base equation to every $K$, and \lbx!Equal.lvCopy! a copy equation to every $K\ge1$; \lbx!lv_hD! derives the shift hypothesis of \cref{thm:boxes-chain-equal-le} from cut labels $c$ with $\mathit{labDim}(c+W)=\mathit{labDim}(c)$ at $K=1$; \lbx!copyOK_lt!, \lbx!baseOK_lt!, \lbx!mem_all_of_ib! bound labels.
+
+\begin{theorem}[Chain induction over levels]\label{thm:boxes-chain-equal-lv}
+\begin{lstlisting}[style=leanbox]
+theorem chain_equal_lv (E : Env) (W : ℕ) (cut : List ℕ) (bO : Net) (cO : ℕ → Net) (bX : Net)
+    (cX : ℕ → Net) (C B : List (ℕ × ℕ)) (hC : ∀ p ∈ C, W ≤ p.1 ∧ p.1 < 2 * W)
+    (hB : ∀ p ∈ B, p.1 < W)
+    (hcut : ∀ x ∈ cut, x < W ∧ labDim (lvEnv E W C B 1) (x + W) = labDim (lvEnv E W C B 1) x)
+    (hbO : baseOK W cut bO = true) (hcO : ∀ i, copyOK W cut (cO i) = true)
+    (hbX : baseOK W cut bX = true) (hcX : ∀ i, copyOK W cut (cX i) = true)
+    (s t : ℂ) (a b : ℕ → ℂ) (h0 : Equal (lvEnv E W C B 1) s bO t bX)
+    (h1 : ∀ i, Equal (lvEnv E W C B 1) (a i) (cO i) (b i) (cX i)) :
+    ∀ k, Equal (lvEnv E W C B k) (s * ∏ i ∈ range k, a i) (chainNet W cut bO cO k)
+      (t * ∏ i ∈ range k, b i) (chainNet W cut bX cX k)
+\end{lstlisting}
+\end{theorem}
+\noindent At each $k$: \lbx!chain_equal_le! with $K=k$, the base and copy equations moved from $K=1$ by \lbx!Equal.lvBase! and \lbx!Equal.lvCopy!.
+
+\subsection{Exporter}\label{sec:boxes-chain-export}
+\module{archytaszx.semantics.lean_chain} writes these proofs for an induction settled through a chain cut region (\py!inference.kind! is \py!"induction"! or \py!"induction_offset"! with \py!data["window"] == "cut"!). Its constants are \py!W = 1 << 20! (the level stride), \py!_FREE = 1 << 19! (the offset of a copy's own boundary labels within its level), \py!_BASE = 1 << 18! (the shift of the base labels over mixed dimensions), and \py!MAX_PERIOD = 64! (the longest copy period searched).
+
+\begin{algorithm}[\texttt{export\_chain}]\label{alg:boxes-export-chain}
+Signature: \py!export_chain(theorem, values=None, name="main", checks=(2,)) -> str!.
+\begin{enumerate}
+\item Read the exposed successor, the two families $\mathit{own}_k$ and $\mathit{other}_k$, the region and the step symbol from the inference; for an offset induction rebuild both families from the induction hypothesis with the offset symbol. Peel the other side's successor (\texttt{\_peel\_step\_index}); fail when it does not peel.
+\item \py!_split! each side: instantiate the exposed successor at $k=0$, separate the copy (the nodes outside the region) from the base, require the copy to meet the base only at its link-in ports (swapping link-in and link-out when the cut matches the latter), take the base with the cut partners as extra boundary and the scalar of the family at $0$; take copy $j$ at $k=j$ with scalar the ratio of the family scalars at $j+1$ and $j$; find the least period $P\le64$ of the copies (comparing structure without scalars, testing $j+1=2h$ for halves that repeat); require the scalars periodic, or geometric with a fixed ratio per period. Fail when the two sides' cut and link positions or their ratios differ.
+\item Prove the base pair and the $\mathrm{lcm}$ period of copy pairs by path sums (\py!_bodies!, through \py!lean_pathsum.net_body! on dimension $2^K$ or \py!qnet_body! on an odd prime; \cref{ch:lean-export}).
+\item Relabel each copy onto the chain scheme: link-in position $t$ to $\mathit{cut}_t$, link-out position $t$ to $\mathit{cut}_t+W$, the other copy boundary positions $j$ to $W+\mathtt{\_FREE}+j$, internal labels $x$ to $W+x$ (\py!_relabel! returns a pair list $\pi$ with \lbx!ren π! equal to that map on the labels).
+\item Emit namespace \lbx!ArchytasZX.ChainProof.name! with \lbx!E!, \lbx!hD!, the bodies as \lbx!Base! and \lbx!Copy0!, \ldots, the tables \lbx!cOt!, \lbx!cXt!, \lbx!aOt!, \lbx!aXt!, the periodic readers \lbx!cO i := perIdx cOt ⟨[], [], []⟩ i! and \lbx!aO i := perIdx aOt 1 i! (times \lbx!r ^ (i / P)! for geometric scalars), \lbx!copyEq! by \lbx!interval_cases! on $i\bmod P$, \lbx!hcO!/\lbx!hcX! by \lbx!perIdx_all!, and \lbx!main! by \lbx!chain_equal! (for an offset induction, \lbx!main s k! with level $j$ carrying copy $s+k-1-j$).
+\item Over mixed qubit wire dimensions (\py!_export_mixed!), shift the base labels by \py!_BASE!, collect the copy label table $C$ from the relabelled copies (failing when a chain label gets two dimensions) and the base table $B$, and prove \lbx!main! by \lbx!chain_equal_lv!.
+\item At each $k$ in \py!checks!, write both instantiated sides, match them to the chain networks at $k$ by a label map found by search (\py!_iso!), and prove them equal (\lbx!At{k}.inst!) from \lbx!main k! by \lbx!Equal.mapL2! (or \lbx!Equal.mapL2_on!) and permutations checked by \lbx!decide!.
+\end{enumerate}
+Every failure raises \py!PathSumUnsupported!.
+\end{algorithm}
+The Python mirrors \py!_chain_net!, \py!_map_net!, \py!_ren! compute \lbx!chainNet!, \lbx!Net.mapL!, and \lbx!ren!.
+
+\section{Tree Families}\label{sec:boxes-tree}
+
+\file{TreeInduct.lean} plugs one copy at a time onto a growing network, each copy at its own plug label.
+
+\begin{definition}[Tree network]\label{def:boxes-treeNet}
+For a stride $W$, a root label $r$, plug labels $p:\N\to\N$, a base, and copies,
+\[
+\mathit{plugMap}(W,r,p,t)(x)=\mathrm{swap}\bigl(r+tW,\ p(t)\bigr)(x+tW),
+\]
+(the transposition of the two labels applied after the shift), and
+\begin{align*}
+\mathit{treeNet}(0)&=\mathit{base},\\
+\mathit{treeNet}(t{+}1)&=\bigl\langle C.\mathit{nodes}\mathbin{+\!\!+}T_t.\mathit{nodes},\ C.\mathit{int}\mathbin{+\!\!+}[p(t)]\mathbin{+\!\!+}T_t.\mathit{int},\\ &\qquad\ \mathrm{filter}_{\ne p(t)}(T_t.\mathit{bnd})\mathbin{+\!\!+}\mathrm{filter}_{\ne p(t)}(C.\mathit{bnd})\bigr\rangle,
+\end{align*}
+with $T_t=\mathit{treeNet}(t)$ and $C=\mathit{mapL}(\mathit{plugMap}(W,r,p,t))(\mathit{copy}\ t)$: copy $t$'s root is sent to $p(t)$, which becomes summed.
+\end{definition}
+
+\begin{definition}[Tree label conditions]\label{def:boxes-tcopyOK}
+\lbx!tbaseOK W base!: every base label below $W$. \lbx!tcopyOK W r copy!: $r<W$, every copy label is $r$ or in $[W,2W)$, every summed copy label in $[W,2W)$. \lbx!PlugOK W p base copy! is the structure: $p(t)<tW+W$ (\lbx!lt!); $p(t)\notin\mathit{base.int}$ (\lbx!base!); $p(t)\ne p(s)$ for $s<t$ (\lbx!ne!); $p(t)\ne x+sW$ for every summed label $x$ of copy $s$ (\lbx!own!).
+\end{definition}
+\lbx!plugMap_root!: $\mathit{plugMap}(t)(r)=p(t)$; \lbx!plugMap_own!: for $r<W\le y$ and $p(t)<tW+W$, $\mathit{plugMap}(t)(y)=y+tW$; \lbx!plugMap_injective!. \lbx!tree_bounds!: every label of $\mathit{treeNet}(n)$ is below $nW+W$, and each summed one is a summed base label, an earlier plug label, or an earlier copy's shifted summed label. \lbx!plug_off_int!, \lbx!tcopy_off!, \lbx!tnet_off!, \lbx!tcopy_labels!, \lbx!mem_tree_succ! supply the hypotheses of \lbx!plug!.
+
+\begin{theorem}[Tree induction]\label{thm:boxes-tree-equal}
+\begin{lstlisting}[style=leanbox]
+theorem tree_equal (E : Env) (W r : ℕ) (p : ℕ → ℕ) (bO : Net) (cO : ℕ → Net) (bX : Net)
+    (cX : ℕ → Net) (hD : ∀ x y, labDim E x = labDim E y)
+    (hbO : tbaseOK W bO = true) (hcO : ∀ i, tcopyOK W r (cO i) = true)
+    (hbX : tbaseOK W bX = true) (hcX : ∀ i, tcopyOK W r (cX i) = true)
+    (hpO : PlugOK W p bO cO) (hpX : PlugOK W p bX cX)
+    (s t : ℂ) (a b : ℕ → ℂ) (h0 : Equal E s bO t bX) (h1 : ∀ i, Equal E (a i) (cO i) (b i) (cX i)) :
+    ∀ n, Equal E (s * ∏ i ∈ range n, a i) (treeNet W r p bO cO n)
+      (t * ∏ i ∈ range n, b i) (treeNet W r p bX cX n)
+\end{lstlisting}
+\end{theorem}
+\noindent The proof follows \cref{thm:boxes-chain-equal} with \lbx!plugMap! in place of the shift.
+
+\begin{definition}[Heap order]\label{def:boxes-heapPlug}
+For a first plug label $\mathit{leaf}_0$ and child labels $\mathit{kids}$ ($b=|\mathit{kids}|$),
+\[
+\mathit{heapPlug}(W,\mathit{leaf}_0,\mathit{kids})(0)=\mathit{leaf}_0,\qquad \mathit{heapPlug}(W,\mathit{leaf}_0,\mathit{kids})(t+1)=\mathit{kids}_{t\bmod b}+\lfloor t/b\rfloor W:
+\]
+copy $t+1$ is plugged onto child $t\bmod b$ of copy $\lfloor t/b\rfloor$. A tree of branching $b$ and depth $k$ is $\mathit{treeNet}$ at $(b^k-1)/(b-1)$ copies, its leaf level the last $b^{k-1}$ copies. \lbx!heapOK W leaf0 kids base copies! holds when $b>0$, there is at least one copy, the child labels are distinct and in $[W,2W)$, $\mathit{leaf}_0<W$ and not a summed base label, and no child label is a summed label of any copy.
+\end{definition}
+\lbx!kid_mem!, \lbx!div_W! ($\lfloor(x+qW)/W\rfloor=q+1$ for $x\in[W,2W)$), and
+\begin{lstlisting}[style=leanbox]
+theorem heap_plugOK (W r leaf0 : ℕ) (kids : List ℕ) (base : Net) (copies : List Net) (d : Net)
+    (hb : tbaseOK W base = true) (hc : ∀ i, tcopyOK W r (perIdx copies d i) = true)
+    (h : heapOK W leaf0 kids base copies = true) :
+    PlugOK W (heapPlug W leaf0 kids) base (perIdx copies d)
+\end{lstlisting}
+Heap order is the array layout of a complete $b$-ary tree as in heapsort~\cite{williams1964heapsort}.
+
+\paragraph{Exporter.} \py!export_tree(bases, copies, leaf, root, kids, name="main", checks=())! in \module{archytaszx.semantics.lean_chain} proves two tree families equal after every number of copies: \py!bases! the two networks before any copy, boundary position \py!leaf! the first plug, \py!copies! one period of copy pairs, boundary position \py!root! the copy's parent port and \py!kids! its child ports. It emits \lbx!W!, \lbx!r := 0!, \lbx!leaf0!, \lbx!kids! (the child positions $j$ as labels $W+\mathtt{\_FREE}+j$), \lbx!p := heapPlug W leaf0 kids!, the relabelled copy tables, \lbx!hpO!/\lbx!hpX! by \lbx!heap_plugOK!, and \lbx!main! by \lbx!tree_equal!; it requires one wire dimension. At each \py!TreeCheck(depth, left, right, fan)! it builds the fused tree of the fan side at $(b^{\mathit{depth}}-1)/(b-1)$ copies (\py!_tree_count!, \py!_grow_tree!) and proves the two instances equal. \py!_tree_net! and \py!_heap_plug! mirror \lbx!treeNet! and \lbx!heapPlug!. \py!export_tree_theorem! derives the bases and copies from a kernel theorem (\py!_tree_side!, \py!_fan_side!) and calls \py!export_tree!.
+
+\section{Periodic Families}\label{sec:boxes-periodic}
+
+\begin{theorem}[Periodic families]\label{thm:boxes-periodic}
+\begin{lstlisting}[style=leanbox]
+theorem Equal.periodic (E : Env) (p : ℕ) (hp : 0 < p) (S G : ℕ → Net) (s g : ℕ → ℂ) (a : ℂ)
+    (f : ℕ → ℕ → ℕ) (hf : ∀ k, Function.Injective (f k))
+    (hd : ∀ k x, labDim E (f k x) = labDim E x)
+    (base : ∀ r < p, Equal E (s r) (S r) (g r) (G r))
+    (stepS : ∀ k, Equal E (s (k + p)) (S (k + p)) (a * s k) ((S k).mapL (f k)))
+    (stepG : ∀ k, Equal E (g (k + p)) (G (k + p)) (a * g k) ((G k).mapL (f k))) :
+    ∀ k, Equal E (s k) (S k) (g k) (G k)
+\end{lstlisting}
+\end{theorem}
+\noindent Strong induction on $k$: below $p$ by \lbx!base!; at $j+p$ the hypothesis at $j$ relabelled by $f(j)$ and scaled by $a$, between \lbx!stepS j! and the reverse of \lbx!stepG j!. Both sides are scaled by the one constant $a$ per period, as in the engine's periodic rule (\cref{ch:kernel}).
+
+\subsection{Closed periodic chains}
+\file{PeriodicChain.lean} instantiates \cref{thm:boxes-periodic} for a closed chain: a fixed \emph{tail} $\mathit{tl}$ on the link labels $u$, $k$ copies of $\mathit{cp}$, and a moving \emph{head} $\mathit{hd}$.
+
+\begin{definition}[Level shift]\label{def:boxes-sh}
+$\mathit{sh}(W,k,x)=x$ for $x<W$, else $x+kW$. \lbx!sh_lt!, \lbx!sh_ge!, \lbx!sh_zero!, \lbx!sh_sh! ($\mathit{sh}_k\circ\mathit{sh}_j=\mathit{sh}_{k+j}$, also \lbx!sh_comp!, \lbx!rename_sh!), \lbx!sh_inj!, and \lbx!lev_eq! (two labels of $[W,2W)$ raised by $j$ and $m$ levels meet only at the same level and label). \lbx!rename_rename!, \lbx!mapL_mapL!, \lbx!mapL_id! compose renamings.
+\end{definition}
+
+\begin{definition}[Family, block, and head networks]\label{def:boxes-famNet}
+\begin{align*}
+\mathit{famNet}(W,u,\mathit{tl},\mathit{cp},\mathit{hd},\mathit{bd},k)=\bigl\langle&\mathit{tl}.\mathit{nodes}\mathbin{+\!\!+}\mathrm{flatMap}_{j<k}\,\mathit{sh}_j(\mathit{cp}).\mathit{nodes}\mathbin{+\!\!+}\mathit{sh}_k(\mathit{hd}).\mathit{nodes},\\
+&\mathit{tl}.\mathit{int}\mathbin{+\!\!+}\mathrm{filter}_{\notin\mathit{bd}}(u)\\
+&\quad\mathbin{+\!\!+}\mathrm{flatMap}_{j<k}\bigl(\mathit{sh}_j(\mathit{cp}.\mathit{int})\mathbin{+\!\!+}\mathit{sh}_{j+1}(u)\bigr)\mathbin{+\!\!+}\mathit{hd}.\mathit{int},\ \ \mathit{bd}\bigr\rangle,\\
+\mathit{blkNet}(W,u,\mathit{cp},\mathit{hd},p)=\bigl\langle&\mathrm{flatMap}_{j<p}\,\mathit{sh}_j(\mathit{cp}).\mathit{nodes}\mathbin{+\!\!+}\mathit{sh}_p(\mathit{hd}).\mathit{nodes},\\
+&\mathrm{flatMap}_{j<p}\bigl(\mathit{sh}_j(\mathit{cp}.\mathit{int})\mathbin{+\!\!+}\mathit{sh}_{j+1}(u)\bigr)\mathbin{+\!\!+}\mathit{hd}.\mathit{int},\ \ u\mathbin{+\!\!+}\mathit{hd}.\mathit{bnd}\bigr\rangle,\\
+\mathit{headNet}(u,\mathit{hd})=\bigl\langle&\mathit{hd}.\mathit{nodes},\ \mathit{hd}.\mathit{int},\ u\mathbin{+\!\!+}\mathit{hd}.\mathit{bnd}\bigr\rangle,
+\end{align*}
+where $\mathit{sh}_j(N)$ is \lbx!N.mapL (sh W j)!. Labels below $W$ are never raised.
+\end{definition}
+
+\begin{definition}[Periodic chain conditions]\label{def:boxes-famOK}
+\lbx!famOK W u tl cp hd bd! holds when: $u\subseteq[W,2W)$; every summed copy label is in $[W,2W)$ and not in $u$; every copy leg is on $u$, on $u+W$, or a summed copy label; every head leg is on $u$ or below $W$; every summed or boundary head label is below $W$; every tail leg and summed label is on $u$ or below $W$ and not a summed head label; every head boundary label is in $\mathit{bd}$. \lbx!famOK_spec! unpacks it.
+\end{definition}
+\lbx!mem_ctx!, \lbx!ctx_off_blk!, \lbx!ctx_off_head! keep the context (tail and first $k$ copies) off the block's and head's summed labels; \lbx!famNet_add! writes $\mathit{famNet}(k+p)$ as that context with the block raised $k$ levels; \lbx!blk_mapL! and \lbx!head_mapL! compute $\mathit{sh}_k$ of the block and head networks.
+
+\begin{theorem}[Periodic step]\label{thm:boxes-fam-step}
+\begin{lstlisting}[style=leanbox]
+theorem fam_step (E : Env) (hD : ∀ x y, labDim E x = labDim E y)
+    (h : famOK W u tl cp hd bd = true) (p : ℕ) (c : ℂ)
+    (h0 : Equal E 1 (blkNet W u cp hd p) c (headNet u hd)) (k : ℕ) :
+    Equal E 1 (famNet W u tl cp hd bd (k + p)) c (famNet W u tl cp hd bd k)
+\end{lstlisting}
+\end{theorem}
+\noindent The block equation raised $k$ levels is plugged into the context in place of the last $p$ copies and the head.
+
+\begin{definition}[Periodic scalar]\label{def:boxes-perS}
+$\mathit{perS}(\mathit{tab},A,p,k)=\mathit{tab}_{k\bmod p}\cdot A^{\lfloor k/p\rfloor}$ (default entry $0$); \lbx!perS_step!: $\mathit{perS}(k+p)=A\,\mathit{perS}(k)$ for $p>0$; \lbx!perS_lt!: $\mathit{perS}(r)=\mathit{tab}_r$ for $r<p$.
+\end{definition}
+
+\begin{theorem}[Periodic chain family]\label{thm:boxes-fam-periodic}
+\begin{lstlisting}[style=leanbox]
+theorem fam_periodic (E : Env) (hD : ∀ x y, labDim E x = labDim E y)
+    (h : famOK W u tl cp hd bd = true) (p : ℕ) (hp : 0 < p) (c A : ℂ)
+    (h0 : Equal E 1 (blkNet W u cp hd p) c (headNet u hd)) (G : Net) (s g : ℕ → ℂ)
+    (hs : ∀ k, s (k + p) = A * s k) (hg : ∀ k, g (k + p) = A * c * g k)
+    (base : ∀ r < p, Equal E (s r) (famNet W u tl cp hd bd r) (g r) G) :
+    ∀ k, Equal E (s k) (famNet W u tl cp hd bd k) (g k) G
+\end{lstlisting}
+\end{theorem}
+\noindent \cref{thm:boxes-periodic} with $S(k)=\mathit{famNet}(k)$, $G(k)=G$, $a=Ac$, and the identity relabelling (\lbx!mapL_id!): the step of $S$ is \cref{thm:boxes-fam-step} under \lbx!Equal.rescale! (with $s(k+p)=A\,s(k)$), the step of $G$ holds by $g(k+p)=Ac\,g(k)$.
+
+\paragraph{Exporter.} \py!export_periodic(theorem, values=None, name="main", checks=(2, 3))! in \module{archytaszx.semantics.lean_periodic} handles a kernel theorem with \py!inference.kind == "periodic"!, index symbol \py!data["index"]! and period $p=$ \py!data["step"]!. Exactly one side must carry a chain (\py!chain_period!); its chain box must have copy scalar $1$, its link tail ends must be nodes outside the box, and its nodes must meet the outside only at links. The nodes reachable from the head-side link partners form $\mathit{tl}$ (with every node on neither side), the box nodes $\mathit{cp}$, the nodes reachable from the tail-side partners $\mathit{hd}$; link $t$ is labeled $W+t$ with \py!W = 1 << 20!. The pairs at index $0,\dots,p-1$ and the block pair ($p$ copies then the head against the head times $c$) are proved by path sums and relabelled onto the templates by \py!_pull! (a label map found by \py!_iso!). It emits \lbx!ok : famOK W u tl cp hd bd = true := by decide!, \lbx!h0! by \lbx!Equal.mapL2! with \lbx!reorderL!/\lbx!reorder!, \lbx!base0!, \ldots, \lbx!base!, \lbx!sT!, \lbx!gT!, \lbx!A! (the chain scalar's ratio per period), \lbx!c!, and
+\begin{lstlisting}[style=leanbox]
+theorem main : ∀ k, Equal E (perS sT A p k) (famNet W u tl cp hd bd k)
+    (perS gT (A * c) p k) G :=
+  fam_periodic E hD ok p (by norm_num) c A h0 G _ _ (perS_step _ _ _ (by norm_num))
+    (perS_step _ _ _ (by norm_num)) base
+\end{lstlisting}
+followed, at each index of \py!checks!, by the instantiated sides matched to \lbx!famNet! and \lbx!G! and proved equal under their own scalars (\lbx!At{k}.inst!). The mirrors \py!_sh!, \py!_fam!, \py!_blk! compute \lbx!sh!, \lbx!famNet!, \lbx!blkNet!.
+
+\section{Auxiliary Lemmas}\label{sec:boxes-aux}
+
+\Cref{tab:boxes-aux} states the lemmas of the chapter's modules that the preceding sections use without naming. Hypotheses that every lemma of a section shares (\lbx!SplitData!, \lbx!WF D!, $b\in D.\mathit{boxes}$, $b$ a leaf, $b.\mathit{nodes}=[\,]$ or $b.\mathit{ports}=[\,]$, distinct node ids) are omitted; ``perm'' is \lbx!List.Perm!.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{4.4cm}>{\raggedright\arraybackslash}p{11.0cm}@{}}
+\caption{Auxiliary lemmas.}\label{tab:boxes-aux}\\
+\toprule
+Lemma & Statement\\
+\midrule
+\endfirsthead
+\toprule
+Lemma & Statement\\
+\midrule
+\endhead
+\multicolumn{2}{@{}l}{\file{Bundle.lean}}\\
+\midrule
+\lbx!lookup_mem! & $l.\mathit{lookup}(x)=\mathit{some}\ i\Rightarrow(x,i)\in l$\\
+\lbx!Spec.labDim_at! & $\mathit{labDim}_{S.\mathit{at}\,k}(x)=(S.\mathit{at}\,k).\mathit{dimv}(\mathit{labIdx}\,x)$ (by \lbx!rfl!)\\
+\lbx!Spec.expand_plain!, \lbx!Spec.expand_bund! & $\mathit{expand}(l::r)=l::\mathit{expand}(r)$ for a non-bundle $l$; $=l::(l+H)::\mathit{expand}(r)$ for a bundle\\
+\lbx!Spec.mem_expand! & $x\in\mathit{expand}(ls)\iff x\in ls\vee\exists m\in ls,\ \mathit{isB}(m)\wedge x=m+H$\\
+\lbx!Spec.combine_bund! & $\mathit{combine}(\tau)(l)=\tau(l)+\mathit{base}(l)^k\tau(l+H)$ for a bundle $l$\\
+\lbx!Spec.digit_combine! & for a bundle $l$ with $\tau(l)<B^k$, $\tau(l+H)<B$, $B=\mathit{base}(l)>0$: digits $i<k$ of $\mathit{combine}(\tau)(l)$ are those of $\tau(l)$, digit $k$ is $\tau(l+H)$\\
+\lbx!digsC_congr!, \lbx!tailVals_congr!, \lbx!bundled_congr!, \lbx!copyLegs_congr! & the digit functions depend on $\mathit{mult}$ only on the multiplicities of the chains read\\
+\lbx!bundled_app! & $\mathit{bundled}(hd\mathbin{+\!\!+}tl,cs)=hd\mathbin{+\!\!+}\mathit{tailVals}(tl,cs)$ for $|tl|=|cs|$\\
+\lbx!tailVals_append! & $\mathit{tailVals}(a\mathbin{+\!\!+}b,ca\mathbin{+\!\!+}cb)=\mathit{tailVals}(a,ca)\mathbin{+\!\!+}\mathit{tailVals}(b,cb)$ for $|a|=|ca|$\\
+\lbx!Kind.outCs_ms!, \lbx!Kind.inCs_ms! & every multiplicity of a chain of \lbx!outCs!, \lbx!inCs! is in \lbx!Kind.ms!\\
+\lbx!tensor_env! & \lbx!tensor! agrees in two environments with equal phases, coefficients, and multiplicities on \lbx!Kind.ms!\\
+\lbx!val_tensor! & for a kind other than \lbx!B!, \lbx!S!: $\mathit{val}_E(\sigma,\langle b,o,i,\delta,\phi\rangle)=\mathit{tensor}_E(b,E.\mathit{dimv}\,\delta,\phi,\sigma(o),\sigma(i))$\\
+\lbx!val_env! & a node value agrees in two environments with equal dimension (and, for \lbx!B!/\lbx!S!, second dimension), phases, coefficients, and multiplicities on \lbx!Kind.ms!\\
+\lbx!copyKind_ne! & \lbx!copyKind b! $\Rightarrow b\ne\mathrm B\wedge b\ne\mathrm S$\\
+\lbx!Spec.legsOK_append!, \lbx!Spec.legsOK_cons! & \lbx!legsOK! of a concatenation (equal first lengths) and of a cons\\
+\lbx!Spec.legsOK_split!, \lbx!Spec.legsOK_len! & \lbx!legsOK! against left-padded chains splits into plain head legs and the bundled tail; $|cs|\le|ls|$\\
+\lbx!Spec.plain_of_legsOK!, \lbx!Spec.legs_plain! & legs against empty chains have empty chain and are not bundles\\
+\lbx!Spec.chain_of_legsOK! & a zipped leg has its stated chain\\
+\lbx!Spec.legsOK_not_isB! & legs whose chains avoid $m$ are not bundles\\
+\lbx!Spec.dropM_not_isB! & the legs \lbx!dropM! keeps are not bundles\\
+\lbx!Spec.isB_of_chain!, \lbx!Spec.not_isB_of_chain! & a label of chain $m::c$ is a bundle of base index with chain $c$; a label whose chain avoids $m$ is not a bundle\\
+\lbx!Spec.base_chain! & a label of chain $m::c$ and root $\mathit{dim}$ has $\mathit{base}=F.\mathit{dims}(\mathit{dim})^{\prod_c\mathit{ks}}$\\
+\lbx!Spec.combine_plain_chain! & \lbx!combine! is $\tau$ on labels of empty chain\\
+\lbx!peel_len! & the two lists of \lbx!peel! have equal length\\
+\lbx!Spec.chainsOK_append!, \lbx!Spec.chainsOK_replicate! & \lbx!chainsOK! of a concatenation; of empty chains\\
+\lbx!prodVal_flatMap! & $\prod_E(\mathrm{flatMap}\,f\,ns)=\prod_{n}\prod_E(f\,n)$\\
+\lbx!bundled_nil! & $\mathit{bundled}(vs,[\,])=vs$\\
+\lbx!val_zk!, \lbx!val_xk!, \lbx!val_wk! & the values of \lbx!zk!, \lbx!xk!, \lbx!wk! nodes as \lbx!tZ!, \lbx!tX!, \lbx!tW! at \lbx!bundled! values\\
+\lbx!tailVals_zip!, \lbx!bundled_map! & \lbx!tailVals! and \lbx!bundled! of mapped legs as flattened \lbx!digsC! of the zipped legs\\
+\lbx!copyLegs_rep!, \lbx!copyLegs_rep′! & with empty chains, \lbx!copyLegs! is $\mathit{digit}(d,i,\cdot)$ of each value\\
+\lbx!val_nodeEquivB₀! & \lbx!nodeEquivB₀ n m! $\Rightarrow\mathit{val}(\sigma,n)=\mathit{val}(\sigma,m)$\\
+\lbx!zip_fst_snd!, \lbx!headOf_tailOf! & $\mathrm{zip}(\mathrm{map\ fst},\mathrm{map\ snd})=l$; $\mathit{headOf}\mathbin{+\!\!+}\mathit{tailOf}=ls$\\
+\midrule
+\multicolumn{2}{@{}l}{\file{Port.lean}}\\
+\midrule
+\lbx!digs_cons!, \lbx!digit_zero! & $\mathit{digs}(d,k+1,v)=\mathit{digit}(d,0,v)::[\mathit{digit}(d,i+1,v)\mid i<k]$; $\mathit{digit}(d,0,v)=v\bmod d$\\
+\lbx!digit_zero_val!, \lbx!digs_zero! & digits of $0$ are $0$\\
+\lbx!eq_zero_of_digs! & $v<d^k$ with all $k$ digits $0$ $\Rightarrow v=0$ ($d>0$)\\
+\lbx!peel_fst! & $\mathit{peel}(\ldots).1=[x+H\mid(x,\_)\in\mathit{portLegs}(m,c,tl,cs)]$\\
+\lbx!peel_snd! & when chains starting with $m$ are $[m]$, every peeled chain is $[\,]$\\
+\lbx!peel_empty! & no chain starts with $m$ $\Rightarrow$ \lbx!peel! is $([\,],[\,])$\\
+\lbx!tailVals_nil! & with empty chains, $\mathit{tailVals}(vs,cs)=vs$\\
+\lbx!digsC_one! & $\mathit{digsC}([m],v)=\mathit{digs}(d,\mathit{mult}(m),v)$\\
+\lbx!portLegs_sub!, \lbx!portLegs_isB! & every port leg is a leg of $tl$ of the stated color; it is a bundle\\
+\lbx!LegFacts.tail!, \lbx!LegFacts.head! & \lbx!LegFacts! of the tail of a cons; the head leg is a bundle with peeled dimension $F.\mathit{dims}(\mathit{dim})$ iff its chain starts with $m$\\
+\lbx!perm_four!, \lbx!digs_peel_zero! & list permutations for the W case: $\mathit{digs}(d,j+1,0)\mathbin{+\!\!+}[e]$ is a permutation of $\mathit{digs}(d,j+1,\mathit{adj}(d,0,e))\mathbin{+\!\!+}[0]$ for $e<d$\\
+\lbx!bundled_tail!, \lbx!bundled_append_tail! & \lbx!bundled! of mapped legs as head values then \lbx!tailVals!; \lbx!bundled! of appended legs and chains\\
+\lbx!nodup_fst! & distinct first components give equal second components\\
+\lbx!prod_map_const_mul!, \lbx!prod_map_const! & $\prod(r\,f)=r^{|l|}\prod f$; $\prod r=r^{|l|}$\\
+\lbx!portC_append!, \lbx!portG_still! & \lbx!portC! of a concatenation is the product; \lbx!portG! is $\tau$ off the bundles\\
+\lbx!Node.ports_isB! & every port label of a \lbx!nodeOK!, \lbx!portNode! node is a bundle and a label of the node\\
+\midrule
+\multicolumn{2}{@{}l}{\file{PortBox.lean}}\\
+\midrule
+\lbx!legs_nodup_of!, \lbx!dlabs_nodup! & distinct node ids $\Rightarrow$ distinct legs; distinct legs $\Rightarrow$ distinct digit labels\\
+\lbx!pg_def! & $\mathit{pg}\ b=(p\mapsto p\in b.\mathit{ports})$\\
+\lbx!box_eq_of_id!, \lbx!ep_mem_boxes! & boxes with equal ids are equal; membership in the grown box list\\
+\lbx!node_of_leg!, \lbx!bnd_legs!, \lbx!leg_of_mem!, \lbx!leg_mem! & a leg's node is a node; a boundary port is a leg; a leg lies on a node within its side length; every in-range side position is a leg\\
+\lbx!chain_leaf_last! & in a chain below a leaf, the leaf can only be last\\
+\lbx!wire_not_bnd! & a wire's ends are legs and not boundary ports\\
+\lbx!find?_congr′!, \lbx!find_node! & \lbx!find?! under predicates that agree on the list; the node of an id\\
+\lbx!partner_some!, \lbx!partner_none!, \lbx!bnd_of_partner_none! & a partner comes from a wire; no partner means no wire end; a leg without partner is a boundary port\\
+\lbx!partner_of_wire_nd!, \lbx!partner_of_wire! & with distinct ends, each end of a wire is the other's partner\\
+\lbx!legChain_wire! & both ends of a wire have one leg chain\\
+\lbx!flatMap_blocks_length!, \lbx!flatMap_blocks_get! & length and entries of concatenated blocks of widths $w$: entry $\mathit{wsum}(w,i)+j$ is entry $j$ of block $i$\\
+\lbx!growSide_eq!, \lbx!growSide_getD! & a grown side as blocks; its entry at $\mathit{shiftPos}+j$ is the old leg's dimension\\
+\lbx!mem_growImg′!, \lbx!growImg_getD_pos! & an image is at $\mathit{shiftPos}+j$ for $j$ below the block width; entry $j$ of a grown leg's image\\
+\lbx!getLastD_snoc!, \lbx!dropLast_snoc! & $\mathit{getLastD}(u\mathbin{+\!\!+}[j])=j$; $\mathit{dropLast}(u\mathbin{+\!\!+}[j])=u$\\
+\lbx!tail_pg!, \lbx!legChain_pg!, \lbx!legChain_img! & a leg of $b$ has tail and leg chain ending in $b.\mathit{mult}$; its images have the chain without it\\
+\lbx!dnode_labels_mem! & every label of a copy of a node is a digit label of the diagram\\
+\lbx!φP_not!, \lbx!pshift_mem! & off $b$, $\varphi_P(p,t)=(\mathit{pshift}\,p,t)$ and $\mathit{pshift}\,p$ is $p$'s image\\
+\midrule
+\multicolumn{2}{@{}l}{\file{NodeBox.lean}}\\
+\midrule
+\lbx!DNode.legs_nodup!, \lbx!DNode.mem_legs!, \lbx!legs_copy! & a node's legs are distinct; membership; a copy's legs are the original's on the new id\\
+\lbx!node_unique!, \lbx!leg_node!, \lbx!side_mem!, \lbx!portDim_of! & nodes with equal ids are equal; a leg lies on a node; side positions are legs; the dimension index of a side position\\
+\lbx!nimg_in!, \lbx!nimg_out!, \lbx!inS_iff!, \lbx!nimg_in_mem!, \lbx!nimg_out_mem! & \lbx!nimg! inside and outside $b$; its members\\
+\lbx!nimg_node_lt! & an outside leg's images have node ids below $\mathit{fresh}$\\
+\lbx!crossP_iff! & $\mathit{crossP}(p)\iff\neg\mathit{inS}(p)\wedge$ the partner of $p$ is inside $b$\\
+\lbx!nimg_wire_len! & both ends of a wire have images of one length\\
+\lbx!flatMap_swap_perm! & swapping the two loops of a nested map is a permutation\\
+\lbx!mem_copies! & $c\in\mathit{copies}\iff\exists j<k,\ x\in b.\mathit{nodes},\ c=\mathit{cpId}(j,x)$\\
+\lbx!cn_perm!, \lbx!cn_ends_nodup! & the copied diagram's wire ends and boundary are a duplicate-free permutation of its legs\\
+\lbx!nodeChain_last! & a node of a leaf $b$ has node boxes $A\mathbin{+\!\!+}[b]$ and chain $A.\mathit{mult}\mathbin{+\!\!+}[b.\mathit{mult}]$\\
+\lbx!prod_flatMap′!, \lbx!rcidx_nil! & product of a flattened list; $\mathit{rcidx}(\mathit{ks},[\,])=[[\,]]$\\
+\lbx!cn_nodeChain_out!, \lbx!cn_nodeChain_copy! & an outside node keeps its chain; copy $j$ of a node of $b$ has chain $A.\mathit{mult}$\\
+\lbx!cn_tail_split!, \lbx!cn_tail_keep!, \lbx!cn_tail_copy! & an outside crossing leg has tail $c\mathbin{+\!\!+}[b.\mathit{mult}]$, its images tail $c$; a non-splitting leg keeps its tail; a copy's legs have empty tail\\
+\midrule
+\multicolumn{2}{@{}l}{\file{NodeVal.lean}, \file{NodeBridge.lean}}\\
+\midrule
+\lbx!lookup_isNone_iff! & $l.\mathit{lookup}(a)=\mathit{none}\iff\forall p\in l,\ p.1\ne a$\\
+\lbx!bundled_splitC! & $\mathit{bundled}(A\mathbin{+\!\!+}B,cs)=A\mathbin{+\!\!+}\mathit{tailVals}(B,cs)$ for $|B|=|cs|$\\
+\lbx!sortT_tag!, \lbx!tls_nil! & every triple of \lbx!sortT! carries its tag; $\mathit{tls}=[\,]\iff$ every tail is empty\\
+\lbx!zip_replicateC!, \lbx!zip_map_right′! & zipping with a constant list; zipping with a mapped list\\
+\lbx!keepL_eq! & \lbx!keepL! read off a node's outputs\\
+\lbx!leg_side!, \lbx!pairs_mem_leg!, \lbx!dnode_eq! & a side position is a leg; a member of \lbx!pairs! is a leg's (label, tail); \lbx!dnode! unfolded\\
+\lbx!keep_mem!, \lbx!sort_mem! & the kept legs and the sorted tails are members of \lbx!pairs!\\
+\lbx!node_congr! & \lbx!n.node g = n.node g′! when $g$, $g'$ agree on the legs\\
+\midrule
+\multicolumn{2}{@{}l}{\file{DiagramBridge.lean}, \file{BoxedBridge.lean}, \file{Induct.lean}}\\
+\midrule
+\lbx!all_zip_get! & an \lbx!all! over a zip holds at each common index\\
+\lbx!wire_ends_mem! & both ends of wire $j$ are in \lbx!ends!\\
+\lbx!lookup_of_mem! & with distinct keys, $(l,d)\in L\Rightarrow L.\mathit{lookup}(l)=\mathit{some}\ d$\\
+\lbx!BBridge.find?_congr′! & \lbx!find?! under predicates that agree on the list\\
+\lbx!foldr_pick_mem!, \lbx!foldr_pick_none! & the least-id fold returns a member; it returns \lbx!none! only on the empty list\\
+\midrule
+\multicolumn{2}{@{}l}{\file{ChainEvery.lean}}\\
+\midrule
+\lbx!label_out1!, \lbx!label_tail_out!, \lbx!label_head_in! & in \lbx!closedK k! at offset $o$: output $1$ of copy $3+j$ ($j\le k$) has label $j$; the tail's output $k+1$; the head's input $k+2$\\
+\lbx!label_head_out!, \lbx!label_in!, \lbx!label_out0!, \lbx!label_tail_in! & the head's output $o$; input $0$ of copy $3+j$ has $o+j$; output $0$ of copy $3+j$ has $o+j+1$; the tail's input $o+k+1$\\
+\bottomrule
+\end{longtable}

@@ -1,0 +1,59 @@
+\chapter{Glossary}\label{app:glossary}
+
+This glossary defines the terms used throughout the manual. Each term has one meaning; the manual uses no synonyms for them. The chapter named after each entry gives the full definition.
+
+\begin{description}[style=nextline,leftmargin=1.5em,font=\normalfont\bfseries]
+\item[!-box] A marked subdiagram that stands for a symbolic number of copies of itself; see \emph{node-scoped !-box} and \emph{port-scoped !-box} (\cref{ch:diagrams}).
+\item[bare wire] A wire with no generator on it; the identity map on its dimension.
+\item[boundary] The ordered inputs and outputs of a diagram, through which it composes with other diagrams (\cref{ch:diagrams}).
+\item[certificate] A machine-checkable record of a derivation: its rewrite steps, from which the derivation can be replayed (\cref{ch:proofs}).
+\item[certified] Said of a verdict, proof, or derivation that the Lean kernel has checked (\emph{Lean-certified}) or that the proof kernel has built (\cref{ch:kernel}).
+\item[certifying] Said of the engine: it produces outputs that are certified. The engine itself is not verified.
+\item[chain box] A node-scoped !-box whose copies are linked one to the next, so that copy $i$ feeds copy $i+1$ (\cref{ch:diagrams}).
+\item[comparison view] The canonical form of a diagram up to renaming, used to compare normal forms (\cref{ch:rewriting}).
+\item[concrete] Said of a dimension, multiplicity, or value given as a number.
+\item[counterexample] An assignment of the free symbols, and possibly a boundary index, at which two diagrams denote different values (\cref{ch:proofs}).
+\item[decision procedure] A procedure that settles equality of two diagrams, or a rung of the ladder of such procedures (\cref{ch:proofs}).
+\item[derivation] A sequence of rewrite steps from one diagram to another (\cref{ch:rewriting}).
+\item[dimension] The dimension $d$ of the Hilbert space $\C^d$ a wire carries; concrete or symbolic (\cref{ch:algebra}).
+\item[dimension binder] The generator $B$, which joins wires of dimensions $s$ and $t$ into one wire of dimension $st$ (\cref{ch:diagrams}).
+\item[dimension splitter] The generator $S$, the inverse of the dimension binder (\cref{ch:diagrams}).
+\item[discard] The generator $G$: the trace as an effect and the unnormalized maximally mixed state as a state (\cref{ch:mixed}).
+\item[doubling] The translation of a mixed diagram into a pure diagram over doubled wires (\cref{ch:mixed}).
+\item[e-graph] A data structure holding many equal diagrams at once, as equivalence classes of nodes, for equality saturation (\cref{ch:rewriting}).
+\item[exhaustive search] The fair bidirectional breadth-first enumeration of rule applications that finds a derivation of every true equality between concrete diagrams (\cref{ch:completeness}).
+\item[family] A diagram with free symbols, read as the set of its instances (\cref{ch:diagrams}).
+\item[Fourier box] The generator $F$, the unitary discrete Fourier transform on one wire (\cref{ch:diagrams}).
+\item[generator] A primitive node type of the calculus: the Z spider, the X spider, the W node, the triangle and its inverse, the Fourier box, the dimension binder, the dimension splitter, or the discard (\cref{ch:diagrams}).
+\item[induction] A proof of an equality of families by induction over the multiplicity of a !-box (\cref{ch:kernel}).
+\item[Lean kernel] The type checker of Lean~4, which checks exported theorems.
+\item[multiplicity] The number of copies $\mu_b$ a !-box $b$ stands for: a concrete number or a symbolic expression (\cref{ch:diagrams}).
+\item[node-scoped !-box] A !-box over a set of nodes, repeating those nodes with their wires (\cref{ch:diagrams}).
+\item[normal form] The fixpoint of the normal-form rule set reached by the normal-form driver (\cref{ch:rewriting}).
+\item[numeric oracle] The comparison of two diagrams by numeric contraction at concrete values of their symbols (\cref{ch:proofs}).
+\item[path sum] A sum over Boolean or digit variables of exponentials of a phase polynomial, representing a linear map~\cite{amy2018pathsums} (\cref{ch:algebra}).
+\item[pattern] The left-hand side of a rule, matched against a diagram (\cref{ch:rewriting}).
+\item[phase vector] The phases of a spider, one per basis value of its wire dimension (\cref{ch:algebra}).
+\item[port] An attachment point of a node, at which a wire ends; each port has a direction (input or output) and a dimension (\cref{ch:diagrams}).
+\item[port-scoped !-box] A !-box over a set of ports of one node, repeating those ports (\cref{ch:diagrams}).
+\item[proof kernel] The engine's small trusted core whose theorems are built only by its inference rules (\cref{ch:kernel}).
+\item[purification] The translation of a diagram with discards into a pure diagram with extra boundary wires (\cref{ch:mixed}).
+\item[qufinite] Said of the ZXW-calculus with wires of different finite dimensions in one diagram~\cite{wang2023qufinitezxw}.
+\item[refutation] A proof that two diagrams are not equal, built from a counterexample (\cref{ch:lean-export-net,ch:lean-export}).
+\item[restriction] A claim about a family limited to some instances or to a restricted family of its symbols (\cref{ch:semantics}).
+\item[rewrite step] One application of a rule at one match, with its scalar and provenance (\cref{ch:rewriting}).
+\item[rule] An equation between a pattern and a replacement, with side conditions and an exact scalar (\cref{ch:rewriting,ch:rules}).
+\item[saturation] Equality saturation: application of rules to an e-graph until no rule adds anything or a limit is reached (\cref{ch:rewriting}).
+\item[scalable diagram] A diagram in the scalable sheet notation, which writes repeated structure as sheets and is translated losslessly to and from !-boxes (\cref{ch:diagrams}).
+\item[scalar] The exact complex factor a diagram or a rule carries (\cref{ch:algebra}).
+\item[span] A named, timed section of engine work recorded by the tracing module (\cref{ch:development}).
+\item[spider] A Z spider or an X spider.
+\item[symbolic] Said of a dimension, multiplicity, or value given as an expression in free symbols.
+\item[system size] The number of qudits $n$ of a family, usually the multiplicity of a !-box.
+\item[tactic] A composable proof-search step of the tactic language (\cref{ch:rewriting}).
+\item[translation] A conversion between two representations that preserves meaning: between generator sets, between notations, or from engine theorems to Lean.
+\item[triangle] The generator $T$, with its inverse $T^{-1}$ (\cref{ch:diagrams}).
+\item[verdict] The outcome of a decision: \texttt{EQUAL}, \texttt{UNEQUAL}, \texttt{EQUAL\_UNCERTIFIED}, \texttt{UNEQUAL\_UNCERTIFIED}, or \texttt{UNKNOWN} (\cref{ch:proofs}).
+\item[W node] The generator with one input and any number of outputs that sends $\ket{0}$ to $\ket{0\cdots0}$ and $\ket{i}$, $i \ne 0$, to the sum of $\ket{i}$ on one output and $\ket{0}$ on the rest (\cref{ch:diagrams}).
+\item[X spider, Z spider] The two spider generators, with any number of ports and a phase vector (\cref{ch:diagrams}).
+\end{description}

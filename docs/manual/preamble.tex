@@ -1,0 +1,172 @@
+% Shared preamble of the ArchytasZX reference manual.
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools,stmaryrd}
+\usepackage{graphicx}
+\usepackage{booktabs,tabularx,longtable,xltabular,array,multirow}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{csquotes}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,shapes.misc,positioning,calc,fit,backgrounds,arrows.meta,decorations.pathreplacing}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{imakeidx}
+\makeindex[intoc,columns=2]
+\usepackage[hidelinks,pdfusetitle,bookmarksnumbered]{hyperref}
+\usepackage[nameinlink,capitalise,noabbrev]{cleveref}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}
+\raggedbottom
+\setlength{\emergencystretch}{3em}
+
+% Theorem-like environments.
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{algorithm}[definition]{Algorithm}
+\newtheorem{example}[definition]{Example}
+\theoremstyle{plain}
+\newtheorem{proposition}[definition]{Proposition}
+\newtheorem{theorem}[definition]{Theorem}
+\newtheorem{lemma}[definition]{Lemma}
+\theoremstyle{remark}
+\newtheorem{remark}[definition]{Remark}
+\crefname{algorithm}{Algorithm}{Algorithms}
+
+% Mathematical notation, as in the paper.
+\newcommand{\ket}[1]{\lvert #1 \rangle}
+\newcommand{\bra}[1]{\langle #1 \rvert}
+\newcommand{\braket}[2]{\langle #1 \vert #2 \rangle}
+\newcommand{\sem}[1]{\llbracket #1 \rrbracket}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Zd}[1]{\mathbb{Z}_{#1}}
+\newcommand{\bbox}{!-box}
+\newcommand{\bboxes}{!-boxes}
+
+% Code listings.
+\definecolor{azxcmd}{RGB}{0,70,140}
+\definecolor{azxgen}{RGB}{0,115,70}
+\definecolor{azxkw}{RGB}{125,40,110}
+\definecolor{azxcomment}{gray}{0.45}
+\definecolor{leankw}{RGB}{125,40,110}
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.4pt,
+  xleftmargin=1em,
+  xrightmargin=1em,
+  captionpos=t,
+  breaklines=true,
+  upquote=true,
+  literate={→}{{$\to$}}1 {←}{{$\leftarrow$}}1 {≤}{{$\le$}}1 {≥}{{$\ge$}}1 {≠}{{$\ne$}}1
+           {ω}{{$\omega$}}1 {⟩}{{$\rangle$}}1 {⟨}{{$\langle$}}1 {∀}{{$\forall$}}1
+           {∃}{{$\exists$}}1 {λ}{{$\lambda$}}1 {∑}{{$\sum$}}1 {·}{{$\cdot$}}1
+           {ℂ}{{$\mathbb{C}$}}1 {ℕ}{{$\mathbb{N}$}}1 {ℤ}{{$\mathbb{Z}$}}1 {ℚ}{{$\mathbb{Q}$}}1
+           {↦}{{$\mapsto$}}1 {⊗}{{$\otimes$}}1 {∘}{{$\circ$}}1 {≫}{{$\gg$}}1
+           {α}{{$\alpha$}}1 {β}{{$\beta$}}1 {π}{{$\pi$}}1 {∈}{{$\in$}}1 {×}{{$\times$}}1
+           {₀}{{$_0$}}1 {₁}{{$_1$}}1 {₂}{{$_2$}}1 {⁻}{{$^{-}$}}1 {¹}{{$^{1}$}}1
+           {√}{{$\surd$}}1 {∧}{{$\wedge$}}1 {∨}{{$\vee$}}1 {¬}{{$\neg$}}1 {↔}{{$\leftrightarrow$}}1
+           {⟶}{{$\longrightarrow$}}1 {ε}{{$\varepsilon$}}1 {μ}{{$\mu$}}1 {σ}{{$\sigma$}}1,
+}
+\lstdefinelanguage{azx}{
+  sensitive=true,
+  morekeywords=[1]{load,show,rules,match,apply,check,normalize,saturate,decide,prove,induct,
+    certificate,translate,name,names,undo,reset,detail,help,double,purify},
+  morekeywords=[2]{dim,count,let,wire,inputs,outputs,scalar,box,repeat,as,in,phase,weight,
+    literal,against,for,on,exhaustive,algebraic,emit,verify,kernel,lean,back},
+  morekeywords=[3]{Z,X,W,F,T,Ti,S,B,G},
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+\lstdefinestyle{azx}{
+  language=azx,
+  keywordstyle=[1]{\color{azxcmd}},
+  keywordstyle=[2]{\color{azxkw}},
+  keywordstyle=[3]{\color{azxgen}},
+  commentstyle={\itshape\color{azxcomment}},
+}
+\lstdefinelanguage{Lean}{
+  morekeywords={theorem,lemma,def,abbrev,structure,inductive,class,instance,by,fun,let,in,where,
+    match,with,axiom,import,namespace,section,end,open,variable,noncomputable,private,
+    protected,example,deriving,if,then,else,do,have,show,from,calc,decide,simp,rfl},
+  sensitive=true, morecomment=[l]{--}, morecomment=[s]{/-}{-/},
+}
+\lstdefinestyle{lean}{
+  language=Lean,
+  keywordstyle={\color{leankw}},
+  commentstyle={\itshape\color{azxcomment}},
+}
+\lstdefinestyle{python}{
+  language=Python,
+  keywordstyle={\color{azxcmd}},
+  commentstyle={\itshape\color{azxcomment}},
+}
+\lstdefinestyle{shell}{language=bash, keywordstyle={}}
+\lstdefinestyle{grammar}{language={}, basicstyle=\ttfamily\small}
+\lstdefinestyle{inline}{frame=none, basicstyle=\ttfamily, keywordstyle={}, breaklines=true,
+  breakatwhitespace=false}
+
+% Inline code: \azx!...! (engine language), \py!...! (Python), \lean!...! (Lean),
+% \code!...! (other literal text), \file{...} (paths), \module{...} (Python modules).
+\newcommand{\azx}{\lstinline[style=azx,frame=none,basicstyle=\ttfamily,breaklines=true,breakatwhitespace=false]}
+\newcommand{\nat}{\azx}
+\newcommand{\py}{\lstinline[style=inline,language=Python]}
+\newcommand{\code}{\lstinline[style=inline]}
+\newcommand{\lean}{\lstinline[style=lean,frame=none,basicstyle=\ttfamily,breaklines=true,breakatwhitespace=false]}
+\def\UrlBreaks{\do\/\do\.\do\_\do\-}
+\newcommand{\file}[1]{\nolinkurl{#1}}
+\newcommand{\modidx}[1]{\nolinkurl{#1}}
+\newcommand{\module}[1]{\nolinkurl{#1}\index{#1@\modidx{#1}}}
+\newcommand{\term}[1]{\emph{#1}\index{#1}}
+\newcommand{\tool}[2]{#1\footnote{\url{#2}}}
+
+% Specification boxes for signatures and record layouts.
+\newtcolorbox{signature}[1][]{colback=gray!4,colframe=gray!50,boxrule=0.4pt,arc=1pt,
+  left=4pt,right=4pt,top=2pt,bottom=2pt,fontupper=\small,#1}
+
+% ZXW diagram styles. Diagrams flow bottom to top: inputs at the bottom, outputs at the top.
+\definecolor{zxgreen}{RGB}{204,255,204}
+\definecolor{zxred}{RGB}{255,136,136}
+\definecolor{zxyellow}{RGB}{255,255,150}
+\tikzset{
+  zxd/.style={baseline=(current bounding box.center),every node/.style={font=\scriptsize},
+    x=0.9cm,y=0.9cm},
+  wire/.style={draw,line width=0.5pt},
+  zs/.style={circle,draw,fill=zxgreen,minimum size=4.5mm,inner sep=0.5pt,font=\scriptsize},
+  xs/.style={circle,draw,fill=zxred,minimum size=4.5mm,inner sep=0.5pt,font=\scriptsize},
+  zdot/.style={circle,draw,fill=zxgreen,minimum size=2.2mm,inner sep=0pt},
+  xdot/.style={circle,draw,fill=zxred,minimum size=2.2mm,inner sep=0pt},
+  fbox/.style={rectangle,draw,fill=zxyellow,minimum size=4mm,inner sep=1pt,font=\scriptsize},
+  tri/.style={isosceles triangle,isosceles triangle apex angle=60,shape border rotate=90,
+    draw,fill=white,minimum size=3.5mm,inner sep=0pt},
+  trii/.style={isosceles triangle,isosceles triangle apex angle=60,shape border rotate=-90,
+    draw,fill=white,minimum size=3.5mm,inner sep=0pt},
+  wnode/.style={isosceles triangle,isosceles triangle apex angle=60,shape border rotate=90,
+    draw,fill=black,minimum size=3mm,inner sep=0pt},
+  bnode/.style={trapezium,trapezium angle=65,draw,fill=gray!20,minimum width=7mm,
+    minimum height=3.5mm,inner sep=1pt,font=\scriptsize},
+  snode/.style={trapezium,trapezium angle=115,draw,fill=gray!20,minimum width=7mm,
+    minimum height=3.5mm,inner sep=1pt,font=\scriptsize},
+  ground/.style={draw,line width=0.8pt},
+  bang/.style={draw,dashed,rounded corners=2pt,inner sep=3pt},
+  banglabel/.style={font=\tiny,anchor=north west,inner sep=1pt},
+  dimlabel/.style={font=\tiny,inner sep=1pt},
+}
+% \zxground{coordinate}: the discard G drawn as an earth symbol above the given point.
+\newcommand{\zxground}[1]{%
+  \draw[ground] ($(#1)+(-0.18,0)$) -- ($(#1)+(0.18,0)$);
+  \draw[ground] ($(#1)+(-0.11,0.07)$) -- ($(#1)+(0.11,0.07)$);
+  \draw[ground] ($(#1)+(-0.04,0.14)$) -- ($(#1)+(0.04,0.14)$);}

@@ -1,0 +1,251 @@
+\chapter{Engine Parameters}\label{app:params}
+
+This appendix lists every fixed numeric parameter of the engine's procedures: search and saturation limits, sample values and caps of the numeric oracle, tolerances, thresholds of the symbolic simplifiers, bounds of induction and certification, and the sizes of the caches. Each table names the procedure, the parameter, its exact value, and the Python identifier that holds it with its module; module names are given relative to the package \texttt{archytaszx}, so \file{semantics.decide} stands for \module{archytaszx.semantics.decide}. A value written as a keyword argument (\py!max_samples=24!) is a default that a caller can override; every other value is a module constant. In the backoff rows, $b$ is the number of times the rule has been banned so far in the current saturation.
+
+\newcommand{\azxParamHead}{%
+\toprule
+Parameter & Value & Identifier and module \\
+\midrule}
+
+\section{Rewriting}
+
+The normal-form driver and the rewrite strategies are specified in \cref{ch:rewriting}.
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Normal-form driver, strategies and matchers.}\label{tab:params-rewriting}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Rewrite steps of the normal-form driver and of \texttt{apply\_until\_fixpoint} & $128$ & \py!DEFAULT_GUARD.max_steps!, \file{rewrite.engine} \\
+Node cap of the default guard & none & \py!DEFAULT_GUARD.max_nodes!, \file{rewrite.engine} \\
+Loop detection of the default guard & on & \py!DEFAULT_GUARD.detect_loops!, \file{rewrite.engine} \\
+Iterations of the joint leg and phase fixpoint of spider-fusion matching & $32$ & \py!_MAX_FIXPOINT_PASSES!, \file{rewrite.match} \\
+Fourier boxes the Fourier cancellation consumes & $4$ & \py!FOURIER_CHAIN_LENGTH!, \file{rewrite.match} \\
+Applications of the \texttt{repeat} tactic & $128$ & \py!_DEFAULT_REPEAT! (\py!repeat(max_times=...)!), \file{rewrite.tactics} \\
+\bottomrule
+\end{xltabular}
+
+\section{Bounded Search and Saturation}
+
+\Cref{ch:rewriting} specifies the e-graph, its backoff scheduler and the tactic search; \cref{ch:proofs} specifies where the decision procedure and the prover use them.
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Saturation and bounded search.}\label{tab:params-saturation}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+\multicolumn{3}{@{}l}{\emph{Saturation rung of the decision procedure}} \\
+Iterations & $3$ & \py!DECIDE_SATURATION_LIMITS.max_iterations!, \file{semantics.decide} \\
+E-nodes & $128$ & \py!DECIDE_SATURATION_LIMITS.max_enodes! \\
+Rule applications & $1{,}024$ & \py!DECIDE_SATURATION_LIMITS.max_applications! \\
+Node margin over the larger root & $4$ & \py!DECIDE_SATURATION_LIMITS.node_margin! \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Default saturation limits (the \texttt{saturate} command and \texttt{EGraph.saturate})}} \\
+Iterations & $6$ & \py!SaturationLimits.max_iterations!, \file{rewrite.egraph} \\
+E-nodes & $512$ & \py!SaturationLimits.max_enodes! \\
+Rule applications & $20{,}000$ & \py!SaturationLimits.max_applications! \\
+Node margin over the larger root & $4$ & \py!SaturationLimits.node_margin! \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Backoff scheduler (both limit sets)}} \\
+Applications of one rule in one iteration before a ban & more than $1{,}000\cdot2^b$ & \py!SaturationLimits.match_limit! $=1000$, shifted left by $b$ \\
+Ban length & $5\cdot2^b$ iterations & \py!SaturationLimits.ban_length! $=5$, shifted left by $b$ \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Storage budgets of one e-graph}} \\
+Nodes held by all e-nodes together & $2^{17}=131{,}072$ & \py!STORED_NODE_BUDGET!, \file{rewrite.egraph} \\
+Diagram weight held by all e-nodes, read as an e-node cap of $\max(2,\lfloor 2^{22}/w\rfloor)$, $w$ the heaviest root's weight & $2^{22}=4{,}194{,}304$ & \py!STORED_WEIGHT_BUDGET!, \file{rewrite.egraph} \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Tactic search (\texttt{prove})}} \\
+Moves per side & $4$ & \py!DEFAULT_SEARCH_LIMITS.max_depth!, \file{rewrite.tactics} \\
+Distinct states & $2{,}048$ & \py!DEFAULT_SEARCH_LIMITS.max_states! \\
+Rule applications & $20{,}000$ & \py!DEFAULT_SEARCH_LIMITS.max_applications! \\
+Node margin over the larger input & $4$ & \py!DEFAULT_SEARCH_LIMITS.node_margin! \\
+Validation reports kept by one tactic context & $4{,}096$ & \py!_REPORT_LIMIT!, \file{rewrite.tactics} \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Exhaustive search (\cref{ch:completeness})}} \\
+Depth and time & unbounded & none, \file{rewrite.exhaustive} \\
+\bottomrule
+\end{xltabular}
+
+\section{Numeric Oracle and Sampling}
+
+The numeric oracle and its sample grid are specified in \cref{ch:proofs}; numeric contraction in \cref{ch:semantics}.
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{The numeric oracle.}\label{tab:params-oracle}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Dimension values, in order & $2$, $3$, $4$, $1$ & \py!DIMENSION_SAMPLE_VALUES!, \file{semantics.decide} \\
+Dimension values above a floor $f$ & the first four values $\ge f$ of $2$, $3$, $4$, $1$, $5$, $6$, \ldots & \py!_floor_samples!, \file{semantics.decide} \\
+Multiplicity values & $0$, $1$, $2$, $3$ & \py!MULTIPLICITY_SAMPLE_VALUES! \\
+Values of a symbol without assumptions, including phases & $\tfrac13$, $\tfrac14$, $0$, $\tfrac12$ & \py!PHASE_SAMPLE_VALUES! \\
+Integer symbol values, including exponents & the first four of $1$, $2$, $0$, $3$, $-1$, $4$, $5$, $-2$, $6$, $7$, $-3$, $8$ that meet the symbol's assumptions, cycled to four & \py!INTEGER_SAMPLE_POOL! \\
+Other symbol values & the first four of $\tfrac13$, $\tfrac14$, $0$, $\tfrac12$, $1$, $2$, $-\tfrac13$, $-\tfrac14$, $-1$, $-\tfrac12$, $-2$ that meet the symbol's assumptions, cycled to four & \py!RATIONAL_SAMPLE_POOL! \\
+Instance grid & every value tuple if there are at most $4{,}096$; otherwise each symbol varied alone from each diagonal tuple; diagonals first & \py!_MAX_GRID_PRODUCT!, \file{semantics.decide} \\
+Instances evaluated per oracle run & $24$ & \py!max_samples=24! of \py!decide_equal!, \py!refute_by_oracle!, \py!prove!, \py!check_proof! \\
+Tolerance & $10^{-9}$, relative: a deviation counts only above $10^{-9}\cdot\max(1,m)$, $m$ the largest entry modulus of either side & \py!DEFAULT_TOLERANCE!, \file{semantics.check}; scaling in \py!_oracle_compare!, \file{semantics.decide} \\
+Planned size above which a ladder sample is deferred to the end of the ladder & $2^{20}$ elements & \py!_DEFERRED_SIZE!, \file{semantics.decide} \\
+Growth over the largest evaluated sample before a sample is refused (when also above $2^{20}$) & $16\times$ & \py!_SIZE_GROWTH!, \file{semantics.decide} \\
+Search range of the smallest admissible point & $64$ values from the floor & \py!_ADMISSIBLE_SEARCH!, \file{semantics.decide} \\
+Tensor size & the process memory limit (cgroup v2 \code!memory.max!, else \code!RLIMIT_AS!) $/16/4$ entries; $10^7$ without a limit & \py!DEFAULT_MAX_ELEMENTS!, \py!FALLBACK_MAX_ELEMENTS!, \file{semantics.contract_numeric} \\
+Axes of one tensor & $64$ & \py!MAX_AXES!, \file{semantics.contract_numeric} \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Interoperability checks (\cref{ch:semantics})}} \\
+Multiplicity values & $0,1,2$ & \py!MULTIPLICITY_VALUES!, \file{semantics.interop} \\
+Dimension values & $2,3$ & \py!DIMENSION_VALUES! \\
+Values of every other symbol & the first $2$ of its pool & \py!OTHER_VALUE_COUNT! \\
+Samples & $12$ & \py!DEFAULT_SAMPLE_LIMIT! \\
+Full grid product & $4{,}096$ & \py!_MAX_GRID_PRODUCT!, \file{semantics.interop} \\
+\bottomrule
+\end{xltabular}
+
+\section{Symbolic Comparison and Counterexample Search}
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Symbolic comparison, the vanishing test and the witness search.}\label{tab:params-symbolic}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Witness instances & the oracle candidates (the grid without its instance cap, or the given samples) and the integer-root points, filtered to admissible ones that meet every floor & \py!_witness_assignments!, \py!root_points!, \file{semantics.decide} \\
+Witness tolerance & $10^{-9}$, relative: an entry differs when $|a-b|>10^{-9}\max(1,|a|,|b|)$ or the exact difference is provably nonzero & \py!find_entry_witness!, \file{semantics.check} \\
+Simplification steps & $1{,}024$ & \py!DEFAULT_MAX_SIMPLIFY_STEPS!, \file{algebra.scalar} \\
+Case splits of the vanishing test (product of split sizes) & $4{,}096$ & \py!_MAX_CASES!, \file{semantics.check} \\
+Delta lattice of an orbit group (product of moduli) & $4{,}096$ & \py!_LATTICE_MAX!, \file{semantics.check} \\
+Denominator of an orbit generator & $4{,}096$ & \py!_ORBIT_MAX!, \file{semantics.check} \\
+Rounds of orbit resumming & $4$ & \py!_RESUM_ROUNDS!, \file{semantics.check} \\
+Points of the product-of-roots test & $1$, $2$, $3$, $5$ (offset by symbol position), 30 digits, relative gap $10^{-20}$ & \py!_differ_at_samples!, \file{semantics.check} \\
+Coefficient threshold of the shifted nonnegativity test & $10^{-30}$ at 50 digits & \py!_shifted_nonnegative!, \file{semantics.check} \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Symbolic contraction (\cref{ch:semantics})}} \\
+Largest power tried for a chain's transfer matrix & $8$ & \py!MAX_PERIOD!, \file{semantics.contract_symbolic} \\
+Largest transfer-matrix side & $64$ & \py!MAX_TRANSFER_SIZE!, \file{semantics.contract_symbolic} \\
+Steps of \texttt{chain\_period} & $64$ & \py!chain_period(max_steps=64)!, \file{semantics.contract_symbolic} \\
+Phase terms of a canonical path sum read as an entry & $512$ & \py!CANON_PHASE_TERMS!, \file{semantics.contract_symbolic} \\
+Summed indices of one nested sum & $24$ & \py!_NESTED_INDICES!, \file{semantics.contract_symbolic} \\
+\bottomrule
+\end{xltabular}
+
+\section{Path Sums}
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Path-sum reduction and comparison (\cref{ch:algebra,ch:semantics}).}\label{tab:params-pathsum}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Path variables of a residual sum evaluated exactly (with \texttt{enumerate\_residual}) & $6$ & \py!max_residual_paths=6! of \py!decide_equal! and \py!prove! \\
+Boundary points of residual enumeration & $64$ & \py!_RESIDUAL_POINTS!, \file{semantics.pathsum_diagram} \\
+Orderings of color-tied path variables compared & $5{,}040$ & \py!RESIDUAL_ORDERINGS!, \file{algebra.pathsum} \\
+Boundary points of the parity comparison & $4{,}096$ & \py!PARITY_POINTS!, \file{algebra.pathsum} \\
+Terms of an XOR lift & $2^{20}$ & \py!XOR_LIFT_TERMS!, \file{algebra.pathsum} \\
+Fewest items folded as an array & $48$ & \py!LIFT_ARRAY_ITEMS!, \file{algebra.pathsum} \\
+Terms held by the fold cache & $2^{20}$ & \py!FOLD_CACHE_TERMS!, \file{algebra.pathsum} \\
+Pairs above which substitution uses arrays & $2^{15}$ & \py!SUBSTITUTE_ARRAY_PAIRS!, \file{algebra.pathsum} \\
+Chunk size of array substitution & $2^{21}$ & \py!SUBSTITUTE_CHUNK!, \file{algebra.pathsum} \\
+\bottomrule
+\end{xltabular}
+
+\section{Induction}
+
+Induction is specified in \cref{ch:kernel}; its use by the ladder and the prover in \cref{ch:proofs}.
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Induction.}\label{tab:params-induction}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Nesting depth of the induction rung & $2$ & \py!max_depth=2! of \py!decide_equal!, \file{semantics.decide} \\
+Nesting depth of induction in proof search & $2$ & \py!DEFAULT_INDUCTION_DEPTH!, \file{semantics.prove} \\
+Rewrite steps in a step case & $64$ & \py!DEFAULT_MAX_STEPS!, \file{semantics.induction} \\
+Width of the oracle window above the base & $4$ & \py!DEFAULT_WINDOW_WIDTH!, \file{semantics.induction} \\
+Nested lemma decisions & $2$ & \py!_MAX_LEMMA_DEPTH!, \file{semantics.induction} \\
+Greedy exposing steps & $16$ & \py!_MAX_GREEDY_STEPS!, \file{semantics.induction} \\
+Boundary placements of a cut region & $2{,}000$ & \py!_MAX_CUT_PLACEMENTS!, \file{semantics.induction} \\
+Rewrites per library lemma in one lemma window & $4$ & \py!_MAX_REWRITES!, \file{semantics.lemmas} \\
+Spiders split by one insertion exposure & $3$ & \py!_MAX_INSERTED!, \file{semantics.lemmas} \\
+Nesting of contraction steps re-proved by induction in one export & $2$ & \py!INDUCTED_DEPTH!, \file{semantics.kernel} \\
+Default samples tried as the induction witness of a contraction step & $4$ & \py!INDUCTED_SAMPLES!, \file{semantics.kernel} \\
+Probe width of the multiplicity floor test & $4$ & \py!_PROBE!, \file{semantics.kernel} \\
+Largest multiplicity floor searched & $64$ & \py!_MAX_FLOOR!, \file{semantics.kernel} \\
+Instances of a finite restriction & $64$ & \py!_MAX_INSTANCES!, \file{semantics.restrict} \\
+Longest copy period of a chain export & $64$ & \py!MAX_PERIOD!, \file{semantics.lean_chain} \\
+Rounds of one \bbox{} instantiation & $10{,}000$ & \py!_MAX_INSTANTIATE_ROUNDS!, \file{diagram.bangbox} \\
+\bottomrule
+\end{xltabular}
+
+\section{Certification}
+
+Certification is specified in \cref{ch:proofs} and the Lean exporters in \cref{ch:lean-export-net,ch:lean-export}.
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Certification and Lean export.}\label{tab:params-certification}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Planned size above which the certification oracle defers a sample & $2^{20}$ elements & \py!CERTIFY_SAMPLE_ELEMENTS!, \file{semantics.prove} \\
+Instances of the interface recheck & the first $16$ of the numeric oracle's grid & \py!MAX_POINTS!, \file{semantics.lean_refute} \\
+Instances of a Lean refutation after the counterexample & the $16$ of the numeric oracle's grid with the least sum of absolute values & \py!MAX_POINTS!, \py!_by_size!, \file{semantics.lean_refute} \\
+Boundary assignments a residue refutation tries & $4{,}096$, plus the hinted index & \py!MAX_ASSIGNMENTS!, \file{semantics.lean_refute} \\
+Summed label space above which a refutation contracts by a plan instead of summing directly & $256$ & \py!BRUTE_LIMIT!, \file{semantics.lean_refute} \\
+Factor-table terms of a refutation & $200{,}000$ & \py!MAX_TERMS!, \file{semantics.lean_refute} \\
+Degree of the cyclotomic field of a refutation & $512$ & \py!MAX_CYCLOTOMIC_DEGREE!, \file{semantics.lean_refute} \\
+Decimal digits of a numeric refutation & $40$ & \py!DIGITS!, \file{semantics.lean_numeric} \\
+Taylor terms of a numeric refutation & $10$ & \py!TAYLOR!, \file{semantics.lean_numeric} \\
+Decimal digits of a square root in a numeric refutation & $45$ & \py!SQRT_DIGITS!, \file{semantics.lean_numeric} \\
+Normalization rounds of the symbolic-sum export & $3$ & \py!ROUNDS!, \file{semantics.lean_sym} \\
+Terms of the full symbolic-sum translation & $4{,}096$ & \py!FULL_TERMS!, \file{semantics.lean_sym} \\
+Terms multiplied out in the unnormalized translation & $2^{14}$ & \py!NORM_TERMS!, \file{semantics.lean_sym} \\
+Steps between two checkpoints of a path-sum chain & $20$ & \py!CHAIN_BLOCK!, \file{semantics.lean_pathsum} \\
+Steps between two checkpoints of a side's reduction & $4$ & \py!RUN_BLOCK!, \file{semantics.lean_pathsum} \\
+Steps per \texttt{qchain} block & $40$ & \py!CHAIN!, \file{semantics.lean_f2} \\
+Forms visited per \texttt{qchain} block past its first step & $6{,}000$ & \py!BLOCK_WORK!, \file{semantics.lean_f2} \\
+\bottomrule
+\end{xltabular}
+
+\section{Exact Arithmetic}
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Dimensions, scalars and number fields (\cref{ch:algebra}).}\label{tab:params-algebra}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Passes of the dimension solver's fixpoint & $32$ & \py!_MAX_SOLVE_PASSES!, \file{algebra.dimension} \\
+Binding merges chased per pair in one solver pass & $64$ & \py!_MAX_BINDING_MERGES!, \file{algebra.dimension} \\
+Passes of the \texttt{unify\_all} fixpoint & $32$ & \py!_MAX_UNIFY_ALL_PASSES!, \file{algebra.dimension} \\
+Bits above which an integer prints as \code!about 2^k! & $50$ & \py!_EXACT_BITS!, \file{algebra.dimension} \\
+Largest divisor tried when factoring off a constant & $64$ & \py!_OFF_FACTOR_MAX!, \file{algebra.scalar} \\
+Digits of an algebraic atom's numeric value & $60$ & \py!_DIGITS!, \file{algebra.numfield} \\
+Shifts tried for a primitive element & $1$, $2$, $-1$, $3$, $-2$, $5$, $7$, $-3$, $11$, $13$ & \py!_SHIFTS!, \file{algebra.numfield} \\
+\bottomrule
+\end{xltabular}
+
+\section{Caches}
+
+Every cache below is a table that is emptied when it reaches its size, before the next entry is stored. A cache changes running time only, never a result.
+
+\begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
+\caption{Cache sizes.}\label{tab:params-caches}\\
+\azxParamHead
+\endfirsthead
+\azxParamHead
+\endhead
+Normalized and simplified scalars & $2^{13}$ entries & \py!_MEMO_CAP!, \file{algebra.scalar} \\
+Reduced scalar terms & $2^{12}$ entries & \py!_REDUCED_CAP!, \file{algebra.scalar} \\
+\bbox{} tags, zero-phase keys and node colors of structural comparison & $2^{16}$ entries each & \py!_MEMO_LIMIT!, \file{diagram.compare} \\
+Role tables, free symbols, node symbols, roles and node constraints of validation & $2^{17}$ entries each & \py!_CACHE_LIMIT!, \file{diagram.validate} \\
+Per-node validation issues & $2^{17}$ entries & \py!_NODE_ISSUES_LIMIT!, \file{diagram.validate} \\
+Validation reports & $2^{12}$ entries & \py!_REPORTS_LIMIT!, \file{diagram.validate} \\
+Entry digests of the rewrite cache & $2^{16}$ entries & \py!_ENTRY_MEMO_LIMIT!, \file{rewrite.cache} \\
+Simplified scalars of the normal-form driver & $4{,}096$ entries & \py!_SIMPLIFIED_CAP!, \file{rewrite.normal_form} \\
+Pattern templates per side & $256$ & \py!_TEMPLATE_MEMO!, \file{rewrite.match_template} \\
+Induction theorems kept, latest last & $16$ & \py!INDUCTED_KEPT!, \file{semantics.kernel} \\
+Normalized symbolic-sum terms (least recently used) & $2^{16}$ entries & \py!_norm_cached!, \file{semantics.lean_sym} \\
+\bottomrule
+\end{xltabular}

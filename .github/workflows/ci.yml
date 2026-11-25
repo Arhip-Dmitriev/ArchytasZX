@@ -51,3 +51,13 @@ jobs:
       - run: pip install -e .[dev,viz]
       - name: pytest (both tiers, across cores)
         run: pytest -m "" -n auto
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: build the manual with latexmk
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: docs/manual
+          root_file: archytaszx.tex

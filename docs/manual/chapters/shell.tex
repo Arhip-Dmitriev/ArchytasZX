@@ -1,0 +1,427 @@
+\chapter{The Command-Line Shell}\label{ch:shell}
+
+This chapter specifies the \texttt{archytaszx} command: its options, how it reads scripts and interactive input into logical lines, the commands the shell handles itself, the views that choose how diagrams are printed, its input and output loop, colors, error printing, exit codes, and the display settings and terminal images it uses. Two modules implement it:
+\begin{itemize}
+\item \module{archytaszx.repl.shell}: the \py!Shell! class, line joining, the read-eval-print loop, and the console entry point \py!main! (\cref{sec:shell-invocation,sec:shell-lines,sec:shell-dispatch,sec:shell-loop});
+\item \module{archytaszx.repl.terminal}: the configuration file, terminal detection, mathtext images, and inline-image escape sequences (\cref{sec:shell-config,sec:shell-terminal}).
+\end{itemize}
+The engine commands that the shell passes on, the session they act on, and the outcome records they return are specified in \cref{ch:language}; the formatter that prints an outcome in a view is specified here (\cref{sec:shell-views}). The ZX drawings of the ZX views are specified in \cref{ch:pictorial}, the Python interface, which drives the same shell, in \cref{ch:python-api}, and installation and the environment in \cref{ch:install}.
+
+\section{Architecture}\label{sec:shell-architecture}
+
+The shell is the outer of three layers. The parser (\module{archytaszx.repl.parser}) turns text into diagrams; the command layer (\module{archytaszx.repl.commands}) runs one command line on a session and returns an outcome made of mode-independent text blocks and engine states; the shell reads lines, handles a few commands itself, passes every other line to \py!commands.run!, and prints the outcome with \py!commands.format_outcome! in the current view. The printer (\module{archytaszx.repl.printer}) and the ZX drawer (\module{archytaszx.repl.zxdraw}) render engine states. The Python interface (\module{archytaszx.repl.embed}) owns one \py!Shell! per program.
+
+\begin{signature}
+\code!class Shell(*, mode: NotationMode = DEFAULT_MODE, zx_style: str = "matplot", unicode: bool = False, session: Session | None = None, color: bool = False, listing: bool = False)!
+\end{signature}
+A shell holds the engine \py!Session! (a fresh one when \texttt{session} is \py!None!), the notation mode, the ZX drawing style, the Unicode flag, the color flag, the listing flag, a doubled flag (initially false), the list of recorded lines (\texttt{history}), the count of failed lines (\texttt{errors}), the outcome of the latest engine line (\texttt{last\_outcome}), and a done flag set by \azx!quit!. The constructor raises \py!TypeError! for a mode that is not a \py!NotationMode!, a non-Boolean \texttt{unicode}, or a session that is not a \py!Session!. Its methods are \py!run_line(line) -> str!, \py!run_script(lines) -> list[str]!, \py!iter_script(lines) -> Iterator[tuple[str, str]]!, \py!loop(stdin=None, stdout=None) -> int!, and \py!prompt(continuation=False) -> str!.
+
+\section{Invocation}\label{sec:shell-invocation}
+
+\begin{lstlisting}[style=shell]
+archytaszx [--help] [--dirac | --zx | --zxrender | --zxunicode | --zxascii | --both | --raw]
+           [--unicode] [--images DIR | --images_white DIR] [--publication]
+           [--no-concrete-axioms] [--tgateenum] [-c CMD] [FILE ...]
+\end{lstlisting}
+
+The console script \texttt{archytaszx} calls \py!archytaszx.repl.shell.main()!; \texttt{python -m archytaszx.repl.shell} does the same. The argument parser is Python's \py!argparse! with the program name \texttt{archytaszx}, the description \code!ArchytasZX symbolic qufinite ZX-calculus shell.!, and no automatic \texttt{-h}. \Cref{tab:shell-options} lists every option.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.31\linewidth}X@{}}
+\toprule
+Option & Effect \\
+\midrule
+\texttt{--help} & Print the usage and the option list, and exit with status 0. \\
+\texttt{--dirac}, \texttt{-dirac} & View \texttt{dirac}: Dirac notation. The default. \\
+\texttt{--zx}, \texttt{-zx} & View \texttt{zx}: ZX diagrams drawn with matplotlib; an alias of \texttt{--zxrender}. \\
+\texttt{--zxrender}, \texttt{-zxrender} & View \texttt{zxrender}: ZX diagrams drawn with matplotlib, as Unicode text on a terminal without an image protocol. \\
+\texttt{--zxunicode}, \texttt{-zxunicode} & View \texttt{zxunicode}: ZX diagrams on a Unicode character grid. \\
+\texttt{--zxascii}, \texttt{-zxascii} & View \texttt{zxascii}: ZX diagrams on an ASCII character grid. \\
+\texttt{--both}, \texttt{-both} & View \texttt{both}: the matplotlib ZX drawing and the Dirac notation. \\
+\texttt{--raw}, \texttt{-raw} & View \texttt{raw}: full graph listings, nothing summarized or capped. \\
+\texttt{--unicode} & Print Dirac notation and proofs in Unicode. \\
+\texttt{--images DIR} & Also save every matplotlib ZX drawing in \texttt{DIR}, in the configured format. \\
+\texttt{--images\_white DIR} & As \texttt{--images}, black drawings on a white background. \\
+\texttt{--publication} & Label ZX drawings in the QPL paper's notation (radians, vectors, Z boxes) with LaTeX fonts; saved drawings default to PDF. \\
+\texttt{--no-concrete-axioms} & Never substitute bound dimensions while rewriting; no axiom that holds only at concrete dimensions applies. \\
+\texttt{--tgateenum} & Let the path-sum rung of decide and prove evaluate residual sums of at most 6 path variables exactly at boundary points, for an \texttt{UNEQUAL} only (\cref{ch:proofs}). Off by default. \\
+\texttt{-c CMD}, \texttt{--command CMD} & Run \texttt{CMD} instead of the interactive loop; repeatable, in order. \\
+\texttt{FILE ...} & Command files to run, in order, after the \texttt{-c} commands. \\
+\bottomrule
+\end{tabularx}
+\caption{Options of \texttt{archytaszx}.}
+\label{tab:shell-options}
+\end{table}
+
+The seven view options form one mutually exclusive group, and \texttt{--images} and \texttt{--images\_white} another; giving two options of one group is a usage error. Each view option has a one-dash spelling. An unknown option, a missing argument, or a conflict prints \py!argparse!'s usage message to standard error and exits with status~2.
+
+\begin{algorithm}[Startup]\label{alg:shell-main}
+\leavevmode
+\py!main(argv=None)!:
+\begin{enumerate}
+\item Parse the arguments. On \py!SystemExit! return its code: the integer when it is one, $0$ for \py!None!, else $2$.
+\item Load the display settings from the configuration file into \py!terminal.CONFIG! (\cref{sec:shell-config}). When loading raises \py!ValueError!, write \code!archytaszx: MESSAGE; using the default display settings! to standard error and keep the default settings.
+\item With \texttt{--publication}, set \py!CONFIG.publication! to true. Set \py!match_template.CONCRETE_AXIOMS! to false under \texttt{--no-concrete-axioms}, else true (\cref{ch:rewriting}). Set \py!terminal.SAVE_DIR! to the \texttt{--images} or \texttt{--images\_white} directory (or \py!None!), and \py!terminal.SAVE_WHITE! to whether \texttt{--images\_white} was given.
+\item Create the shell with the view's mode and drawing style, the Unicode flag, and color on exactly when standard output is a terminal and the environment variable \texttt{NO\_COLOR} is unset or empty. Set the session's \texttt{tgateenum} flag from \texttt{--tgateenum}.
+\item When the mode is not \texttt{dirac}, the style is \texttt{matplot}, and there are \texttt{-c} commands or files, prepare the terminal (\cref{alg:shell-prepare}).
+\item Read every file as UTF-8 and split it into lines. A file that cannot be read or decoded writes \code!archytaszx: cannot read FILE: REASON! to standard error and returns $2$ before any line runs.
+\item Make standard input tolerant (undecodable bytes become U+FFFD) and standard output tolerant (unencodable characters become backslash escapes).
+\item Without \texttt{-c} commands and files, run the interactive loop (\cref{sec:shell-loop}) and take its status. Otherwise run the \texttt{-c} commands as one script with an empty base directory, then each file as a script whose base directory is the file's directory (the session's \texttt{base}, against which \azx!certificate lean FILE! resolves a relative path), writing each nonempty output followed by a newline; stop after the script in which \azx!quit! ran. The status is $1$ when any line failed and $0$ otherwise.
+\item Flush standard output and return the status. A \py!KeyboardInterrupt! writes \code!interrupted! to standard error and returns $130$; an \py!OSError! or \py!ValueError! (such as a closed standard output) points the standard output descriptor at the null device and returns $1$.
+\end{enumerate}
+\end{algorithm}
+
+\Cref{tab:shell-exit} summarizes the exit statuses.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}rX@{}}
+\toprule
+Status & Meaning \\
+\midrule
+0 & Scripts: every line succeeded. Interactive: end of input or \azx!quit!. \texttt{--help}. \\
+1 & Scripts: at least one line failed (an engine outcome with \texttt{ok} false, a shell error, or an internal error). Interactive: input could not be read or output could not be written. Either: standard output closed. \\
+2 & A usage error, or a file that cannot be read. \\
+130 & Interrupted by Ctrl-C outside a running command in script mode. \\
+\bottomrule
+\end{tabularx}
+\caption{Exit statuses of \texttt{archytaszx}.}
+\label{tab:shell-exit}
+\end{table}
+
+A failed line does not stop a script: every line runs, and the status records the failure. An engine outcome fails not only on an error but also when a comparison does not establish equality: an \texttt{UNEQUAL} or \texttt{UNKNOWN} \azx!decide!, a \azx!prove! that finds nothing, and a \azx!check! with a mismatch all fail (\cref{ch:language}). A script whose purpose is a refutation therefore exits with status~1.
+
+\section{Logical Lines}\label{sec:shell-lines}
+
+Input is read as physical lines and joined into \term{logical lines}, each of which is one shell command or engine command. Two joining rules apply in scripts, and a third in the interactive loop.
+
+\begin{itemize}
+\item \emph{Continuation.} A line ending in a backslash is joined to the next line with one space; the backslash and the surrounding whitespace of each part are removed. A comment line, one whose first nonblank character is \code!#!, never continues, but inside a continued line every line continues.
+\item \emph{Indented blocks (scripts).} A line beginning with a space or a tab is joined to the logical line above it with a newline, its comment cut and its whitespace stripped. This is how a multi-line DSL program follows \azx!load! or \code!@NAME =!.
+\item \emph{Blocks (interactive).} A logical line that is exactly \azx!load! (optionally \code!:load!) or \code!@NAME =! starts a block: the following physical lines, comments cut and whitespace stripped, are joined with newlines until a blank line or the end of input. Lines need not be indented; a line that is only a comment is skipped.
+\end{itemize}
+
+\begin{algorithm}[Script lines]\label{alg:shell-logical}
+\leavevmode
+\py!_logical_lines(lines)! yields logical lines from physical lines. It keeps a pending logical line (initially none) and a list of continuation parts (initially empty). For each physical line, with trailing newline characters and whitespace removed, and its code being the text before its first \code!#!, stripped:
+\begin{enumerate}
+\item With no parts and empty code (a blank or comment line), yield the line stripped and continue. The pending line is kept, so a later indented line still joins it.
+\item With no parts, a pending line, and a first character that is a space or a tab: replace the pending line by its text before its first \code!#!, right-stripped, a newline, and the code; continue.
+\item If the line ends in a backslash and either parts exist or the line is not a comment line, append the line without the backslash, stripped, to the parts; continue.
+\item Append the line stripped to the parts. Yield the pending line if there is one. The new pending line is the nonempty parts joined by single spaces; clear the parts.
+\end{enumerate}
+At the end, remaining parts are joined by spaces and appended to the pending line with a newline (or become it); the pending line, if any, is yielded.
+\end{algorithm}
+
+\py!iter_script(lines)! (a string is first split into lines) yields \py!(line, output)! for each logical line that is not blank and not a comment, running it with \py!run_line!, and stops before the next line once \azx!quit! has run. \py!run_script(lines)! returns the list of outputs.
+
+\begin{example}[An indented block]
+The script lines
+\begin{lstlisting}[style=azx]
+@ghz =
+  count n
+  g = Z(0 -> 2)
+  repeat n: g.out1
+  scalar d^(-1/2)
+decide @ghz
+\end{lstlisting}
+form two logical lines: \code!@ghz =! followed by the four indented lines joined with newlines, a \azx!define! of a DSL program; and \azx!decide @ghz!.
+\end{example}
+
+\section{Line Dispatch}\label{sec:shell-dispatch}
+
+\begin{algorithm}[Running one logical line]\label{alg:shell-run-line}
+\leavevmode
+\py!Shell.run_line(line)! returns the text to print, \code!""! for none.
+\begin{enumerate}
+\item A line that is not a string counts as an error and returns \code!error: a line must be a str, got T! (red when color is on).
+\item Strip the line. A blank line or a line starting with \code!#! returns \code!""! and is not recorded.
+\item Record the line in the history. A leading colon is removed (and the rest stripped); a line that is only a colon returns \code!""!.
+\item Let $w$ be the first word, in lower case, and $r$ the rest, stripped. Handle the shell commands of \cref{tab:shell-commands} when $w$ names one (each except \azx!config! only when $r$ is empty).
+\item Otherwise run the line with \py!commands.run(session, text)! and store the outcome as \texttt{last\_outcome}. A failed outcome counts as an error. Format the outcome in the current view (\cref{alg:shell-format}) and return it, with its error lines red when the outcome failed. An exception other than \py!KeyboardInterrupt! raised while running or formatting counts as an error and returns \code!error: internal: CLASS: MESSAGE!, whitespace runs collapsed, in red.
+\end{enumerate}
+\end{algorithm}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Command & Effect and output \\
+\midrule
+\texttt{quit}, \texttt{exit} & Set the done flag; no output. Scripts stop; the loop ends with status 0. \\
+\texttt{history} & The recorded lines, numbered from 1, the numbers right-aligned to the width of the largest: \texttt{\ 1\ \ load ...}. \\
+\texttt{dirac}, \texttt{zx}, \texttt{zxrender}, \texttt{zxunicode}, \texttt{zxascii}, \texttt{both}, \texttt{raw} & Switch the view (\cref{tab:shell-views}); output \texttt{mode: WORD}. \\
+\texttt{listing} & Toggle the graph listing under each ZX drawing; output \texttt{listing: on} or \texttt{listing: off}. \\
+\texttt{doubled} & Toggle drawing mixed diagrams doubled, the conjugate sheet shaded; output \texttt{doubled: on|off}. \\
+\texttt{tgateenum} & Toggle the session's residual-sum evaluation (as \texttt{--tgateenum}); output \texttt{tgateenum: on|off}. \\
+\texttt{publication} & Toggle \texttt{CONFIG.publication}; output \texttt{publication: on|off}. \\
+\texttt{config [KEY VALUE | save | reset]} & Show or change the display settings (\cref{sec:shell-config}). \\
+\bottomrule
+\end{tabularx}
+\caption{Commands the shell handles itself.}
+\label{tab:shell-commands}
+\end{table}
+
+The shell commands are recognized case-insensitively and with an optional leading colon; every other word goes to the engine, which matches command names exactly. The shell-only usage lines in the engine's \azx!help! are:
+\begin{lstlisting}[style=grammar]
+dirac -- Dirac notation
+zx -- ZX diagrams drawn with matplotlib (alias of zxrender)
+zxrender -- ZX diagrams drawn with matplotlib
+zxunicode -- ZX diagrams drawn on a Unicode grid
+zxascii -- ZX diagrams drawn on an ASCII grid
+both -- Dirac notation and ZX drawings
+raw -- full ZX graph listings, nothing summarised or capped
+listing -- toggle the ZX graph listing under each drawing
+doubled -- toggle drawing mixed diagrams doubled, the conjugate sheet shaded
+publication -- toggle the paper's notation in ZX drawings
+config [KEY VALUE | save | reset] -- image settings: size, color, format, publication
+history -- list the lines entered this session
+quit -- leave the shell
+exit -- leave the shell
+\end{lstlisting}
+
+\paragraph{The config command.} \azx!config! with no argument lists the settings; \azx!config KEY VALUE! sets one (the key in lower case) and lists them; \azx!config reset! restores the defaults and lists them; \azx!config save! writes the settings to the configuration file and prints \code!saved PATH!. Any other argument, a bad key, a bad value, or a failed write counts as an error and prints \code!error: MESSAGE! (\code!usage: config [KEY VALUE | save | reset]! for a wrong argument count). The listing is:
+\begin{lstlisting}[style=grammar]
+size = 1
+color = auto
+format = auto
+publication = false
+file: /home/user/.config/archytaszx/config.toml
+\end{lstlisting}
+with the size printed in the shortest general format (\code!1!, \code!1.5!). Settings changed by \azx!config! last until the process ends unless saved.
+
+\section{Views and Notation Modes}\label{sec:shell-views}
+
+\begin{signature}
+\py!class NotationMode(enum.Enum)!: \code!DIRAC = "dirac"!, \code!ZX = "zx"!, \code!BOTH = "both"!, \code!RAW = "raw"!.\\
+\py!DEFAULT_MODE = NotationMode.DIRAC!\\
+\py!VIEWS: dict[str, tuple[NotationMode, str | None]]!
+\end{signature}
+
+A \term{view} is a notation mode together with a ZX drawing style. \Cref{tab:shell-views} lists the seven views; a view without a style keeps the current style.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+View & Mode & Drawing style \\
+\midrule
+\texttt{dirac} & \texttt{DIRAC} & unchanged \\
+\texttt{zx}, \texttt{zxrender} & \texttt{ZX} & \texttt{matplot} \\
+\texttt{zxunicode} & \texttt{ZX} & \texttt{unicode} \\
+\texttt{zxascii} & \texttt{ZX} & \texttt{ascii} \\
+\texttt{both} & \texttt{BOTH} & \texttt{matplot} \\
+\texttt{raw} & \texttt{RAW} & unchanged \\
+\bottomrule
+\end{tabular}
+\caption{Views.}
+\label{tab:shell-views}
+\end{table}
+
+The notation mode decides how each diagram is printed:
+\begin{itemize}
+\item \texttt{DIRAC}: the Dirac line of the diagram (\cref{ch:language}), followed by the instance line \code!at a = 1, ...: ...! when the diagram has parameters; a diagram without a Dirac form prints \code!dirac: unavailable (REASON)!. No graph listing appears.
+\item \texttt{ZX}: the ZX drawing of the diagram in the current style (\cref{ch:pictorial}); outside a drawing context (below) its graph listing.
+\item \texttt{BOTH}: the ZX block, then the Dirac block.
+\item \texttt{RAW}: the graph listing (\cref{ch:language}).
+\end{itemize}
+A scalable form prints its scalable listing in \texttt{RAW}; in \texttt{ZX} and \texttt{BOTH} it is translated back to a diagram and drawn (its scalable listing when the translation fails or when no drawing context is active); its Dirac block is the Dirac block of the translated-back diagram, or \code!dirac: unavailable (REASON)!. Composite records print each contained diagram in the mode, with the headers of \cref{ch:language}.
+
+\begin{signature}
+\py!printer.drawing(draw: Callable[[Diagram], str] | None) -> ContextManager[None]!\\
+\code!format_outcome(outcome: Outcome, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False, zx_style: str = "matplot", listing: bool = False, doubled: bool = False) -> str!
+\end{signature}
+Inside \py!with drawing(f):!, the ZX block of a diagram $D$ is \py!f(D)!; outside, or with \py!f! \py!None!, it is the graph listing. The drawer is a context variable.
+
+\begin{algorithm}[Formatting an outcome]\label{alg:shell-format}
+\leavevmode
+\py!format_outcome(outcome, mode, ...)! raises \py!CommandGrammarError! for a non-outcome, a mode that is not a \py!NotationMode!, or a style not among \texttt{matplot}, \texttt{unicode}, \texttt{ascii}.
+\begin{enumerate}
+\item Define the drawer: for a diagram $D$, a view of $D$ for the ZX drawer; with \texttt{doubled} and a mixed $D$, a view of the doubled diagram with the nodes of the conjugate sheet shaded (\cref{ch:mixed,ch:pictorial}); the drawing in \texttt{zx\_style}; followed by a newline and $D$'s graph listing when \texttt{listing}.
+\item Within \py!drawing(drawer)! when the mode is \texttt{ZX} or \texttt{BOTH}, else \py!drawing(None)!, print each block: a \py!Text! as its text; a \py!Proof! by \py!proof_text(proof, unicode=unicode)!; a \py!State! by \py!printer.render(state, mode, unicode=unicode)!. A block whose printing raises prints \code!render: unavailable (CLASS: MESSAGE)!.
+\item Join the printed blocks with newlines.
+\end{enumerate}
+\end{algorithm}
+
+In the shell, the outcome of a successful \azx!detail! under \texttt{--unicode} is printed by \py!detail_text(payload, unicode=True)! instead, so that its diagrams appear in Unicode; every other outcome goes through \py!format_outcome! with the shell's mode, Unicode flag, style, listing flag, and doubled flag. \py!Text! blocks are the same in every view: only diagrams and proofs change with the view.
+
+\begin{example}[One diagram in three views]
+After \azx!load copy[d]!, the view \texttt{dirac} prints \code!copy_{2} = sum_{k=0}^{d-1} |k, k><k|!; the view \texttt{raw} prints
+\begin{lstlisting}[style=grammar]
+graph: 1 node, 0 wires, 1 input -> 2 outputs
+  scalar: 1
+  parameters: none
+  nodes:
+    n0  Z  in: [d]  out: [d, d]
+  wires: none
+  inputs: [n0.in0]
+  outputs: [n0.out0, n0.out1]
+  bang boxes: none
+\end{lstlisting}
+and the view \texttt{zxascii} prints
+\begin{lstlisting}[style=grammar]
+    in 0----(Z)]----out 0
+               ]
+               ]----out 1
+every wire has dimension d
+\end{lstlisting}
+\end{example}
+
+\section{The Interactive Loop}\label{sec:shell-loop}
+
+\begin{algorithm}[The read-eval-print loop]\label{alg:shell-loop}
+\leavevmode
+\py!Shell.loop(stdin=None, stdout=None)! reads from \texttt{stdin} (default standard input) and writes to \texttt{stdout} (default standard output).
+\begin{enumerate}
+\item The loop is \term{interactive} when the source is a terminal. When interactive, the mode is not \texttt{DIRAC}, and the style is \texttt{matplot}, prepare the terminal (\cref{alg:shell-prepare}).
+\item When interactive and the source and sink are the process's standard streams, read with \py!input()! and start \tool{GNU Readline}{https://tiswww.case.edu/php/chet/readline/rltop.html} through Python's \py!readline! module when it is available: load the history file \file{~/.archytaszx_history} (an unreadable file is ignored) and set the history length to $1000$.
+\item When interactive, write the banner \code!ArchytasZX shell, mode MODE; type help for commands.!, with the mode value (\code!dirac!, \code!zx!, \code!both!, \code!raw!).
+\item Until the done flag is set: read a logical line (\cref{alg:shell-read}); at the end of input, write a newline when interactive and return $0$; otherwise run it and write its nonempty output followed by a newline. A failure to read counts as an error, writes \code!error: cannot read input: CLASS: MESSAGE!, and returns $1$.
+\item A \py!KeyboardInterrupt! (Ctrl-C) while reading or running discards the pending line or stops the running command, writes \code!interrupted! (preceded by a newline when interactive), and continues the loop.
+\item An \py!OSError! or \py!ValueError! from writing returns $1$. On every exit, the readline history is written back to the history file (a failed write is ignored).
+\end{enumerate}
+Every write flushes; characters the sink cannot encode are written as backslash escapes.
+\end{algorithm}
+
+\begin{algorithm}[Reading a logical line interactively]\label{alg:shell-read}
+\leavevmode
+\begin{enumerate}
+\item Read physical lines with the prompt \py!prompt(False)! for the first and \py!prompt(True)! for each continuation; non-interactive input gets no prompt.
+\item Apply the continuation rule (a trailing backslash; a comment line does not continue unless parts exist). At the end of input return the parts joined by spaces, or \py!None! when there are none.
+\item When interactive and the joined line is exactly \azx!load!, \code!:load!, or \code!@NAME =!, read the block that follows (\cref{sec:shell-lines}), each line with the continuation prompt, and return the head and the block's lines joined with newlines.
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{The prompt.} \py!prompt(False)! is \code!PLACE(N): !, where $N$ is the number of recorded lines plus one and \code!PLACE! is the name of the working directory: \code!home! for the home directory, the last path component otherwise (the whole path for the root \code!/!), \code!?! when the working directory cannot be read. A continuation prompt replaces \code!PLACE! by as many dots as it has characters. In \file{/home/user/proofs} the first prompt is \code!proofs(1): ! and a continuation prompt \code!......(1): !.
+
+\paragraph{Colors.} With color on, each output line that starts with \code!error:! is wrapped in the ANSI sequences \code!ESC[31m! and \code!ESC[0m! (red). Color applies to the error lines of failed engine outcomes, of internal errors, and of \azx!config! errors.
+
+\paragraph{Error printing.} A failed engine command prints \code!error: MESSAGE! and \code!(detail shows the engine detail)! (\cref{ch:language}); \azx!detail! then prints the class and message of each exception in the cause chain and the current diagram. An unexpected exception inside the shell prints one line \code!error: internal: CLASS: MESSAGE!. Neither stops the loop.
+
+\section{Display Settings}\label{sec:shell-config}
+
+\begin{signature}
+\py!@dataclass class Config!: \py!size: float = 1.0!, \code!color: str = "auto"!, \code!format: str = "auto"!, \py!publication: bool = False!.\\
+\code!FORMATS = ("auto", "png", "pdf", "svg")!\\
+\py!CONFIG: Config!: the settings in force.\\
+\py!config_path(environ=None) -> str!, \py!set_config(config, key, value) -> None!, \py!load_config(path=None) -> Config!, \py!save_config(config, path=None) -> str!
+\end{signature}
+
+The settings scale and color the images the shell renders and select the format of saved drawings and the publication notation (\cref{ch:pictorial}). \py!config_path! returns \file{$XDG_CONFIG_HOME/archytaszx/config.toml}, with \file{~/.config} in place of \texttt{\$XDG\_CONFIG\_HOME} when that variable is unset or empty.
+
+\py!set_config(config, key, value)! sets one setting and raises \py!ValueError! on a bad key or value:
+\begin{itemize}
+\item \texttt{size}: a number $s$ with $0<s\le10$ (\code!size must be a number, got V!; \code!size must be in (0, 10]!);
+\item \texttt{color}: \code!auto!, \code!#rgb!, \code!#rrggbb!, or a color name that \tool{matplotlib}{https://matplotlib.org} accepts (false when matplotlib is not installed), stripped;
+\item \texttt{format}: one of \py!FORMATS!, stripped and lower-cased;
+\item \texttt{publication}: a Boolean, or a string that is, stripped and lower-cased, one of \code!true!, \code!on!, \code!yes!, \code!1! (true) or \code!false!, \code!off!, \code!no!, \code!0! (false);
+\item any other key: \code!unknown setting 'K'; settings: size, color, format, publication!.
+\end{itemize}
+
+\py!load_config(path)! reads the \tool{TOML}{https://toml.io} file at the path (default \py!config_path()!): a missing file gives the defaults; an unreadable file or invalid TOML raises \code!ValueError("cannot read PATH: REASON")!; every key-value pair goes through \py!set_config!. \py!save_config(config, path)! creates the parent directory and writes exactly four lines,
+\begin{lstlisting}[style=grammar]
+size = 1.0
+color = "auto"
+format = "auto"
+publication = false
+\end{lstlisting}
+the size as Python's \py!repr! of the float, and returns the path. \py!format! \texttt{auto} saves PDF in publication mode and PNG otherwise.
+
+\section{Terminal Images}\label{sec:shell-terminal}
+
+The matplotlib views show drawings and formulas as inline images on terminals that support an image protocol. This section specifies the detection, rendering, and encoding of such images; the drawings themselves are specified in \cref{ch:pictorial}.
+
+\subsection{Detection}
+
+\begin{signature}
+\code!PROTOCOLS = ("kitty", "iterm", "sixel", "none")!\\
+\py!protocol(environ=None, tty=None) -> str!, \py!dark(environ=None) -> bool!\\
+\py!@dataclass class Terminal!: \py!fg: str | None!, \py!bg: str | None!, \py!cell: int | None!, \py!cell_width: int | None! (all default \py!None!)\\
+\py!TERMINAL: Terminal!, \py!query_terminal() -> Terminal!, \py!prepare(environ=None) -> None!
+\end{signature}
+
+\begin{algorithm}[Image protocol]\label{alg:shell-protocol}
+\leavevmode
+\py!protocol(environ, tty)!:
+\begin{enumerate}
+\item If \texttt{ARCHYTASZX\_IMAGES}, lower-cased, is in \py!PROTOCOLS!, return it.
+\item If standard output is not a terminal (or \texttt{tty} is false), return \code!none!.
+\item \code!kitty! when \texttt{KITTY\_WINDOW\_ID} is set, \texttt{TERM} is \code!xterm-kitty! or \code!xterm-ghostty!, or \texttt{TERM\_PROGRAM} is \code!ghostty!.
+\item \code!iterm! when \texttt{TERM\_PROGRAM} is \code!iTerm.app!, \code!WezTerm!, or \code!vscode!, or \texttt{LC\_TERMINAL} is \code!iTerm2!.
+\item \code!sixel! when \texttt{TERM} contains \code!sixel! or starts with \code!foot! or \code!mlterm!, or \texttt{TERM\_PROGRAM} is \code!mlterm!.
+\item Otherwise \code!none!.
+\end{enumerate}
+\end{algorithm}
+
+\py!dark(environ)! returns true for \texttt{ARCHYTASZX\_IMAGE\_THEME} equal to \code!dark! and false for \code!light! (any case); otherwise it reads the text after the last \code!;! of \texttt{COLORFGBG} and returns false exactly when that is the number $7$ or $15$.
+
+\py!query_terminal()! opens \file{/dev/tty}, switches it to cbreak mode, and sends three queries, each answered within $0.2$~seconds or not at all: OSC~10 (\code!ESC]10;?ESC\!) and OSC~11 for the foreground and background colors, replies matching \code!rgb:R/G/B! in hexadecimal of any width, each component scaled to two hexadecimal digits by $\lfloor h\cdot255/(16^{w}-1)\rfloor$; and CSI~16~t (\code!ESC[16t!) for the cell size, reply \code!ESC[6;H;Wt!, a nonpositive value meaning unknown. The terminal mode is restored afterwards. Any failure returns an empty \py!Terminal()!.
+
+\begin{algorithm}[Preparing the terminal]\label{alg:shell-prepare}
+\leavevmode
+\py!prepare(environ)! does nothing when the protocol is \code!none!. Otherwise, when standard input and output are terminals, it stores \py!query_terminal()! as \py!TERMINAL!, and, once per process, starts a daemon thread that renders one formula (loading matplotlib in the background). A later render waits for that thread.
+\end{algorithm}
+
+\subsection{Rendering and encoding}
+
+\begin{signature}
+\py!colours(dark_theme, environ=None) -> tuple[str, str]!\\
+\py!render_png(lines: list[str], *, dark_theme: bool, opaque: bool = False, density: float = 1, palette: tuple[str, str] | None = None) -> bytes!\\
+\py!cells(png: bytes, density: float) -> tuple[int, int] | None!\\
+\py!encode_image(png: bytes, proto: str | None = None, density: float = 1) -> str | None!\\
+\py!scalable(proto: str) -> bool!\\
+\code!keep(data: bytes, kind: str, ext: str = "png") -> str | None!\\
+\py!SAVE_DIR: str | None = None!, \py!SAVE_WHITE = False!, \code!WHITE = ("#000000", "#ffffff")!
+\end{signature}
+
+\py!colours(dark_theme)! returns \py!(fg, bg)!: the foreground is \texttt{ARCHYTASZX\_IMAGE\_FG}, else the terminal's reported foreground, else \code!#e6e6e6! on a dark theme and \code!#111111! on a light one; the background is the terminal's reported background, else \code!#1e1e1e! or \code!#ffffff!.
+
+\begin{algorithm}[Rendering mathtext lines]\label{alg:shell-render-png}
+\leavevmode
+\py!render_png(lines, ...)! renders each line as matplotlib mathtext \code!$LINE$!, left aligned, one line per row.
+\begin{enumerate}
+\item The colors are \py!colours(dark_theme)!, with the foreground replaced by \py!CONFIG.color! when that is not \code!auto!, and both replaced by \texttt{palette} when given.
+\item The pixel size of the font is $p=0.75\,h\cdot\text{size}$ with $h$ the terminal's cell height when known, else $p=14\cdot\text{size}$; the font size is $72p/100$ points at 100 dots per inch.
+\item Measure each line's extent; the padding and the gap between rows are both $p/3$. The image is $w=\max_i w_i+2p/3$ wide and $\sum_i h_i+(n-1)p/3+2p/3$ high; rows are placed from the top.
+\item Save as PNG at $100\cdot\min(\text{density},\,12000/\max(w,h))$ dots per inch (the longest side at most 12000 pixels), transparent unless \texttt{opaque}, in which case the background is the background color.
+\end{enumerate}
+\end{algorithm}
+
+\py!cells(png, density)! returns the terminal columns and rows that show the PNG at $1/\text{density}$ of its pixel size, from the width and height in its header (bytes 16--23), when the cell size is known; the width is capped at the terminal width minus one (at least 10 columns), keeping the aspect ratio; each value is rounded up and at least $1$. Otherwise \py!None!.
+
+\py!encode_image(png, proto, density)! returns the escape text that shows the PNG inline, or \py!None! for the protocol \code!none!:
+\begin{itemize}
+\item \emph{kitty} (the \tool{kitty graphics protocol}{https://sw.kovidgoyal.net/kitty/graphics-protocol/}): the base64 data in chunks of 4096 characters, each chunk as \code!ESC_G...;DATA ESC\!, the first with \code!a=T,f=100!, the cell size \code!,c=C,r=R! when known, and \code!m=1! on every chunk but the last (\code!m=0!);
+\item \emph{iterm}: \code!ESC]1337;File=inline=1;size=BYTES;FIT;preserveAspectRatio=1:DATA BEL!, where \code!FIT! is \code!width=C;height=R! in cells when known, else \code!width=Wpx;height=Hpx! at $1/\text{density}$ when the density is not $1$, else empty;
+\item \emph{sixel}: the image quantized to 16 gray levels (the mean of red, green, and blue, rounded), a palette \code!#c;2;v;v;v! with $v=\operatorname{round}(100c/15)$, then six-pixel bands joined by \code!-!; within a band, one run per gray level present, \code!#c! followed by the characters $63+\text{mask}$ with runs longer than three written \code+!NC+, runs joined by \code!$!; framed as \code!ESC Pq"1;1;W;H! \ldots{} \code!ESC\!. The sixel image is not scaled.
+\end{itemize}
+\py!scalable(proto)! is true for \code!iterm!, and for \code!kitty! when the cell width is known.
+
+\py!keep(data, kind, ext)! writes the data to \py!SAVE_DIR! as \file{NNNN-KIND.EXT}, with \texttt{NNNN} a four-digit counter starting at \code!0001! per process, creating the directory; it returns the path, or \py!None! without a save directory. The drawer calls it for every image it renders when \texttt{--images} or \texttt{--images\_white} is given, and \py!SAVE_WHITE! selects the palette \py!WHITE! (black on white) for saved drawings (\cref{ch:pictorial}).
+
+\section{Environment}\label{sec:shell-env}
+
+The shell reads these environment variables: \texttt{NO\_COLOR} (a nonempty value turns color off), \texttt{XDG\_CONFIG\_HOME} (the configuration directory), \texttt{ARCHYTASZX\_IMAGES}, \texttt{ARCHYTASZX\_IMAGE\_THEME}, \texttt{ARCHYTASZX\_IMAGE\_FG}, \texttt{COLORFGBG}, \texttt{TERM}, \texttt{TERM\_PROGRAM}, \texttt{KITTY\_WINDOW\_ID}, and \texttt{LC\_TERMINAL} (\cref{sec:shell-terminal}). It reads and writes two files: the configuration file (\cref{sec:shell-config}) and the readline history \file{~/.archytaszx_history}. \Cref{ch:install} collects the variables of the whole package.
+
+\section{Example}\label{sec:shell-example}
+
+A script run as \texttt{archytaszx s.azx}:
+\begin{lstlisting}[style=azx]
+load copy[d] ; (copy[d] (x) id[d])
+apply spider_fusion at n0, n2
+check
+decide
+\end{lstlisting}
+prints
+\begin{lstlisting}[style=grammar]
+loaded dirac input
+sum_{k0,k1,k2=0}^{d-1} [k0 = k1] [k0 = k2] |k1, k1, k2><k0|
+step: spider_fusion (consumed n0, n2, new n3, scalar 1)
+result:
+  sum_{k1,k3=0}^{d-1} [k1 = k3] |k1, k1, k3><k3|
+check: no mismatch in 4 samples over d
+decide: equal by normal_form: normal forms agree; no oracle mismatch in 4 sample(s)
+proof: re-checkable; certificate kernel / certificate lean
+\end{lstlisting}
+and exits with status~0. The sample counts depend on the sample grid of \cref{ch:proofs}. The same lines with \texttt{-c} options (\texttt{archytaszx -c "load copy[d]" -c "decide against id[d]"}) run without a file.

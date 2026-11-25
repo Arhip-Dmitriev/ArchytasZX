@@ -1,0 +1,1335 @@
+\chapter{The Input Language and Engine Commands}\label{ch:language}
+
+This chapter specifies every text a user types to the engine: the three diagram notations (the spider and wire DSL, Dirac expressions, and graph listings), rule steps, the arguments the commands share, and every engine command with its options, semantics, printed output, and errors. It also specifies the session state the commands act on, the result record each command returns, and the text forms in which the engine prints diagrams. Three modules implement it:
+\begin{itemize}
+\item \module{archytaszx.repl.parser}: reading of the three notations and of rule steps into diagrams (\cref{sec:language-forms,sec:language-expr,sec:language-dsl,sec:language-dirac,sec:language-listing,sec:language-steps});
+\item \module{archytaszx.repl.printer}: the Dirac text and graph listing of a diagram, the catalog names, and the printed form of composite engine records (\cref{sec:language-dirac-out,sec:language-listing,sec:language-records});
+\item \module{archytaszx.repl.commands}: the session, the command table, dispatch, and every command (\cref{sec:language-session,sec:language-args,sec:language-commands,sec:language-detail}).
+\end{itemize}
+The interactive shell that reads lines and chooses how outcomes are printed is specified in \cref{ch:shell}; the Python interface that builds diagrams by operators in \cref{ch:python-api}. The diagram data structure that every reader produces is specified in \cref{ch:diagrams}, the dimension, phase, and scalar types in \cref{ch:algebra}, the rules in \cref{ch:rules}, the rewriting engine in \cref{ch:rewriting}, and the decision procedure, proof search, and certificates that the commands call in \cref{ch:proofs,ch:kernel}. The ZX drawings are specified in \cref{ch:pictorial}.
+
+The notations denote diagrams of the qufinite ZXW calculus~\cite{coecke2011interacting,poor2023zxw,wang2023qufinitezxw} with \bboxes{}~\cite{dixon2009graphical,kissinger2014pattern}. Diagrams flow from inputs (bras) to outputs (kets). A diagram whose symbols are free stands for a family; \cref{ch:proofs} defines family equality.
+
+\section{Input Forms and Dispatch}\label{sec:language-forms}
+
+\subsection{The four forms}
+
+\begin{signature}
+\py!class InputForm(enum.Enum)!: \code!DIRAC = "dirac"!, \code!DSL = "dsl"!, \code!LISTING = "listing"!, \code!STEP = "step"!.
+
+\py!@dataclass(frozen=True, slots=True) class ParsedDiagram!: \py!diagram: Diagram!, \py!form: InputForm!.
+
+\py!parse(source: str) -> ParsedDiagram | RuleStep!
+
+\py!parse_diagram(source: str) -> Diagram!
+
+\py!parse_dsl(source: str) -> Diagram!, \py!parse_dirac(source: str) -> Diagram!, \py!parse_listing(source: str) -> Diagram!
+
+\py!parse_step(source: str) -> RuleStep!, \py!apply_step(diagram: Diagram, step: RuleStep) -> RewriteResult!
+\end{signature}
+
+The parser reads four \term{input forms}. Three of them denote diagrams: the \term{DSL} (\cref{sec:language-dsl}), a statement language that names nodes and wires them; \term{Dirac expressions} (\cref{sec:language-dirac}), sums of kets and bras and compositions of catalog atoms; and \term{graph listings} (\cref{sec:language-listing}), the exact inverse of the printed listing. The fourth, the \term{rule step} (\cref{sec:language-steps}), names a rewrite.
+
+\py!parse(source)! first cuts every \code!#! comment: on each line, the text from the first \code!#! to the end of the line is removed. It then selects the form by \cref{alg:language-form}, reads the source with that form's reader, and returns a \py!RuleStep! for a step and a \py!ParsedDiagram! otherwise. \py!parse_diagram(source)! returns \py!parse(source).diagram!, and raises \code!ParseGrammarError("a rule step names no diagram")! on a step. No function of the parser takes a notation mode.
+
+\begin{algorithm}[Form selection]\label{alg:language-form}
+\leavevmode
+Let $t$ be the source with surrounding whitespace removed.
+\begin{enumerate}
+\item If $t$ starts with \code!graph:!, the form is LISTING.
+\item If $t$ starts with the word \code!apply! (the regular expression \code!apply\b!), the form is STEP.
+\item Split $t$ into statements (\cref{sec:language-dsl-lex}). If there are none, the form is DIRAC.
+\item Let $s$ be the first statement. If $s$ starts with one of the words \code!box!, \code!count!, \code!dim!, \code!inputs!, \code!let!, \code!outputs!, \code!repeat!, \code!scalar!, \code!wire! followed by a word boundary, or if $s$ contains the arrow \code!->! outside every bracket pair \code!()!, \code![]!, \code!{}!, the form is DSL.
+\item If $s$ begins with a node declaration head \code!NAME = GEN! or \code!NAME[a..b] = GEN! (\cref{sec:language-dsl-grammar}), where \code!GEN! is a registered generator name and the character after the head is not the start of \code!(x)!, the form is DSL.
+\item Otherwise the form is DIRAC.
+\end{enumerate}
+\end{algorithm}
+
+Under this rule \code!x = Z(1 -> 1)! is DSL, \code!GHZ_{3} = sum_{k=0}^{d-1} |k, k, k>! is DIRAC (the head \code!GHZ_! is not followed by \code!=!), and \code!plus = sum_{k=0}^{d-1} |k>! is DIRAC (\code!sum! is not a generator). The registered generator names are \code!B!, \code!F!, \code!G!, \code!S!, \code!T!, \code!Ti!, \code!W!, \code!X!, \code!Z!, and \code!Zp! (the pair-phase node; \cref{ch:diagrams}).
+
+\subsection{Errors}\label{sec:language-parse-errors}
+
+\begin{signature}
+\py!class ParseError(Exception)!: the base of every parser error.\\
+\py!class ParseGrammarError(ParseError)!: the source does not match the grammar of its form.\\
+\py!class ParseDomainError(ParseError)!: the source parses but names a value or a diagram outside the accepted domain.\\
+Aliases: \py!DiracError = ParseError!, \py!DiracGrammarError = ParseGrammarError!, \py!DiracDomainError = ParseDomainError!.
+\end{signature}
+
+Every public reader (\py!parse!, \py!parse_diagram!, \py!parse_dsl!, \py!parse_dirac!, \py!parse_listing!, \py!parse_step!, \py!apply_step!) is guarded: an exception other than a \py!ParseError! raised inside it is re-raised as a \py!ParseError!, chained with the original as \py!__cause__!, by these rules, in order:
+\begin{enumerate}
+\item a \py!RecursionError! becomes \code!ParseGrammarError("input nests too deeply")!;
+\item an \py!OverflowError!, a \py!MemoryError!, a \py!ValueError! of exactly that class whose message contains \code!limit!, or any exception whose class name contains \code!Domain! becomes a \py!ParseDomainError!;
+\item any other exception becomes a \py!ParseGrammarError!.
+\end{enumerate}
+The message of a converted error is \code!<class name>: <message>!. A reader never raises anything but a \py!ParseError! for an \py!Exception!; a \py!KeyboardInterrupt! passes through.
+
+\begin{definition}[Accepted diagram]\label{def:language-accepted}
+Every diagram a reader returns is \term{accepted}: each dimension of each port and phase vector, with the diagram's parameters substituted, stays within the size bounds of \cref{tab:language-bounds}; and \py!validate(diagram)! (\cref{ch:diagrams}) reports no issue that is not deferred and no deferred issue of kind \py!PARAMETER_UNKNOWN_SYMBOL!. A diagram that is not accepted raises \code!ParseDomainError("input is not a valid diagram: " + messages)!, the issue messages joined by \code!; !.
+\end{definition}
+
+\subsection{Size bounds}\label{sec:language-bounds}
+
+The parser refuses inputs that would build very large objects. \Cref{tab:language-bounds} lists every bound. A refused input raises \py!ParseDomainError! unless the table says otherwise.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.3\linewidth}r>{\raggedright\arraybackslash}X@{}}
+\toprule
+Constant & Value & Bound \\
+\midrule
+\texttt{\_MAX\_NUMERAL\_DIGITS} & 18 & Digits of a numeral read as an id, a port index, a leg count, a phase index, a range end, a repeat count, or a legacy dimension token. \\
+\texttt{\_MAX\_KET\_LEG\_COUNT} & 1024 & Legs of a \code!literal! leg count, a legacy tensor power, a concrete fan fed by composition, a repeat count \code!^N!; the length of a range \code!a..b! ($b-a<1024$; an empty range is a grammar error). \\
+\texttt{\_MAX\_EXPANDED\_LEGS} & 65536 & Legs one Dirac parse expands in total; legs of a DSL count \code!m -> n! (each of $m$, $n$). \\
+\texttt{\_MAX\_EXPR\_DIGITS} & 1000 & Digits of a numeral inside an expression. \\
+\texttt{\_MAX\_POWER\_BITS} & $2^{16}$ & Bit size of every rational value an expression builds; total bit size of the numeric atoms of a product, and of a numeric base times its exponent. \\
+\texttt{\_MAX\_ROOT\_BITS} & 4096 & Bit size of the odd part (every factor 2 removed from numerator and denominator) of a rational that a fractional power takes. \\
+\texttt{\_MAX\_TERMS} & 4096 & Terms of one sum, and the estimated term count of the expansion of a dimension exponent, a phase, or a scalar. \\
+\texttt{\_MAX\_EXPR\_DEPTH} & 100 & Nesting of expressions and of Dirac groups (a grammar error). \\
+\texttt{\_SCALAR\_BITS\_PER\_NODE} & 64 & Extra bits each node of the diagram adds to the numeral, product, and power bounds of its scalar and copy scalars. \\
+\texttt{\_EXPAND\_MAX} & $2^{16}$ & A phase rule over a concrete dimension above this value stays a rule instead of being expanded into entries. \\
+\bottomrule
+\end{tabularx}
+\caption{Size bounds of the parser.}
+\label{tab:language-bounds}
+\end{table}
+
+Here the bit size of a rational $p/q$ is $\max(\operatorname{bitlen}(p),\operatorname{bitlen}(q))$, and $0$, $1$, and $-1$ count zero bits. When a scalar of a DSL program or a listing is read, the context value \texttt{\_EXTRA\_BITS} is $64N$ for a diagram of $N$ nodes; the numeral bound then grows by $\lfloor 64N\cdot 30103/100000\rfloor$ digits, and the value, product, and power bounds to $2^{16}+64N$ bits. The term-count estimate of an expression is: a sum adds the estimates of its terms; a product multiplies them; a power $b^{e}$ with $t>1$ base terms and rational exponent $e$ gives $\binom{t+k-1}{k}$ with $k=\lfloor|e|\rfloor$, plus one when $e$ is not an integer; every estimate is capped at $4097$.
+
+\begin{signature}
+\py!lifted_bounds() -> ContextManager[None]!
+\end{signature}
+Inside a \py!with lifted_bounds():! block, the numeral digit bounds, the leg-count bounds, the range-length bound, the rational, product, and power bounds are lifted. The depth bound, the term bounds, and the per-parse leg bound \texttt{\_MAX\_EXPANDED\_LEGS} stay. The block sets a context variable, so it applies to the current thread or task only.
+
+\subsection{Abstraction on entry}\label{sec:language-abstraction}
+
+The DSL and Dirac readers \term{abstract} concrete numbers on entry: a numeral written as a whole dimension becomes a dimension symbol, and a concrete \bbox{} multiplicity or concrete fan count becomes a multiplicity symbol; the symbol's value is recorded in the diagram's parameter environment (\cref{ch:diagrams}). Every reasoning step then sees a family, and the bound values serve only as the instance that \py!render_dirac! shows and that \azx!induct! uses as its witness (\cref{sec:language-induct}). Graph listings are never abstracted.
+
+\begin{algorithm}[Abstraction of one parse]\label{alg:language-abstraction}
+\leavevmode
+An abstraction state holds a set \emph{taken} of names, initially every identifier (the regular expression \code![^\W\d]\w*!) that occurs in the source text, a map from values to dimension names, initially the \emph{reuse} map of the DSL prepass (\cref{alg:language-dsl-build}) or empty, and the \emph{bindings} recorded so far.
+\begin{enumerate}
+\item A dimension numeral $v$ marked \code!literal! is the concrete dimension $v$.
+\item An unmarked dimension numeral $v$ that already has a name in the map is that dimension symbol. Otherwise \code!Dim.concrete(v).abstract(avoid=taken, stem="d")! mints a fresh name (the stem \code!d!, then \code!d1!, \code!d2!, \ldots{} until the name is not taken), the name joins \emph{taken} and the map, and the binding $\text{name}=v$ is recorded. One parse therefore gives every occurrence of the same value the same symbol.
+\item A concrete count $v$ (a \bbox{} multiplicity or a fan) is a fresh multiplicity symbol for each occurrence: \code!Mult(v).abstract(avoid=taken, stem="n")! mints \code!n!, \code!n1!, \ldots, the name joins \emph{taken}, and the binding is recorded.
+\end{enumerate}
+\end{algorithm}
+
+Only a numeral that fills a whole dimension slot is abstracted. A numeral inside a compound dimension expression, such as the \code!2! of \code!d^2! or \code!2*q!, stays concrete. A dimension numeral equal to $1$ is abstracted like any other.
+
+\section{Expressions}\label{sec:language-expr}
+
+Dimensions, multiplicities, exponents, phases, weights, and scalars share one expression language. One recursive-descent parser reads an expression to an abstract syntax tree; a role evaluator then builds the value the role needs. No user text reaches SymPy's own parser~\cite{meurer2017sympy}.
+
+\subsection{Tokens and grammar}
+
+The tokens are integers \code![0-9]+!, names \code![^\W\d]\w*! (Unicode letters allowed, no leading digit), and the operators \code!**!, \code!-!, \code!+!, \code!*!, \code!/!, \code!^!, \code!(!, \code!)!, and \code!,!. Whitespace between tokens is skipped. Any other character ends the expression. A name that is not a Python identifier is an error.
+
+\begin{lstlisting}[style=grammar,caption={Expression grammar.},label={lst:language-expr}]
+expression = term { ( "+" | "-" ) term } ;
+term       = unary { ( "*" | "/" ) unary } ;
+unary      = "-" unary
+           | atom [ ( "^" | "**" ) unary ] ;
+atom       = integer
+           | "(" expression ")"
+           | "literal" integer
+           | constant
+           | function "(" expression ")"
+           | name ;
+constant   = "I" | "pi" | "π" | "E" ;
+function   = "exp" | "sqrt" | "cos" | "sin" ;
+\end{lstlisting}
+
+The power operator binds tighter than unary minus and associates to the right: \code!-x^2! is $-(x^2)$, \code!2^3^2! is $2^{9}$, and \code!a^-b! is $a^{-b}$. The word \code!literal! followed by an integer is a literal numeral; followed by anything else it is a name. A function word not followed by \code!(! is a name. The comma token is never consumed; it ends an expression, so callers split lists at top-level commas first. A caller that reads a whole text requires the expression to end at the end of the text. The syntax tree nodes are: number, literal number, name, constant, negation, sum of signed terms, product of factors each marked multiplied or divided, power, and call.
+
+Errors (all \py!ParseGrammarError! unless marked): \code!empty <what>!; \code!expected ')' at column C of '<text>', found F!; \code!expected a number, a name or '('! at a column; \code!unexpected text after the <what>!; \code!expression nests deeper than 100 levels!; \code!sum of more than 4096 terms! (domain).
+
+\subsection{Roles}\label{sec:language-roles}
+
+The same syntax tree means different things in different slots. \Cref{tab:language-roles} lists, per role, which nodes are allowed and how names resolve; a disallowed node raises \code!ParseGrammarError("<node kind> is not allowed in a <role>")!, where the node kind is the lower-case class name (\code!sum!, \code!neg!, \code!call!, \ldots).
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{0.33\linewidth}X@{}}
+\toprule
+Role & Allowed nodes & Names \\
+\midrule
+dimension & number, literal, name, constant, product without division, power with an exponent-role exponent & dimension symbols \py!Dim.symbol(name)!; numerals per \cref{alg:language-abstraction} in a whole slot \\
+exponent & number, name, constant, sum without negation, product without division, power & a multiplicity symbol when the name is a known multiplicity name, else a SymPy symbol with \code!integer! and \code!nonnegative! assumptions \\
+multiplicity & number, name, constant, sum whose subtracted terms are numbers, product without division, power with a number base $\ge 1$ & multiplicity symbols \py!Mult.symbol(name)! \\
+phase & every node except literal & from the role table, else \py!Phase.symbol(name)! (in turns) \\
+scalar, weight & every node except literal & from the role table, else \py!Scalar.symbol(name)! \\
+\bottomrule
+\end{tabularx}
+\caption{Expression roles.}
+\label{tab:language-roles}
+\end{table}
+
+A multiplicity value must also satisfy the multiplicity grammar of \cref{ch:diagrams}: non-negative integers and names under \code!+! and \code!*!, integers under \code!-!, no name repeated as a factor. A violation raises \py!ParseGrammarError! with the message \code!multiplicity E is outside the multiplicity grammar: ...!. A \code!literal! node in a phase or scalar raises \code!ParseGrammarError("'literal' marks only a dimension or count numeral")!.
+
+The phase and scalar evaluator maps the tree to a SymPy value: numbers to integers, constants to $i$, $\pi$, $\pi$, and $e$, negation, sums, products, and divisions to their SymPy forms (a division by zero raises \code!ParseDomainError("division by zero")!), a power through the power bound, \code!exp(x)! to $e^{x}$, \code!sqrt(x)! to $x^{1/2}$, and
+\[
+\cos x = \tfrac12\bigl(z+z^{-1}\bigr),\qquad \sin x=\tfrac{1}{2i}\bigl(z-z^{-1}\bigr),\qquad z=e^{ix},
+\]
+where $x/\pi$ must be rational, else \code!ParseDomainError("cos of x: only rational multiples of pi")!. A phase is read in turns: the phase $\alpha$ stands for $e^{2\pi i\alpha}$ (\cref{ch:algebra}). A phase must be finite and real (a value containing $i$ raises \code!ParseDomainError("phase E is not real")!); a scalar must be finite (no $\infty$, complex infinity, or NaN).
+
+\begin{definition}[Role table]\label{def:language-role-table}
+The \term{role table} of a diagram under construction maps each name to the SymPy symbol it denotes. It is built from seed entries (the \code!roles:! line of a listing), then from four groups in this order: the positive dimension symbols of every port and phase dimension, the symbols of every \bbox{} multiplicity (and of every declared count and index name), the non-positive symbols of the dimensions (exponent symbols), and the symbols of every phase entry. Within a group, names are taken in sorted order; the first entry for a name wins.
+\end{definition}
+
+A name in a phase or scalar that is in the role table means that symbol; for example the \code!d! of \code!scalar d^(-1/2)! is the dimension symbol $d$ (positive, integer), not a fresh scalar symbol.
+
+\section{The DSL}\label{sec:language-dsl}
+
+The DSL declares nodes by name, wires their ports, and declares the boundary, the scalar, the symbols, and the \bboxes{}. \py!parse_dsl(source)! reads a program; node and \bbox{} ids follow the order of declaration.
+
+\subsection{Statements and comments}\label{sec:language-dsl-lex}
+
+A program is split into \term{statements}: on each line, the text from the first \code!#! on is a comment and is removed; the rest is split at every \code!;!; each part is stripped of surrounding whitespace; empty parts are dropped. A semicolon therefore always separates statements. An empty program raises \code!ParseGrammarError("empty DSL program")!.
+
+\subsection{Grammar}\label{sec:language-dsl-grammar}
+
+\begin{lstlisting}[style=grammar,caption={DSL grammar. Spaces between tokens are free except where a keyword needs one.},label={lst:language-dsl}]
+program     = statement { ( newline | ";" ) statement } ;
+statement   = node-decl | binding | wire-stmt | boundary | scalar-stmt
+            | box-stmt | repeat-stmt | chain-stmt | pairs-stmt | tree-stmt
+            | side-stmt | align-stmt | copy-scalar | link ;
+
+node-decl   = node-name [ "[" int ".." int "]" ] "=" generator [ "(" legs ")" ]
+              [ phase-suffix ] ;
+legs        = count "->" count [ "," dim ]
+            | "in:" "[" [ dim { "," dim } ] "]" "," "out:" "[" [ dim { "," dim } ] "]"
+            | [ dim ]                          (* G, F, T, Ti only *)
+            | dim "," dim ;                    (* B, S only *)
+count       = int ;
+phase-suffix = [ "phase" [ "[" dim "]" ] ( "0" | "{" entries "}" ) ]
+               [ "weight" [ "[" dim "]" ] "{" entries "}" ] ;
+entries     = [ entry { "," entry } ] ;
+entry       = ( int | name ) ":" expression ;
+
+binding     = ( "dim" | "count" | "let" ) bind-item { "," bind-item } ;
+bind-item   = name [ "=" [ "-" ] int ] ;
+
+wire-stmt   = "wire" link { "," link } ;
+link        = end "--" end | chain ;
+end         = port | node-name ;
+port        = node-name "." ( "out" | "in" ) int ;
+chain       = chain-item "->" chain-item { "->" chain-item } ;
+chain-item  = port | node-decl | range | node-name | anon-node ;
+range       = stem "[" int ".." int "]" ;
+anon-node   = generator [ "(" legs ")" ] [ phase-suffix ] [ "^" int ] ;
+
+boundary    = ( "inputs" | "outputs" ) [ port { "," port } ] ;
+scalar-stmt = "scalar" expression ;
+
+box-stmt    = "box" box-name "x" mult ( "nodes" | "ports" ) scope
+              [ "index" name ] [ "in" box-name ] ;
+mult        = expression ;                     (* multiplicity role *)
+scope       = item { "," item } ;
+repeat-stmt = "repeat" mult [ "as" box-name ] [ "index" name ] [ "in" box-name ]
+              ":" repeat-item { "," repeat-item } ;
+repeat-item = chain | port | chain-item ;
+chain-stmt  = "chain" box-name ":" port "->" port { "," port "->" port } [ "cyclic" ] ;
+pairs-stmt  = "pairs" box-name "of" box-name "index" name [ "in" box-name ]
+              ":" chain-item { "," chain-item } ;
+tree-stmt   = "tree" box-name ":" port "<-" port { "," port }
+              [ "level" name ] [ "position" name ] ;
+side-stmt   = ( "left" | "right" ) box-name ":" port { "," port } ;
+align-stmt  = "align" box-name "with" box-name ;
+copy-scalar = "copy" "scalar" box-name ":" expression ;
+\end{lstlisting}
+
+Names (\code!node-name!, \code!box-name!, \code!stem!, \code!name!) have the shape \code![A-Za-z_]\w*!. A node or box name may not be a DSL keyword (\code!dim!, \code!count!, \code!let!, \code!wire!, \code!inputs!, \code!outputs!, \code!scalar!, \code!box!, \code!repeat!), \code!literal!, \code!apply!, a constant, or a function name; a symbol name bound by \code!dim!, \code!count!, or \code!let! may not be a keyword, \code!literal!, or \code!apply!. A violation raises \code!ParseGrammarError("<what> name 'X' is a keyword or not an identifier")!. Lists split at top-level commas: a comma inside a bracket pair does not split, and an unbalanced bracket or an empty item is a grammar error.
+
+\subsection{Statement classification}
+
+Each statement is classified in this order:
+\begin{enumerate}
+\item A statement that begins with a node declaration head and contains no top-level \code!->! is a node declaration.
+\item By its first word: \code!dim!, \code!count!, \code!let!: a binding; \code!wire!: a wire statement; \code!inputs!, \code!outputs!: a boundary; \code!scalar!; \code!box!; \code!repeat!; and, when the whole statement matches the respective grammar, \code!chain!, \code!copy scalar!, \code!pairs!, \code!tree!, \code!left!, \code!right!, \code!align!.
+\item A statement that contains a top-level \code!->! or \code!--! and does not begin with two words (\code![A-Za-z_]\w*\s+[A-Za-z_]!) is a link.
+\item Otherwise the statement raises \code!ParseGrammarError("unknown DSL statement 'S'")!, followed by \code!; did you mean 'W'?! when a DSL keyword or a declared node name is close to the first word (\py!difflib.get_close_matches! with cutoff $0.6$).
+\end{enumerate}
+
+\subsection{Nodes}\label{sec:language-dsl-nodes}
+
+A node declaration \code!NAME = GEN(legs) suffix! creates one node; \code!NAME[a..b] = ...! creates one node per integer $a\le i\le b$, named \code!NAME<i>!, all with the same legs and phase. A name declared twice raises \code!ParseGrammarError("node 'X' is declared twice")!. An unknown generator raises \py!ParseGrammarError! naming it, with a close match and the list of known names. The forms of \code!legs! are tried in this order:
+
+\begin{enumerate}
+\item \code!m -> n! or \code!m -> n, D!: $m$ inputs and $n$ outputs, all of dimension $D$; without $D$ the default dimension. $m$ and $n$ are decimal integers of at most 18 digits and at most 65536 each. More than two comma-separated parts raise \code!'A' is not 'm -> n[, D]'!.
+\item \code!in: [D1, ...], out: [E1, ...]!: explicit dimensions per port.
+\item For \code!G! with at most one part: one input of the given or default dimension and no output. Such a node is \term{flexible}: \cref{alg:language-dsl-build} turns it into a state when it is used as one.
+\item For \code!F!, \code!T!, and \code!Ti! with at most one part: one input and one output of the given or default dimension.
+\item For \code!B! with two parts \code!s, t!: inputs $s$ and $t$, output $st$; for \code!S!: input $st$, outputs $s$ and $t$.
+\end{enumerate}
+A \code!Zp! node (the pair-phase generator, exactly two ports of any sides) takes the \code!m -> n! or explicit form. Any other combination raises \code!ParseGrammarError("GEN(args) matches no node form; write GEN(m -> n) or GEN(m -> n, D)")!. A \code!Z!, \code!X!, or \code!W! node therefore always needs parentheses; \code!F!, \code!T!, \code!Ti!, and \code!G! may omit them.
+
+The \term{default dimension} is the first name bound by a \code!dim! statement, or \code!d! when there is none. The default is the dimension symbol of that name, never abstracted.
+
+The phase suffix sets the node's phase vector (\cref{ch:algebra}). Its dimension is, in order: the bracketed dimension after \code!phase!; the bracketed dimension after \code!weight!; the dimension of the \code!m -> n, D! form or the shorthand form; the dimension of the node's first input, else its first output. A node with no ports and no bracketed dimension raises \code!ParseDomainError("node 'X' has no legs; its phase needs 'phase[D]'")!. The suffix \code!phase 0! is the zero vector. Each entry is \code!i: expr! for an integer index $i$ (at most 18 digits), or \code!x: expr! for an identifier $x$, the \term{rule} of the vector: \code!expr! with $x$ standing for the index symbol \py!INDEX!, giving the value at every index. At most one rule appears, and no index twice. A phase entry written as a plain integer or \code!p/q! with at most 30 digits each and $q\ne0$ is read directly; any other entry through the phase role. Weight entries are read through the scalar role. A \code!Zp! node instead takes the \term{pair phase} \code!phase{x, y: EXPR}!: two distinct identifiers and one phase expression in which $x$ stands for the index symbol \py!INDEX! of the node's first port and $y$ for \py!INDEX2! of its second (outputs before inputs); the value is \py!PairPhase(port1, port2, turns)! (\cref{ch:algebra}). Any other suffix, or a node without exactly two ports, raises \code!a Zp node takes two legs and 'phase{x, y: EXPR}', got 'TEXT'!; the same name twice raises \code!pair phase names 'x' twice!. For every other generator the vector is \py!PhaseVector(D, entries, rule, expand=E)!, with the weights when a weight suffix is present, where \code!E! is false exactly when $D$ is concrete and above $2^{16}$.
+
+\subsection{Wires and chains}\label{sec:language-dsl-wires}
+
+A wire item \code!a -- b! connects two ends. An end is a port \code!NAME.outI! or \code!NAME.inJ!, or a bare node name; a bare end on the left of \code!--! takes an output of that node, on the right an input, as \cref{alg:language-dsl-build} assigns. The item must have exactly two nonempty sides, else \code!ParseGrammarError("wire 'W' is not 'a.outI -- b.inJ' or 'a -> b'")!.
+
+A \term{chain} \code!x1 -> x2 -> ... -> xk! wires each step's output end to the next step's input end, left to right; it is the DSL's sequential composition. Each chain item stands for one or more nodes, in order:
+\begin{itemize}
+\item a port stands for itself, and may appear only as the first or the last end of the chain, else \code!ParseGrammarError("chain 'C': only its ends may name a port")!;
+\item a node declaration declares its nodes there and stands for them in order;
+\item a range \code!stem[a..b]! stands for the declared nodes \code!stema!, \ldots, \code!stemb!; a bare declared name stands for that node; an undeclared name raises \code!unknown node 'X'! with a close match;
+\item an anonymous node \code!GEN(legs) suffix ^N! declares $N$ (default 1, at most 1024) fresh nodes of one shape, each named \code!GEN~i! with $i$ the number of nodes declared before it; such nodes cannot be named elsewhere.
+\end{itemize}
+Consecutive nodes of the expanded chain are wired output end to input end. A chain is also a valid \code!wire! item and a valid \code!repeat! item. For example \code!X(0 -> 1) -> F^2 -> G! declares an X state, two Fourier boxes and a discard, and wires them in series.
+
+\subsection{Boundary, scalar, and bindings}
+
+\code!inputs ports! and \code!outputs ports! fix the boundary inputs and outputs, in the written order; each statement appears at most once. Without an \code!inputs! statement, the boundary inputs are every input port that no wire and no \code!outputs! item uses, in order of node id and then port index; outputs likewise. Boundary items must be ports of named nodes.
+
+\code!scalar expr! sets the diagram scalar, read in the scalar role with the extra bits of \cref{tab:language-bounds}; it appears at most once.
+
+\code!dim a, b = 3!, \code!count n, m = 2!, and \code!let x = 5! declare symbols. A \code!dim! name is a dimension symbol of the role table, and the first \code!dim! name is the default dimension; a \code!count! name is a multiplicity symbol; \code!let! requires a value. A value is a signed integer and binds the name in the parameter environment; a name bound twice raises \code!ParseGrammarError("'X' is bound twice")!. Every bound name must be a symbol the finished diagram carries (in its scalar, a port or phase dimension, a phase, or a \bbox{} multiplicity), else \code!ParseDomainError("binding(s) [...] name no symbol the diagram carries")!. A value bound by \code!dim! or \code!let! also names the abstraction of that numeral: in \code!dim q = 3; z = Z(1 -> 1, 3)! the dimension of \code!z! is $q$ with $q=3$, not a minted $d$.
+
+\subsection{Bang boxes}\label{sec:language-dsl-boxes}
+
+\code!box B x M nodes n1, n2! declares a node-scoped \bbox{} named \code!B! of multiplicity $M$ over the listed nodes (ranges allowed); \code!ports p1, p2! declares a port-scoped \bbox{}. \code!index i! names the box's copy index (an indexed box), and \code!in P! makes box \code!P! its parent. A multiplicity that is a bare integer is abstracted to a fresh multiplicity symbol (\cref{alg:language-abstraction}); \code!literal N! keeps it concrete; any other expression is read in the multiplicity role. A box name declared twice raises an error.
+
+\code!repeat M [as B] [index i] [in P]: items! declares the items and a box over them in one statement. Each item is a chain (its nodes join the scope), a port, or a single chain item (its nodes join the scope). The scope must be all nodes or all ports, else \code!ParseGrammarError("'S' mixes nodes and ports")!. Without \code!as!, the box is named \code!~i! with $i$ the number of boxes declared before it. For example, \code!count n; repeat n: X(0 -> 1)! is the tensor power of $n$ X states, and \code!repeat n: z.out1! puts output 1 of \code!z! in a port-scoped box: $n$ copies of that port.
+
+The remaining statements attach the extended structure of \cref{ch:diagrams} to a declared box (an unknown box raises an error naming the statement and a close match):
+\begin{itemize}
+\item \code!chain B: a.outI -> b.inJ, ... [cyclic]! sets the box's links (each item exactly two ports), cyclic when the word \code!cyclic! closes the statement;
+\item \code!pairs P of B index j [in Q]: items! declares a pair box \code!P! of multiplicity $1$ over the items' nodes, paired with \code!B! under the index $j$, parent \code!Q!;
+\item \code!left P: ports! and \code!right P: ports! add the left and right ports of a pair box; on any other box they raise \code!left: box 'B' is not a pair box!;
+\item \code!tree B: parent <- child, ... [level l] [position p]! sets the box's tree (each end a port), at most once per box;
+\item \code!align B with C! aligns box \code!B! with box \code!C!, at most once;
+\item \code!copy scalar B: expr! sets the box's copy scalar, read in the scalar role, at most once.
+\end{itemize}
+Links, an index, a copy scalar, and an alignment need a node-scoped box: on a port-scoped box they raise \code!ParseGrammarError("links, index, copy scalar and align need a node box")!.
+
+\subsection{Building the diagram}
+
+\begin{algorithm}[DSL build]\label{alg:language-dsl-build}
+\leavevmode
+\begin{enumerate}
+\item \emph{Prepass.} Over all statements, collect: the reuse map (for each value bound by \code!dim! or \code!let!, the first name that binds it), the multiplicity names (every \code!count! name and every name in a \code!box! or \code!repeat! multiplicity that parses as a multiplicity), the default dimension, and the declared node names (every node declaration head, also inside chains and after the colon of \code!repeat!).
+\item \emph{Read.} Classify and read every statement in order with a fresh abstraction state (\cref{alg:language-abstraction}) whose taken names are the source's identifiers. If any node used the default dimension, read the program again with the default dimension's name added to the taken names, so that no minted name equals it.
+\item \emph{Orient.} Each flexible \code!G! becomes a state (no inputs, its former input as its output) when it is a wire source: a bare left end of a \code!--! wire or of a chain step, the node of an \code!.out! reference, or the node of an \code!outputs! item.
+\item \emph{Nodes.} Add the nodes in declaration order with ids $0,1,2,\ldots$.
+\item \emph{Boundary.} Resolve the explicit \code!inputs! and \code!outputs! ports.
+\item \emph{Ports of wires.} Mark as used every explicit port of the boundary and of every wire. Then, for each wire in order, give each bare end the lowest port of the needed side (output on the left, input on the right) that is not used, and mark it used. A node with no free port raises \code!ParseDomainError("node 'X' has no free output for a wire")! (or \code!input!).
+\item \emph{Default boundary} for each side without an explicit statement.
+\item \emph{Boxes.} Add the boxes in declaration order with ids $0,1,\ldots$, with their scopes, parents, and extended fields.
+\item \emph{Values.} Build the role table from every port and phase dimension, the declared dimensions and the default dimension, every box multiplicity, the declared counts, and every box index, pair index, level, and position name. Set every phase vector, then the scalar, then every copy scalar.
+\item \emph{Parameters.} Check that every explicit binding names a carried symbol; set the parameters to the abstraction bindings updated by the explicit bindings.
+\item \emph{Phase range.} For each node whose phase dimension is symbolic and has entries: if the dimension with the parameters substituted is an integer $v$, every entry index must be at most $v-1$, else \code!ParseDomainError("phase index i of nK is outside dimension v")!.
+\item Return the diagram once it is accepted (\cref{def:language-accepted}).
+\end{enumerate}
+\end{algorithm}
+
+\begin{example}[A DSL program and its listing]\label{ex:language-dsl}
+The program
+\begin{lstlisting}[style=azx]
+z = Z(1 -> 2, 3); x = X(2 -> 1, 3); z -> x; z -> x
+\end{lstlisting}
+declares a Z spider and an X spider of dimension $3$ and wires both outputs of \code!z! to both inputs of \code!x!: each chain takes the lowest free output of \code!z! and the lowest free input of \code!x!. The numeral $3$ is abstracted to $d$ with $d=3$. Its listing (\cref{sec:language-listing}) is
+\begin{lstlisting}[style=grammar]
+graph: 2 nodes, 2 wires, 1 input -> 1 output
+  scalar: 1
+  parameters: d = 3
+  nodes:
+    n0  Z  in: [d]  out: [d, d]
+    n1  X  in: [d, d]  out: [d]
+  wires:
+    n0.out0 -- n1.in0
+    n0.out1 -- n1.in1
+  inputs: [n0.in0]
+  outputs: [n1.out0]
+  bang boxes: none
+\end{lstlisting}
+\end{example}
+
+\begin{example}[A family in the DSL]\label{ex:language-dsl-family}
+The GHZ preparation of \file{examples/ghz_proof.azx},
+\begin{lstlisting}[style=azx]
+count n
+X(0 -> 1) -> F -> z = Z(1 -> 2)
+repeat n: z.out1 -> t = X(2 -> 1), X(0 -> 1) -> t
+scalar d^(-1/2)
+\end{lstlisting}
+declares an X state, a Fourier box and a copy spider \code!z! in series; the \code!repeat! statement declares, inside one node-scoped \bbox{} of multiplicity $n$, the target \code!t! fed by output 1 of \code!z! and by a second X state: $n$ CNOTs controlled by one qudit. The boundary outputs are the unused outputs \code!z.out0! and \code!t.out0!.
+\end{example}
+
+\section{Dirac Expressions}\label{sec:language-dirac}
+
+A Dirac expression writes a diagram as index sums of kets and bras, as catalog atoms, and as their tensor products and compositions. Its reading follows the structural path-sum view of a diagram~\cite{amy2018pathsums}: one bound index per spider. \py!parse_dirac(source)! reads one expression.
+
+\subsection{Grammar}\label{sec:language-dirac-grammar}
+
+\begin{lstlisting}[style=grammar,caption={Dirac expression grammar.},label={lst:language-dirac}]
+dirac      = [ atom-chain " = " ] formula ;
+formula    = scalar-only | feed ;
+feed       = tensor { ";" tensor } ;
+tensor     = term { ( "(x)" | "⊗" ) term } ;
+term       = [ "(" expression ")" ] primary ;   (* scalar factor; see text *)
+primary    = "(" feed ")"
+           | ketsum
+           | "ptrace" "[" int { "," int } "]" "(" feed ")"
+           | mixed-atom
+           | atom ;
+
+ketsum     = sum { sum } { factor } { ket } { bra } ;
+sum        = ( "sum" | SIGMA ) "_{" name { "," name } "=" "0" "}" "^{" bound "}" ;
+bound      = [ "literal" ] ( name | int ) "-1"
+           | dim-expression "-" "1" ;
+factor     = "[" name "=" name "]"
+           | "e^{" "2" ( "pi" | "π" ) "i" "(" phase-term { "+" phase-term } ")" "}"
+           | "1" ;
+phase-term = expression "[" name "=" int "]" ;
+ket        = "|" slots ( ">" | "⟩" ) [ "^{" power "}" ] ;
+bra        = ( "<" | "⟨" ) slots "|" [ "^{" power "}" ] ;
+slots      = slot { ( "," | " " ) slot } ;
+slot       = name | letter { letter } ;    (* a repeated one-letter index *)
+power      = [ "\otimes" | "⊗" ] ( "literal" int | expression ) ;
+
+atom       = ( "Z" | "X" ) "_{" counts "->" counts "}" [ "(" entries ")" ] [ dims ]
+           | ( "GHZ" | "copy" | "W" ) "_{" counts "}" [ "^dagger" ] [ dims ]
+           | word [ "^dagger" ] [ "^-1" ] [ dims ] ;
+word       = "plus" | "id" | "copy" | "zero" | "F" | "triangle" | "bind" | "split" ;
+counts     = expression ;                  (* multiplicity role, or "literal" int *)
+entries    = int ":" expression { "," int ":" expression } ;
+dims       = "[" dim { "," dim } "]" ;
+mixed-atom = ( "discard" | "maxmixed" | "dephase" | "measure_x" ) [ "[" dim "]" ] ;
+\end{lstlisting}
+
+In the grammar, \texttt{SIGMA} is the Greek capital letter $\Sigma$ (U+03A3). Brackets \code!()!, \code![]!, and \code!{}! must balance and nest properly over the whole text, else \code!unbalanced ')' at column C! or \code!unclosed '(' at column C!. Whitespace between terms is free. \code!^dagger! applies to \code!GHZ!, \code!copy!, and \code!plus! only, \code!^-1! to \code!triangle! only, in that order and before the dimensions.
+
+\paragraph{Name prefix.} When the text contains \code! = ! (with a space on each side) at bracket depth $0$, the text before its first such occurrence must be a chain of catalog atoms joined by \code!(x)! or \code!⊗! (checked by syntax only), and is dropped; otherwise \code!ParseGrammarError("'X' before ' = ' is not a catalog name")!. This makes every printed Dirac line (\cref{sec:language-dirac-out}) valid input.
+
+\paragraph{Lone scalars.} When the whole formula parses as one expression that names no catalog word and none of \code!GHZ!, \code!Z!, \code!X!, \code!W!, \code!Z_phase!, the result is the empty diagram with that scalar. A lone name raises \code!ParseGrammarError("unknown catalog atom or lone scalar name 'x'; write a scalar as an expression such as '1*x'")!.
+
+\paragraph{Scalar factors.} A parenthesis at the start of a term is a scalar factor when the text after its closing parenthesis is nonempty and does not begin with \code!;!, \code!)!, \code!(x)!, or \code!⊗!; the parenthesis then holds an expression in the scalar role and the factor multiplies the following primary. Otherwise the parenthesis groups a \code!feed!. A scalar factor that names a catalog word raises \code!catalog name 'X' is not a scalar!. Thus \code!(1/2) plus[d]! is half the plus state, while \code!(copy[d] (x) id[d])! is a group.
+
+\subsection{Index sums}\label{sec:language-dirac-sums}
+
+A \term{ket sum} binds one or more indices and builds one Z spider per bound index, with the sum's dimension $D$. In \code!sum_{a,b=0}^{D-1}!, the bound \code!D-1! is a legacy token (an identifier or a numeral, optionally after \code!literal!) or an expression of the form \code!E - 1!, whose \code!E! is read as a whole dimension slot. A name bound twice or a dimension that names a bound index raises an error. The factors and boundary items then attach to these spiders:
+\begin{itemize}
+\item each slot of a ket adds an output to its index's spider, and each slot of a bra an input, in written order; a slot \code!kk! stands for \code!k, k!;
+\item a power \code!|k>^{p}! on a single-slot ket or bra makes the slot $p$ legs: \code!literal N! gives $N$ plain legs; a concrete multiplicity $c\ge1$ gives a \term{pending fan} of $c$ legs; a symbolic multiplicity gives one leg in a port-scoped \bbox{} of that multiplicity; a power on a ket of several slots is an error;
+\item a delta \code![a = b]! wires a new output of $a$'s spider to a new input of $b$'s spider and unifies their dimensions;
+\item a phase factor \code!e^{2 pi i (t1 [k=j1] + t2 [k=j2] ...)}! adds the turns $t$ to the phase entry at value $j$ of $k$'s spider; terms at the same value add; a coefficient may not name a bound index;
+\item the factor \code!1! is ignored.
+\end{itemize}
+The legs a delta adds follow the legs of the kets and bras. A copy family such as \code!|k[i]>! is not input syntax.
+
+For example, \code!sum_{k=0}^{d-1} e^{2 pi i (a [k=1])} |k, k>! is one Z spider with two outputs and the phase $a$ at index~1, printed back as \code!Z_{0->2}(1: a) = sum_{k=0}^{d-1} e^{2 pi i (a [k=1])} |k, k>!. A phase entry at index~$0$ is refused by the phase vector, which fixes index~$0$ to zero (\cref{ch:algebra}).
+
+\subsection{Catalog atoms}\label{sec:language-dirac-atoms}
+
+\Cref{tab:language-atoms} lists the catalog atoms. In subscripts the counts are read by \cref{alg:language-counts}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.24\linewidth}lll>{\raggedright\arraybackslash}X@{}}
+\toprule
+Atom & Generator & Inputs & Outputs & Notes \\
+\midrule
+\texttt{Z\_\{m->n\}(i: a, ...)} & Z & counts $m$ & counts $n$ & phase entries optional \\
+\texttt{X\_\{m->n\}(i: a, ...)} & X & counts $m$ & counts $n$ & phase entries optional \\
+\texttt{GHZ\_\{n\}} & Z & 0 & counts $n$ & \texttt{\^{}dagger} swaps sides \\
+\texttt{copy\_\{n\}} & Z & 1 & counts $n$ & \texttt{\^{}dagger} swaps sides \\
+\texttt{W\_\{n\}} & W & 1 & counts $n$ & \\
+\texttt{plus} & Z & 0 & 1 & \texttt{\^{}dagger} swaps sides \\
+\texttt{id} & Z & 1 & 1 & \\
+\texttt{copy} & Z & 1 & 2 & \texttt{\^{}dagger} swaps sides \\
+\texttt{zero} & X & 0 & 1 & \\
+\texttt{F} & F & 1 & 1 & \\
+\texttt{triangle}, \texttt{triangle\^{}-1} & T, Ti & 1 & 1 & \\
+\texttt{bind[s, t]} & B & $s$, $t$ & $st$ & dimensions optional \\
+\texttt{split[s, t]} & S & $st$ & $s$, $t$ & dimensions required \\
+\bottomrule
+\end{tabularx}
+\caption{Catalog atoms of Dirac input.}
+\label{tab:language-atoms}
+\end{table}
+
+An atom other than \code!bind! and \code!split! takes at most one dimension \code![D]!, shared by all its ports and its phase; \code!bind! and \code!split! take two, \code![s, t]!. The word \code!Z_phase!, a label the printer uses, raises \code!Z_phase is a printer label; write Z_{1->1}(1: ...)[D]!. A Z or X atom has phase entries only with integer indices. A Z or X atom with no ports and no phase gets the zero phase vector explicitly.
+
+\begin{algorithm}[Subscript counts]\label{alg:language-counts}
+\leavevmode
+The legs of a count expression $c$:
+\begin{enumerate}
+\item \code!literal N!: $N$ plain legs ($0\le N\le1024$).
+\item A concrete multiplicity $v$: none for $v=0$, one plain leg for $v=1$, and one pending fan of $v$ legs for $v\ge2$.
+\item A symbolic sum $c_0+r$ whose added numbers sum to $c_0$ and whose other terms form $r$: $c_0$ plain legs followed by one leg in a port-scoped \bbox{} of multiplicity $r$ (if $r$ turns out concrete, rule~2 applies to it alone).
+\item Any other symbolic multiplicity $r$: one leg in a port-scoped \bbox{} of multiplicity $r$.
+\end{enumerate}
+\end{algorithm}
+
+A pending fan that no composition consumes becomes, when the diagram is built, one port in a port-scoped \bbox{} whose multiplicity is a fresh abstracted symbol bound to the count. Hence \code!Z_{1->2}[d]! reads as \code!Z_{1->n}! with $n=2$, while \code!copy[d]! has two plain outputs. \code!Z_{1->n+1}[d]! has one plain output and one fanned output.
+
+\subsection{Mixed atoms and partial traces}\label{sec:language-dirac-mixed}
+
+The mixed atoms build diagrams with the discard \code!G! (\cref{ch:mixed}):
+\begin{itemize}
+\item \code!discard[D]!: one \code!G! with one input; the dimension may be omitted and inferred.
+\item \code!maxmixed[D]!: one \code!G! with one output (the discard state), times the scalar $D^{-1/2}$; the dimension is required.
+\item \code!dephase[D]!: a Z spider with one input and two outputs, output~1 wired into a \code!G!; the atom's input is the spider's input and its output the spider's output~0.
+\item \code!measure_x[D]!: the same with an X spider.
+\end{itemize}
+\code!ptrace[i, j, ...](E)! discards the outputs of \code!E! at the 1-based positions $i$, $j$, \ldots{} (duplicates allowed): each gets a new \code!G! effect. The positions count the entries of the output list, where a pending or symbolic fan is one entry; a position outside $1\ldots$(entries), an empty list, or a position on a fan raises \py!ParseDomainError!.
+
+\subsection{Composition and tensor product}\label{sec:language-dirac-compose}
+
+\code!A (x) B! is the tensor product: nodes, wires, inputs, outputs, and scalar factors of $A$ followed by those of $B$. \code!A ; B! is sequential composition in reading order: $A$ first, its leading outputs feeding $B$'s inputs.
+
+\begin{algorithm}[Composition \texttt{A ; B}]\label{alg:language-compose}
+\leavevmode
+\begin{enumerate}
+\item Let $N$ be the number of inputs $B$ needs: one per plain input, $c$ per pending fan of $c$. A symbolic input fan raises \code!input fan x m of 'L' cannot be fed: its count is symbolic!; a pending fan above 1024 legs raises an error.
+\item Count $A$'s outputs from the left until $N$ are available; a symbolic output fan met before that raises \code!output fan x m of 'L' cannot feed: its count is symbolic!. Fewer than $N$ raise \code!feed needs N outputs, the left side has M!.
+\item Expand each pending input fan of $B$ into that many plain inputs.
+\item Walk $A$'s outputs left to right while inputs remain to be fed: a plain output is used; a pending fan of $c$ gives $\min(c,\text{remaining})$ new plain legs and its count drops by that number; the fan stays in the output list even when its count reaches zero.
+\item Unify the dimension of each used output with the dimension of the input it feeds, wire them, and set the outputs to $A$'s unused outputs followed by $B$'s outputs; the scalar factors are concatenated.
+\end{enumerate}
+Each expanded leg counts against \texttt{\_MAX\_EXPANDED\_LEGS}.
+\end{algorithm}
+
+\subsection{Dimension inference}\label{sec:language-dirac-dims}
+
+Each atom without explicit dimensions gets a dimension variable; \code!bind! and \code!split! get two, $s$ and $t$, and their composite port the product term $st$. Variables form a union-find structure~\cite{tarjan1975unionfind}. Unifying two single-variable terms merges their classes; when both classes carry values that differ, they are accepted if they agree after substituting the minted bindings, else \code!ParseDomainError("dimension A of 'L1' is fed into B of 'L2'")!. Equations involving a product term are kept and solved after parsing by repeated propagation: when one side's value is known and the other side is a single unvalued variable, the variable takes that value; this repeats until nothing changes, and then every equation with two known sides is checked. A port or phase whose dimension stays unknown raises \code!ParseDomainError("cannot infer the dimension of 'L'; give it as L[D]")!, or \code!L[s, t]! for a binder or splitter.
+
+\subsection{Building the diagram}
+
+The diagram's nodes are the pieces' nodes in creation order; wires and the boundary follow the piece. One port-scoped \bbox{} is added for each fan port, in order of node, then inputs before outputs, then port index; a symbolic fan's box has its multiplicity, a pending fan's box a fresh abstracted symbol. Exponent symbols in dimensions whose names are fan multiplicities become those multiplicity symbols. The phase entries are read in the phase role against the role table. The scalar is the product of all scalar factors. The parameters are the abstraction bindings. The phase-range check and acceptance of \cref{alg:language-dsl-build} apply.
+
+\begin{example}[Dirac input]\label{ex:language-dirac}
+\code!copy[d] ; (copy[d] (x) id[d])! reads as three Z spiders, the first feeding the second and third; \code!sum_{k=0}^{3-1} |kk>! is the GHZ state of two qudits, printed \code!GHZ_{2} = sum_{k=0}^{d-1} |k, k>! with the instance line \code!at d = 3: sum_{k=0}^{3-1} |k, k>!; \code!bind[2, 3]! is a binder of dimensions $d=2$ and $d_1=3$.
+\end{example}
+
+\subsection{The legacy slice}
+
+\begin{signature}
+\py!parse_dirac_source(source: str) -> Diagram!
+\end{signature}
+The legacy reader accepts exactly \code!sum_{k=0}^{D-1} |BODY>! with an optional tensor power \code!^{n}!, \code!^{\otimes n}!, or \code!^{⊗n}! (\code!n! a numeral, optionally after \code!literal!), optionally followed by \code!; copy!. The summation index must be \code!k!; \code!D! is an identifier or a numeral, optionally after \code!literal!; \code!BODY! is \code!k! repeated, commas and spaces ignored; a power needs the body \code!k!. The result is one Z state with one output per \code!k!, outputs in ket order; with \code!; copy!, the state's first output feeds a Z spider with one input and two outputs, and the boundary is the state's other outputs then the copy's two. A numeral dimension is abstracted by \py!Dim.abstract!; a power without \code!literal! becomes one leg in a port-scoped \bbox{} bound to the count (stem \code!n!). Errors are \py!ParseGrammarError! and \py!ParseDomainError! with messages naming the expected shape. This reader is not guarded and is not reached by \py!parse!.
+
+\section{Graph Listings}\label{sec:language-listing}
+
+A graph listing prints a diagram completely: every node with its port dimensions, every wire, the boundary, and the \bbox{} forest with every extended field. \py!render_graph(diagram)! prints it; \py!parse_listing(source)! reads it back with the same node and box ids, and nothing is abstracted. The listing is the form the RAW view shows (\cref{ch:shell}) and the input that reproduces a diagram exactly.
+
+\subsection{Format}
+
+\begin{lstlisting}[style=grammar,caption={Graph listing format. \texttt{SP} is one space; \texttt{IND} two spaces.},label={lst:language-listing}]
+listing    = header NL
+             IND "scalar: " expr NL
+             IND "parameters: " ( "none" | param { ", " param } ) NL
+             [ IND "roles: " role { ", " role } NL ]
+             IND "nodes:" ( " none" | NL { IND IND node-line NL } )
+             IND "wires:" ( " none" | NL { IND IND ref " -- " ref NL } )
+             IND "inputs: " refs NL
+             IND "outputs: " refs NL
+             IND "bang boxes:" ( " none" | { NL box-line } ) ;
+header     = "graph: " int " node" ["s"] ", " int " wire" ["s"] ", "
+             int " input" ["s"] " -> " int " output" ["s"] ;
+param      = name " = " signed-int ;
+role       = name " = " ( "dimension" | "multiplicity" | "exponent" | "phase" | "scalar" ) ;
+node-line  = "n" int SP SP gen SP SP "in: [" port-dims "]" SP SP "out: [" port-dims "]"
+             [ SP SP "phase[" expr "]: " ( "0" | "{" p-entries "} turns"
+                                           [ " weight: {" p-entries "}" ] ) ]
+             [ SP SP "boxes: " mark { " > " mark } ] ;
+port-dims  = [ expr { mark } { ", " expr { mark } } ] ;
+mark       = "!" int ;
+p-entries  = [ key ": " expr { ", " key ": " expr } ] ;
+key        = int | name ;
+refs       = "[" [ ref { ", " ref } ] "]" ;
+ref        = "n" int "." ( "out" | "in" ) int ;
+box-line   = IND IND { IND IND } "!" int SP SP "x " expr SP SP
+             ( "nodes: " "n" int { ", n" int } | "ports: " ref { ", " ref } )
+             [ SP SP "links: " ref " -> " ref { ", " ref " -> " ref } [ SP SP "cyclic" ] ]
+             [ SP SP "tree: " ref " <- " ref { ", " ref }
+               [ SP SP "level: " name ] [ SP SP "position: " name ] ]
+             [ SP SP "index: " name ]
+             [ SP SP "copy scalar: " expr ]
+             [ SP SP "pairs of: !" int " index: " name
+               [ SP SP "left: " ref { ", " ref } ] [ SP SP "right: " ref { ", " ref } ] ]
+             [ SP SP "feed: !" int " -> " ref ]
+             [ SP SP "align: !" int ]
+             [ SP SP "parent: !" int " (" ( "missing" | "cycle" ) ")" ] ;
+\end{lstlisting}
+
+\paragraph{Printing rules.} The header counts are exact, the nouns singular for a count of $1$. Every expression is SymPy's \py!sstr! with \code!**! written \code!^!. Parameters are sorted by name. Nodes are sorted by id. A port's marks are the ids of the port-scoped \bboxes{} containing it, ordered by depth and then id; a node's \code!boxes:! chain lists its node-scoped boxes the same way. A phase vector prints \code!0! when it is zero; otherwise its entries sorted by index as \code!i: turns!, then its rule as \code!k: expr! with the first of \code!k!, \code!k1!, \code!k2!, \ldots{} not free in the vector standing for the index, then \code! turns!; a weighted vector adds its weights and weight rule likewise. A wire prints its two ports with the smaller first, ports ordered by node id, then direction (\code!input! before \code!output!), then index; wires are sorted by that pair. Trailing blanks are removed from every line. The pair phase of a \code!Zp! node prints through the same rule as \code!phase[D]: {} turns!, without its expression; the listing reader then refuses the node (\code!a Zp node takes two legs and 'phase{x, y: EXPR}', got ''!), so a listing of a diagram with a \code!Zp! node does not read back.
+
+\paragraph{The box forest.} Boxes print depth first, children in ascending id, each line indented two spaces per depth level beyond the base indentation. The roots are the boxes without a parent and the boxes whose parent is missing from the diagram (flag \code!missing!); a parent cycle is cut at its smallest id, which prints as a root with flag \code!cycle!. A port-scoped box lists its ports in port order, a node-scoped box its nodes in id order.
+
+\paragraph{The roles line.} A reader infers the role of each name by the role table (\cref{def:language-role-table}), with phase entries defaulting to the phase role and weights and the scalar to the scalar role. The printer adds \code!roles: NAME = ROLE, ...!, sorted by name, for every symbol of a phase entry, a weight, or the scalar that a reader would infer as a different SymPy symbol, when the symbol's actual role is one of the five; otherwise there is no roles line.
+
+\py!render_graph! never fails on a \py!Diagram!, valid or not; a non-diagram argument raises \py!PrinterGrammarError!. A node id that is not an integer prints as \code!n<repr>!.
+
+\subsection{Reading a listing}
+
+\begin{algorithm}[Listing reader]\label{alg:language-listing}
+\leavevmode
+\begin{enumerate}
+\item Drop blank lines and trailing blanks. The first line must match the header (a regular expression allowing any run of whitespace between its parts), else \code!listing: expected 'graph: N nodes, W wires, I inputs -> O outputs'!.
+\item Read the fields in order: \code!scalar:!, \code!parameters:! (each \code!NAME = INT!, no name twice), the optional \code!roles:! (each \code!NAME = ROLE! with a known role, no name twice; each entry seeds the role table), the \code!nodes:! block up to \code!wires:!, the \code!wires:! block up to \code!inputs:!, \code!inputs:!, \code!outputs:!, and the \code!bang boxes:! block to the end. A field out of order raises \code!listing: expected 'F:', found 'L'!; a line after the boxes raises \code!listing: unexpected 'L' at the end!.
+\item Read each box line. The parent of a box is the nearest preceding box line with smaller indentation; an explicit \code!parent:! is allowed only on a root. Multiplicities are read in the multiplicity role (\code!literal N! is the concrete $N$). No box id twice.
+\item Read each node line; its port dimensions and phase dimension are read in the dimension role with numerals kept concrete. No node id twice.
+\item Check that the port marks and node chains equal the scopes of the box lines, ordered by (depth, id), else \code|listing: port '!' marks disagree with the bang-box lines| or \code!listing: node 'boxes:' chains disagree with the bang-box lines!.
+\item Build the diagram with the nodes at exactly their ids, the wires, the boundary, the boxes at exactly their ids, and the parameters. The header counts must equal the body's node, wire, input, and output counts, else \code!listing: the header counts disagree with the body!.
+\item Read the phase vectors, then the scalar (with the extra bits of \cref{tab:language-bounds}), then the copy scalars, each against the role table extended by the phases read so far; the copy-scalar table also holds every box index, pair index, level, and position name as a multiplicity symbol.
+\item Return the diagram once it is accepted.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Scalable listings}
+
+\py!render_scalable_graph(s: ScalableDiagram) -> str! prints the scalable form of \cref{ch:diagrams} (output only; there is no reader). The header reads \code!scalable: N nodes, W wires, I inputs -> O outputs!, followed by \code!scalar:!, \code!parameters:!, a \code!scales:! forest with one line \code!sI  KIND x MULT! per scale (\code!KIND! is \code!COPIES! or \code!LEGS!, with the parent flags of the box forest), node lines whose port dimensions carry \code!~sK! when the port fans over scale $K$ and that end with \code!  scale: sK! for a node in a scale, the wires, and \code!inputs:! and \code!outputs:! lists in which a bundle prints as \code!{sK: items}!.
+
+\section{Dirac Output}\label{sec:language-dirac-out}
+
+The printer reads a pure diagram into a structural index-sum term and prints it. The term is the denotation of \cref{ch:semantics} written out, axis for axis (outputs, then inputs); it never contracts, evaluates, or rewrites.
+
+\subsection{The term}
+
+\begin{signature}
+\py!CopyVar(name: str, box: BangBoxId, count: Mult)!: the copy index of a \bbox{}, ranging over $1\ldots$\py!count!.\\
+\py!IndexVar(name: str, dim: Dim, copies: tuple[CopyVar, ...])!: a family of indices in $0\ldots$\py!dim!$-1$, one per value of the copy variables.\\
+\py!IndexAt(var: IndexVar, at: tuple[CopyVar, ...])!: one member of a family.\\
+\py!Leg(index: IndexAt, fan: tuple[CopyVar, ...] = ())!: one port, or one per fan value.\\
+Factors: \py!Delta(left, right)!, \py!ZFactor(index, phase)!, \py!XFactor(kappa, phase, outputs, inputs, dim)!, \py!FourierFactor(out, inp, dim)!, \py!TriangleFactor(out, inp)!, \py!TriangleInverseFactor(out, inp)!, \py!WFactor(inp, outputs)!, \py!BinderFactor(out, a, b, t)!, \py!SplitterFactor(inp, a, b, t)!, \py!Product(over, factors)!.\\
+Boundary items: \py!Slot(index)!, \py!Fan(index, over)!, \py!Block(over: CopyVar, items)!.\\
+\py!DiracTerm(scalar: Scalar, indices, factors, kets, bras)!.\\
+\py!DiracRendering(term, name: str | None, text: str, instance_text: str | None, source: str | None)!.\\
+All are frozen slotted dataclasses compared by value.
+\end{signature}
+
+\begin{definition}[Meaning of a term]\label{def:language-term}
+A term denotes $\text{scalar}\cdot\sum_{\text{indices}}\prod_{\text{factors}}\ket{\text{kets}}\bra{\text{bras}}$. An \py!IndexVar! with copy variables is one index per value of its copies. A node inside node-scoped \bboxes{} takes its indices and its factor once per copy vector (a \py!Product!). A \py!Leg! or \py!Fan! with copy variables is one port per value; a \py!Block! lists its items once per value of its copy variable, copy-major, in the order in which instantiation lays out a boundary (\cref{ch:diagrams}). The factors mean, with $\omega_d=e^{2\pi i/d}$:
+\begin{align*}
+\text{Z}:&\quad e^{2\pi i\alpha(k)}\ \text{(every port carries the spider index $k$)},\\
+\text{X}:&\quad d^{-(m+n)/2}\,e^{2\pi i\alpha(q)}\,\omega_d^{\,q(\sum\text{outs}-\sum\text{ins})},\\
+\text{F}:&\quad d^{-1/2}\,\omega_d^{\,o\,i},\qquad \text{T}:\ [o=0\lor o=i],\qquad \text{Ti}:\ [o=i]-[o=0][i\ge1],\\
+\text{W}:&\quad [i=\textstyle\sum\text{outs}]\,[\operatorname{nnz}(\text{outs})\le1],\qquad \text{B},\text{S}:\ [w=a\,t+b],
+\end{align*}
+where $w$ is the composite port of dimension $st$ and $t$ the dimension of the second part.
+\end{definition}
+
+\begin{algorithm}[Diagram to term]\label{alg:language-term}
+\leavevmode
+\py!dirac_term(diagram)! requires a diagram without extended \bboxes{} (chains, indexed boxes, copy scalars), valid by \py!validate!, and whose generators are among Z, X, F, T, Ti, W, B, S (so a \code!G! or \code!Zp! node has none); otherwise it raises \py!PrinterDomainError! (\code!diagram has no Dirac form: ...!).
+\begin{enumerate}
+\item \emph{Names.} The taken names are every symbol the diagram carries or binds. Each box $b$ gets the copy variable \code!i<b>!; each Z spider $v$ the index \code!k<v>!, or \code!k! when the diagram is a single Z spider in no node-scoped box; each X spider the index \code!q<v>!; each other port a leg variable \code!j<node><o|i><index>!. A name that is taken gets primes appended until it is free. Each variable's copies are the copy variables of the node's node-scope chain (outer to inner).
+\item \emph{Legs.} For each port of a non-Z node: a boundary port gets its own leg variable whose copies are the node's chain plus the port's fan; a port wired to a Z spider uses that spider's index; a port wired to another non-Z port shares one variable, named after the smaller of the two ports, whose copies are the first port's chain followed by the second's extra copies. A leg's fan is its variable's copies outside its own node's chain.
+\item \emph{Factors.} For each node in id order, its factor (a Z spider only when its phase is nonzero); then one \py!Delta! per wire between two distinct Z spiders, wires in sorted order. A factor of a node with a nonempty chain is wrapped in a \py!Product! over the chain, and consecutive products over the same copy variables merge. A fixed-arity port of F, T, Ti, W (input), B, or S that is fanned raises \py!PrinterDomainError!.
+\item \emph{Indices.} The Z indices by node id, then the X indices, then the leg variables by port order.
+\item \emph{Boundary.} The boundary outputs, grouped into bundles by \py!group_boundary! (\cref{ch:diagrams}), become the kets: a bundle a \py!Block!, a port with fan copies a \py!Fan!, any other port a \py!Slot!; the inputs become the bras likewise.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Printing a term}
+
+\py!render_term(term, *, env=None, unicode=False) -> str! prints a term on one line, substituting the integer values of \py!env! for symbols. \Cref{tab:language-glyphs} lists the two glyph sets.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+Glyph set & sum & product & tensor & root of unity & $\pi$ & ket end & bra start \\
+\midrule
+ASCII (default) & \texttt{sum} & \texttt{prod} & \texttt{(x)} & \texttt{w} & \texttt{pi} & \texttt{>} & \texttt{<} \\
+Unicode & $\Sigma$ & $\prod$ & $\otimes$ & $\omega$ & $\pi$ & $\rangle$ & $\langle$ \\
+\bottomrule
+\end{tabular}
+\caption{Glyphs of Dirac output.}
+\label{tab:language-glyphs}
+\end{table}
+
+\begin{enumerate}
+\item \emph{Expressions} print as SymPy \py!sstr! with \code!**! as \code!^! and spaces removed; a value that is not an atom, or that starts with \code!-!, prints in parentheses where it is a base or a dimension.
+\item \emph{Sums.} Consecutive indices with the same dimension and copies share one sum: \code!sum_{a,b=0}^{D-1}!, or with copies \code!sum_{a[i0],b[i0]=0, i0=1..n}^{D-1}!. A member is \code!name! or \code!name[c1,c2]!.
+\item \emph{Factors.} \code![a = b]!; a Z factor \code!e^{2 pi i (t1 [k=1] + t2 [k=2] + R)}! with the rule $R$ at the index, preceded by \code!w{weights}(k)! when weighted; an X factor \code!D^{-W/2}! (omitted when the width $W$, the number of ports counting fans by their counts, is $0$), its phase, and \code!w_{D}^{q (o1 + o2 - i1)}!, a fanned leg written \code!sum_{c=1}^{n} j!; F \code!D^{-1/2} w_{D}^{o i}!; T \code![o = 0 or o = i]!; Ti \code!([o = i] - [o = 0][i >= 1])!; W \code![i = o1 + o2][nnz(o1, o2) <= 1]!, a fanned output written \code!(j)_{c=1}^{n}! inside nnz, and \code![i = 0]! without outputs; B and S \code![w = a*t + b]!; a product \code!prod_{c=1}^{n}( f1 f2 )!.
+\item \emph{Boundary.} Consecutive slots share one ket \code!|a, b>! or bra \code!<a, b|!; a fan prints \code!|j>^{P}!, with $P$ the product of the counts of its copy variables that do not index $j$, preceded by \code!(x)_{c=1}^{n}! for the copy variables that do; a block prints \code!(x)_{c=1}^{n}( items )!. The kets precede the bras.
+\item \emph{Term.} The sums, then the factors, then the boundary, separated by spaces; a scalar other than $1$ in front in parentheses; the bare scalar when there is nothing else; \code!1! appended when there are indices but no factor and no boundary.
+\end{enumerate}
+
+\subsection{Catalog names}\label{sec:language-catalog}
+
+\py!recognize(diagram) -> str | None! names a diagram from a catalog when every connected component is one bare generator. Components join nodes connected by a wire or by a node-scoped box.
+
+\begin{algorithm}[Catalog recognition]\label{alg:language-recognize}
+\leavevmode
+Return \py!None! unless: the diagram has a node, its scalar is $1$, the boundary outputs and the boundary inputs each list the components in non-decreasing order, and every component is one node in no node-scoped box with no wire at all. Otherwise name each component's node and join the names by \code! (x) !. For a node, let $m$ and $n$ be its input and output widths, a fanned port counting the product of its fan counts.
+\begin{itemize}
+\item Z with a nonzero phase: \code!Z_phase! when $m=n=1$ and unweighted, else \code!Z_{m->n}(LABEL)!.
+\item Z without phase: test first $(n,m)$, then $(m,n)$ with the suffix \code!^dagger!: other $=0$ and count $=1$ gives \code!plus!; other $=0$ and count $\ge2$ gives \code!GHZ_{count}!; other $=1$ and count $\ge2$ gives \code!copy_{count}!. With no match, \code!id! when $m=n=1$, else \code!Z_{m->n}!.
+\item X with a nonzero phase: \code!X_{m->n}(LABEL)!; without: \code!zero! for $m=0,n=1$, \code!id! for $m=n=1$, else \code!X_{m->n}!.
+\item W: \code!W_{n}!. F: \code!F!. T: \code!triangle!. Ti: \code!triangle^-1!.
+\item B: \code!bind! when its own boundary inputs are exactly its inputs 0 and 1 in order; S: \code!split! when its own boundary outputs are exactly its outputs 0 and 1 in order; otherwise the diagram has no name.
+\end{itemize}
+A count is $\ge2$ when SymPy proves $\text{count}-2\ge0$; a bare symbol $n$ is not, $n+2$ is. \code!LABEL! is the entries \code!i: turns!, then \code!k: rule!, then \code!weight{...}! when weighted, joined by \code!, !.
+\end{algorithm}
+
+\subsection{Renderings}
+
+\begin{signature}
+\py!dirac(diagram, *, unicode=False) -> DiracRendering!\\
+\py!render_dirac(diagram, *, unicode=False, instance=False) -> str!\\
+\py!to_dirac_source(diagram) -> str | None!
+\end{signature}
+
+\py!dirac(diagram, *, unicode=False, bound=True)! returns the term, the catalog name (\code! (x) ! replaced by \code! ⊗ ! under Unicode), the text \code!NAME = FORMULA! (or the formula alone), the \term{instance text} (the formula with the parameter values substituted, when the diagram has parameters and \texttt{bound} is true; \py!render_dirac! passes its \texttt{instance} flag as \texttt{bound}), and the legacy source. A mixed diagram (one with a discard) is printed through its purification $P$ (\cref{ch:mixed}): the text is \code!Tr_env[ TEXT ], env = output I! (or \code!outputs I, J!, 1-based), standing for the CPM $\rho\mapsto\operatorname{Tr}_{\text{env}}(P\rho P^\dagger)$~\cite{selinger2007cpm}, with no name and no source. \py!render_dirac(..., instance=True)! appends the line \code!at a = 1, b = 2: INSTANCE! when there is an instance text, parameters sorted by name.
+
+\py!to_dirac_source(diagram)! returns the legacy-slice source of a diagram that is one phase-free Z state (no inputs, at least one output, no wire, scalar $1$, no node-scoped box) whose dimension resolves to a concrete value or a symbol other than \code!k!: \code!sum_{k=0}^{D-1} |k, k, ...>!, or \code!sum_{k=0}^{D-1} |k>^{N}! when port-scoped boxes give a concrete total width $N\ge1$; otherwise \py!None!.
+
+\paragraph{Errors.} \py!PrinterError! is the base class; \py!PrinterGrammarError! marks an argument of the wrong type, \py!PrinterDomainError! a diagram without a Dirac form. Errors of the diagram, dimension, phase, scalar, \bbox{}, generator, scalable, and denotation modules raised while printing become \py!PrinterDomainError!.
+
+\section{Rule Steps}\label{sec:language-steps}
+
+\begin{lstlisting}[style=grammar,caption={Rule step grammar.},label={lst:language-step}]
+step     = "apply" rule-name [ "at" selector ] [ "with" value { "," value } ] ;
+selector = int | "n" int { "," "n" int } ;
+value    = name "=" ( phase-suffix | signed-int | expression ) ;
+\end{lstlisting}
+
+\begin{signature}
+\py!@dataclass(frozen=True, slots=True) class RuleStep!: \py!rule: str!, \py!index: int | None!, \py!nodes: tuple[int, ...] | None!, \py!source: str!, \py!values: str | None = None!.
+\end{signature}
+A \py!RuleStep! checks its fields: \py!rule! is a string, \py!index! is \py!None! or an integer $\ge0$ (not a Boolean), \py!nodes! is \py!None! or a tuple of distinct integers $\ge0$, and not both are set; a violation raises \py!ParseGrammarError!.
+
+\py!parse_step(source)! matches the grammar (else \code!'S' is not 'apply RULE [at INT | at nI, nJ, ...]'!), requires the rule name to be in \py!RULES! (else \code!ParseDomainError("no rule 'R'; did you mean 'Q'? (rules lists them)")!, the suggestion present only when a name is close), and refuses a node named twice.
+
+\begin{algorithm}[Applying a step]\label{alg:language-apply-step}
+\leavevmode
+\py!apply_step(diagram, step)!:
+\begin{enumerate}
+\item Compute \py!matches = RULES[step.rule].pattern.find_matches(diagram)! (\cref{ch:rewriting}).
+\item With \py!step.nodes!: the matches whose support node set equals the given set; exactly one must exist, else \code!ParseDomainError("no R matches on nodes [..]")! or \code!K R matches on nodes [..]!.
+\item Otherwise the match at \py!step.index! (default $0$); an index past the end raises \code!ParseDomainError("R has N match(es); no match I")!.
+\item With \py!step.values!: the rule must have a template pattern (\cref{ch:rules}), else \code!R takes no 'with' values!. Each item \code!NAME = VALUE! sets one free value of the match: a phase suffix \code!phase{...}! or \code!weight{...}! is a phase vector over the match's template dimension; a signed integer is that integer; anything else is read in the scalar role. The pattern's \py!with_values! returns the completed match.
+\item Return \py!apply(diagram, rule, match)! (\cref{ch:rewriting}).
+\end{enumerate}
+\end{algorithm}
+
+\section{Sessions and Outcomes}\label{sec:language-session}
+
+The engine commands act on a session and return an outcome. No command sees the notation mode: a command returns blocks of output, and only the formatter of \cref{ch:shell} reads the mode.
+
+\subsection{The session}
+
+\begin{signature}
+\py!@dataclass(slots=True) class Session!
+\end{signature}
+\Cref{tab:language-session} lists the fields of a session. A fresh \py!Session()! has every field at its default.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.2\linewidth}X@{}}
+\toprule
+Field & Default & Meaning \\
+\midrule
+\texttt{current} & \texttt{None} & The current diagram. \\
+\texttt{start} & \texttt{None} & The start of the session derivation; set with \texttt{current} by \azx!load!. \\
+\texttt{results} & \texttt{[]} & The rewrite results from \texttt{start} to \texttt{current}, replayable. \\
+\texttt{names} & \texttt{\{\}} & Named diagrams, by name without \texttt{@}. \\
+\texttt{scalable} & \texttt{None} & The scalable form of \azx!translate!. \\
+\texttt{sheet\_steps} & \texttt{[]} & The sheet steps applied to \texttt{scalable}. \\
+\texttt{certificate} & \texttt{None} & The stored certificate (a proof artifact, below). \\
+\texttt{certificate\_witness} & \texttt{None} & The assignment an induction certificate verifies at. \\
+\texttt{last\_proof} & \texttt{None} & The latest proof outcome, induction result, proof certificate, kernel theorem, refutation, symbolic proof, restricted proof, or finite proof. \\
+\texttt{no\_proof} & \texttt{None} & Why the latest decide or prove built no proof, or \texttt{None}. \\
+\texttt{induct\_pair} & \texttt{None} & The pair the latest \azx!induct! proved, for re-derivation. \\
+\texttt{induct\_restriction} & \texttt{None} & The restriction, original pair, and family flag of the latest restricted \azx!induct!. \\
+\texttt{last\_detail} & \texttt{None} & The full payload of the latest command. \\
+\texttt{undo\_stack} & \texttt{[]} & Snapshots for \azx!undo!. \\
+\texttt{base} & \texttt{""} & The directory relative file paths resolve against. \\
+\texttt{tgateenum} & \texttt{False} & Whether decide and prove let the path-sum rung evaluate stuck residual sums (\cref{ch:proofs}). \\
+\bottomrule
+\end{tabularx}
+\caption{Fields of a session.}
+\label{tab:language-session}
+\end{table}
+
+A \term{proof artefact} is one of: a step-sequence or induction \py!Certificate!, a \py!ProofCertificate!, an \py!InductionProof! (\cref{ch:proofs}), or a kernel \py!Theorem!, \py!Refutation!, \py!Symbolic!, \py!RestrictedProof!, or \py!FiniteProof! (one restricted proof per value combination of finite clauses; \cref{ch:kernel}).
+
+A \term{snapshot} holds the command label and the undoable part of a session: \texttt{current}, \texttt{start}, \texttt{results}, \texttt{scalable}, and \texttt{sheet\_steps}. Names, certificates, and proofs are not undoable.
+
+\subsection{Blocks and outcomes}
+
+\begin{signature}
+\py!Text(text: str)!: mode-independent output text.\\
+\py!State(state: object)!: an engine state, printed by \py!printer.render! in the mode.\\
+\py!Proof(proof: object)!: a proof artifact, printed by \py!proof_text!.\\
+\py!Outcome(command: str, ok: bool, blocks: tuple[Block, ...], detail: object | None, changed: bool)!\\
+\py!ErrorDetail(line: str, command: str, error_types: tuple[str, ...], messages: tuple[str, ...], state: Diagram | None)!
+\end{signature}
+All five are frozen slotted dataclasses whose constructors check their field types and raise \py!CommandGrammarError! on a wrong type. An \py!Outcome! records the command's canonical name, its success, its output blocks, its full payload (shown by \azx!detail!), and whether it changed the session. An \py!ErrorDetail! records a failed line, its command, the class names and one-line messages of the exception and its \py!__cause__! chain (outermost first, each exception once), and a copy of the current diagram.
+
+\begin{signature}
+\py!class CommandError(Exception)!; \py!class CommandGrammarError(CommandError)!: a malformed line (unknown option, bad assignment, missing argument); \py!class CommandDomainError(CommandError)!: a well-formed command that the session or the engine cannot carry out.
+\end{signature}
+
+\subsection{Dispatch}\label{sec:language-dispatch}
+
+\begin{signature}
+\py!COMMANDS: Mapping[str, Handler]!, \py!ALIASES: Mapping[str, str]!, \py!HELP: Mapping[str, str]!\\
+\py!command_names() -> tuple[str, ...]!\\
+\py!execute(session: Session, line: str) -> Outcome!\\
+\py!run(session: Session, line: str) -> Outcome!
+\end{signature}
+
+\py!COMMANDS! maps each canonical name to its handler: \azx!load!, \azx!show!, \azx!double!, \azx!purify!, \azx!rules!, \azx!match!, \azx!apply!, \azx!check!, \azx!normalize!, \azx!decide!, \azx!saturate!, \azx!prove!, \azx!induct!, \azx!certificate!, \azx!translate!, \azx!name!, \azx!define!, \azx!names!, \azx!undo!, \azx!reset!, \azx!detail!, and \azx!help!. \py!ALIASES! maps \code!list-rules! to \azx!rules!, \code!save! to \azx!name!, \code!cert! to \azx!certificate!, and \code!normalise! to \azx!normalize!. \py!HELP! holds one usage line per command, the shell-only commands of \cref{ch:shell} included. \py!command_names()! returns the commands and aliases, sorted. All three mappings are read-only.
+
+\begin{algorithm}[Splitting a line]\label{alg:language-split}
+\leavevmode
+Let $t$ be the line stripped.
+\begin{enumerate}
+\item If $t$ starts with \code!@! and matches \code!@?NAME\s*=\s*SOURCE! (\code!NAME! an identifier, \code!SOURCE! nonempty, across newlines), the command is \azx!define! with the arguments $t$ cut at its first \code!#!.
+\item Otherwise let $w$ be the first word and $r$ the rest; map $w$ through the aliases. If the result is not a command name, or $r$ starts with \code!=! and the command is not \azx!apply!, the command is \azx!load! with the whole of $t$ as its argument.
+\item Otherwise the command is that name, with the arguments $r$ cut at its first \code!#! and stripped.
+\end{enumerate}
+\end{algorithm}
+
+Any line whose first word is not a command is therefore a diagram to load: \code!copy[d]! and \code!z = Z(1 -> 2)! load, and \code!load = ...! loads the whole line.
+
+\begin{algorithm}[Executing a line]\label{alg:language-execute}
+\leavevmode
+\py!execute(session, line)!:
+\begin{enumerate}
+\item Raise \py!CommandGrammarError! when \texttt{session} is not a \py!Session!, \texttt{line} not a string, or the line blank (\code!empty command!).
+\item Split the line (\cref{alg:language-split}).
+\item For a state-changing command (\azx!load!, \azx!apply!, \azx!normalize!, \azx!saturate!, \azx!translate!, \azx!reset!), take a snapshot labeled with the line on one line, whitespace runs collapsed, cut to 60 characters with \code!...! as the last three.
+\item Run the handler. If it raises, restore the snapshot (when one was taken) and re-raise: a \py!CommandError! as it is; any other \py!Exception! as \py!CommandGrammarError! when it is a \py!ParseGrammarError! and as \py!CommandDomainError! otherwise, with its one-line message (or its class name when empty) and the original as \py!__cause__!; a \py!BaseException! that is not an \py!Exception! as it is.
+\item If a snapshot was taken and the outcome reports a change, push the snapshot on the undo stack; after a changing \azx!load!, \azx!apply!, \azx!normalize!, or \azx!saturate!, drop the scalable form and its sheet steps.
+\item Store the outcome's payload as \texttt{last\_detail} and return the outcome.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[Running a line]\label{alg:language-run}
+\leavevmode
+\py!run(session, line)! returns \py!execute(session, line)! when it returns. When it raises an \py!Exception!:
+\begin{enumerate}
+\item The command name is the split command of the line, or \code!""! for a non-string or blank line.
+\item Build an \py!ErrorDetail! from the line (its \py!repr! when it is not a string), the command, the cause chain, and a copy of the current diagram; store it as \texttt{last\_detail} when \texttt{session} is a \py!Session!.
+\item The message is the exception's one-line text, or its class name when empty. For a \azx!load! whose first word is not a command but is close to a command name or alias (cutoff $0.75$), append \code!; did you mean 'W'?!.
+\item Return \code!Outcome(name, False, (Text("error: " + message), Text("(detail shows the engine detail)")), detail, False)!.
+\end{enumerate}
+\py!run! never raises for an \py!Exception!.
+\end{algorithm}
+
+For example, the line \code!lod x! prints
+\begin{lstlisting}[style=grammar]
+error: unknown catalog atom 'lod'; did you mean 'load'?
+(detail shows the engine detail)
+\end{lstlisting}
+
+\paragraph{Numbers in output.} Counts in messages are written \code!1 step!, \code!2 steps!: the noun takes an \code!s! unless the count is $1$. An expression prints as SymPy \py!sstr! of its SymPy form with \code!**! as \code!^!. An assignment prints as \code!a = 1, b = 2! sorted by name, or \code!(no symbols)! when empty. A one-line text collapses every whitespace run to one space. Where a message shows a diagram inline, it shows its Dirac text on one line, or \code!unavailable (REASON)! when it has no Dirac form.
+
+\section{Command Arguments}\label{sec:language-args}
+
+\subsection{Diagram sources}
+
+Where a command takes a diagram, the argument is either \code!@NAME! or a source in any of the three diagram forms (\cref{sec:language-forms}). \code!@start! and \code!@current! are built in and stand for the session's start and current diagrams; with no diagram loaded they raise \code!CommandDomainError("no diagram loaded; use load")!. Any other \code!@NAME! must be a stored name, else \code!no diagram named 'X'; names lists them!. A named diagram is copied on use. A rule step as a source raises \code!a rule step names no diagram; use apply!. An empty argument raises \code!expected a diagram source or @NAME!.
+
+\subsection{The compared pair}
+
+The comparison commands \azx!check!, \azx!decide!, \azx!prove!, and \azx!induct! compare a \term{pair} of diagrams: without a target, the session's start diagram (left) against its current diagram (right); with \code!against TARGET!, the current diagram (left) against the target (right). \azx!decide! and \azx!prove! also accept a target without the word \code!against!. Without a current diagram the commands raise \code!no diagram loaded; use load!.
+
+\subsection{Assignments}
+
+An \term{assignment list} is a sequence of \code!NAME=VALUE! items separated by spaces or commas; spaces around \code!=! are allowed. A value is a signed integer of at most 18 digits or a fraction \code!p/q! of at most 18 digits each; a fraction with an integral value becomes an integer, a zero denominator raises \code!'V' divides by zero!. Errors: \code!expected NAME=VALUE, got 'T'!, \code!X is assigned twice!. \azx!induct! also accepts one \code!on SYMBOL! item.
+
+\begin{definition}[Supplied values]\label{def:language-supplied}
+The \term{free symbols} of a diagram are the free symbols of its scalar, of every port dimension and phase dimension (the \term{dimension symbols}), of every phase entry, and of every \bbox{} multiplicity (the \term{multiplicity symbols}; a multiplicity symbol is never also a dimension symbol). A supplied assignment for a pair must name only free symbols of the pair, else \code!CommandDomainError("a, b not free in the compared diagrams (free: ...)")!; a multiplicity symbol needs an integer $\ge0$, a dimension symbol an integer $\ge1$.
+\end{definition}
+
+\begin{definition}[Sample points]\label{def:language-samples}
+The \term{sample points} of a pair under supplied values are the points of \py!sample_grid(left, right)! (\cref{ch:proofs}), each updated by the supplied values, duplicates removed in order. A point that leaves a free symbol without a value is \term{refused} with the reason \code!no sample value for a, b!.
+\end{definition}
+
+\subsection{Restriction clauses}\label{sec:language-for}
+
+\azx!decide!, \azx!prove!, and \azx!induct! accept a trailing restriction \code![only] for CLAUSE, CLAUSE, ...!. The text after the last occurrence of the word \code!for! (preceded by the start or a space and followed by a space) is the clause list; \code!only! directly before it sets \texttt{family\_first} to false, which makes the engine decide the restricted pair alone instead of first trying the family; \code!only! without \code!for! raises \code!only needs a for clause!. Clauses are separated by commas and follow the grammar of \cref{lst:language-clauses}; their kinds, validation, and meaning are specified in \cref{ch:proofs}.
+
+\begin{lstlisting}[style=grammar,caption={Restriction clauses.},label={lst:language-clauses}]
+clause = name ( "=" | "!=" | "≠" | ">=" | "≥" | "<=" | "≤" | ">" | "<" ) rhs
+       | number ( "<=" | "≤" | "<" ) name ( "<=" | "≤" | "<" ) number
+       | name "in" ( "Z" | "(" "1" "/" int ")" "Z" | "Z" "/" int ) ;
+rhs    = number                                   (* n = 3, n >= 2, d != 2 *)
+       | [ number [ "*" ] ] name [ "+" number ] ;  (* n = 2*m + 1 *)
+number = [ "+" | "-" ] int [ "/" int ] ;
+\end{lstlisting}
+
+\section{The Commands}\label{sec:language-commands}
+
+Each command below lists its syntax, its semantics, its output blocks in order, and its errors. Unless stated otherwise, a command takes no arguments beyond those shown, extra arguments raise \code!C takes no arguments!, a command that needs a current diagram raises \code!no diagram loaded; use load!, and the outcome is successful. \code!INDENT! is two spaces.
+
+\subsection{load}\label{sec:language-load}
+
+\begin{lstlisting}[style=azx]
+load SOURCE | @NAME
+\end{lstlisting}
+Reads the diagram and makes it both the current and the start diagram; clears the session derivation, the latest proof, the reason for no proof, the stored certificate, and its witness. Output: \code!loaded @NAME! or \code!loaded FORM input! (\code!dirac!, \code!dsl!, or \code!listing!), then the diagram as a state. The outcome changes the session. Every line that is not a command is a \azx!load! (\cref{alg:language-split}).
+
+\subsection{show}
+
+\begin{lstlisting}[style=azx]
+show [derivation | start | scalable | certificate | @NAME | SOURCE]
+\end{lstlisting}
+Without an argument, the current diagram. \code!derivation!: the session derivation as a step-sequence certificate labeled \code!session derivation!, after the line \code!derivation: N steps from the start diagram!. \code!start!: the start diagram. \code!scalable!: the scalable form (else \code!no scalable diagram; use translate!). \code!certificate!: the stored certificate (else \code!no certificate; use certificate emit!), as the line of \cref{tab:language-artefact-lines} and, for a certificate, proof certificate, or induction proof, its proof text (\cref{sec:language-proof-text}). Any other argument is a diagram source, shown without loading it.
+
+\subsection{double and purify}
+
+\begin{lstlisting}[style=azx]
+double [@NAME | SOURCE]
+purify [@NAME | SOURCE]
+\end{lstlisting}
+Each acts on the given diagram, or on the current diagram without an argument, and does not change the session. \azx!double! builds the doubled pure diagram of a mixed diagram (\cref{ch:mixed}) and prints \code!double: N nodes; outputs plain then conjugate, inputs plain then conjugate!, then the doubled diagram. \azx!purify! builds the purification and prints \code!purify: environment = output(s) I, J! (1-based positions of the environment outputs, or \code!none!), then the pure diagram.
+
+\subsection{rules}
+
+\begin{lstlisting}[style=azx]
+rules [RULE]
+\end{lstlisting}
+Without an argument, one line per rule name of \py!RULES!, in library order (\cref{ch:rules}). With a rule name, five lines:
+\begin{lstlisting}[style=grammar]
+rule: NAME
+  quantifiers: leg counts A, B, ...; dimensions D, ...
+  side conditions: C1, C2, ...
+  dimension guards: KIND VALUE, ...
+  scalar: S
+\end{lstlisting}
+where an empty list prints \code!none!, a guard without a value prints its kind alone, and the scalar is the rule's introduced scalar, or \code!per match (RULES.txt)! for a template rule whose scalar varies with the match. An unknown rule raises \code!CommandDomainError("no rule 'R'; did you mean 'Q'? (rules lists them)")!. For example, \azx!rules spider_fusion! prints
+\begin{lstlisting}[style=grammar]
+rule: spider_fusion
+  quantifiers: leg counts m_a, n_a, m_b, n_b; dimensions d
+  side conditions: distinct_nodes, same_generator_type, ..., dimension_guards_satisfied
+  dimension guards: none
+  scalar: 1
+\end{lstlisting}
+
+\subsection{match}
+
+\begin{lstlisting}[style=azx]
+match [RULE]
+\end{lstlisting}
+Lists the matches of the rule, or of every rule, in the current diagram: one line \code!#I RULE at nA, nB! per match, $I$ counting from $0$ per rule and the support nodes sorted. A rule whose matcher raises an engine error prints \code!RULE: matcher refused (REASON)!. With no match at all, the line \code!no matches!. The indices are those \azx!apply ... at I! selects.
+
+\subsection{apply}\label{sec:language-apply}
+
+\begin{lstlisting}[style=azx]
+apply RULE [at INT | at nI, nJ, ...] [with NAME = VALUE, ...]
+\end{lstlisting}
+Parses the line as a rule step and applies it to the current diagram (\cref{alg:language-apply-step}); appends the result to the session derivation and makes its diagram current. Output: the rewrite result as a state, printed
+\begin{lstlisting}[style=grammar]
+step: RULE (consumed nA, nB, new nC, scalar S)
+result:
+  DIAGRAM
+\end{lstlisting}
+The outcome changes the session.
+
+\subsection{check}\label{sec:language-check}
+
+\begin{lstlisting}[style=azx]
+check [NAME=VALUE ...] [against TARGET]
+\end{lstlisting}
+Compares the pair with the numeric oracle \py!compare! (\cref{ch:semantics,ch:proofs}) at each sample point. A refused point, or a point at which the oracle raises an oracle error (an error of the \bbox{}, check, contraction, denotation, dimension, generator, graph, phase, scalar, or validation modules, or a \py!MemoryError!), is skipped and recorded.
+\begin{itemize}
+\item On the first mismatch: the outcome fails with the lines \code!check: mismatch after N samples!, the Dirac outcome with relation \code+!=+ (below), the disproof line (\cref{sec:language-disproof}), and \code!counterexample: ASSIGNMENT: REASON!. The refutation becomes the latest proof and the stored certificate is cleared.
+\item Otherwise: \code!check: no mismatch in N samples over a, b! (without \code! over ...! when no point has a symbol), and, when points were refused, \code!K samples refused, first at ASSIGNMENT (REASON)!. When no point was evaluated the outcome fails, with the line \code!check: no sample could be evaluated! first.
+\end{itemize}
+The \term{Dirac outcome} of a pair is three lines:
+\begin{lstlisting}[style=grammar]
+dirac outcome: left REL right
+  left:  DIRAC LINE
+  right: DIRAC LINE
+\end{lstlisting}
+with \code+REL+ one of \code+!=+, \code+!=?+, and \code+?=+.
+
+\subsection{normalize}
+
+\begin{lstlisting}[style=azx]
+normalize
+\end{lstlisting}
+Reduces the current diagram by \py!normal_form! (\cref{ch:rewriting}) with the default rules and the default guard (128 steps, no node bound, loop detection); appends the steps to the session derivation and makes the reduced diagram current. Output: the reduced diagram, then \code!normalized in N steps: STOP!, followed for a stop other than \code!fixpoint! by \code! (guard max_steps 128)!, \code! (guard max_nodes NONE)!, or \code! (guard loop detection)! for the stops \code!step_limit!, \code!node_limit!, and \code!loop_detected!. The outcome changes the session when there was a step.
+
+\subsection{saturate}
+
+\begin{lstlisting}[style=azx]
+saturate
+\end{lstlisting}
+Adds the current diagram to a fresh e-graph~\cite{willsey2021egg}, saturates it with the default limits (6 iterations, 512 e-nodes, 20000 applications; \cref{ch:rewriting}), and extracts the cheapest member of the root's class. When the extraction's root e-node is the added root, its steps extend the session derivation and its diagram becomes current (unchanged when there is no step). Otherwise the extracted diagram becomes the current and start diagram, the derivation is cleared, and the line \code!derivation restarted at the extracted diagram! is added. Output: the current diagram, then
+\begin{lstlisting}[style=grammar]
+saturation STOP[ (limits 6 iterations, 512 e-nodes, 20000 applications)]: I iterations,
+E e-node(s) added, M merges, A applications; extracted cost COST in N steps
+\end{lstlisting}
+on one line, the limits shown when the stop is not \code!saturated!. The outcome changes the session when there was a step or a restart.
+
+\subsection{decide}\label{sec:language-decide}
+
+\begin{lstlisting}[style=azx]
+decide [against] [TARGET] [[only] for CLAUSES]
+\end{lstlisting}
+Runs the decision procedure \py!decide_equal(left, right, restrict=CLAUSES, family_first=F, enumerate_residual=session.tgateenum)! (\cref{ch:proofs}) on the pair, with the Dirac line of a diagram (no catalog name) as the description its Lean exports use. It clears the stored certificate and the reason for no proof. The first line is
+\begin{lstlisting}[style=grammar]
+decide: VERDICT[ for CLAUSES[ (restricted pair only)]] by METHOD: REASON
+\end{lstlisting}
+where \code!VERDICT! is \code!equal!, \code!unequal!, \code!equal (uncertified)!, \code!unequal (uncertified)!, or \code!unknown!, and \code!METHOD! the decision method's value. The proof pair is the decision's doubled pair when it has one, else the compared pair; for a restricted decision that does not hold for the family, the restricted pair (doubled when doubled).
+
+\begin{algorithm}[Lines of a decide]\label{alg:language-decide}
+\leavevmode
+\emph{When the decision claims equality} (\texttt{EQUAL} or \texttt{EQUAL\_UNCERTIFIED}):
+\begin{enumerate}
+\item For a restricted decision that holds for the family: \code!decide: holds for every n, m (family proof specialised)!, the clause symbols in clause order without repeats.
+\item For a doubled decision with an inner method: \code!proof: of the doubled diagrams (DOUBLED)!.
+\item The decision's proof becomes the latest proof. Without one: \code!proof: none the kernel re-checks; the verdict rests on METHOD!, and the reason for no proof is set. With one: \code!proof: re-checkable; certificate kernel / certificate lean!, followed by \code!proof: conditional on CONSTRAINTS! when the proof is a symbolic-sum proof whose Lean header states assumed dimension constraints.
+\item With dimension floors: \code!proof: assumes the dimension floor(s) d >= 2, ...!. With assumed dimension equations: \code!conditional on N assumed dimension equations!.
+\end{enumerate}
+The outcome succeeds exactly for \texttt{EQUAL}.
+
+\emph{Otherwise}, the outcome fails, and the lines are:
+\begin{enumerate}
+\item the Dirac outcome, with \code+!=+ for \texttt{UNEQUAL}, \code+!=?+ for \texttt{UNEQUAL\_UNCERTIFIED}, \code+?=+ otherwise;
+\item for \texttt{UNEQUAL}: the refutation at the counterexample (the original-symbol counterexample of a restricted decision) becomes the latest proof, and the disproof line follows; for \texttt{UNEQUAL\_UNCERTIFIED}: the disproof line without a refutation; for \texttt{UNKNOWN}: no disproof line, and the reason for no proof is \code!the decide built no certificate: REASON!;
+\item with a counterexample: \code!counterexample: ASSIGNMENT: REASON!, prefixed \code!uncertified ! unless the verdict is \texttt{UNEQUAL}; else, with an induction counterexample: \code!counterexample: n = V with WITNESS: REASON!; else, unless the method is \texttt{INTERFACE}: the furthest-simplified forms of the proof pair (below) and, when the decision ran saturation, \code!bound: saturation STOP (limits 3 iterations, 128 e-nodes, 1024 applications)!;
+\item for an unrestricted decision, the bound line (below).
+\end{enumerate}
+\end{algorithm}
+
+The \term{furthest-simplified forms} of a pair are, per side, the line \code!furthest-simplified SIDE (normal form, N steps, stop STOP[ (GUARD)]):! followed by that side's normal form as a state (the decision's own normal form when it has one); a side whose normal form raises an engine error prints \code!furthest-simplified SIDE: unavailable (REASON)!.
+
+The \term{bound line} applies to an \texttt{UNEQUAL} decision of a pair whose parameter environments bind at least one multiplicity symbol: let the bound point be those multiplicity values plus the bound values of the other dimension symbols (the left diagram's values winning). When the counterexample already agrees with the bound point, there is no line. Otherwise the pair is decided again restricted to the bound point, without building a proof, and the line is \code!at the bound n = 2, d = 3: VERDICT by METHOD!, followed by \code! (decide ... for n = 2, d = 3 to certify)! when the verdict is \texttt{EQUAL}; an engine error prints \code!at the bound ...: not decided (REASON)!. For example, \file{examples/restricted/loops_n2.azx} decides $n$ self-loops of dimension $d$ against one self-loop of dimension $d^2$, which differ at $n=0$ and agree at the bound $n=2$.
+
+\subsection{prove}\label{sec:language-prove}
+
+\begin{lstlisting}[style=azx]
+prove [exhaustive [algebraic]] [against] [TARGET] [[only] for CLAUSES]
+\end{lstlisting}
+Runs the proof search \py!prove(left, right, restrict, family_first, enumerate_residual=session.tgateenum)!, or with \code!exhaustive! the fair search \py!prove_exhaustive(left, right, algebraic=A, restrict, family_first)! with \code!A! true after \code!algebraic! (\cref{ch:proofs}). The outcome becomes the latest proof. The first line is \code!prove: STATUS[ for CLAUSES[ (restricted pair only)]]: REASON!, \code!STATUS! one of \code!proved!, \code!refuted!, \code!not_found!, \code!check_failed!.
+
+\emph{When proved}, the outcome succeeds with the lines \code!prove: instance LABEL: REASON! per instance of a finite restriction; for a restricted outcome, \code!prove: holds for every n (family proof specialised)! when the family proof holds; and \code!proof by KIND; certificate emits it!, where \code!KIND! is \code!induction! or \code!search!, followed by \code! on the doubled diagrams (DOUBLED)! or \code! with the discard rules (NATIVE)! for a mixed outcome. For a pure restricted outcome with a certificate or induction proof, the latest proof becomes a \py!RestrictedProof! of it over the restriction and the original pair.
+
+\emph{Otherwise} the outcome fails. Let the point be the counterexample (the original-symbol one when restricted). A \texttt{refuted} outcome with a point gets a refutation (its own Lean refutation when unrestricted); the relation is \code+!=+ when there is a refutation or when the outcome is refuted without a point, else \code+?=+. The lines are the first line, the Dirac outcome, then:
+\begin{itemize}
+\item with a point: for \texttt{refuted}, the refutation (or the outcome) becomes the latest proof, the stored certificate is cleared, and the disproof line follows; then \code!counterexample: ASSIGNMENT: REASON!, prefixed \code!uncertified ! when there is no refutation and the status is not \texttt{check\_failed};
+\item without a point and \texttt{check\_failed}: \code!check failed: REASON!;
+\item otherwise, unless refuted: the furthest-simplified forms of the (restricted) pair and \code!bound: search STATUS (limits depth 4, states 2048, applications 20000)!, \code!STATUS! the search status or \code!none!.
+\end{itemize}
+
+\subsection{induct}\label{sec:language-induct}
+
+\begin{lstlisting}[style=azx]
+induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] [[only] for CLAUSES]
+\end{lstlisting}
+Proves the pair by induction on one multiplicity symbol with \py!prove_by_induction! (\cref{ch:kernel}). The restriction is split off first, then the target, then the options. A mixed pair is replaced by its doubled pair.
+
+\begin{algorithm}[Choosing the index and the witness]\label{alg:language-induct}
+\leavevmode
+\begin{enumerate}
+\item Check the supplied values (\cref{def:language-supplied}). A value for the \code!on! symbol raises \code!n is the induction index; it takes no value!.
+\item The \term{live} symbols are the pair's multiplicity symbols, sorted; with none, \code!CommandDomainError("no bang box: induct needs a free multiplicity symbol")!. An \code!on! symbol must be live, else \code!X is no free multiplicity symbol (n, m)!. Without \code!on!, the index is the first live symbol, which must not have a supplied value.
+\item The \term{witness} takes, for each free symbol that is not a multiplicity symbol, the value bound in the pair's parameter environments (the left's value winning), then the supplied values on top.
+\item Every non-multiplicity free symbol and every other live symbol needs a witness value, except symbols fixed by an \code!=! clause of the restriction; a missing one raises \code!induct holds d, m at a value; supply NAME=VALUE for each!.
+\item Call \py!prove_by_induction(left, right, index=ON, witness=W, restrict=CLAUSES, family_first=F)!.
+\end{enumerate}
+\end{algorithm}
+
+The result becomes the latest proof, and the pair (the restricted pair for a restricted result that does not hold for the family) is kept for re-derivation by \azx!certificate kernel!. The first line is
+\begin{lstlisting}[style=grammar]
+induct: VERDICT[ for CLAUSES] over INDEX from BASE via DISCHARGE: REASON
+\end{lstlisting}
+where \code!VERDICT! is one of \code!proved_uniform!, \code!proved_induction!, \code!schema_checked!, \code!refuted!, \code!inconclusive!, \code!DISCHARGE! the discharge tier or \code!none!, and \code!INDEX! for a restricted result over a fresh symbol reads \code!m (n = 2*m + 1)!. The second line is \code!witness: ASSIGNMENT!.
+\begin{itemize}
+\item \emph{Proved}: for a restricted result holding for the family, \code!induct: holds for every n (family proof specialised)!; then \code!induction certificate available; certificate emits it!, or \code!no induction certificate was built! when the result has no derivation. The outcome succeeds.
+\item \emph{With a counterexample}: the refutation at the point (the witness plus the index value, or the original-symbol counterexample) becomes the latest proof and the stored certificate is cleared; without a Lean refutation the first line gains \code!; not reported refuted: no Lean refutation!. Then the Dirac outcome (\code+!=+ with a refutation, else \code+?=+), the disproof line, and the counterexample line \code!counterexample: n = V with WITNESS: REASON!.
+\item \emph{With a discharge tier but not proved}: one line \code!tier TIER: REASON! per tier and \code!bound: only the TIER tier settled the step; not a proof!.
+\item \emph{Otherwise}: the furthest-simplified forms, one line per tier, and \code!bound: no discharge tier settled the step (max_steps 64)!.
+\end{itemize}
+
+\subsection{Disproof lines}\label{sec:language-disproof}
+
+The \term{refutation} of a pair at a point is a kernel \py!Refutation! of the pair (its doubled pair when either side is mixed) at the point, carrying the Lean source of the refutation (\cref{ch:kernel,ch:lean-export}); when the Lean exporter refuses, there is no refutation. The disproof line is \code!disproof: re-checkable; certificate lean! with a refutation, else \code!disproof: none Lean re-checks; the verdict rests on METHOD!, \code!METHOD! being \code!the oracle! for \azx!check!, \azx!prove!, and \azx!induct! and the decision method for \azx!decide!.
+
+\subsection{certificate}\label{sec:language-certificate}
+
+\begin{lstlisting}[style=azx]
+certificate [emit [derivation | induction | proof]]
+certificate show
+certificate verify [NAME=VALUE ...]
+certificate kernel
+certificate lean [FILE]
+\end{lstlisting}
+Without an action the action is \code!emit!. An unknown action raises \code!unknown certificate action 'A'; use emit, verify, show, kernel or lean!.
+
+\begin{algorithm}[Selecting the certificate to emit]\label{alg:language-emit}
+\leavevmode
+For \code!emit WHICH! (\code!WHICH! empty, \code!derivation!, \code!induction!, or \code!proof!), with $P$ the latest proof:
+\begin{enumerate}
+\item \code!WHICH! empty or \code!proof!, and $P$ is a proof certificate, kernel theorem, refutation, symbolic proof, restricted proof, or finite proof: $P$.
+\item \code!WHICH! empty or \code!proof!, and $P$ is a proved proof outcome with a certificate or an induction proof: that artifact.
+\item \code!WHICH! empty or \code!induction!, and $P$ is a proved induction result with a derivation: an induction certificate of that derivation, with the result's witness.
+\item \code!WHICH! is \code!induction! and $P$ is a proof outcome with an induction proof: that proof.
+\item \code!WHICH! empty, $P$ absent, and a reason for no proof recorded: \code!CommandDomainError("REASON; certificate derivation exports the session derivation")!.
+\item \code!WHICH! empty or \code!derivation!: the session derivation as a step-sequence certificate.
+\item \code!WHICH! is \code!induction! and $P$ is a proved induction result: \code!the last induct built no certificate: REASON!.
+\item Otherwise: \code!no WHICH certificate; prove or induct first!.
+\end{enumerate}
+\end{algorithm}
+
+\Cref{tab:language-artefact-lines} gives the line that names each artifact.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}X@{}}
+\toprule
+Artifact & Line \\
+\midrule
+\texttt{Certificate} & \texttt{certificate: METHOD, KIND, N steps} (\texttt{numeric\_oracle} or \texttt{induction}; \texttt{step\_sequence} or \texttt{induction}) \\
+\texttt{ProofCertificate} & \texttt{certificate: proof, N steps} \\
+\texttt{InductionProof} & \texttt{certificate: induction proof over n, N steps} \\
+\texttt{kernel.Theorem} & \texttt{certificate: kernel theorem, N inferences} \\
+\texttt{kernel.Refutation} & \texttt{certificate: refutation at ASSIGNMENT} (or \texttt{no parameters}) \\
+\texttt{kernel.Symbolic} & \texttt{certificate: normal form of symbolic sums} \\
+\texttt{kernel.RestrictedProof} & \texttt{certificate: restricted proof for CLAUSES, the family proof specialised} (or \texttt{the restricted pair}) \\
+\texttt{kernel.FiniteProof} & \texttt{certificate: restricted proof for CLAUSES, N instances by cases} \\
+\bottomrule
+\end{tabularx}
+\caption{The line of each proof artifact.}
+\label{tab:language-artefact-lines}
+\end{table}
+
+\paragraph{emit.} Selects the artifact (\cref{alg:language-emit}), stores it as the session certificate with its witness, and prints its line and, for a certificate, proof certificate, or induction proof, its proof text. An argument other than the three words raises \code!certificate emit [derivation|induction|proof]!.
+
+\paragraph{show.} Prints the stored certificate like \code!emit!; without one, \code!no certificate; use certificate emit!.
+
+\paragraph{verify.} Emits the default artifact first when none is stored (with the line \code!emitted LINE!), then prints \code!verifying LINE! and checks the artifact:
+\begin{itemize}
+\item a kernel theorem: \code!verify: verified: the proof kernel built it; certificate lean exports it!;
+\item a symbolic proof: \code!verify: verified: certificate lean proves it by the normal form of symbolic sums!;
+\item a refutation: the oracle compares the two sides at its point; differing gives \code!verify: verified: the diagrams differ at POINT; certificate lean proves it!, agreeing fails with \code!verify: failed: the diagrams agree at POINT!, an oracle error fails with \code!verify: no evaluation at POINT: REASON!;
+\item a finite proof: \py!kernel.finite_symbolic! combines its instances; success prints \code!verify: verified: every instance re-checked; certificate lean exports the cases!, a kernel or oracle error fails with \code!verify: failed: REASON!;
+\item a restricted proof: the proof kernel re-checks it (\py!restricted_symbolic! for a symbolic inner proof); success prints the kernel-theorem line, a kernel or oracle error fails with \code!verify: failed: REASON!;
+\item a certificate: the supplied values are checked against its initial and final diagrams. An induction certificate verifies only at its witness: a supplied value that differs raises \code!an induction certificate verifies only at its witness W; n differs!. A step-sequence certificate verifies at every sample point. At each point \py!verify(certificate, point)! (\cref{ch:proofs}) runs; refused points are recorded. The first failure fails with \code!verify: failed at POINT: REASON!, the Dirac outcome with \code+?=+, and the counterexample line when the comparison mismatched. With no point evaluated: \code!verify: no point evaluated!, failing. Otherwise \code!verify: verified at N points: REASON! with \code!; K points refused, first at ...! when some were refused;
+\item a proof certificate or induction proof: \py!check_proof! over the sample points (an induction proof without supplied values is checked piecewise, with no sample points); failure prints \code!verify: failed: REASON!, the Dirac outcome with \code+?=+, and the counterexample line; success \code!verify: verified: REASON!.
+\end{itemize}
+
+\paragraph{kernel and lean.} \code!certificate kernel! re-checks the stored certificate in the proof kernel and states the theorem; \code!certificate lean [FILE]! also exports it to Lean~4~\cite{demoura2021lean4}, printed or written to \code!FILE!. A relative \code!FILE! resolves against the session's base directory when one is set. \code!certificate kernel! with an argument raises \code!certificate kernel takes no arguments!.
+
+\begin{algorithm}[certificate kernel and certificate lean]\label{alg:language-kernel}
+\leavevmode
+\begin{enumerate}
+\item With no stored certificate, emit the default artifact and print \code!emitted LINE!.
+\item A refutation: print \code!kernel: refutation of LEFT = RIGHT, differing at POINT!. For \code!lean!, export it (a kernel error fails with \code!lean: REASON!) and print \code!lean: tensor-network semantics, HOW!, where \code!HOW! is \code!the boundaries differ in size!, \code!the leg dimensions differ!, \code!refuted by ball arithmetic at POINT!, or \code!refuted exactly at POINT!, read from the source header.
+\item A symbolic proof, or a restricted proof whose inner proof is symbolic (re-checked by \py!restricted_symbolic! first; a kernel error fails with \code!kernel: rejected: REASON!): print \code!kernel: LEFT = RIGHT STATEMENT, by the normal form of symbolic sums!, where \code!STATEMENT! is the proof's domain statement or \code!for every dimension and phase!, then \code!  assumes A! per assumption and per assumed dimension constraint. For \code!lean!, print \code!lean: tensor-network semantics, the normal form computed by the Lean kernel!, and the unlinked line when the header marks it.
+\item A finite proof: combine its instances into one symbolic proof with \py!kernel.finite_symbolic! (the Dirac lines as descriptions); a kernel or oracle error fails with \code!kernel: rejected: REASON!; otherwise continue as in step 3 with the combined proof.
+\item Otherwise, check the artifact with \py!kernel.check! (\cref{ch:kernel}). On a kernel or oracle error: when the stored certificate is an induction certificate of the latest \azx!induct!, search for a proof of that pair with \py!prove! and check it (as a restricted proof when the induct was restricted); on success print \code!kernel: REASON; re-derived a re-checkable proof by search! and continue with that theorem. Failing that, try the symbolic-sum normalizer on the artifact's pair; on success print \code!kernel: REASON; proved by the normal form of symbolic sums instead!, store the symbolic proof as the certificate, and continue as in step 3. Failing that, fail with \code!kernel: rejected: REASON!.
+\item For \code!lean! with a mixed side, try the normalizer on the doubled sides; on success print \code!lean: the doubled diagrams' equality, which is the CPMs' (MIXED.txt, 2.3)! and continue as in step 3.
+\item Print \code!kernel: theorem LEFT = RIGHT[ STATEMENT]! and \code!  N inferences[ (K subst)]; rules: R1, R2, ...! (the axioms used, first occurrence order, or \code!none!), then \code!  assumes A! per assumption.
+\item For \code!lean!: export the theorem with the Dirac lines as descriptions and print the kind of export: \code!lean: tensor-network semantics, the normal form computed by the Lean kernel! (a normalizer proof), \code!lean: opaque diagrams, every step an axiom but N symbolic contractions proved over networks!, \code!lean: tensor-network semantics, every step proved! or \code!..., K unproved step(s)!, with \code!, the diagrams' scalars not compared! when the header says so, or \code!lean: opaque diagrams, every step an axiom!; then the unlinked line when the header marks it, and \code!lean: conditional on CONSTRAINTS! when the header assumes dimension constraints.
+\item Write the source to \code!FILE! and print \code!lean: wrote FILE! (an \py!OSError! raises \code!cannot write FILE: REASON!), or print the source.
+\end{enumerate}
+The \term{unlinked line} reads \code!lean: uncertified for the original claim: the theorem is about the restricted diagrams; its link to the original diagrams is not proved!. \code!LEFT! and \code!RIGHT! are ASCII Dirac lines without catalog names. The outcome's payload is the theorem, symbolic proof, or refutation.
+\end{algorithm}
+
+\subsection{Proof text}\label{sec:language-proof-text}
+
+\begin{signature}
+\py!proof_text(proof: ProofArtefact, *, unicode: bool = False) -> str!
+\end{signature}
+\py!proof_text! writes a proof artifact as a theorem and its proof:
+\begin{lstlisting}[style=grammar]
+Theorem.
+  LEFT
+    = RIGHT
+
+PROOF BODY
+QED  (checked by METHOD)
+\end{lstlisting}
+with the end mark U+220E (a filled square) in place of \code!QED! under Unicode, and \code!METHOD! the certificate's check method with underscores as spaces (\code!numeric oracle!, \code!induction!) or \code!replay! for other artifacts. The sides are the certificate's initial and final diagrams, or the start and goal, or the restricted or finite proof's sides, or the theorem's sides, each as a Dirac line without the catalog name.
+\begin{itemize}
+\item A step sequence is a chain of equalities: the first diagram after two spaces, then each next diagram after \code!= !, padded to a common width and followed by four spaces and \code!(by RULE at nA, nB)!. The states come from replaying the recorded steps; a state not reached prints \code![REASON]!. A chain of one diagram reads \code!Proof. Both sides are the same diagram.!.
+\item A proof certificate is its forward chain followed by its backward chain read backwards (each justification gains \code!, read backwards!), joined at a shared diagram or by the justification \code!(the same diagram)!.
+\item An induction certificate reads \code!Proof by induction on n.!, optionally \code!(m held symbolic.)!, then \code!Base case (n = B).! and \code!Inductive step (assume the claim at n, show it at n + 1), by DISCHARGE.! with each child's chain nested, or \code!(no rewrite steps)!.
+\item An induction proof reads \code!Proof by induction on n.!, \code!Base case (n = 0).! with the base chain, \code!Inductive step. Assume the claim at n = k; at n = k + 1:!, \code!the SIDE side contains its own instance at k (nodes nA, ...):! with the exposing chain, \code!replacing it by the induction hypothesis, the other side follows:!, and the step chain.
+\end{itemize}
+
+\subsection{translate}\label{sec:language-translate}
+
+\begin{lstlisting}[style=azx]
+translate
+translate back
+translate dissolve S | kill S | split S FIRST | join S S
+translate enclose nA, nB [x MULT]
+translate fuse nA.outI -- nB.inJ
+\end{lstlisting}
+Works with the scalable form and the sheet operations of \cref{ch:diagrams,ch:rewriting}. A scale \code!S! is \code!sK! or \code!K!; a multiplicity \code!MULT! or \code!FIRST! is a sum of products of integers and names.
+
+\paragraph{translate.} Translates the current diagram to scalable form and checks the round trip with \py!check_round_trip! at the sample grid of the diagram with itself; stores the scalable form and clears the sheet steps. Output: \code!round trip ok: REASON! (or \code!failed!), the scalable form, and on failure the Dirac outcome of the diagram against the translated-back diagram with \code+?=+ and the counterexample line. The outcome's success is the round trip's.
+
+\paragraph{translate back.} Translates the scalable form back (else \code!no scalable diagram; use translate!). With no sheet step applied: \code!translated back; no sheet step, the current diagram stands! and the current diagram. When the result is structurally identical to the current diagram: \code!translated back; identical to the current diagram!. Otherwise the result becomes the current and start diagram, the derivation is cleared, and the line is \code!translated back; derivation restarted at the translated diagram!. The scalable form and sheet steps are dropped.
+
+\paragraph{Sheet operations.} Without a stored scalable form, the current diagram is translated first (line \code!translated the current diagram to scalable notation!). The operation is applied: \code!dissolve S!, \code!kill S!, \code!split S FIRST!, \code!join S S!, \code!enclose nA, nB [x MULT]! (default multiplicity $1$), \code!fuse nA.outI -- nB.inJ!; wrong arguments raise the usage of that operation (for example \code!translate split S FIRST!), an unknown operation \code!unknown translate operation 'O'; use back, dissolve, split, join, enclose, kill, fuse!. The step's result becomes the scalable form and the step is recorded. The step is checked by \py!check_sheet_step! at the sample grid of the diagrams before and after (no samples when either cannot be translated back). Output: the sheet step, \code!sheet step ok: REASON! (or \code!failed!), and on failure the Dirac outcome and counterexample line.
+
+Every \azx!translate! outcome reports a change, so \azx!undo! reverts it.
+
+\subsection{name, define, and names}
+
+\begin{lstlisting}[style=azx]
+name NAME
+define NAME = SOURCE
+@NAME = SOURCE
+names
+\end{lstlisting}
+\azx!name! (alias \code!save!) stores a copy of the current diagram as \code!@NAME! and prints \code!named @NAME!; the name must be an identifier, and \code!start! and \code!current! raise \code!NAME is built in!. \azx!define! (also written \code!@NAME = SOURCE!) reads the source without loading it, stores a copy, and prints \code!named @NAME! and the diagram; a malformed argument raises \code!expected @NAME = SOURCE!. \azx!names! prints \code!@NAME: DIRAC LINE! per stored name, sorted, or \code!no names!. Named diagrams persist until the session ends; a name defined again is replaced.
+
+\subsection{undo and reset}
+
+\azx!undo! pops the last snapshot and restores it, printing \code!undid LABEL! and the current diagram when there is one; with an empty stack it raises \code!nothing to undo!. \azx!reset! makes the current diagram the start of a new derivation, clearing the steps, and prints \code!derivation restarted at the current diagram!; it changes the session.
+
+\subsection{detail}\label{sec:language-detail}
+
+\azx!detail! prints the full payload of the latest command (\cref{sec:language-records}); with none it raises \code!nothing to detail yet!. The \azx!detail! outcome's own payload is the same payload, so a second \azx!detail! repeats it.
+
+\subsection{help}
+
+\azx!help! prints every usage line of \py!HELP!, sorted by command, then \code!aliases: cert = certificate, list-rules = rules, normalise = normalize, save = name! and \code!any other line is load <line>!. \azx!help CMD! prints the usage line of one command or alias; an unknown word raises \code!no command 'W'; help lists them!. The usage lines are:
+\begin{lstlisting}[style=grammar]
+load SOURCE|@NAME -- read a diagram (Dirac, DSL or listing); any non-command line is load
+show [derivation|start|scalable|certificate|@NAME|SOURCE] -- show a state
+double [@NAME|SOURCE] -- the doubled pure diagram of a mixed one (the current diagram by default)
+purify [@NAME|SOURCE] -- the purification of a mixed diagram, its environment outputs named
+rules [RULE] -- rule names, or one rule's quantifiers, side conditions, dimension guards and
+  scalar (alias list-rules)
+match [RULE] -- matches in the current diagram, all rules when none
+apply RULE [at INT | at nI, nJ] [with NAME = VALUE, ...] -- rewrite the current diagram at a
+  match, a template rule's free values set
+check [NAME=VALUE ...] [against TARGET] -- oracle check of start vs current (or current vs
+  TARGET) at the sample grid, supplied values overriding
+normalize -- reduce the current diagram to normal form
+decide [against] [TARGET] -- decide equality of start vs current (or current vs TARGET)
+saturate -- equality saturation, then extract the cheapest diagram
+prove [exhaustive [algebraic]] [against] [TARGET] -- tactic search for a proof; exhaustive:
+  fair search over every rule, unbounded; algebraic: free values over the algebraic
+  numbers, by iterative deepening
+induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] -- symbolic-n proof by induction
+certificate [emit [derivation|induction|proof] | verify [NAME=VALUE ...] | show | kernel |
+  lean [FILE]] -- emit, verify, show, kernel-check or export a certificate to Lean 4
+translate [back | dissolve S | split S FIRST | join S S | enclose nA, nB [x MULT] | kill S |
+  fuse nA.outI -- nB.inJ] -- scalable notation and sheet steps
+name NAME -- store the current diagram as @NAME (alias save)
+define NAME = SOURCE -- store a diagram as @NAME without loading it; also written @NAME = SOURCE
+names -- list named diagrams
+undo -- revert the last state-changing command
+reset -- restart the derivation at the current diagram
+detail -- the last command's full payload, listing and Dirac side by side
+help [CMD] -- this text, or one command's usage
+\end{lstlisting}
+Each usage line is one line; the indented continuations above are line breaks of this manual only. The shell-only lines are listed in \cref{ch:shell}.
+
+\section{Printed Records and Detail}\label{sec:language-records}
+
+\subsection{Composite states}
+
+\py!printer.render(state, mode, *, unicode=False)! prints every engine state a \py!State! block may hold; \cref{ch:shell} specifies how the mode chooses the printing of each diagram, written \code!DIAGRAM! below (indented two spaces per nesting level). The composite records print as follows.
+\begin{itemize}
+\item \py!RewriteResult!: \code!step: RULE (consumed nA, ..., new nB, ..., scalar S)! (\code!none! for an empty list), \code!result:!, and the diagram.
+\item \py!NormalForm!: \code!normal form: N steps, STOP!, \code!source:! and its diagram, \code!derivation:! (or \code!derivation: none!) with one step line and \code!state I:! block per step, \code!reduced:! and its diagram.
+\item \py!Derivation!: \code!derivation: KIND, N steps[, label 'L']!, then, indented: for an induction, \code!induction: n, base B, held symbolic: H[, step discharge: T]!; \code!state 0:! and each \code!step I: ...! line with its \code!state I:! block, states recovered by replaying the recorded steps from the initial diagram (a replayed step must equal its record; a state not reached prints \code!state I: unavailable (not reached: REASON)!; the last state is the recorded final one, noted \code!recorded final (replay REASON)! when the replay failed); for a derivation without steps whose final diagram differs structurally from its initial one, \code!final:! and the final diagram; then \code!children:! with each child under \code!base:! and \code!step:! (an induction with two children) or \code!child I:!.
+\item \py!Certificate!: \code!certificate: METHOD! and its derivation, indented.
+\item \py!ProofCertificate!: \code!proof: N steps (forward F, backward B)!, \code!moves: ...!, \code!backward moves: ...!, \code!forward:! and \code!backward:! with their certificates.
+\item \py!InductionProof!: \code!induction proof: over n, step symbol k, side SIDE, region nA, ..., N steps!, \code!start:!, \code!goal:!, and the \code!base:!, \code!expose:!, and \code!step:! pieces.
+\item \py!SheetStep!: \code!sheet step: OPERATION(ARG=VALUE, ...)!, \code!before:! and \code!after:! with the scalable forms. A port argument prints as \code!nI.outJ!, a wire as \code!nA.outI -- nB.inJ!, a collection in parentheses (a set sorted).
+\end{itemize}
+\py!render! on any other type raises \code!PrinterGrammarError("render cannot print a T")!. \py!render_derivation(initial, results, mode)! prints \code!state 0:! and the step and state lines of a list of rewrite results; \py!render_certificate(cert, mode)! prints a certificate.
+
+\subsection{Detail}
+
+\begin{signature}
+\py!detail_text(payload: object, *, unicode: bool = False) -> str!\\
+\py!printer.render_detail(state, *, unicode=False) -> str!\\
+\py!printer.side_by_side(left: str, right: str, *, gap: int = 4) -> str!
+\end{signature}
+
+\py!render_detail(state)! prints the graph listing of a state's diagram (its scalable listing for a scalable form) and its Dirac block side by side, whatever the mode; the diagram of a rewrite result or normal form is its result, of a derivation or certificate its final diagram, of a proof certificate or induction proof its goal, of a sheet step its result. \py!side_by_side! pads each line of the left column to the column's widest line, measured in terminal columns (2 for a wide or fullwidth character, 0 for a combining or format character, 1 otherwise), adds \texttt{gap} spaces, and appends the right column's line; trailing blanks are removed; a negative or non-integer gap raises \py!PrinterGrammarError!.
+
+\py!detail_text(payload)! prints a command's full payload as lines, every diagram state as \code!LABEL:! and its \py!render_detail! block indented (or \code!LABEL: unavailable (Class: REASON)!). It never raises for a payload: a failure prints \code!detail: unavailable (Class: REASON)!. \Cref{tab:language-detail} lists the form of each payload.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.25\linewidth}X@{}}
+\toprule
+Payload & Detail \\
+\midrule
+\texttt{Diagram}, scalable form & \texttt{state:} block \\
+\texttt{Text} & its lines \\
+\texttt{RewriteResult} & step line, \texttt{result:} block \\
+\texttt{NormalForm} & \texttt{normalize: normal form, N steps, STOP}; steps attempted, scalar accumulated, key; every state and step; \texttt{reduced:} block \\
+\texttt{Derivation} & header, induction claim (\texttt{induction over n from B, step discharge T, held symbolic H}), replayed states and steps, children \\
+certificates and proofs & as the composite states, every state as a detail block; a proof certificate also shows \texttt{start:} and \texttt{goal:} \\
+\texttt{Decision} & verdict and method, reason, samples checked, parameter agreement, assumptions (\texttt{assumed = equal\_to (SOURCE, OUTCOME)}), counterexample, entry witness, comparison, saturation report, both normal forms, every certificate, the induction result \\
+\texttt{ProofOutcome} & status, reason, assumptions, search statistics (status, depth, states, expanded, applications, pruned), counterexample, proof check, certificate and induction proof \\
+\texttt{InductionResult} & verdict, reason, witness, step symbol, held symbols, counterexample, base and step comparisons, every tier with its comparisons and steps, the six obligation diagrams (left and right at base, at $k$, at the successor), the derivation \\
+\texttt{ProofCheck}, \texttt{VerificationReport} & verdict, reason, statistics, comparisons, and the replay records \\
+sheet step, sheet check, round trip & the operation and both forms; replayed, valid, oracle, and sample counts \\
+saturation report, extraction & counts, failed applications, the extraction's class, e-node, root, cost, steps \\
+\texttt{ComparisonResult} & \texttt{comparison: matched|mismatch (MODE, max deviation X): REASON[, lambda L]} \\
+\texttt{\_Pair} & \texttt{TITLE:}, \texttt{left:} and \texttt{right:} blocks, the inner payload \\
+\texttt{ErrorDetail} & \texttt{error in COMMAND: LINE}, one \texttt{Class: message} line per cause, the \texttt{current:} block \\
+anything else & its \texttt{repr} \\
+\bottomrule
+\end{tabularx}
+\caption{The detail of each payload.}
+\label{tab:language-detail}
+\end{table}
+
+The comparison commands store their payload as a pair record (\py!_Pair!) of the title (\code!check!, \code!decide!, \code!prove!, \code!induct!), the two sides, and the engine result. For example, after the failed line \code!lod x!, \azx!detail! prints
+\begin{lstlisting}[style=grammar]
+error in load: lod x
+  CommandGrammarError: unknown catalog atom 'lod'
+  ParseGrammarError: unknown catalog atom 'lod'
+\end{lstlisting}
+
+\section{A Worked Session}\label{sec:language-example}
+
+The script \file{examples/copy_induction.azx} proves that an X state copied by a Z spider into $n$ outputs is $n$ X states scaled by $d^{(1-n)/2}$, for every $n$ and $d$:
+\begin{lstlisting}[style=azx]
+@copies =
+    count n
+    repeat n: X(0 -> 1)
+    scalar d^((1-n)/2)
+
+load
+    count n
+    X(0 -> 1) -> z = Z(1 -> 1)
+    repeat n: z.out0
+
+prove against @copies
+certificate emit induction
+certificate kernel
+\end{lstlisting}
+The first block defines \code!@copies! (an indented block continues its head line; \cref{ch:shell}); the second loads a Z spider whose single output is fanned $n$ times. The shell prints, in the default Dirac view:
+\begin{lstlisting}[style=grammar]
+named @copies
+(d^(1/2-n/2)) sum_{q0[i0],j0o0[i0]=0, i0=1..n}^{d-1} prod_{i0=1}^{n}( d^{-1/2}
+  w_{d}^{q0[i0] (j0o0[i0])} ) (x)_{i0=1}^{n}( |j0o0[i0]> )
+loaded dsl input
+sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k1)} |k1>^{n}
+prove: proved: proved by induction on n from 0 in 3 step(s) after search exhausted after
+  1 layer(s): ...; base and step check by replay and the hypothesis; no oracle mismatch
+  in 16 sample(s)
+proof by induction; certificate emits it
+certificate: induction proof over n, 3 steps
+Theorem.
+  sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k1)} |k1>^{n}
+    = (d^(1/2-n/2)) sum_{q0[i0],j0o0[i0]=0, i0=1..n}^{d-1} ...
+
+Proof by induction on n.
+  Base case (n = 0).
+        sum_{k2,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k2)}
+      = sqrt(d)                                         (by state_copy at n0, n2)
+  Inductive step. Assume the claim at n = k; at n = k + 1:
+    ...
+QED  (checked by replay)
+kernel: theorem sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k1)} |k1>^{n} = ... for all n
+  16 inferences; rules: state_copy, port_box_unfusion
+\end{lstlisting}
+(long lines broken and elided here). The proof was found by induction after the bounded search failed; the emitted induction proof re-checks in the proof kernel with 16 inferences that use the rules \code!state_copy! and \code!port_box_unfusion!; \azx!certificate lean FILE! would export it to Lean.

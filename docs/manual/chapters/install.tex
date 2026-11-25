@@ -1,0 +1,148 @@
+\chapter{Installation and Configuration}\label{ch:install}
+
+This chapter specifies what ArchytasZX needs to run, how it is installed, how the bundled Lean project is built, and every file and environment variable that configures it.
+
+\section{Requirements}\label{sec:install-requirements}
+
+ArchytasZX is a pure Python package. It requires Python~3.12 or later; continuous integration tests Python~3.12, 3.13, and~3.14 (\cref{ch:development}). Its two runtime dependencies are unpinned:
+\begin{itemize}
+\item \tool{NumPy}{https://numpy.org}~\cite{harris2020numpy}, for numeric tensors;
+\item \tool{SymPy}{https://www.sympy.org}~\cite{meurer2017sympy}, for symbolic expressions, assumptions, and exact arithmetic.
+\end{itemize}
+
+Optional features need further software. \Cref{tab:install-extras} lists the optional dependency groups that the package declares (\file{pyproject.toml}).
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lp{0.38\linewidth}X@{}}
+\toprule
+Group & Packages & Needed for \\
+\midrule
+\texttt{viz} & \tool{matplotlib}{https://matplotlib.org} & ZX drawings, PNG and PDF output, terminal images (\cref{ch:pictorial}). \\
+\texttt{benchmarks} & \texttt{qiskit==2.6.2}, \texttt{numpy}, \texttt{matplotlib} & The benchmark suite (\cref{ch:bench-pipeline}). \\
+\texttt{dev} & \texttt{pytest}, \texttt{pytest-xdist}, \texttt{ruff}, \texttt{mypy} & Tests, linting, formatting, and type checking (\cref{ch:development}). \\
+\bottomrule
+\end{tabularx}
+\caption{Optional dependency groups.}
+\label{tab:install-extras}
+\end{table}
+
+Lean certification needs the Lean~4 toolchain manager \tool{elan}{https://github.com/leanprover/elan}, which provides \texttt{lake}; \cref{sec:install-lean} gives the versions.
+
+\section{Installing the Package}\label{sec:install-package}
+
+The distribution name is \texttt{ArchytasZX}; the import name is \texttt{archytaszx}. From a source checkout,
+\begin{lstlisting}[style=shell]
+pip install -e ".[viz]"          # engine, shell and drawings
+pip install -e ".[dev,viz]"      # plus the development tools
+\end{lstlisting}
+installs the package in editable mode. The build backend is \texttt{setuptools} (version 68 or later) with \texttt{wheel}. The installed package contains every Python subpackage of \texttt{archytaszx} and, as package data, the marker \file{py.typed} and the Lean project's sources: \file{lean/*.lean}, \file{lean/ArchytasZX/*.lean}, \file{lean/lakefile.toml}, \file{lean/lean-toolchain}, and \file{lean/lake-manifest.json}. The directory \file{archytaszx/lean} is not a Python package.
+
+Installation creates one console command, \texttt{archytaszx}, which calls \py!archytaszx.repl.shell.main! (\cref{ch:shell}). The top-level module \texttt{archytaszx} exports four names lazily: \py!azx!, \py!Program!, \py!Piece!, and \py!Sym!, loaded from \module{archytaszx.repl.embed} on first access (\cref{ch:python-api}). Any other attribute access on the top-level module raises \py!AttributeError!.
+
+\section{The Lean Project}\label{sec:install-lean}
+
+The Lean project lives in \file{archytaszx/lean}. \Cref{tab:install-lean} lists its pinned versions, read from \file{lean-toolchain}, \file{lakefile.toml}, and \file{lake-manifest.json}.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+Item & Version \\
+\midrule
+Toolchain & \texttt{leanprover/lean4:v4.35.0} \\
+Package name & \texttt{archytaszx}; default target the library \texttt{ArchytasZX} \\
+\tool{Mathlib}{https://github.com/leanprover-community/mathlib4}~\cite{mathlib2020} & tag \texttt{v4.35.0}, revision \texttt{56a005855ea17e0b0958f73ec801ae140b0a1679} \\
+\midrule
+\multicolumn{2}{@{}l}{Transitive dependencies (revision prefixes as locked in the manifest)} \\
+\texttt{plausible} & \texttt{dfa4f381} (\texttt{main}) \\
+\texttt{LeanSearchClient} & \texttt{d6b4c7be} (\texttt{main}) \\
+\texttt{importGraph} & \texttt{a41f0e9a} (\texttt{main}) \\
+\texttt{proofwidgets} & \texttt{df72b022} (\texttt{main}) \\
+\texttt{aesop} & \texttt{4a174c49} (\texttt{master}) \\
+\texttt{Qq} & \texttt{dce0ad79} (\texttt{master}) \\
+\texttt{batteries} & \texttt{66e46918} (\texttt{main}) \\
+\texttt{Cli} & \texttt{c24fe607} (\texttt{v4.35.0}) \\
+\bottomrule
+\end{tabularx}
+\caption{Pinned versions of the Lean project.}
+\label{tab:install-lean}
+\end{table}
+
+The engine checks an exported Lean file with the function \py!check(source, path, timeout=1800)! of \module{archytaszx.semantics.lean_net}. It proceeds as follows.
+
+\begin{algorithm}[Checking a Lean file]\label{alg:install-check}
+\leavevmode
+\begin{enumerate}
+\item Locate \texttt{lake}: the first \texttt{lake} on \texttt{PATH}, else \file{~/.elan/bin/lake} if that file exists. If neither exists, raise \py!NetUnsupported("Lean (lake) is not installed")!.
+\item Write \texttt{source} to \texttt{path} in UTF-8.
+\item Let the project directory be the directory \file{lean} beside the \texttt{semantics} subpackage, that is, \file{archytaszx/lean}. If \file{.lake/packages/mathlib} does not exist there, run \texttt{lake exe cache get} in the project directory to download Mathlib's prebuilt files. If it exits with a nonzero status, return \py!(False, output)!.
+\item Run \texttt{lake build} in the project directory. If it exits with a nonzero status, return \py!(False, output)!.
+\item Run \texttt{lake env lean} on the absolute path of \texttt{path} in the project directory and return \py!(status == 0, output)!.
+\end{enumerate}
+Here \texttt{output} is the concatenation of the step's standard output and standard error. Each of the three processes is killed after \texttt{timeout} seconds, which raises \py!subprocess.TimeoutExpired!.
+\end{algorithm}
+
+The first check on a fresh installation therefore downloads Mathlib and builds the library; later checks rebuild only what changed. To build the library by hand,
+\begin{lstlisting}[style=shell]
+cd archytaszx/lean
+lake exe cache get
+lake build
+\end{lstlisting}
+
+\section{The Configuration File}\label{sec:install-config}
+
+The shell reads display settings from a TOML file. Its path is \file{$XDG_CONFIG_HOME/archytaszx/config.toml}, or \file{~/.config/archytaszx/config.toml} when \texttt{XDG\_CONFIG\_HOME} is unset or empty. A missing file gives the defaults. An unreadable file, a file that is not valid TOML, an unknown key, or a bad value makes \py!load_config! raise a \py!ValueError!; the shell then writes \code!archytaszx: MESSAGE; using the default display settings! to standard error and continues with all four defaults. \Cref{tab:install-config} lists the four settings.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}llX@{}}
+\toprule
+Key & Default & Accepted values \\
+\midrule
+\texttt{size} & \texttt{1.0} & A number in $(0, 10]$: the scale of text in images, where 1 is the terminal's character-cell height. \\
+\texttt{color} & \texttt{"auto"} & \texttt{auto} (the terminal's text color), \texttt{\#rgb}, \texttt{\#rrggbb}, or a color name that matplotlib accepts. \\
+\texttt{format} & \texttt{"auto"} & \texttt{auto}, \texttt{png}, \texttt{pdf}, or \texttt{svg}: the format of saved ZX drawings; \texttt{auto} is PDF in publication mode and PNG otherwise. \\
+\texttt{publication} & \texttt{false} & A Boolean, or one of the strings \texttt{true}, \texttt{on}, \texttt{yes}, \texttt{1}, \texttt{false}, \texttt{off}, \texttt{no}, \texttt{0} (any case): whether ZX drawings use the paper's notation and fonts. \\
+\bottomrule
+\end{tabularx}
+\caption{Settings of the configuration file.}
+\label{tab:install-config}
+\end{table}
+
+The shell command \azx!config! shows and changes these settings and \azx!config save! writes them back (\cref{ch:shell}). The written file has exactly four lines, in the order \texttt{size}, \texttt{color}, \texttt{format}, \texttt{publication}; for example,
+\begin{lstlisting}[style=grammar]
+size = 1.0
+color = "auto"
+format = "auto"
+publication = false
+\end{lstlisting}
+The parent directory is created if it does not exist.
+
+\section{Environment Variables}\label{sec:install-env}
+
+\Cref{tab:install-env} lists every environment variable the \texttt{archytaszx} package reads. The benchmark suite reads further variables, specified in \cref{ch:bench-pipeline,ch:bench-tools}.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.3\linewidth}X@{}}
+\toprule
+Variable & Effect \\
+\midrule
+\texttt{ARCHYTASZX\_TRACE} & When exactly \texttt{1} at import time of \module{archytaszx.trace}, timed sections of engine work are recorded (\cref{ch:development}). Any other value, or none, turns tracing off. \\
+\texttt{ARCHYTASZX\_IMAGES} & Forces the terminal image protocol: \texttt{kitty}, \texttt{iterm}, \texttt{sixel}, or \texttt{none} (any case). Any other value lets the shell detect the protocol (\cref{ch:pictorial}). \\
+\texttt{ARCHYTASZX\_IMAGE\_THEME} & \texttt{dark} or \texttt{light} (any case) sets the assumed terminal background; otherwise \texttt{COLORFGBG} decides. \\
+\texttt{ARCHYTASZX\_IMAGE\_FG} & The text color of terminal images, ahead of the color the terminal reports and the theme default. \\
+\texttt{NO\_COLOR} & When set to a nonempty value, the shell prints no ANSI colors. \\
+\texttt{XDG\_CONFIG\_HOME} & The base directory of the configuration file (\cref{sec:install-config}). \\
+\texttt{TERM}, \texttt{TERM\_PROGRAM}, \texttt{KITTY\_WINDOW\_ID}, \texttt{LC\_TERMINAL}, \texttt{COLORFGBG} & Read to detect the terminal's image protocol and background (\cref{ch:pictorial}). \\
+\texttt{PATH} & Searched for \texttt{lake} (\cref{alg:install-check}). \\
+\bottomrule
+\end{tabularx}
+\caption{Environment variables of the \texttt{archytaszx} package.}
+\label{tab:install-env}
+\end{table}
