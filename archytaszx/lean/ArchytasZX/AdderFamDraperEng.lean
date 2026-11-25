@@ -1515,6 +1515,14 @@ theorem engFam (d : ℕ) (hd : 0 < d) (n : ℕ) : Equal (engE d n) 1 (engL n) 1 
   rw [key, prod_Ce d hd (sigF n σ) n hs, Draper.IndS, h0, h1, h2, h3]
   ring
 
+/-- `engFam` with any common scalar on both sides. -/
+theorem engFamS (d : ℕ) (hd : 0 < d) (n : ℕ) (s : ℂ) : Equal (engE d n) s (engL n) s (engR n) := by
+  obtain ⟨hp, he⟩ := engFam d hd n
+  refine ⟨hp, fun σ hσ => ?_⟩
+  have h := he σ hσ
+  rw [one_mul, one_mul] at h
+  rw [h]
+
 theorem engFam_8 (d : ℕ) (hd : 0 < d) : Equal (engE d 8) 1 (engL 8) 1 (engR 8) :=
   engFam d hd 8
 
