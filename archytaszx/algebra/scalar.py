@@ -101,6 +101,7 @@ DEFAULT_MAX_SIMPLIFY_STEPS = 1024
 
 _RESERVED_INDEX = re.compile(r"^_[ik][0-9]+$")
 _CASE_SYMBOL = re.compile(r"^_q[0-9]+$")
+_INDEX_SUM_DEPTH = [0]
 
 ScalarSymbolKey = Union[str, "Scalar"]
 ScalarSubstituteValue = Union[int, "sp.Rational", "Scalar"]
@@ -3001,8 +3002,13 @@ class Scalar:
     @classmethod
     def index_sum(cls, dim: Dim, body: Callable[[Scalar], Scalar]) -> Scalar:
         """A sum of body(k) over k from 0 to dim - 1, left unevaluated."""
-        placeholder = sp.Dummy("_kbound", integer=True, nonnegative=True)
-        body_scalar = body(cls(placeholder))
+        depth = _INDEX_SUM_DEPTH[0]
+        placeholder = sp.Symbol(f"_kbound{depth}", integer=True, nonnegative=True)
+        _INDEX_SUM_DEPTH[0] = depth + 1
+        try:
+            body_scalar = body(cls(placeholder))
+        finally:
+            _INDEX_SUM_DEPTH[0] = depth
         if not isinstance(body_scalar, Scalar):
             raise ScalarSumError(
                 f"index_sum() body must return a Scalar, got {type(body_scalar).__name__}"
