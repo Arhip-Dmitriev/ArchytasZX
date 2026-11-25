@@ -15,10 +15,11 @@
 Both sides are written as ``LDiagram``s with aligned wires (:func:`lean_split._xlinked`), each
 pair box over the merged box as an ``LPair`` (:func:`lean_linked._strip_pairs`), each Zp(1 -> 1)
 node of a top-level box between a leg of a node in no box and a leg of its box as an ``LPair``
-with ``fixL`` (:func:`_strip_zp`), the merged side's nodes in the first side's order. ``export_merge`` writes both sides, the pairs, their
-box groups, ``MergeOK`` and ``SameSlots`` (checked here first on a mirror, then in Lean by
-``decide +kernel``) and ``main``, the ``evalP`` digit sums of both sides read at the flat
-positions of their slot data equal through ``evalP_merge_flat``; None outside that form."""
+with ``fixL`` (:func:`_strip_zp`), the merged side's nodes in the first side's order.
+``export_merge`` writes both sides, the pairs, their box groups, ``MergeOK`` and ``SameSlots``
+(checked here first on a mirror, then in Lean by ``decide +kernel``) and ``main``, the ``evalP``
+digit sums of both sides read at the flat positions of their slot data equal through
+``evalP_merge_flat``; None outside that form."""
 
 from __future__ import annotations
 
