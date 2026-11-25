@@ -50,7 +50,7 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import BangBoxDomainError, BangBoxError, Mult
-from archytaszx.diagram.generators import GeneratorType
+from archytaszx.diagram.generators import GeneratorType, PhaseSchema
 from archytaszx.diagram.graph import (
     BangBoxId,
     Diagram,
@@ -758,6 +758,10 @@ def to_scalable(diagram: Diagram) -> ScalableDiagram:
         raise ScalableGrammarError("cannot translate: " + "; ".join(blocking))
     if any(box.is_extended for box in diagram.bang_boxes.values()):
         raise ScalableGrammarError("cannot translate a chain, indexed, pair or copy-scalar box")
+    if any(
+        box.sheets or box.groups or box.align is not None for box in diagram.bang_boxes.values()
+    ):
+        raise ScalableGrammarError("cannot translate a sheets, grouped or aligned box")
     boxes = diagram.bang_boxes
     scales: list[Scale] = []
     for box_id in sorted(boxes):
@@ -951,12 +955,22 @@ def strip(s: ScalableDiagram, assignment: Mapping[str, int] | None = None) -> Di
             width = ev.width(s.fan_chain(port.fan))
             offsets[ref] = (len(dims[ref.direction]), width)
             dims[ref.direction].extend([port.dim] * width)
+        phase = node.phase
+        legs_of = (*node.inputs, *node.outputs)
+        if (
+            phase is None
+            and legs_of
+            and not dims[Direction.INPUT]
+            and not dims[Direction.OUTPUT]
+            and node.generator_type.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
+        ):
+            phase = PhaseVector(legs_of[0].dim)
         for vector in vectors:
             instances[(node.id, vector)] = out.add_node(
                 node.generator_type,
                 dims[Direction.INPUT],
                 dims[Direction.OUTPUT],
-                phase=node.phase,
+                phase=phase,
             )
 
     def legs(ref: PortRef, vector: tuple[int, ...]) -> list[PortRef]:

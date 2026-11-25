@@ -379,6 +379,8 @@ def _copy_boxes(
         parent = None if box.parent is None else new_id.get(box.parent)
         if box.is_pair or box.is_tree or box.is_fed:
             raise MixedDomainError(f"bang box {box.id!r}: a pair, tree or fed box has no doubling")
+        if box.groups:
+            raise MixedDomainError(f"bang box {box.id!r}: a grouped box has no doubling")
         if box.is_node_scope:
             scope: set[NodeId] = set()
             for m in maps:
@@ -423,6 +425,9 @@ def _copy_boxes(
                 port_ids[box.id][i] = target.add_bang_box(
                     box.multiplicity, port_scope=ports, parent=own
                 )
+    for box in order:
+        if box.align is not None and box.id in new_id and box.align in new_id:
+            target.set_bang_box_extension(new_id[box.id], align=new_id[box.align])
 
 
 def double_with_origin(diagram: Diagram) -> Doubled:

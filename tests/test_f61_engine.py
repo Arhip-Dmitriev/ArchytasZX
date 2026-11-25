@@ -10,7 +10,7 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.pathsum import SQRT2, Cyclo
 from archytaszx.algebra.phase import INDEX, PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.bangbox import Mult, chain_splitted, merge, peel_one
+from archytaszx.diagram.bangbox import Mult, chain_splitted, instantiate_symbol, merge, peel_one
 from archytaszx.diagram.generators import (
     TRIANGLE,
     TRIANGLE_INVERSE,
@@ -20,6 +20,8 @@ from archytaszx.diagram.generators import (
     GeneratorType,
 )
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.diagram.mixed import double
+from archytaszx.diagram.scalable import ScalableGrammarError, strip, to_scalable
 from archytaszx.diagram.validate import validate
 from archytaszx.rewrite import rules_axioms as R
 from archytaszx.rewrite.match import find_cap_matches, find_triangle_matches
@@ -199,6 +201,35 @@ def test_chain_splitted_keeps_the_parent_link() -> None:
     out = chain_splitted(diagram, box, [frozenset({a}), frozenset({b})])
     made = [i for i in out.bang_boxes if i not in diagram.bang_boxes]
     assert [out.bang_boxes[i].parent for i in made] == [parent]
+
+
+def test_strip_gives_a_legless_spider_its_zero_phase() -> None:
+    dim = Dim.concrete(3)
+    diagram = Diagram()
+    z = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim])
+    diagram.set_boundary_outputs([PortRef(z, Direction.OUTPUT, 0)])
+    diagram.add_bang_box(Mult.symbol("n"), port_scope=frozenset({PortRef(z, Direction.OUTPUT, 0)}))
+    stripped = strip(to_scalable(diagram), {"n": 0})
+    (node,) = stripped.nodes.values()
+    assert node.phase == PhaseVector(dim)
+    assert compare(stripped, instantiate_symbol(diagram, "n", 0), {}).matched
+
+
+def test_aligned_boxes_are_refused_by_to_scalable_and_kept_by_doubling() -> None:
+    diagram, (a, b) = _states(2)
+    root = diagram.add_bang_box(Mult.symbol("n"), node_scope=frozenset({a}))
+    other = diagram.add_bang_box(Mult.symbol("n"), node_scope=frozenset({b}), align=root)
+    try:
+        to_scalable(diagram)
+    except ScalableGrammarError:
+        pass
+    else:
+        raise AssertionError("to_scalable dropped the alignment")
+    doubled = double(diagram)
+    aligned = [box for box in doubled.bang_boxes.values() if box.align is not None]
+    assert len(aligned) == 1
+    assert aligned[0].align in doubled.bang_boxes
+    assert other in diagram.bang_boxes
 
 
 if __name__ == "__main__":
