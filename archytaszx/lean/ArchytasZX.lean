@@ -127,5 +127,6 @@ import ArchytasZX.FamFcaNet
 import ArchytasZX.FamFcaWire
 import ArchytasZX.FamEval
 import ArchytasZX.FamFcaEq
+import ArchytasZX.FamFcaSpec
 import ArchytasZX.PairSum
 import ArchytasZX.LinkedMerge
