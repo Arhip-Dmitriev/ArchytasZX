@@ -92,6 +92,59 @@ theorem nodesR {n : ℕ} (hn : 0 < n) :
     simp only [List.count_append, List.count_cons, List.count_nil]
     omega
 
+/-! ## The wires -/
+
+theorem mem_Z1_1 {n j : ℕ} (hj : j < n) : (({ n1 with id := 5 + j } : DNode), (1, j)) ∈ Z1 n := by
+  simp only [Z1, List.mem_append, List.mem_map, List.mem_range]
+  exact Or.inl (Or.inl (Or.inl (Or.inr ⟨j, hj, rfl⟩)))
+
+theorem mem_Z1_3 {n j : ℕ} (hj : j < n) : (({ n3 with id := n + 5 + j } : DNode), (3, j)) ∈ Z1 n := by
+  simp only [Z1, List.mem_append, List.mem_map, List.mem_range]
+  exact Or.inl (Or.inr ⟨j, hj, rfl⟩)
+
+theorem cp1_1 {n j : ℕ} (hj : j < n) : D1.cp n 1 j = 5 + j := cp1_eq (mem_Z1_1 hj)
+
+theorem cp1_3 {n j : ℕ} (hj : j < n) : D1.cp n 3 j = n + 5 + j := cp1_eq (mem_Z1_3 hj)
+
+theorem at1 (n j : ℕ) (q : Port) : D1.at_ n j q = ⟨D1.cp n q.node j, q.out, q.pos⟩ := by
+  simp [FamDiagram.at_, FamDiagram.cnt_plain n (show D1.pairs = [] from rfl), FamDiagram.posC_one]
+
+theorem mv1 (n : ℕ) (q : Port) : D1.mv n q = q := FamDiagram.mv_plain n rfl q
+
+/-- The binder chain's wires, `n > 0`. -/
+def W1 (n : ℕ) : List (Port × Port) :=
+  (⟨0, true, 0⟩, ⟨5, false, 0⟩) :: (range (n - 1)).map (fun j => (⟨5 + j, true, 0⟩, ⟨5 + (j + 1), false, 0⟩)) ++
+    [(⟨5 + (n - 1), true, 0⟩, ⟨2, false, 0⟩)]
+
+/-- The splitter chain's wires, `n > 0`. -/
+def W2 (n : ℕ) : List (Port × Port) :=
+  (⟨4, false, 0⟩, ⟨n + 5, true, 0⟩) ::
+    (range (n - 1)).map (fun j => (⟨n + 5 + j, false, 0⟩, ⟨n + 5 + (j + 1), true, 0⟩)) ++
+    [(⟨n + 5 + (n - 1), false, 0⟩, ⟨2, true, 0⟩)]
+
+theorem wires1 {n : ℕ} (hn : 0 < n) : (D1.famExpand n).wires = W1 n ++ W2 n := by
+  simp only [FamDiagram.famExpand, X1, show (E2n n).wires = [] from rfl, List.map_nil,
+    show D1.pairs = [] from rfl, List.zipIdx_nil, List.flatMap_nil, List.append_nil, List.nil_append]
+  have hL : D1.links = [⟨⟨1, true, 0⟩, ⟨1, false, 0⟩, ⟨2, false, 0⟩, ⟨0, true, 0⟩⟩,
+      ⟨⟨3, false, 0⟩, ⟨3, true, 0⟩, ⟨2, true, 0⟩, ⟨4, false, 0⟩⟩] := rfl
+  simp only [hL, List.flatMap_cons, List.flatMap_nil, List.append_nil]
+  simp only [FamDiagram.linkWires, show n ≠ 0 by omega, ite_false, mv1, at1]
+  have h1 : ∀ j < n, (D1.cp n 1 j) = 5 + j := fun j hj => cp1_1 hj
+  have h3 : ∀ j < n, (D1.cp n 3 j) = n + 5 + j := fun j hj => cp1_3 hj
+  simp only [W1, W2]
+  congr 1
+  · rw [h1 0 hn, h1 (n - 1) (by omega)]
+    congr 2
+    refine List.map_congr_left fun j hj => ?_
+    have := List.mem_range.1 hj
+    rw [h1 j (by omega), h1 (j + 1) (by omega)]
+  · rw [h3 0 hn, h3 (n - 1) (by omega)]
+    simp only [Nat.add_zero]
+    congr 2
+    refine List.map_congr_left fun j hj => ?_
+    have := List.mem_range.1 hj
+    rw [h3 j (by omega), h3 (j + 1) (by omega)]
+
 end FamFca
 
 end ArchytasZX
