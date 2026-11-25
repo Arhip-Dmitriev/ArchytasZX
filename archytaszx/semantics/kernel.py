@@ -562,23 +562,27 @@ def repeel(
     index: str,
     a_last: frozenset[BangBoxId] = frozenset(),
     b_last: frozenset[BangBoxId] = frozenset(),
+    a_first: frozenset[BangBoxId] = frozenset(),
+    b_first: frozenset[BangBoxId] = frozenset(),
 ) -> Theorem:
     """``a = b`` for ``a`` and ``b`` two joint peels of ``source``'s boxes carrying ``index``
     (:func:`~archytaszx.diagram.bangbox.peel_owners`; when not all peel, of those whose
     multiplicity has a positive constant term), the boxes of ``a_last`` and of ``b_last``
-    peeling their last copy."""
+    peeling their last copy, those of ``a_first`` and of ``b_first`` their first copy."""
     from archytaszx.diagram.bangbox import BangBoxError, peel_owners
 
     try:
-        a = peel_owners(source, index, last=a_last).diagram
-        b = peel_owners(source, index, last=b_last).diagram
+        a = peel_owners(source, index, last=a_last, first=a_first).diagram
+        b = peel_owners(source, index, last=b_last, first=b_first).diagram
     except BangBoxError:
         try:
-            a = peel_owners(source, index, last=a_last, partial=True).diagram
-            b = peel_owners(source, index, last=b_last, partial=True).diagram
+            a = peel_owners(source, index, last=a_last, partial=True, first=a_first).diagram
+            b = peel_owners(source, index, last=b_last, partial=True, first=b_first).diagram
         except BangBoxError as exc:
             raise KernelError(f"repeel: {exc}") from exc
     data: dict[str, object] = {"source": source, "index": index}
+    if a_first or b_first:
+        data["first"] = (a_first, b_first)
     return Theorem(_TOKEN, a, b, Inference("repeel", data=data))
 
 

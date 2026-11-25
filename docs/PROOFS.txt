@@ -608,9 +608,11 @@ top_split close by the ModDelta pin over a full index range (scalar._delta_step)
 test now reads coefficients that are integer expressions of known sign (scalar._bounds,
 _signed_linear_over: i2 + d i3 with i2 < d, i3 < d^k lies in [0, d^(k + 1) - 1]).
 
-Peeling the first copy of fca_boxed at a = 2 (the route these lemmas serve) is not reached:
-bangbox._peel_extended refuses a first-copy peel of a box with pair boxes, and a chain with
-links from an output to an input (the B(d^j, d) chain) peels only its last copy.
+The first copy of fca_boxed's box C0 (pair boxes P0, P3) and of the out -> in chain B(d^j, d)
+peels by peel_one(first=True). kernel.repeel(source, index, a_last, b_last, a_first, b_first)
+proves a first-copy peel equal to the last-copy peel of the same renamed source, both peels
+recomputed by the kernel from source; a step proved at a first-copy peel enters
+kernel.induction through trans with that repeel. Lean exports repeel as an axiom.
 
 4.5 Periodic chains: decide._decide_periodic
 

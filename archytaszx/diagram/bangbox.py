@@ -2373,20 +2373,25 @@ def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
 
 
 def _peel_extended(
-    diagram: Diagram, box: BangBox, last: sp.Expr, force_last: bool = False
+    diagram: Diagram,
+    box: BangBox,
+    last: sp.Expr,
+    force_last: bool = False,
+    force_first: bool = False,
 ) -> dict[NodeId, NodeId]:
     """Peel the last copy (index ``last``) off a chain, indexed or copy-scalar box: the residual
     box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail.
     A chain that :func:`peels_first` loses its first copy instead, unless ``force_last`` (index
     0, the residual reading its index as ``index + 1``): the copy's ``q`` ports wired to the
-    head and its ``p`` ports to the residual's ``q``. Returns the copy's node map."""
+    head and its ``p`` ports to the residual's ``q``; ``force_first`` peels the first copy of
+    any box. Returns the copy's node map."""
     if box.cyclic or box.is_tree:
         raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
     if box.is_pair:
         raise BangBoxGrammarError(f"pair box {box.id!r} has no peel_one")
-    first = peels_first(box) and not force_last
+    first = force_first or (peels_first(box) and not force_last)
     pairs = _pairs_of(diagram, box.id)
-    if pairs and (first or any(_children_of(diagram, p.id) for p in pairs)):
+    if pairs and any(_children_of(diagram, p.id) for p in pairs):
         raise BangBoxGrammarError(f"box {box.id!r} with these pair boxes has no peel_one")
     templates = [_detach_pair(diagram, pair) for pair in pairs]
     temps: list[NodeId] = []
@@ -2417,7 +2422,10 @@ def _peel_extended(
     )
     _drop_identities(diagram, temps)
     for template in templates:
-        _peel_pairs(diagram, box.id, template, id_map, last)
+        if first:
+            _peel_pairs_first(diagram, box, template, id_map)
+        else:
+            _peel_pairs(diagram, box.id, template, id_map, last)
     return id_map
 
 
@@ -2509,6 +2517,139 @@ def _peel_pairs(
             factor = _scalar_at(factor, pair.pair_index, last)
         own = diagram.bang_boxes[box_id].copy_scalar
         diagram.set_bang_box_extension(box_id, copy_scalar=factor if own is None else own * factor)
+
+
+def _peel_pairs_first(
+    diagram: Diagram,
+    box: BangBox,
+    template: _PairTemplate,
+    id_map: Mapping[NodeId, NodeId],
+) -> None:
+    """Put a detached pair box back over the residual of a first-copy peel of ``box``, its
+    index and pair index read one higher, and add, in the residual's scope, one template copy
+    per residual copy r for the pair (peeled copy, r + 1) (index read 0, pair index read
+    ``index + 1``): its left ends on the peeled copy's left port, its right ends on a new leg
+    of the residual's right port; the peeled copy's right port loses its leg."""
+    ports = [a[1] for a in template.attached]
+    if len(set(ports)) != len(ports) or any(
+        diagram.nodes[r.node_id].generator_type.name not in ("Z", "X") for r in ports
+    ):
+        raise BangBoxGrammarError(
+            f"pair box {template.box.id!r} meets a port twice or a port of a node other than "
+            "a spider; no first-copy peel"
+        )
+    pair = template.box
+    name, pname = box.index, pair.pair_index
+    reads = [
+        x
+        for _, _, _, _, phase in template.nodes
+        if phase is not None
+        for x in (name, pname)
+        if x is not None and x in phase.free_symbols  # type: ignore[attr-defined]
+    ]
+    if pair.copy_scalar is not None:
+        reads += [x for x in (name, pname) if x is not None and x in pair.copy_scalar.free_symbols]
+    if name is None and reads:
+        raise BangBoxGrammarError(
+            f"pair box {pair.id!r} reads an index over unindexed box {box.id!r}; no first-copy peel"
+        )
+    residual = diagram.bang_boxes[box.id]
+    sym = None if name is None else _symbol_in(diagram, residual.node_scope, box.copy_scalar, name)
+    if name is not None and sym is None:
+        sym = sp.Symbol(name, integer=True, nonnegative=True)
+    tracked: dict[tuple[str, PortRef], list[PortRef]] = {}
+    for _, port, _ in template.attached:
+        tracked[("residual", port)] = [port]
+        tracked[("copy", port)] = [_moved(port, id_map)]
+
+    def regrow(key: tuple[str, PortRef], k: int) -> None:
+        (ref,) = tracked[key]
+        new = _regrow_port(diagram, ref, k)
+        for other, refs in tracked.items():
+            tracked[other] = [
+                moved
+                for old in refs
+                for moved in _remap_grown_port(old, ref.node_id, new, ref.direction, ref.index, k)
+            ]
+
+    for _, port, side in template.attached:
+        if side == "right":
+            regrow(("residual", port), 2)
+            regrow(("copy", port), 0)
+
+    def place(ends: Mapping[PortRef, PortRef]) -> dict[NodeId, NodeId]:
+        node_map: dict[NodeId, NodeId] = {}
+        for nid, generator, ins, outs, phase in template.nodes:
+            node_map[nid] = diagram.add_node(generator, list(ins), list(outs), phase=phase)  # type: ignore[arg-type]
+        for a, b in template.internal:
+            diagram.add_wire(_moved(a, node_map), _moved(b, node_map))
+        for inside, port, _ in template.attached:
+            diagram.add_wire(_moved(inside, node_map), ends[port])
+        return node_map
+
+    def symbol(nodes: Iterable[NodeId], key: str) -> sp.Symbol:
+        found = _symbol_in(diagram, nodes, pair.copy_scalar, key)
+        return found if found is not None else sp.Symbol(key, integer=True, nonnegative=True)
+
+    def read(nodes: Iterable[NodeId], steps: list[tuple[str, sp.Expr | int]]) -> None:
+        for node_id in sorted(nodes):
+            for key, value in steps:
+                phase = diagram.nodes[node_id].phase
+                if phase is not None and key in phase.free_symbols:
+                    diagram.set_phase(node_id, phase.substitute({key: value}))
+
+    def scalar(steps: list[tuple[str, sp.Expr | int]]) -> Scalar | None:
+        factor = pair.copy_scalar
+        if factor is None:
+            return None
+        for key, value in steps:
+            factor = _scalar_at(factor, key, value)
+        return factor
+
+    pair_ends = {port: tracked[("residual", port)][0] for _, port, _ in template.attached}
+    pair_map = place(pair_ends)
+    pair_nodes = frozenset(pair_map.values())
+    steps: list[tuple[str, sp.Expr | int]] = []
+    if pname is not None:
+        psym = symbol(pair_nodes, pname)
+        steps.append((pname, psym + 1))
+    if name is not None:
+        assert sym is not None
+        steps.append((name, sym + 1))
+    read(pair_nodes, steps)
+    diagram.add_bang_box(
+        pair.multiplicity,
+        node_scope=pair_nodes,
+        parent=pair.parent,
+        copy_scalar=scalar(steps),
+        pair_of=box.id,
+        pair_index=pname,
+        left_ports=frozenset(pair_ends[p] for _, p, s in template.attached if s == "left"),
+        right_ports=frozenset(pair_ends[p] for _, p, s in template.attached if s == "right"),
+    )
+    _rescope_ancestors(diagram, pair.parent, frozenset(), pair_nodes)
+    copy_ends = {
+        port: (tracked[("copy", port)][0] if side == "left" else tracked[("residual", port)][1])
+        for _, port, side in template.attached
+    }
+    node_map = place(copy_ends)
+    added = frozenset(node_map.values())
+    steps = []
+    if name is not None:
+        assert sym is not None
+        steps.append((name, 0))
+        if pname is not None:
+            steps.append((pname, sym + 1))
+    read(added, steps)
+    holder: BangBoxId | None = box.id
+    while holder is not None:
+        outer = diagram.bang_boxes[holder]
+        diagram.set_bang_box_node_scope(holder, outer.node_scope | added)
+        holder = outer.parent
+    factor = scalar(steps)
+    if factor is not None:
+        own = diagram.bang_boxes[box.id].copy_scalar
+        diagram.set_bang_box_extension(box.id, copy_scalar=factor if own is None else own * factor)
 
 
 def _shift_index(diagram: Diagram, box: BangBox, by: sp.Expr | None = None) -> Scalar | None:
@@ -2684,14 +2825,17 @@ class PeelResult:
     separable: bool
 
 
-def peel_one(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> PeelResult:
+def peel_one(
+    diagram: Diagram, box_id: BangBoxId, *, last: bool = False, first: bool = False
+) -> PeelResult:
     """Split one copy off a bang box: multiplicity ``m`` becomes ``m - 1`` beside one bare copy.
 
     The peeled copy is laid out after the box's own boundary block, so instantiating the
     residual box at ``k`` reproduces exactly what instantiating the original at ``k + 1``
     would: :func:`instantiate_symbol` builds its copies copy-major from the same splice.
     Requires a multiplicity whose constant term is at least one. With ``last``, a chain that
-    :func:`peels_first` loses its last copy instead.
+    :func:`peels_first` loses its last copy instead; with ``first``, an indexed or chain box
+    loses its first copy.
     """
     working = diagram.copy()
     box = working.bang_boxes.get(box_id)
@@ -2700,6 +2844,8 @@ def peel_one(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> Peel
     zipped = box.is_node_scope and bool(box.links) and zip_child(working, box) is not None
     if last and (zipped or box.is_tree or not box.is_extended):
         raise BangBoxGrammarError(f"box {box_id!r} has no last-copy peel")
+    if first and (last or zipped or box.is_tree or not box.is_extended):
+        raise BangBoxGrammarError(f"box {box_id!r} has no first-copy peel")
     if box.is_node_scope and (
         _zip_chain(working, box_id) is not None
         or (box.parent is not None and zip_child(working, working.bang_boxes[box.parent]))
@@ -2717,7 +2863,7 @@ def peel_one(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> Peel
     elif zipped:
         _peel_zipped(working, box, predecessor.to_sympy())
     elif box.is_extended:
-        _peel_extended(working, box, predecessor.to_sympy(), last)
+        _peel_extended(working, box, predecessor.to_sympy(), last, first)
     elif box.is_node_scope:
         _peel_node_scope(working, box)
     else:
@@ -2856,9 +3002,11 @@ def peel_owners(
     *,
     last: frozenset[BangBoxId] = frozenset(),
     partial: bool = False,
+    first: frozenset[BangBoxId] = frozenset(),
 ) -> PeelResult:
     """:func:`peel_one` on every box of :func:`index_owners` in id order, the copies joined,
-    the boxes of ``last`` peeling their last copy; with ``partial``, only the boxes whose
+    the boxes of ``last`` peeling their last copy and those of ``first`` their first copy
+    (``peel_one(first=True)``); with ``partial``, only the boxes whose
     multiplicity has a positive constant term; raises when there is none or one of them lies
     inside another."""
     owners = index_owners(diagram, name)
@@ -2874,7 +3022,7 @@ def peel_owners(
     if not owners:
         raise BangBoxGrammarError(f"no live bang box has multiplicity symbol {name!r}")
     if len(owners) == 1:
-        return peel_one(diagram, owners[0], last=owners[0] in last)
+        return peel_one(diagram, owners[0], last=owners[0] in last, first=owners[0] in first)
     for box_id in owners:
         above = diagram.bang_boxes[box_id].parent
         while above is not None:
@@ -2891,10 +3039,12 @@ def peel_owners(
         group = aligned_members(working, box_id) if working.bang_boxes[box_id].is_node_scope else []
         if len(group) > 1 and set(group) <= set(owners):
             done |= set(group)
+            if set(group) & first:
+                raise BangBoxGrammarError(f"aligned box {box_id!r} has no first-copy peel")
             result = peel_aligned(working, box_id, last=bool(set(group) & last))
             working, copies = result.diagram, copies | result.copy_node_ids
             continue
-        result = peel_one(working, box_id, last=box_id in last)
+        result = peel_one(working, box_id, last=box_id in last, first=box_id in first)
         working, copies = result.diagram, copies | result.copy_node_ids
         separable = separable and result.separable
     return PeelResult(working, copies, separable)

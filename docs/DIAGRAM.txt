@@ -230,11 +230,16 @@ or child box, a copy index read in a phase or the copy scalar, a crossing other 
 port or boundary slots other than its tree ports refuses it. A box with pair boxes (73.1)
 peels its last copy: each pair box goes back over the rest, and one copy of its scope per
 remaining copy j, its pair index read as n - 1, joins the box's scope, wired from a new leg of
-copy j's left port to the peeled copy's right port, whose left port loses its leg; a chain
-that peels its first copy, a pair box with children, and left or right ports met twice or on
-a node other than a Z or X spider refuse it. Peeling the first copy reads the index as I + 1
-in the rest's phases and leg dimensions. A cyclic chain and a fed box refuse peel_one; copy_box
-and merge refuse these
+copy j's left port to the peeled copy's right port, whose left port loses its leg; a pair box
+with children, and left or right ports met twice or on a node other than a Z or X spider refuse
+it. Peeling the first copy reads the index as I + 1 in the rest's phases and leg dimensions.
+peel_one(first=True) peels the first copy of any indexed or chain box (an out -> in chain
+included; peel_owners first=): each pair box goes back over the rest reading index and pair
+index one higher, and one copy of its scope per remaining copy r, index read 0 and pair index
+r + 1, joins the box's scope, wired from the peeled copy's left port (fanned out per copy) to
+a new leg of copy r's right port; the peeled copy's right port loses its leg
+(bangbox._peel_pairs_first; tests/test_first_peel.py checks instantiation at k = 0..4).
+A cyclic chain and a fed box refuse peel_one; copy_box and merge refuse these
 boxes, and to_scalable and the Lean network export refuse every diagram holding one.
 
 A rewrite inside a chain box moves each consumed link port to the port the rule's port
