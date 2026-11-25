@@ -145,7 +145,7 @@ points.distribution & "log\_uniform" & Read by no module; the draws are log-unif
 points.seed & 20261106 & Seed of the phase 2 draws.\\
 points.phase2\_extra\_failures & 32 & Cap on failed phase 2 draws per unit.\\
 points.symbolic & true & Whether the symbolic version runs (outside $K$).\\
-stages.decide & true & Read by no module; decide always runs.\\
+stages.decide & true & Counted only in the wall limit of a run (\cref{sec:bench-launch}); decide always runs.\\
 stages.certificate & true & Run the proof-kernel certificate stage.\\
 stages.lean\_export & true & Run the Lean export stage.\\
 stages.lean\_check & true & Run the Lean check stage.\\
