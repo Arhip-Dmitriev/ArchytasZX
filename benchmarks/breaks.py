@@ -1208,14 +1208,15 @@ def generate(cfg: dict[str, Any], path: Path, jobs: int) -> list[dict[str, Any]]
 
 
 def load(cfg: dict[str, Any], path: Path) -> list[dict[str, Any]] | None:
-    """The F records of ``path`` when it holds this config's set, else None."""
+    """The F records of ``path`` when it holds a readable false set, else None."""
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return None
-    return data["records"] if data.get("fingerprint") == fingerprint(cfg) else None
+    records = data.get("records")
+    return records if isinstance(records, list) else None
 
 
 def fingerprint(cfg: dict[str, Any]) -> str:
