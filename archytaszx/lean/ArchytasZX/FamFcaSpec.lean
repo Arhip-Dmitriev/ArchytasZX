@@ -346,6 +346,62 @@ theorem expandK1 (n : ℕ) : D1.base.expandK (fun _ => n) = E2n n := by
   rw [hL]
   simp [E, E2n]
 
+/-! ## Template node and copy -/
+
+theorem X1 (n : ℕ) : D1.X n = E2n n := expandK1 n
+
+/-- The nodes of `D1.X n` with their template node and copy. -/
+def Z1 (n : ℕ) : List (DNode × ℕ × ℕ) :=
+  [(n0, (0, 0))] ++ (range n).map (fun j => ({ n1 with id := 5 + j }, (1, j))) ++ [(n2, (2, 0))] ++
+    (range n).map (fun j => ({ n3 with id := n + 5 + j }, (3, j))) ++ [(n4, (4, 0))]
+
+theorem org1 (n : ℕ) : D1.org n =
+    [(0, 0)] ++ (range n).map (1, ·) ++ [(2, 0)] ++ (range n).map (3, ·) ++ [(4, 0)] := by
+  simp [FamDiagram.org, D1]
+
+theorem zip_map_range {α : Type} (n : ℕ) (f : ℕ → α) (g : ℕ → ℕ × ℕ) :
+    ((range n).map f).zip ((range n).map g) = (range n).map fun j => (f j, g j) := by
+  rw [List.zip_map, zip_range_self, List.map_map]; rfl
+
+theorem zip1 (n : ℕ) : (D1.X n).nodes.zip (D1.org n) = Z1 n := by
+  rw [X1, org1]
+  simp only [E2n, Z1, List.append_assoc, List.cons_append, List.nil_append, List.zip_cons_cons]
+  rw [List.zip_append (by simp), zip_map_range, List.zip_cons_cons,
+    List.zip_append (by simp), zip_map_range]
+  rfl
+
+theorem mem_Z1 {n : ℕ} {a : DNode × ℕ × ℕ} (h : a ∈ Z1 n) :
+    a = (n0, (0, 0)) ∨ (∃ j < n, a = ({ n1 with id := 5 + j }, (1, j))) ∨ a = (n2, (2, 0)) ∨
+      (∃ j < n, a = ({ n3 with id := n + 5 + j }, (3, j))) ∨ a = (n4, (4, 0)) := by
+  simp only [Z1, List.mem_append, List.mem_singleton, List.mem_map, List.mem_range] at h
+  rcases h with (((h | ⟨j, hj, rfl⟩) | h) | ⟨j, hj, rfl⟩) | h
+  · exact Or.inl h
+  · exact Or.inr (Or.inl ⟨j, hj, rfl⟩)
+  · exact Or.inr (Or.inr (Or.inl h))
+  · exact Or.inr (Or.inr (Or.inr (Or.inl ⟨j, hj, rfl⟩)))
+  · exact Or.inr (Or.inr (Or.inr (Or.inr h)))
+
+theorem orgOf1_eq {n y : ℕ} {e : DNode × ℕ × ℕ} (he : e ∈ Z1 n) (hy : e.1.id = y) :
+    D1.orgOf n y = e.2 := by
+  unfold FamDiagram.orgOf
+  rw [zip1, find?_unique (e := e) he (by simpa using hy)]
+  · rfl
+  · intro a ha hp
+    simp only [decide_eq_true_eq] at hp
+    rcases mem_Z1 ha with rfl | ⟨j, hj, rfl⟩ | rfl | ⟨j, hj, rfl⟩ | rfl <;>
+    rcases mem_Z1 he with rfl | ⟨k, hk, rfl⟩ | rfl | ⟨k, hk, rfl⟩ | rfl <;>
+    simp only [n0, n1, n2, n3, n4] at hp hy ⊢ <;> first | omega | (subst hy; simp_all)
+
+theorem cp1_eq {n : ℕ} {e : DNode × ℕ × ℕ} (he : e ∈ Z1 n) : D1.cp n e.2.1 e.2.2 = e.1.id := by
+  unfold FamDiagram.cp
+  rw [zip1, find?_unique (e := e) he (by simp)]
+  · rfl
+  · intro a ha hp
+    simp only [decide_eq_true_eq] at hp
+    rcases mem_Z1 ha with rfl | ⟨j, hj, rfl⟩ | rfl | ⟨j, hj, rfl⟩ | rfl <;>
+    rcases mem_Z1 he with rfl | ⟨k, hk, rfl⟩ | rfl | ⟨k, hk, rfl⟩ | rfl <;>
+    simp_all
+
 end FamFca
 
 end ArchytasZX
