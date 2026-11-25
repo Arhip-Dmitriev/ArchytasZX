@@ -954,32 +954,34 @@ def _pin_residues(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr
     if not _has_outside_flat(term, ModResidue):
         return term
     bound = _bound_symbols(term)
-    atoms = [
-        a for a in term.atoms(ModResidue) if a.args[1].is_Integer and not a.free_symbols & bound
-    ]
+    atoms = [a for a in term.atoms(ModResidue) if not a.free_symbols & bound]
     if not atoms:
         return term
     deltas = [d for d in map(_delta_base, sp.Mul.make_args(term)) if d is not None]
     mapping: dict[sp.Expr, sp.Expr] = {}
     for atom in atoms:
         x, m = atom.args
-        modulus = int(m)
+        concrete = m.is_Integer
+        modulus = int(m) if concrete else 0
         for d in deltas:
             frequency, big = d.args
-            if not big.is_Integer or int(big) % modulus:
+            if concrete and (not big.is_Integer or int(big) % modulus):
+                continue
+            if not concrete and big != m:
                 continue
             form = _linear_form(frequency)
             if form is None:
                 continue
             for var, coefficient in sorted(form.items(), key=lambda item: str(item[0].name)):
                 size = ranges.get(var)
-                if var in bound or size is None or sp.expand(size - modulus) != 0:
+                if var in bound or size is None or sp.expand(size - m) != 0:
                     continue
                 sign = _unit_sign(sp.Integer(coefficient), m)
                 if sign is None:
                     continue
                 rest = sp.expand(frequency - coefficient * var)
-                if _multiple_of(sp.expand(-sign * rest - x), modulus):
+                gap = sp.expand(-sign * rest - x)
+                if _multiple_of(gap, modulus) if concrete else _integer_valued(gap / m):
                     mapping[atom] = var
                     break
             if atom in mapping:
@@ -1846,6 +1848,15 @@ def _delta_step(
                         wrapped = _corner_pin(
                             weight, var, sp.expand(-sign * rest), bounds, size, known
                         )
+                    if (
+                        wrapped is None
+                        and _SYMBOLIC_WRAP.get()
+                        and bounds is not None
+                        and bounds[0] != bounds[1]
+                    ):
+                        wrapped = _wrap_pin(
+                            weight, var, coefficient, rest, modulus, size, symbolic=True
+                        )
                     if wrapped is None:
                         continue
                     return wrapped, _without(limits, index)
@@ -1874,10 +1885,17 @@ def _wrap_pin(
     rest: sp.Expr,
     modulus: sp.Expr,
     size: sp.Expr,
+    symbolic: bool = False,
 ) -> sp.Expr | None:
     """``Sum_{var < m} [c*var + rest == 0 mod M] * weight`` for concrete ``m | M`` and ``c`` a unit
-    mod ``M``: ``weight`` at ``var = (-c*rest) mod m`` times the delta at that value (dropped when
-    ``m == M``), else None."""
+    mod ``M``, or with ``symbolic`` for a symbolic ``m == M``: ``weight`` at
+    ``var = (-c*rest) mod m`` times the delta at that value (dropped when ``m == M``), else
+    None."""
+    if symbolic:
+        sign = _unit_sign(sp.Integer(coefficient), modulus)
+        if sign is None or modulus.is_Integer or sp.expand(modulus - size) != 0:
+            return None
+        return cast(sp.Expr, weight.xreplace({var: ModResidue(sp.expand(-sign * rest), size)}))
     if not (modulus.is_Integer and size.is_Integer) or int(modulus) % int(size):
         return None
     sign = _unit_sign(sp.Integer(coefficient), modulus)
@@ -2020,6 +2038,37 @@ def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int]
     return None
 
 
+def _carried_symbolic(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, sp.Expr] | None:
+    """``(X, t)`` with ``frequency == X/t`` for a symbolic ``t``, when a factor ``[Y == 0 mod t]``
+    of ``term`` makes ``(X -+ Y)/t`` an integer polynomial in integer symbols, else None."""
+    for factor in sp.Mul.make_args(term):
+        delta = _delta_base(factor)
+        if delta is None:
+            continue
+        carry, t = delta.args
+        if t.is_Integer or not t.free_symbols:
+            continue
+        numerator = sp.expand(sp.cancel(frequency * t))
+        if sp.denom(sp.together(numerator)) != 1:
+            continue
+        for sign in (1, -1):
+            rest = sp.expand(sp.cancel((numerator - sign * carry) / t))
+            symbols = sorted(rest.free_symbols, key=lambda x: str(x.name))
+            if any(x.is_integer is not True for x in symbols):
+                continue
+            if not symbols:
+                if rest.is_Integer:
+                    return numerator, t
+                continue
+            try:
+                poly = sp.Poly(rest, *symbols)
+            except sp.PolynomialError:
+                continue
+            if all(c.is_Integer for c in poly.coeffs()):
+                return numerator, t
+    return None
+
+
 def _unit_multiple(
     x: sp.Expr, y: sp.Expr, symbols: tuple[sp.Symbol, ...], modulus: int
 ) -> bool | None:
@@ -2062,11 +2111,12 @@ def _character_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[
         constant, frequency, offset = split
         shift = sp.exp(2 * sp.pi * sp.I * offset / size)
         if frequency.is_integer is not True:
-            carried = _carried_frequency(term, frequency)
-            if carried is None or not size.is_Integer:
+            found = _carried_frequency(term, frequency) if size.is_Integer else None
+            carried = found if found is not None else _carried_symbolic(term, frequency)
+            if carried is None:
                 continue
             numerator, t = carried
-            delta = ModDelta(numerator, sp.Integer(t) * size)
+            delta = ModDelta(numerator, sp.expand(t * size))
             return constant * shift * size * delta, _without(limits, index)
         return constant * shift * size * ModDelta(frequency, size), _without(limits, index)
     return None
@@ -2248,6 +2298,8 @@ def _implies(big: ModDelta, small: ModDelta) -> bool:
     """Whether ``[X == 0 mod M]`` forces ``[Y == 0 mod t]``: integer moduli with ``t | M`` and
     ``X == l*Y mod t`` coefficientwise for a unit ``l``."""
     (x, m), (y, t) = big.args, small.args
+    if not t.is_Integer and t.free_symbols and m != t:
+        return _implies_symbolic(x, m, y, t)
     if not (m.is_Integer and t.is_Integer) or int(t) < 2 or int(m) % int(t) or m == t:
         return False
     if x.has(ModResidue) or y.has(ModResidue):
@@ -2270,6 +2322,28 @@ def _implies(big: ModDelta, small: ModDelta) -> bool:
         if all(c.is_Integer and int(c) % modulus == 0 for c in coefficients):
             return True
     return False
+
+
+def _integer_valued(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is a polynomial with integer coefficients in integer symbols."""
+    expr = sp.expand(sp.cancel(expr))
+    symbols = sorted(expr.free_symbols, key=lambda v: str(v.name))
+    if any(v.is_integer is not True for v in symbols):
+        return False
+    if not symbols:
+        return bool(expr.is_Integer)
+    try:
+        poly = sp.Poly(expr, *symbols)
+    except sp.PolynomialError:
+        return False
+    return all(c.is_Integer for c in poly.coeffs())
+
+
+def _implies_symbolic(x: sp.Expr, m: sp.Expr, y: sp.Expr, t: sp.Expr) -> bool:
+    """:func:`_implies` at a symbolic ``t``: ``m/t`` and ``(x -+ y)/t`` integer polynomials."""
+    if x.has(ModResidue) or y.has(ModResidue) or not _integer_valued(m / t):
+        return False
+    return any(_integer_valued((x - sign * y) / t) for sign in (1, -1))
 
 
 def _drop_implied(term: sp.Expr) -> sp.Expr:
@@ -2663,6 +2737,40 @@ def _reduce_integer_phases(expr: sp.Expr) -> sp.Expr:
     )
 
 
+_SYMBOLIC_WRAP: ContextVar[bool] = ContextVar("symbolic_wrap", default=False)
+
+
+def _close_guarded(expr: sp.Mul, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
+    """``expr``, a product of ModDelta guards and an unclosed Sum, with the guards moved into the
+    Sum when that closes it (:func:`_close_sum`), else None."""
+    factors = sp.Mul.make_args(expr)
+    sums = [f for f in factors if isinstance(f, sp.Sum)]
+    guards = [f for f in factors if isinstance(f, ModDelta)]
+    if len(sums) != 1 or not guards:
+        return None
+    (node,) = sums
+    bound = {var for var, _lower, _upper in node.limits}
+    if any(g.free_symbols & bound for g in guards):
+        return None
+    body = _pin_residues(cast(sp.Expr, sp.Mul(*guards) * node.function), ranges)
+    moved = sp.Sum(body, *node.limits)
+    token = _SYMBOLIC_WRAP.set(True)
+    try:
+        closed = _close_sum(cast(sp.Sum, moved), ranges)
+    finally:
+        _SYMBOLIC_WRAP.reset(token)
+    if closed is None:
+        return None
+    closed = cast(
+        sp.Expr,
+        sp.Add(*(_pin_residues(cast(sp.Expr, t), ranges) for t in sp.Add.make_args(closed))),
+    )
+    if closed.has(ModResidue) and not node.has(ModResidue):
+        return None
+    rest = sp.Mul(*(f for f in factors if f is not node and not isinstance(f, ModDelta)))
+    return cast(sp.Expr, rest * closed)
+
+
 def _close_all(
     expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp.Expr]
 ) -> tuple[sp.Expr, bool]:
@@ -2683,6 +2791,10 @@ def _close_all(
             new_args[position] = replaced
             changed = changed or sub_changed
         expr = cast(sp.Expr, expr.func(*new_args))
+    if isinstance(expr, sp.Mul) and changed is False:
+        guarded = _close_guarded(expr, ranges)
+        if guarded is not None:
+            return guarded, True
     if isinstance(expr, sp.Sum):
         budget[0] -= 1
         if budget[0] < 0:
