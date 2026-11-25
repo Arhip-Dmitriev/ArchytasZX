@@ -420,7 +420,35 @@ def _windowed(
                 return _last_window(start, goal, index, k, base, side)
             except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
                 reasons.append(f"{side.value}, chains at their last copy: {exc}")
+        for side in (InductionSide.START, InductionSide.GOAL):
+            try:
+                return _radix(start, goal, index, k, base, side)
+            except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
+                reasons.append(f"{side.value}, radix window: {exc}")
     raise NoInductionTheorem("; ".join(reasons))
+
+
+def _radix(
+    start: Diagram, goal: Diagram, index: str, k: str, base: kernel.Theorem, side: InductionSide
+) -> kernel.Theorem:
+    """``start = goal`` by the kernel's induction rule over the cut region
+    :func:`~archytaszx.semantics.radix_window.step` exposes on ``side``'s successor."""
+    from archytaszx.semantics import radix_window
+
+    own, other = (start, goal) if side is InductionSide.START else (goal, start)
+    try:
+        expose, cut, step = radix_window.step(
+            induction_renamed(own, index, k),
+            induction_successor(own, index, k),
+            induction_hypothesis(own, index, k),
+            induction_renamed(other, index, k),
+            induction_successor(other, index, k),
+            induction_hypothesis(other, index, k),
+            k,
+        )
+    except radix_window.RadixWindowError as exc:
+        raise NoInductionTheorem(str(exc)) from exc
+    return kernel.induction(start, goal, index, k, base, side, expose, cut.region, step, cut=cut)
 
 
 def _last_window(

@@ -1432,6 +1432,43 @@ def aligned_wires(diagram: Diagram) -> frozenset[Wire]:
     return frozenset(found)
 
 
+def align_merged(diagram: Diagram, root: BangBoxId) -> Diagram:
+    """``diagram`` with the alignment group of ``root`` as one box ``root`` over the union of
+    their scopes, pair boxes of the members read over it, boundary blocks kept by ``groups``
+    when two members hold slots of one boundary list."""
+    members = aligned_members(diagram, root)
+    if len(members) < 2 or members[0] != root:
+        raise BangBoxGrammarError(f"box {root!r} roots no alignment group")
+    boxes = [diagram.bang_boxes[m] for m in members]
+    scalars = [b.copy_scalar for b in boxes if b.copy_scalar is not None]
+    if len(scalars) > 1:
+        raise BangBoxGrammarError("two aligned boxes carry copy scalars")
+    union = frozenset().union(*(b.node_scope for b in boxes))
+    holders: list[BangBoxId] = []
+    split = False
+    for refs in (diagram.boundary_inputs, diagram.boundary_outputs):
+        held = [m for m, b in zip(members, boxes) if any(r.node_id in b.node_scope for r in refs)]
+        split = split or len(held) > 1
+        holders += [m for m in held if m not in holders]
+    groups = (
+        tuple(diagram.bang_boxes[m].node_scope for m in members if m in holders) if split else ()
+    )
+    out = diagram.copy()
+    out.set_bang_box_extension(
+        root,
+        node_scope=union,
+        align=None,
+        copy_scalar=scalars[0] if scalars else None,
+        groups=groups,
+    )
+    for member in members[1:]:
+        out.remove_bang_box(member)
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if box.pair_of in members[1:]:
+            out.set_bang_box_extension(box_id, pair_of=root)
+    return out
+
+
 def _member_wires(
     diagram: Diagram, members: list[BangBoxId]
 ) -> list[tuple[Wire, BangBoxId, BangBoxId]]:

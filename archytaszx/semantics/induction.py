@@ -2516,7 +2516,32 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
                     f"through its cut wires, replaced by the other side's; {why}"
                 )
             reasons.append(f"plain box: {why}")
+    for own_successor, own_k, other_k, other_successor in sides:
+        settled, why = _close_by_radix(own_successor, own_k, other_successor, other_k, index)
+        if settled:
+            return True, why
+        reasons.append(why)
     return False, "; ".join(reasons)
+
+
+def _close_by_radix(
+    own_successor: Diagram, own_k: Diagram, other_successor: Diagram, other_k: Diagram, index: str
+) -> tuple[bool, str]:
+    """Whether :func:`~archytaszx.semantics.radix_window.step` settles the step on
+    ``own_successor``'s first-copy peel; and how, or why not."""
+    from archytaszx.semantics import radix_window
+
+    if not (_chain_owned(own_successor, index) and first_peelers(own_successor, index)):
+        return False, "radix: no first-peeling chain"
+    try:
+        radix_window.step(own_successor, None, own_k, other_successor, None, other_k, index)
+    except (radix_window.RadixWindowError, BangBoxError, ValidateError, InductionError) as exc:
+        return False, f"radix: {exc}"
+    return True, (
+        "every box peeled at its first copy; library lemmas expose the hypothesis at the chain "
+        "boxes, replaced by the other side's; aligned boxes merged, boxed spiders fused, and the "
+        "other side's first-copy peel met by isomorphism"
+    )
 
 
 def peel_peelable(diagram: Diagram, index: str) -> Diagram | None:

@@ -675,6 +675,72 @@ def box_split(d: Diagram, split: Diagram, copy: frozenset[NodeId]) -> Theorem:
     raise KernelError("box_split: the diagram is no boxed spider split of the other")
 
 
+def _align_group(d: Diagram, root: BangBoxId) -> list[BangBoxId]:
+    """The alignment group of ``root`` when it may merge into one box: two or more top-level
+    node-scope boxes without links, chains, trees, feeds, groups or children, of one
+    multiplicity, index and sheets flag, at most one copy scalar, pairwise disjoint scopes
+    that meet no other box, and no box aligned to a member other than ``root``."""
+    from archytaszx.diagram.bangbox import aligned_members
+
+    members = aligned_members(d, root)
+    boxes = [d.bang_boxes[m] for m in members]
+    if len(members) < 2 or members[0] != root or boxes[0].align is not None:
+        raise KernelError("align_merge: no alignment group at the box")
+    head = boxes[0]
+    for box in boxes:
+        if (
+            box.parent is not None
+            or not box.node_scope
+            or box.port_scope
+            or box.links
+            or box.cyclic
+            or box.tree
+            or box.feed is not None
+            or box.pair_of is not None
+            or box.groups
+            or box.sheets != head.sheets
+            or box.index != head.index
+            or sp.expand(box.multiplicity.to_sympy() - head.multiplicity.to_sympy()) != 0
+        ):
+            raise KernelError("align_merge: the aligned boxes differ in kind, count or index")
+    if sum(box.copy_scalar is not None for box in boxes) > 1:
+        raise KernelError("align_merge: two aligned boxes carry copy scalars")
+    seen: set[NodeId] = set()
+    for box in boxes:
+        if seen & box.node_scope:
+            raise KernelError("align_merge: the aligned scopes overlap")
+        seen |= box.node_scope
+    for box_id, box in d.bang_boxes.items():
+        if box_id in members:
+            continue
+        if box.parent in members or box.align in members[1:]:
+            raise KernelError("align_merge: a box lies in or aligns to a member")
+        if box.node_scope & seen or any(r.node_id in seen for r in box.port_scope):
+            raise KernelError("align_merge: another box meets the aligned scopes")
+    return members
+
+
+@_trace.traced("kernel.align_merge")
+def align_merge(d: Diagram, merged: Diagram) -> Theorem:
+    """``d = merged`` when ``merged`` is :func:`~archytaszx.diagram.bangbox.align_merged` of one
+    alignment group of ``d`` passing :func:`_align_group`: copy j of each member wired to copy j
+    of the others is copy j of one box over the union of their scopes."""
+    from archytaszx.diagram.bangbox import BangBoxError, align_merged
+
+    roots = sorted({b.align for b in d.bang_boxes.values() if b.align is not None})
+    for root in roots:
+        if root not in d.bang_boxes:
+            continue
+        try:
+            _align_group(d, root)
+            candidate = align_merged(d, root)
+        except (KernelError, BangBoxError):
+            continue
+        if _same(candidate, merged):
+            return Theorem(_TOKEN, d, merged, Inference("align_merge", data={"box": root}))
+    raise KernelError("align_merge: the diagram is no aligned box merge of the other")
+
+
 @_trace.traced("kernel.power_split")
 def power_split(d: Diagram, split: Diagram) -> Theorem:
     """``d = split`` when ``split`` is :func:`~archytaszx.diagram.bangbox.split_power` of one
@@ -2065,6 +2131,7 @@ class _Lean:
             "peel",
             "identity_slide",
             "box_split",
+            "align_merge",
             "leg_move",
             "power_split",
             "w_fusion",
@@ -2075,6 +2142,7 @@ class _Lean:
                 "peel": "a joint peel of one box family",
                 "identity_slide": "a boxed identity spider moved onto another wire",
                 "box_split": "a boxed spider unfused in every copy",
+                "align_merge": "copy-aligned boxes of one count merged into one box",
                 "leg_move": "legs moved between two wired spiders of one type",
                 "power_split": "a box of b^(e + 1) copies split into b boxes of b^e copies",
             }[inf.kind]
