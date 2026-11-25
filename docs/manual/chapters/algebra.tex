@@ -1018,7 +1018,7 @@ A \emph{balanced round} recomputes $\mathrm{occ}$ for the path variables and tri
 Every rule is an identity of \cref{eq:algebra-pathsum}, so the reduced sum denotes the same function. [Dyadic] trades $K$ digits for $K$ variables whose terms all have coefficient $\tfrac12$, which the [HH] rules take next. A reduction can stop with path variables left; \py!canonical! then returns \py!None! and \py!residual_form! applies.
 
 \begin{example}\label{ex:algebra-hh}
-Two Hadamard gates in sequence have boundary variables $x_0$ (input) and $x_1$ (output), one path variable $y=2$, phase $\tfrac12x_0y+\tfrac12yx_1$, constant $1$, and $k=-2$. \py!reduce! applies [HH] on a boundary constraint to $y$ (the quotient $x_0+x_1$ reads no path variable), adds the constraint $x_0+x_1=0$, and sets $k=0$. Its canonical form (\cref{sec:algebra-canon}) has the single row $x_0:=x_1$, no phase, and constant $1$: the identity.
+Two Hadamard gates in sequence have boundary variables $x_0$ (output) and $x_1$ (input), one path variable $y=2$, phase $\tfrac12x_0y+\tfrac12yx_1$, constant $1$, and $k=-2$. \py!reduce! applies [HH] on a boundary constraint to $y$ (the quotient $x_0+x_1$ reads no path variable), adds the constraint $x_0+x_1=0$, and sets $k=0$. Its canonical form (\cref{sec:algebra-canon}) has the single row $x_0:=x_1$, no phase, and constant $1$: the identity.
 \end{example}
 
 \begin{table}[H]
