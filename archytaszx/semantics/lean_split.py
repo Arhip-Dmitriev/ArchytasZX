@@ -50,6 +50,7 @@ from archytaszx.semantics.lean_linked import (
     _cpp,
     _lnat,
     _lport,
+    _phase_key,
     _Tables,
     _wire_in,
     linked,
@@ -74,7 +75,7 @@ _PERM_FIELDS = 22
 """The fields of ``LegPermOK``."""
 
 _PBOX = 1000
-"""The first id of a port box."""
+"""The least first id of a port box."""
 
 
 @dataclass(frozen=True)
@@ -414,7 +415,7 @@ def _seed(ds: Sequence[Diagram], tables: _Tables, names: set[str]) -> None:
                 if not any(_reads(text, s) for s in names):
                     _Tables.index(tables.dims, text)
             if node.phase is None or not (set(map(str, node.phase.free_symbols)) & names):
-                _Tables.index(tables.phases, repr(node.phase))
+                _Tables.index(tables.phases, _phase_key(node.phase))
     _Tables.index(tables.dims, "")
 
 
@@ -504,10 +505,11 @@ def _aligned(
     D: LDiag, gone: Sequence[tuple[Port, Port, list[int]]], base: int
 ) -> tuple[list[Align], list[PBox]] | None:
     """Each removed aligned wire as an aligned wire of ``D`` with its port boxes; None outside
-    two nodes held directly by member boxes of one count, one end's boxes a part of the other's."""
+    two nodes held directly by member boxes of one count, one end's boxes a part of the other's.
+    Port box ids start at ``base`` or past the largest node box id."""
     aligned: list[Align] = []
     pboxes: list[PBox] = []
-    nid = base
+    nid = max(base, 1 + max((b.id for b in D.boxes), default=-1))
     for p, q, members in gone:
         ends = []
         for e in (p, q):
@@ -985,7 +987,7 @@ def export_split(before: Diagram, after: Diagram) -> str | None:
     held = {q[0] for q in L.cph}
     for x in B:
         node = before.nodes[x]  # type: ignore[index]
-        if after.nodes[x].phase != node.phase:  # type: ignore[index]
+        if x not in after.nodes or after.nodes[x].phase != node.phase:  # type: ignore[index]
             return None
         reads = index is not None and node.phase is not None and index in node.phase.free_symbols
         if reads:

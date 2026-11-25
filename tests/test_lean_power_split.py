@@ -211,3 +211,65 @@ def test_lean_checks_the_qram_split_and_refuses_a_wrong_alignment(tmp_path: obje
         assert bad != source
         ok, output = check(bad, f"{tmp_path}/bad.lean")
         assert not ok
+
+
+def _renumbered(s: Diagram, x: object) -> Diagram:
+    """``s`` with node ``x`` replaced by an identical node of a fresh id."""
+    from archytaszx.diagram.graph import PortRef
+
+    t = s.copy()
+    node = t.nodes[x]  # type: ignore[index]
+    y = t.add_node(
+        node.generator_type,
+        [p.dim for p in node.inputs],
+        [p.dim for p in node.outputs],
+        node.phase,
+    )
+
+    def sw(r: PortRef) -> PortRef:
+        return PortRef(y, r.direction, r.index) if r.node_id == x else r
+
+    wires = [(sw(w.a), sw(w.b)) for w in t.wires if x in (w.a.node_id, w.b.node_id)]
+    ins, outs = [sw(r) for r in t.boundary_inputs], [sw(r) for r in t.boundary_outputs]
+    scopes = {b: box.node_scope for b, box in t.bang_boxes.items() if x in box.node_scope}
+    t.remove_node(x)  # type: ignore[arg-type]
+    for p, q in wires:
+        t.add_wire(p, q)
+    t.set_boundary_inputs(ins)
+    t.set_boundary_outputs(outs)
+    for box_id, scope in scopes.items():
+        t.set_bang_box_node_scope(box_id, (scope - {x}) | {y})
+    return t
+
+
+def test_a_split_missing_a_node_of_the_box_is_refused() -> None:
+    d, s = _split(TAIL)
+    (x,) = d.bang_boxes[BangBoxId(0)].node_scope
+    assert lean_split.export_split(d, _renumbered(s, x)) is None
+
+
+def test_a_zero_phase_vector_seeds_the_no_phase_key() -> None:
+    from archytaszx.algebra.dimension import Dim
+    from archytaszx.algebra.phase import PhaseVector
+    from archytaszx.diagram.generators import Z_SPIDER
+    from archytaszx.semantics.lean_linked import _Tables
+
+    d = Diagram()
+    d.add_node(Z_SPIDER, [Dim.concrete(2)], [Dim.concrete(2)], PhaseVector(Dim.concrete(2), {}))
+    tables = _Tables()
+    lean_split._seed([d], tables, set())
+    assert list(tables.phases) == [repr(None)]
+
+
+def test_port_boxes_take_ids_past_the_node_boxes() -> None:
+    from archytaszx.semantics.lean_linked import LBox, LDiag
+
+    boxes = [
+        LBox(1000, 0, None, (0,)),
+        LBox(1001, 1, None, (1,)),
+        LBox(1002, 0, 1001, (1,)),
+    ]
+    D = LDiag([], [], [], [], boxes, [])
+    found = lean_split._aligned(D, [((0, True, 0), (1, False, 0), [1000, 1002])], lean_split._PBOX)
+    assert found is not None and found[1]
+    assert {b.id for b in found[1]}.isdisjoint(b.id for b in boxes)
