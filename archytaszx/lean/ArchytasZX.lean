@@ -122,5 +122,6 @@ import ArchytasZX.AdderFamDraper
 import ArchytasZX.AdderFamDraperEng
 import ArchytasZX.FamDiagram
 import ArchytasZX.FamExpandEq
+import ArchytasZX.FamFcaExpand
 import ArchytasZX.PairSum
 import ArchytasZX.LinkedMerge
