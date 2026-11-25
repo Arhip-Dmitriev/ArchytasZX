@@ -242,3 +242,130 @@ theorem bidx0 (n i t : ℕ) (hi : i < 2) (ht : t < n) :
         obtain ⟨a, -, e⟩ := List.mem_map.1 hm
         exact absurd (Port.mk.inj e).2.1 (by decide)), idxOf_map_range (hf false 0) ht]
     simp
+
+/-- The expansion in key order is `copyNodes b0 n`. -/
+theorem expandK0 (n : ℕ) : D0.base.expandK (fun _ => n) = D0.base.copyNodes b0 n := by
+  unfold Diagram.expandK
+  rw [expand0, SL0]
+  set E := D0.base.copyNodes b0 n
+  have hO : E.outs = (range n).map (fun j => (⟨cp0 j 9, true, 0⟩ : Port)) := copyNodes0_outs n
+  have hI : E.ins = (range n).map (fun j => (⟨cp0 j 0, false, 0⟩ : Port)) := copyNodes0_ins n
+  have hL : ((range 2).flatMap fun i => (range n).map fun t => (i, [t])).map
+      (fun x => E.bnd.getD (D0.base.bidx (fun _ => n) x).1 Port.dflt) = E.outs ++ E.ins := by
+    rw [show range 2 = [0, 1] from rfl]
+    simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, List.map_append, List.map_map]
+    congr 1
+    · rw [hO]
+      refine List.map_congr_left fun t ht => ?_
+      have ht' := List.mem_range.1 ht
+      simp only [Function.comp, bidx0 n 0 t (by omega) ht', Diagram.bnd, hO, zero_mul, zero_add]
+      rw [List.getD_eq_getElem _ _ (by simp; omega), List.getElem_append_left (by simpa using ht')]
+      simp
+    · rw [hI]
+      refine List.map_congr_left fun t ht => ?_
+      have ht' := List.mem_range.1 ht
+      simp only [Function.comp, bidx0 n 1 t (by omega) ht', Diagram.bnd, hO, hI, one_mul]
+      rw [List.getD_eq_getElem _ _ (by simp; omega), List.getElem_append_right (by simp)]
+      simp
+  dsimp only
+  rw [hL]
+  simp
+
+/-! ## Template node and copy -/
+
+theorem X0 (n : ℕ) : D0.X n = D0.base.copyNodes b0 n := expandK0 n
+
+theorem find?_unique {α : Type} {l : List α} {p : α → Bool} {e : α} (h : e ∈ l) (hp : p e = true)
+    (hu : ∀ a ∈ l, p a = true → a = e) : l.find? p = some e := by
+  obtain ⟨a, ha⟩ := Option.isSome_iff_exists.1 (List.find?_isSome.2 ⟨e, h, hp⟩)
+  rw [ha, hu a (List.mem_of_find?_eq_some ha) (List.find?_some ha)]
+
+theorem zip_flatMap {α β γ : Type} (l : List α) (f : α → List β) (g : α → List γ)
+    (h : ∀ a ∈ l, (f a).length = (g a).length) :
+    (l.flatMap f).zip (l.flatMap g) = l.flatMap fun a => (f a).zip (g a) := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+    simp only [List.flatMap_cons]
+    rw [List.zip_append (h a List.mem_cons_self), ih fun b hb => h b (List.mem_cons_of_mem _ hb)]
+
+/-- The template ids. -/
+def ids0 : List ℕ := [0, 1, 2, 4, 5, 6, 7, 8, 9]
+
+theorem ids0_eq : D0.base.nodes.map (·.id) = ids0 := rfl
+
+theorem rk_lt {x : ℕ} (hx : x ∈ ids0) : rk x < 9 := by
+  simp only [ids0, List.mem_cons, List.not_mem_nil, or_false] at hx
+  rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+theorem rk_inj {x y : ℕ} (hx : x ∈ ids0) (hy : y ∈ ids0) (h : rk x = rk y) : x = y := by
+  simp only [ids0, List.mem_cons, List.not_mem_nil, or_false] at hx hy
+  rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hy with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp_all [rk]
+
+theorem cp0_inj2 {j j' x x' : ℕ} (hx : x ∈ ids0) (hx' : x' ∈ ids0) (h : cp0 j x = cp0 j' x') :
+    j = j' ∧ x = x' := by
+  have := rk_lt hx; have := rk_lt hx'
+  simp only [cp0] at h
+  have hj : j = j' := by omega
+  exact ⟨hj, rk_inj hx hx' (by subst hj; omega)⟩
+
+theorem mem_ids0 {x : DNode} (hx : x ∈ D0.base.nodes) : x.id ∈ ids0 :=
+  ids0_eq ▸ List.mem_map_of_mem hx
+
+theorem node_of_id {x x' : DNode} (hx : x ∈ D0.base.nodes) (hx' : x' ∈ D0.base.nodes)
+    (h : x.id = x'.id) : x = x' := by
+  simp only [D0, List.mem_cons, List.not_mem_nil, or_false] at hx hx'
+  rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hx' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp_all
+
+theorem zip0 (n : ℕ) : (D0.X n).nodes.zip (D0.org n) =
+    D0.base.nodes.flatMap fun x => (range n).map fun j => ({ x with id := cp0 j x.id }, (x.id, j)) := by
+  rw [X0, copyNodes0_nodes]
+  have ho : D0.org n = D0.base.nodes.flatMap fun x => (range n).map (x.id, ·) := by
+    unfold FamDiagram.org
+    refine List.flatMap_congr fun x hx => ?_
+    have : D0.base.boxes.any (x.id ∈ ·.nodes) = true := by
+      simp [boxes0, mem_b0 x hx]
+    simp [this]
+  rw [ho, zip_flatMap _ _ _ (fun _ _ => by simp)]
+  refine List.flatMap_congr fun x _ => ?_
+  rw [List.zip_map, zip_range_self, List.map_map]
+  rfl
+
+theorem mem_zip0 {n : ℕ} {a : DNode × ℕ × ℕ} (h : a ∈ (D0.X n).nodes.zip (D0.org n)) :
+    ∃ x ∈ D0.base.nodes, ∃ j < n, a = ({ x with id := cp0 j x.id }, (x.id, j)) := by
+  rw [zip0] at h
+  obtain ⟨x, hx, h⟩ := List.mem_flatMap.1 h
+  obtain ⟨j, hj, rfl⟩ := List.mem_map.1 h
+  exact ⟨x, hx, j, List.mem_range.1 hj, rfl⟩
+
+theorem orgOf0 {n j : ℕ} {x : DNode} (hx : x ∈ D0.base.nodes) (hj : j < n) :
+    D0.orgOf n (cp0 j x.id) = (x.id, j) := by
+  unfold FamDiagram.orgOf
+  rw [find?_unique (e := ({ x with id := cp0 j x.id }, (x.id, j)))]
+  · rfl
+  · rw [zip0]; exact List.mem_flatMap.2 ⟨x, hx, List.mem_map.2 ⟨j, List.mem_range.2 hj, rfl⟩⟩
+  · simp
+  · intro a ha hp
+    obtain ⟨x', hx', j', -, rfl⟩ := mem_zip0 ha
+    simp only [decide_eq_true_eq] at hp
+    obtain ⟨rfl, h⟩ := cp0_inj2 (mem_ids0 hx') (mem_ids0 hx) hp
+    rw [node_of_id hx' hx h]
+
+theorem cp_eq0 {n j : ℕ} {x : DNode} (hx : x ∈ D0.base.nodes) (hj : j < n) :
+    D0.cp n x.id j = cp0 j x.id := by
+  unfold FamDiagram.cp
+  rw [find?_unique (e := ({ x with id := cp0 j x.id }, (x.id, j)))]
+  · rfl
+  · rw [zip0]; exact List.mem_flatMap.2 ⟨x, hx, List.mem_map.2 ⟨j, List.mem_range.2 hj, rfl⟩⟩
+  · simp
+  · intro a ha hp
+    obtain ⟨x', hx', j', -, rfl⟩ := mem_zip0 ha
+    simp only [decide_eq_true_eq, Prod.mk.injEq] at hp
+    obtain ⟨h, rfl⟩ := hp
+    rw [node_of_id hx' hx h]
+
+end FamFca
+
+end ArchytasZX
