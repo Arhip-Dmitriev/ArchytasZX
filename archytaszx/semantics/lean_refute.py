@@ -1634,7 +1634,7 @@ class _Refuter:
             if grouped is None:
                 return []
             hint = grouped
-            ranges = [ranges[i] for i in order]
+        ranges = [ranges[i] for i in order]
         if not all(0 <= v < r for v, r in zip(hint, ranges, strict=True)):
             return []
         out = [0] * len(bnd)
