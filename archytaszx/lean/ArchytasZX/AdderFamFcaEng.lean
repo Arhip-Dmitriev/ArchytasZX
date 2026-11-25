@@ -15,7 +15,13 @@ binder / shift / splitter spec, with their environment.
 * `engR n`: the spec from `2n² + 8n`.
 * `engE d n`: dimension `i < n` is `d ^ (i + 1)`, dimension `n` is `1`; phase `p ∈ [1, n]` is
   `k ↦ 2k / d ^ (n - p + 1)`, phase `n + 1` is `k ↦ -2k / d ^ n`.
-* `engL_lit`, `engR_lit`: equal to the engine's literal exports at `n = 1 … 5`.
+* `engL_lit`, `engR_lit`, `engLabs_lit`: equal to the engine's literal exports at `n = 1 … 5`.
+* `eval_engR`: the spec as the shift by `2` mod `d ^ n` of the input digit value.
+* `eval_engL`: the boxed side as the product over copies of each copy's Fourier sum with its
+  `ZP` pair phases, by pinning every chain and pair label.
+* `prod_Ce`: that product, copy `k` read as `Fca`'s copy `n - 1 - k`, is `Fca.IndS` (from
+  `Fca.arith`).
+* `engFam`: `engL n = engR n` over `engE d n` for every `n ≥ 1` and every `d`.
 -/
 
 namespace ArchytasZX
@@ -938,7 +944,8 @@ theorem tP_neg (D o x : ℕ) : tP D (-1) [o, x] = (om D ^ (o * x))⁻¹ := by
 /-- Copy `i`'s summand at the Fourier value `x`, its pairs as pair phases. -/
 noncomputable def Ce (d : ℕ) (σ : ℕ → ℕ) (i x : ℕ) : ℂ :=
   fou d x (σ (sl i 0)) * ex (phase d (2 * i + 1) x) * (starRingEnd ℂ) (fou d (σ (sl i 1)) x) *
-    ((range i).map fun k => tP (pD d i k) 1 [σ (sl k 0), x] * tP (pD d i k) (-1) [σ (sl k 1), x]).prod
+    ((range i).map fun k => tP (pD d i k) 1 [σ (sl k 0), x] *
+      tP (pD d i k) (-1) [σ (sl k 1), x]).prod
 
 theorem Ce_sum (d : ℕ) (hd : 0 < d) (σ : ℕ → ℕ) (i : ℕ) :
     ∑ x ∈ Finset.range d, Ce d σ i x = Gl d σ i := by
@@ -983,6 +990,229 @@ theorem prod_Ce (d : ℕ) (hd : 0 < d) (σ : ℕ → ℕ) (n : ℕ) (ha : ∀ i 
   exact prod_Gl d hd σ n ha hb
 
 end arith
+
+
+/-! ## The boxed side in closed form -/
+
+section closed
+
+open Fca
+
+theorem sumOver_blocks (D : ℕ → ℕ) (c : ℕ) (G : ℕ → ℕ → ℕ → ℕ → ℂ) :
+    ∀ (ms : List ℕ), ms.Nodup → ∀ σ : ℕ → ℕ,
+      sumOver D (ms.flatMap fun m => [c + 8 * m + 1, c + 8 * m + 5, c + 8 * m + 6])
+        (fun τ => (ms.map fun m => G m (τ (c + 8 * m + 1)) (τ (c + 8 * m + 5))
+          (τ (c + 8 * m + 6))).prod) σ =
+      (ms.map fun m => ∑ x ∈ Finset.range (D (c + 8 * m + 1)),
+        ∑ u ∈ Finset.range (D (c + 8 * m + 5)), ∑ v ∈ Finset.range (D (c + 8 * m + 6)),
+          G m x u v).prod
+  | [], _, σ => by simp [sumOver]
+  | m :: ms, h, σ => by
+    have hm : m ∉ ms := (nodup_cons.1 h).1
+    rw [flatMap_cons]
+    simp only [map_cons, prod_cons]
+    rw [sumOver_mul_split (Sf := [c + 8 * m + 1, c + 8 * m + 5, c + 8 * m + 6])
+      (Sg := ms.flatMap fun m => [c + 8 * m + 1, c + 8 * m + 5, c + 8 * m + 6])]
+    · rw [sumOver_blocks D c G ms (nodup_cons.1 h).2 σ]
+      congr 1
+      simp only [sumOver]
+      refine Finset.sum_congr rfl fun x _ => Finset.sum_congr rfl fun u _ =>
+        Finset.sum_congr rfl fun v _ => ?_
+      simp
+    · intro τ τ' e
+      dsimp only
+      rw [e (c + 8 * m + 1) (by simp), e (c + 8 * m + 5) (by simp), e (c + 8 * m + 6) (by simp)]
+    · intro τ τ' e
+      dsimp only
+      congr 1
+      refine List.map_congr_left fun k hk => ?_
+      rw [e (c + 8 * k + 1) (mem_flatMap.2 ⟨k, hk, by simp⟩),
+        e (c + 8 * k + 5) (mem_flatMap.2 ⟨k, hk, by simp⟩),
+        e (c + 8 * k + 6) (mem_flatMap.2 ⟨k, hk, by simp⟩)]
+    · intro x hx hx'
+      obtain ⟨k, hk, hk'⟩ := mem_flatMap.1 hx'
+      have hne : k ≠ m := fun e => hm (e ▸ hk)
+      simp only [mem_cons, not_mem_nil, or_false] at hx hk'
+      rcases hx with rfl | rfl | rfl <;> rcases hk' with e | e | e <;> omega
+    · intro x hx hx'
+      obtain ⟨k, hk, hk'⟩ := mem_flatMap.1 hx
+      have hne : k ≠ m := fun e => hm (e ▸ hk)
+      simp only [mem_cons, not_mem_nil, or_false] at hx' hk'
+      rcases hx' with rfl | rfl | rfl <;> rcases hk' with e | e | e <;> omega
+
+theorem tri_sq (n : ℕ) : 2 * tri n + n = n * n := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp only [tri]; nlinarith
+
+theorem rb_eq (n : ℕ) : rb n = 10 * n + 4 * tri n := by
+  have := tri_sq n; unfold rb; nlinarith
+
+theorem Tm_congr (d n : ℕ) {σ τ : ℕ → ℕ} (h : ∀ x < 2 * n, τ x = σ x) {m : ℕ} (hm : m < n)
+    (x u v : ℕ) : Tm d n τ m x u v = Tm d n σ m x u v := by
+  unfold Tm
+  rw [h (n + m) (by omega), h m (by omega)]
+  congr 2
+  refine List.map_congr_left fun j hj => ?_
+  obtain ⟨_, h2⟩ := mem_later.1 hj
+  rw [h (n + j) (by omega), h j (by omega)]
+
+/-- Copy `m`'s summand at the Fourier value `x`, the `F³` chain summed. -/
+noncomputable def Ec (d n : ℕ) (σ : ℕ → ℕ) (m x : ℕ) : ℂ :=
+  fou d x (σ (n + m)) * ex (engP d n (m + 1) x) * (starRingEnd ℂ) (fou d (σ m) x) *
+    ((later n m).map fun j => tP (engD d n (j - m)) 1 [σ (n + j), x] *
+      tP (engD d n (j - m)) (-1) [σ j, x]).prod
+
+theorem frees_eq (n : ℕ) :
+    frees n = (range n).flatMap fun m =>
+      [2 * n + 8 * m + 1, 2 * n + 8 * m + 5, 2 * n + 8 * m + 6] := by
+  simp [frees]
+
+/-- The boxed side at `n ≥ 1` copies: the product over copies of the Fourier sums. -/
+theorem eval_engL (d : ℕ) (hd : 0 < d) {n : ℕ} (hn : 0 < n) (σ : ℕ → ℕ)
+    (hb : ∀ x < 2 * n, σ x < d) :
+    eval (engE d n) (engL n) σ = ∏ m ∈ Finset.range n, ∑ x ∈ Finset.range d, Ec d n σ m x := by
+  have hrb : ∀ x, x < 10 * n + 4 * tri n → labDim (engE d n) x = d := fun x hx =>
+    labDim_low d hn (by rw [rb_eq]; exact hx)
+  unfold eval
+  rw [sumOver_perm _ (int_perm n), sumOver_append]
+  rw [sumOver_congr _ (frees n) _ (fun τ => ((range n).map fun m =>
+    Tm d n σ m (τ (cb n m + 1)) (τ (cb n m + 5)) (τ (cb n m + 6))).prod) σ ?_]
+  · rw [frees_eq]
+    refine (sumOver_blocks (labDim (engE d n)) (2 * n) (Tm d n σ) _ nodup_range σ).trans ?_
+    rw [lprod_range]
+    refine Finset.prod_congr rfl fun m hm => ?_
+    have hm := Finset.mem_range.1 hm
+    rw [hrb (2 * n + 8 * m + 1) (by omega), hrb (2 * n + 8 * m + 5) (by omega),
+      hrb (2 * n + 8 * m + 6) (by omega)]
+    refine Finset.sum_congr rfl fun x _ => ?_
+    have h3 := fou_three d (σ m) x hd
+    rw [Finset.sum_comm, Ec, ← h3]
+    simp only [Tm, Finset.mul_sum, Finset.sum_mul]
+    refine Finset.sum_congr rfl fun v _ => Finset.sum_congr rfl fun u _ => ?_
+    ring
+  · intro τ hτ hr
+    have hlow : ∀ x < 2 * n, τ x = σ x := fun x hx => hτ x fun h => by
+      rw [frees_eq] at h
+      obtain ⟨k, _, hk⟩ := mem_flatMap.1 h
+      simp only [mem_cons, not_mem_nil, or_false] at hk
+      rcases hk with e | e | e <;> omega
+    have hf : ∀ m < n, τ (cb n m + 1) < d := fun m hm => by
+      have := hr (cb n m + 1)
+        (by rw [frees_eq]; exact mem_flatMap.2 ⟨m, mem_range.2 hm, by simp [cb]⟩)
+      rwa [hrb (cb n m + 1) (by unfold cb; omega)] at this
+    have hbτ : ∀ x < 2 * n, τ x < d := fun x hx => by rw [hlow x hx]; exact hb x hx
+    rw [Fca.sumOver_single _ _ (pins_nodup n) _ τ (tz n τ) (fun x hx => tz_off n τ hx) ?_ ?_,
+      prodVal_tz d hn hf hbτ]
+    · congr 1
+      refine List.map_congr_left fun m hm => ?_
+      exact Tm_congr d n hlow (mem_range.1 hm) _ _ _
+    · intro l hl
+      rw [hrb l ?_]
+      · exact tz_lt d hf hbτ l hl
+      · rcases mem_append.1 hl with hc | hp
+        · simp only [chainP, mem_flatMap, mem_range, mem_map, mem_cons, not_mem_nil,
+            or_false] at hc
+          obtain ⟨m, hm, r, hr, rfl⟩ := hc
+          rcases hr with rfl | rfl | rfl | rfl | rfl <;> omega
+        · simp only [pairP, mem_map, mem_range] at hp
+          obtain ⟨k, hk, rfl⟩ := hp
+          omega
+    · intro τ' h0 _ hne l hl
+      exact engL_support d hne h0 l hl
+
+/-- The digits of the engine's boundary at Fca's digit labels: copy `k` is the engine's copy
+`n - 1 - k`. -/
+def psiL (n : ℕ) : List (ℕ × ℕ) :=
+  (range n).flatMap fun k => [(sl k 0, n + (n - 1 - k)), (sl k 1, n - 1 - k)]
+
+/-- `σ` read at Fca's digit labels. -/
+def sigF (n : ℕ) (σ : ℕ → ℕ) (y : ℕ) : ℕ := σ (((psiL n).lookup y).getD 0)
+
+theorem psiL_nodup (n : ℕ) : ((psiL n).map Prod.fst).Nodup := by
+  have e : (psiL n).map Prod.fst = (range n).flatMap fun k => [sl k 0, sl k 1] := by
+    simp [psiL, map_flatMap]
+  rw [e, nodup_flatMap]
+  refine ⟨fun k _ => by simp [sl], ?_⟩
+  refine (pairwise_lt_range (n := n)).imp fun {a b} hab => List.disjoint_left.2 fun x hx hx' => ?_
+  simp only [mem_cons, not_mem_nil, or_false] at hx hx'
+  rcases hx with rfl | rfl <;> rcases hx' with e | e <;>
+    have := (sl_inj (by omega) (by omega) e).1 <;> omega
+
+theorem sigF_0 (n : ℕ) (σ : ℕ → ℕ) {k : ℕ} (hk : k < n) :
+    sigF n σ (sl k 0) = σ (n + (n - 1 - k)) := by
+  rw [sigF, Fca.lookup_of_mem _ (psiL_nodup n) (k := sl k 0) (v := n + (n - 1 - k))
+    (mem_flatMap.2 ⟨k, mem_range.2 hk, mem_cons_self⟩)]; rfl
+
+theorem sigF_1 (n : ℕ) (σ : ℕ → ℕ) {k : ℕ} (hk : k < n) :
+    sigF n σ (sl k 1) = σ (n - 1 - k) := by
+  rw [sigF, Fca.lookup_of_mem _ (psiL_nodup n) (k := sl k 1) (v := n - 1 - k)
+    (mem_flatMap.2 ⟨k, mem_range.2 hk, mem_cons_of_mem _ mem_cons_self⟩)]; rfl
+
+theorem engP_phase (d : ℕ) {n m : ℕ} (hm : m < n) (x : ℕ) :
+    engP d n (m + 1) x = phase d (2 * (n - 1 - m) + 1) x := by
+  unfold engP phase
+  rw [if_neg (by omega), if_pos (by omega), if_neg (by omega), if_pos (by omega),
+    show n - (m + 1) + 1 = (2 * (n - 1 - m) + 1) / 2 + 1 by omega]
+
+theorem Ec_Ce (d : ℕ) {n m : ℕ} (hm : m < n) (σ : ℕ → ℕ) (x : ℕ) :
+    Ec d n σ m x = Ce d (sigF n σ) (n - 1 - m) x := by
+  unfold Ec Ce
+  rw [sigF_0 n σ (by omega), sigF_1 n σ (by omega), engP_phase d hm,
+    show n + (n - 1 - (n - 1 - m)) = n + m by omega, show n - 1 - (n - 1 - m) = m by omega]
+  congr 1
+  rw [later, map_map, lprod_range, lprod_range]
+  rw [show n - m - 1 = n - 1 - m by omega,
+    ← Finset.prod_range_reflect _ (n - 1 - m)]
+  refine Finset.prod_congr rfl fun t ht => ?_
+  have ht := Finset.mem_range.1 ht
+  simp only [Function.comp_def]
+  rw [sigF_0 n σ (show t < n by omega), sigF_1 n σ (show t < n by omega),
+    show m + 1 + (n - 1 - m - 1 - t) = n - 1 - t by omega,
+    show engD d n (n - 1 - t - m) = pD d (n - 1 - m) t by
+      unfold engD pD; rw [if_pos (by omega)]; congr 1; omega]
+
+theorem topv_sigF (d n s : ℕ) (σ : ℕ → ℕ) (hs : s < 2) :
+    ∀ t ≤ n, topv d (sigF n σ) n s t = etv d σ (if s = 0 then n else 0) t
+  | 0, _ => rfl
+  | t + 1, ht => by
+    simp only [topv, etv, topv_sigF d n s σ hs t (by omega)]
+    congr 1
+    interval_cases s
+    · rw [sigF_0 n σ (by omega), if_pos rfl]; congr 1; omega
+    · rw [sigF_1 n σ (by omega), if_neg (by omega), Nat.zero_add]; congr 1; omega
+
+end closed
+
+/-! ## The engine's fca family -/
+
+/-- The engine's boxed Fourier constant adder equals its spec at every `n ≥ 1` copies, for
+every dimension `d`. -/
+theorem engFam (d : ℕ) (hd : 0 < d) (n : ℕ) (hn : 1 ≤ n) :
+    Equal (engE d n) 1 (engL n) 1 (engR n) := by
+  refine ⟨List.Perm.refl _, fun σ hσ => ?_⟩
+  have hrb : 2 * n ≤ rb n := by unfold rb; nlinarith
+  have hb : ∀ x < 2 * n, σ x < d := fun x hx => by
+    have := hσ x (mem_range.2 hx)
+    rwa [labDim_low d hn (by omega)] at this
+  rw [one_mul, one_mul, eval_engL d hd hn σ hb, eval_engR d hd hn σ
+    (fun t ht => hb _ (by omega)) (fun t ht => hb _ (by omega))]
+  have key : ∏ m ∈ Finset.range n, ∑ x ∈ Finset.range d, Ec d n σ m x =
+      ∏ i ∈ Finset.range n, ∑ x ∈ Finset.range d, Ce d (sigF n σ) i x := by
+    rw [← Finset.prod_range_reflect _ n]
+    refine Finset.prod_congr rfl fun i hi => Finset.sum_congr rfl fun x _ => ?_
+    have hi := Finset.mem_range.1 hi
+    rw [Ec_Ce d (by omega), show n - 1 - (n - 1 - i) = i by omega]
+  rw [key, prod_Ce d hd (sigF n σ) n (fun i hi => by rw [sigF_0 n σ hi]; exact hb _ (by omega))
+    (fun i hi => by rw [sigF_1 n σ hi]; exact hb _ (by omega)), Fca.IndS,
+    topv_sigF d n 0 σ (by omega) n le_rfl, topv_sigF d n 1 σ (by omega) n le_rfl]
+  simp
+
+theorem engFam_8 (d : ℕ) (hd : 0 < d) : Equal (engE d 8) 1 (engL 8) 1 (engR 8) :=
+  engFam d hd 8 (by norm_num)
+
+theorem engFam_2 : ∀ n, 1 ≤ n → Equal (engE 2 n) 1 (engL n) 1 (engR n) :=
+  engFam 2 (by norm_num)
 
 
 /-! ## The engine's literal exports -/
