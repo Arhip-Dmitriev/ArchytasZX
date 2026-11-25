@@ -373,7 +373,9 @@ Let $V$ be \py!_sample_values(left, right, floors)!, $n$ its number of symbols i
 \item If $n=0$, return the one empty assignment.
 \item The \emph{diagonals} are the index tuples $(i,\ldots,i)$ for $i=0,1,2,3$.
 \item If $w^n\le 4096$ (\py!_MAX_GRID_PRODUCT!), the rest is every other index tuple of $\{0,1,2,3\}^n$ sorted by (largest index, index sum, tuple). Otherwise the rest is, for each base $b=0,\ldots,3$, each position $p=0,\ldots,n-1$ and each $i\neq b$, the tuple equal to $b$ everywhere but $i$ at $p$, in that loop order.
-\item Remove repeated tuples, keeping the first. Return, for each tuple $t$, the read-only assignment mapping the $j$-th symbol to its $t_j$-th sample value.
+\item Remove repeated tuples, keeping the first. Map each tuple $t$ to the read-only assignment that gives the $j$-th symbol its $t_j$-th sample value.
+\item \emph{Phase degrees} (\py!_phase_degrees!). For each multiplicity symbol $m$ whose samples are \py!MULTIPLICITY_SAMPLE_VALUES! $=(0,1,2,3)$, let $g_m$ be the largest degree in $m$ of any phase expression that reads $m$ on either side (the stored rule of a phase vector, and its stored entries when it has a rule or no stored rule; an expression that is no polynomial in $m$ is skipped). For each such $m$ in name order and each $v=4,\ldots,g_m$, append the point with every symbol at its first sample value and $m=v$.
+\item Return the assignments in that order.
 \end{enumerate}
 \end{algorithm}
 
@@ -655,6 +657,7 @@ Input: a pair $(L,R)$, the options of \py!decide_equal!, and optional dimension 
 \item \emph{Mixed operands.} If \py!mixed! is set or either side is not pure, run the doubled ladder (\cref{sec:proofs-doubled}) and return its result.
 \item Record \py!parameters_agree! (equal parameter environments) and clear both environments: $L_f$, $R_f$.
 \item \emph{Rung 1}, interface (\cref{sec:proofs-rung-interface}). A reason returns \texttt{UNEQUAL}/\allowbreak\texttt{INTERFACE} with that reason.
+\item \emph{Mixed path sum first} (\py!_mixed_path_sum_first!). When path sums are on and the family pair is a mixed pair (\py!is_mixed_pair!: one side has a discard, both sides are box-free, and every port dimension is $1$, $2$, $3$, or $6$; \cref{ch:semantics}), run the path-sum rung (\cref{alg:proofs-pathsum}) with no parameters. \code!equal! returns \texttt{EQUAL}/\allowbreak\texttt{PATH\_SUM} with reason \code!R; mixed path sum before the other rungs!; \code!unequal! returns \texttt{UNEQUAL}/\allowbreak\texttt{SYMBOLIC\_WITNESS} with the differing entry as an \py!EntryWitness! and reason \code!path sums differ at boundary index I: L vs R (R')!; both record the stop \code!('path_sum', status)!. Any other result continues.
 \item \emph{Rung 2}, normal forms (\cref{sec:proofs-rung-nf}): compute both normal forms and their certificates, the assumptions, and whether they agree; stop code \code!agree! or \code!differ!.
 \item \emph{Rung 3}, oracle: the candidates are \py!samples! or \py!sample_grid(L_f, R_f, phi)!; run \cref{alg:proofs-run-oracle} with \py!max_samples!, the fallback point and size ordering exactly when \py!samples! is \py!None!, and \py!max_planned! $=2^{20}$. A mismatch returns \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} with the counterexample, its comparison and no assumptions.
 \item \emph{Normal-form verdict.} If the normal forms agree: when no sample evaluated, run the deferred check (step~11), which may return \texttt{UNEQUAL}; then return \texttt{EQUAL}/\allowbreak\texttt{NORMAL\_FORM} with both certificates and the normal-form assumptions.
@@ -775,7 +778,7 @@ A match returns \texttt{EQUAL}/\allowbreak\texttt{SYMBOLIC\_CONTRACTION} with re
 
 On a non-match the rung searches for a counterexample:
 \begin{enumerate}
-\item \emph{Root points} (\py!root_points!). When the comparison produced a difference $\Delta$, take every dimension symbol $d$ of $\Delta$ (a symbol of some port dimension of either side). For each, factor $\Delta$, keep the factors (or bases of positive powers) that are polynomials in $d$ alone, and collect their integer roots (\py!_integer_roots!); when there are roots, $d$ is raised to $\max+1$. Each candidate of the oracle rung with a raised value applied to every integer value below it gives a new point; new points that equal neither their candidate nor an earlier point nor a candidate are kept, in order.
+\item \emph{Root points} (\py!root_points!). When the comparison produced a difference $\Delta$, take every dimension symbol $d$ of $\Delta$ (a symbol of some port dimension of either side). For each, factor $\Delta$, keep the factors (or bases of positive powers) that are polynomials in $d$ alone, and collect their integer roots (\py!_integer_roots!); when there are roots, $d$ is raised to $\max+1$. Each candidate of the oracle rung with a raised value applied to every integer value below it, and then each dimension symbol $d$ whose value $v\ge1$ divides every nonzero integer constant term of the congruence atoms $\mathrm{ModDelta}(a,d)$ of $\Delta$ (\py!_congruence_constants!) raised by one until it does not, gives a new point; new points that equal neither their candidate nor an earlier point nor a candidate are kept, in order.
 \item \emph{Witness} (\py!_symbolic_witness!): \py!find_entry_witness! of the two tensors (\cref{alg:proofs-find-witness}) over the candidates followed by the root points, filtered to those admissible for the symbol table and meeting every merged floor (\py!_witness_assignments!); a symbolic-set error gives no witness.
 \item \emph{Cross check.} When root points exist, run the oracle on them in order, with \py!max_samples!, no fallback and no ordering; add the evaluated count. If no witness was found and this oracle run mismatches, return \texttt{UNEQUAL}/\allowbreak\texttt{ORACLE\_COUNTEREXAMPLE} at that point.
 \item A witness $w$ sets the stop code to \code!differ! and returns \texttt{UNEQUAL}/\allowbreak\texttt{SYMBOLIC\_WITNESS} with reason \code!symbolic contractions differ at {a}, boundary index (i, ...): x vs y!, counterexample $w$'s assignment, the witness, and a synthetic \texttt{EXACT} comparison with reason \code!entry (i, ...) differs by D! and deviation $D=|x-y|$.
@@ -807,6 +810,17 @@ The path-sum rung compares the path sums~\cite{amy2018pathsums} of both sides th
 The induction rung proves a family over a multiplicity symbol by induction~\cite{kissinger2015firstorder}: a base case decided by the whole ladder, nested, and a step case discharged by the induction machinery of \cref{ch:kernel}. When the plain argument fails, it tries five further arguments. Its result is either a settled tuple (verdict, method, reason, evidence) or a reason string (\py!_Unsettled!, a \py!str! subclass that also carries the base-case decision it reached).
 
 \paragraph{Nesting.} Three context variables govern nested ladders. \py!_NESTED! is true inside a base case's or sub-pair's \py!decide_equal!; it makes \py!_certify! return the decision unchanged, so nested decisions are not certified. \py!_INDUCING! is true while an induction rung runs; \py!_decide_by_induction! passes \py!shift=True! to the rung only when no induction rung is running already.
+
+\begin{algorithm}[Induction routes]\label{alg:proofs-induction-routes}
+\py!_decide_by_induction(L, R, ...)! sets \py!_INDUCING! for its duration and:
+\begin{enumerate}
+\item runs \py!_induction_rung! (\cref{alg:proofs-induction}) with \py!shift! true when it is the outermost call;
+\item when outermost and the result is undecided or an \texttt{EQUAL} without a kernel proof, tries \py!_regrouped_induction!: with exactly one free multiplicity symbol $n$ (the step variable named \code!k!, or \code!k1! when $n$ is \code!k!), \py!radix_window.regrouped_induction(L, R, n, k)! (\cref{ch:kernel}); a \py!RadixWindowError! or an induction error gives nothing; a theorem returns \texttt{EQUAL} by \texttt{INDUCTION} with reason \code!slot nodes grouped and chain boxes split into aligned chains; induction over n by the radix window, the grouping undone by regroup; holds for n >= 0; kernel proof built! and no assumptions;
+\item when outermost and still undecided, tries \py!_generalized_induction! when every phase symbol of both sides is a multiplicity symbol: for each multiplicity symbol $n$ in name order, \py!generalized_constant(L, R, n)! (\cref{ch:kernel}) gives sides with a phase constant $c$ replaced by a fresh real parameter \code!NAME!; the induction rung on those (without the shifted route, evaluations, or samples) must return \texttt{EQUAL} with a kernel proof, which \py!kernel.phase_instance! takes at \code!NAME = c! and \py!kernel.iso! joins to the original sides; the reason is \code!for every real NAME in place of c: R; taken at NAME = c!. A \py!KernelError! skips $n$;
+\item otherwise returns the rung's result.
+\end{enumerate}
+After the induction route on the family pair, when it is undecided and both normal forms exist, \py!_induction_on_normal_forms! retries it on the two normal forms when either normalization applied a step and both certificates exist: an \texttt{EQUAL} with a kernel proof is joined to the original sides through the two normal-form certificates (\py!kernel.check!, \py!kernel.iso!, \py!kernel.symm!; a \py!KernelError! drops the proof and appends \code!; the normal-form certificates do not join it: E! to the reason), its reason is prefixed \code!on the normal forms: !, and its assumptions are joined with the normal forms' assumed constraints (\py!_joined!).
+\end{algorithm}
 
 \begin{signature}
 \py!_STEP_LADDER = (UNIFORM_REWRITE, INDUCTION_REWRITE, SYMBOLIC_CONTRACTION, CHAIN_WINDOW, TREE_WINDOW)!
@@ -923,7 +937,8 @@ A \term{restriction} narrows a claim to some values of its symbols: clauses such
 \begin{enumerate}
 \item Raise \py!DecideGrammarError! when \py!family_first! is not a \py!bool!.
 \item \emph{Finite clauses.} If the restriction has finite clauses, decide every combination of their values in product order by \py!decide_restricted! on \py!instance_at! of it. The first \texttt{UNEQUAL} or \texttt{UNEQUAL\_UNCERTIFIED} returns with reason \code!instance x = v, ...: R!. If any instance is undecided (or none is equal), return \texttt{UNKNOWN}/\texttt{NONE} with reason \code!instances left undecided: L1; L2 (equal at E1; ...)!. Otherwise return the last instance's decision with verdict \texttt{EQUAL\_UNCERTIFIED} and reason \code!every instance equal (E1; ...); uncertified: the kernel has no proof combining the instances!.
-\item \emph{Family first.} With \py!family_first!, run the ladder on the unrestricted pair. An \texttt{EQUAL} is returned with \py!family_holds! set.
+\item \emph{Point pre-check} (\py!_point_refuted!). With \py!family_first!, an instance restriction (every clause fixes a value), and no given samples, the family run is skipped when the restricted pair is refuted at its point: both sides pure and the call not mixed, the family interfaces agreeing, each side's boundary at the clause values at most $\log_2$ \py!_DEFERRED_SIZE! $+10^{-9}$ bits (\py!_boundary_bits!: $\sum$ over boundary ports of multiplicity $\times\log_2$ dimension, for dimensions above $1$ and positive multiplicities), each side's expanded node count at most \py!_POINT_NODES! $=2^{12}$ (\py!_expanded_nodes!; a tree \bbox{} or a non-integer count skips the bound), and the oracle (\py!_run_oracle! with \py!by_size!, at most \py!max_samples! samples of the restricted pair's grid) finding a mismatch.
+\item \emph{Family first.} With \py!family_first! (and not skipped above), run the ladder on the unrestricted pair. An \texttt{EQUAL} is returned with \py!family_holds! set.
 \item Compute the restricted pair by \py!subst_pair!.
 \item If the family decision is \texttt{UNEQUAL}: when its method is \texttt{INTERFACE}, recompute the interface reason on the restricted pair and, when it still fails, return the family decision with that reason and the restricted pair; otherwise, when its counterexample (or the lifted induction counterexample) lies in the domain, return the family decision with \py!counterexample_original! set to that point.
 \item \emph{Samples.} Given samples are cut by \py!restricted_samples!. Without given samples and with a non-certifiable restriction, the samples are the points of \py!sample_grid! of the restricted pair under the restriction's floors whose original reading lies in the domain.
@@ -1311,10 +1326,10 @@ tries, in order, the Lean network exports of the path sums over qubits (\py!expo
 \subsection{Lemmas}
 
 \begin{signature}
-\py!@dataclass(frozen=True, slots=True) class Lemma!: \py!name: str!; \py!symbol: str!; \py!statement: str!; \py!build: Callable[[sympy.Expr], tuple[Diagram, Diagram]]!; \py!prove: Callable[[Diagram, Diagram, str], object] | None = None!.
+\py!@dataclass(frozen=True, slots=True) class Lemma!: \py!name: str!; \py!symbol: str!; \py!statement: str!; \py!build: Callable[[sympy.Expr], tuple[Diagram, Diagram]]!; \py!prove: Callable[[Diagram, Diagram, str], object] | None = None!; \py!values: Callable[[Diagram], list[sympy.Expr]] | None = None!; \py!proves_instances: bool = False!.
 \end{signature}
 
-A lemma states \py!build(e)[0] = build(e)[1]! for every value $e$ of \py!symbol!. \py!prove!, when given, proves both sides with the symbol formal to a kernel theorem. \Cref{tab:proofs-lemmas} lists the stored lemmas; all use the symbol \code!p!.
+A lemma states \py!build(e)[0] = build(e)[1]! for every value $e$ of \py!symbol!. \py!prove!, when given, proves both sides with the symbol formal to a kernel theorem. \py!values!, when given, lists the values of the symbol at which to try the lemma in a diagram (\py!_values!, below); \py!proves_instances! makes \py!prove! also prove the sides at any value. \Cref{tab:proofs-lemmas} lists the stored lemmas; \code!cooley_tukey! and \code!cooley_tukey_2! use the symbol \code!t! (whose value is a pair $(s,t)$ of the top and low register dimensions, or a single $t$ with the top dimension \code!d!, \py!_radix_dims!), all others \code!p!.
 
 \begin{table}[H]
 \centering\small
@@ -1327,6 +1342,14 @@ Name & Group & Statement \\
 \code!and_gated! & \py!LIBRARY! & \code!and_register! with the gathering Z spider taking one more input, on both sides \\
 \code!and_split! & \py!LIBRARY! & a $2^p$ register split by an S chain into $p$ bits, each copied into a triangle gathered with one more input by one Z spider, is the register tested for all ones as in \code!and_register!, then split \\
 \code!zero_register! & \py!LIBRARY! & a bit bound under $p$ zero bits by a B chain is the bit bound under one zero $2^p$ register \\
+\code!cooley_tukey! & \py!LIBRARY! & the shift by one over $st$, with the top $s$ register and the low $t$ register bound by $B(s,t)$, is the low register shifted by one over $t$, its input and output values read into pair phases $xy/(st)$ and $-xy/(st)$ against the Fourier side of the top register, which carries phase $k/(st)$ \\
+\code!cooley_tukey_2! & \py!LIBRARY! & the same for the shift by two, the top register carrying phase $2k/(st)$; proved, also at instances, by \py!_prove_two_shift! (two shift-by-one blocks by contraction, \code!cooley_tukey! rewritten twice) \\
+\code!row_bind! & \py!LIBRARY! & a pair phase $xy/d^{p+1}$ between a $d$ wire and the $d^p$ register bound from $p$ digits by a $B(d^j,d)$ chain is one pair phase $xy/d^{j+2}$ on each digit $j$ before the chain \\
+\code!row_split! & \py!LIBRARY! & a pair phase $-xy/d^{p+1}$ between a $d$ wire and a $d^p$ register split into $p$ digits by an $S(d^j,d)$ chain is one pair phase $-xy/d^{j+2}$ on each digit $j$ after the chain \\
+\code!row_split_up! & \py!LIBRARY! & \code!row_split! with the pair phases $+xy/d^{p+1}$ and $+xy/d^{j+2}$ \\
+\code!top_bind! & \py!LIBRARY! & a top digit bound by $B(1,d)$, then $p$ digits by a $B(d^{j+1},d)$ chain, is the $p$ digits bound by a $B(d^j,d)$ chain under the top digit by $B(d,d^p)$; proved by \py!induct_by_insertion! \\
+\code!top_split! & \py!LIBRARY! & a $d^{p+1}$ register split into $p$ digits by an $S(d^{j+1},d)$ chain and the top digit by $S(1,d)$ is the top digit split off by $S(d,d^p)$, the rest by an $S(d^j,d)$ chain; proved by \py!induct_by_insertion! \\
+\code!radix_add! & \py!LIBRARY! & a $d^{p+1}$ adder on registers bound from a top digit and a $d^p$ register by $B(d,d^p)$, split by $S(d,d^p)$, is the $d^p$ adder on the low registers and, on the top digits, $F$ into a Z hub, $F^3$ out, the hub read into pair phases $xy/d^{p+1}$ against the low addend before the adder and the low copied register after it, and $-xy/d^{p+1}$ against the low sum \\
 \code!split_bind! & \py!INSERTIONS! & a $2^p$ register split by an S chain into $p$ bits and bound back by an aligned B chain is the identity \\
 \code!qram_copy! & \py!COPIES! & $p$ address bits, each flipped unless it matches the bit of a $2^p$ register $R$ split by an S chain, gathered with a data bit through triangles into a controlled flip of the target, is the address bound into a $2^p$ register less $R$ (split and bound back), tested for $0$ with the data bit and the Fourier-side target \\
 \bottomrule
@@ -1335,7 +1358,7 @@ Name & Group & Statement \\
 \label{tab:proofs-lemmas}
 \end{table}
 
-Only \code!qram_copy! has its own prover, \py!induct_by_insertion!. \py!lemma(name)! returns the lemma of that name from the three groups, else raises \py!LemmaError! \code!no lemma named 'x'!. \py!sides(entry, value=None)! returns both sides at \py!value!, or with the symbol formal (the dimension symbol of that name).
+\begin{sloppypar}\code!qram_copy!, \code!top_bind!, and \code!top_split! have the prover \py!induct_by_insertion!, \code!cooley_tukey_2! the prover \py!_prove_two_shift!. \code!cooley_tukey! is built directly (\py!_cooley_tukey_sides!): the left side is $B(s,t)$, the shift $\mathrm{Sh}_1(st)$, and $S(s,t)$; the right side is $F$ on the top input into a Z spider $Z(1\to3)$ over $s$ of phase rule $k/(st)$, whose first output passes $F^3$ to the top output, and whose other two outputs feed the pair-phase nodes $\mathrm{Zp}$ of phases $xy/(st)$ and $-xy/(st)$ (top to low) into a Z spider $Z(2\to1)$ over $t$ before and after the low shift $\mathrm{Sh}_1(t)$; \code!cooley_tukey_2! is the same at amount $2$. The radix lemmas are DSL texts (below). \py!lemma(name)! returns the lemma of that name from the three groups, else raises \py!LemmaError! \code!no lemma named 'x'!. \py!sides(entry, value=None)! returns both sides at \py!value!, or with the symbol formal (the dimension symbol of that name).\end{sloppypar}
 
 \paragraph{The carry lemma.} \code!carry_shift! is built directly (\py!_carry_sides(p)!). With $\mathrm{Sh}_s(D)$ the X spider $X(1\to1)$ over $D$ whose phase-vector rule is $-s\,k/D$ (the shift by $s$; \py!_shift!), the left side is $B(2,2^p)$ on inputs (top, low), then $\mathrm{Sh}_1(2^{p+1})$, then $S(2,2^p)$ on the outputs. The right side applies $F$ to the top input, binds it with the low input by $B(2,2^p)$, applies $\mathrm{Sh}_1(2^{p+1})$, a Z spider $Z(1\to1)$ over $2^{p+1}$ with weight rule $-1$, and $\mathrm{Sh}_{-1}(2^{p+1})$, splits by $S(2,2^p)$, applies $F^3$ to the top output and $\mathrm{Sh}_1(2^p)$ to the low output, with scalar $-1$.
 
@@ -1532,6 +1555,164 @@ outputs c.out0, s.out0, f3.out0
 \label{fig:proofs-split-bind}
 \end{figure}
 
+\paragraph{The radix lemmas.} The texts of \code!row_bind!, \code!row_split!, \code!top_bind!, \code!top_split!, and \code!radix_add! are below; \code!row_split_up! is \code!row_split! with \code!-x*y! replaced by \code!x*y! in both texts.
+\begin{lstlisting}[style=azx]
+# row_bind, left
+dim d
+count p
+zy = Z(1 -> 2, d)
+h = Z(0 -> 1, literal 1)
+b = B(d^j, d)
+pq = Zp(in: [d], out: [d^p]) phase{x, y: x*y/d^(p+1)}
+zr = Z(2 -> 1, d^p)
+wire h.out0 -- b.in0, b.out0 -- zr.in0, zy.out1 -- pq.in0, pq.out0 -- zr.in1
+repeat p as V index j: b
+chain V: b.out0 -> b.in0
+inputs zy.in0, b.in1
+outputs zy.out0, zr.out0
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# row_bind, right
+dim d
+count p
+zy = Z(1 -> 2, d)
+h = Z(0 -> 1, literal 1)
+b = B(d^j, d)
+zi = Z(2 -> 1, d)
+pa = Zp(1 -> 1, d) phase{x, y: x*y/d^(j+2)}
+wire h.out0 -- b.in0, zi.out0 -- b.in1, zy.out1 -- pa.in0, pa.out0 -- zi.in1
+repeat p as V index j: b
+repeat p as W index j: zi, pa
+align W with V
+chain V: b.out0 -> b.in0
+inputs zy.in0, zi.in0
+outputs zy.out0, b.out0
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# row_split, left
+dim d
+count p
+zy = Z(1 -> 2, d)
+zr = Z(2 -> 1, d^p)
+s = S(d^j, d)
+e = Z(1 -> 0, literal 1)
+pq = Zp(in: [d], out: [d^p]) phase{x, y: -x*y/d^(p+1)}
+wire zr.out0 -- s.in0, s.out0 -- e.in0, zy.out1 -- pq.in0, pq.out0 -- zr.in1
+repeat p as U index j: s
+chain U: s.in0 -> s.out0
+inputs zy.in0, zr.in0
+outputs zy.out0, s.out1
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# row_split, right
+dim d
+count p
+zy = Z(1 -> 2, d)
+s = S(d^j, d)
+e = Z(1 -> 0, literal 1)
+zo = Z(2 -> 1, d)
+pa = Zp(1 -> 1, d) phase{x, y: -x*y/d^(j+2)}
+wire s.out1 -- zo.in0, zy.out1 -- pa.in0, pa.out0 -- zo.in1, s.out0 -- e.in0
+repeat p as U index j: s
+repeat p as W index j: zo, pa
+align W with U
+chain U: s.in0 -> s.out0
+inputs zy.in0, s.in0
+outputs zy.out0, zo.out0
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# top_bind, left
+dim d
+count p
+h = Z(0 -> 1, literal 1)
+b0 = B(literal 1, d)
+b = B(d^(j + 1), d)
+wire h.out0 -- b0.in0, b0.out0 -- b.in0
+repeat p as V index j: b
+chain V: b.out0 -> b.in0
+inputs b0.in1, b.in1
+outputs b.out0
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# top_bind, right
+dim d
+count p
+h = Z(0 -> 1, literal 1)
+b = B(d^j, d)
+top = B(d, d^p)
+wire h.out0 -- b.in0, b.out0 -- top.in1
+repeat p as V index j: b
+chain V: b.out0 -> b.in0
+inputs top.in0, b.in1
+outputs top.out0
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# top_split, left
+dim d
+count p
+s = S(d^(j + 1), d)
+s0 = S(literal 1, d)
+e = Z(1 -> 0, literal 1)
+wire s.out0 -- s0.in0, s0.out0 -- e.in0
+repeat p as U index j: s
+chain U: s.in0 -> s.out0
+inputs s.in0
+outputs s0.out1, s.out1
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# top_split, right
+dim d
+count p
+top = S(d, d^p)
+s = S(d^j, d)
+e = Z(1 -> 0, literal 1)
+wire top.out1 -- s.in0, s.out0 -- e.in0
+repeat p as U index j: s
+chain U: s.in0 -> s.out0
+inputs top.in0
+outputs top.out0, s.out1
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# radix_add, left
+dim d
+count p
+ba = B(d, d^p)
+bb = B(d, d^p)
+z = Z(1 -> 2, d^(p + 1))
+x = X(2 -> 1, d^(p + 1))
+sa = S(d, d^p)
+sb = S(d, d^p)
+wire ba.out0 -- z.in0, z.out0 -- sa.in0, z.out1 -- x.in1, bb.out0 -- x.in0, x.out0 -- sb.in0
+inputs ba.in0, ba.in1, bb.in0, bb.in1
+outputs sa.out0, sa.out1, sb.out0, sb.out1
+\end{lstlisting}
+\begin{lstlisting}[style=azx]
+# radix_add, right
+dim d
+count p
+za = Z(1 -> 2, d)
+fa = F(d)
+fb = F(d)
+hub = Z(2 -> 4, d)
+g1 = F(d)
+g2 = F(d)
+g3 = F(d)
+zl = Z(1 -> 2, d^p)
+xl = X(2 -> 1, d^p)
+rb = Z(2 -> 1, d^p)
+pb = Zp(in: [d], out: [d^p]) phase{x, y: x*y/d^(p+1)}
+ra = Z(2 -> 1, d^p)
+pa = Zp(in: [d], out: [d^p]) phase{x, y: x*y/d^(p+1)}
+rs = Z(2 -> 1, d^p)
+ps = Zp(in: [d], out: [d^p]) phase{x, y: -x*y/d^(p+1)}
+wire za.out0 -- fa.in0, fa.out0 -- hub.in1, fb.out0 -- hub.in0, hub.out0 -- g1.in0
+wire g1.out0 -- g2.in0, g2.out0 -- g3.in0, hub.out1 -- ps.in0, ps.out0 -- rs.in1
+wire hub.out2 -- pa.in0, pa.out0 -- ra.in1, hub.out3 -- pb.in0, pb.out0 -- rb.in1
+wire rb.out0 -- xl.in0, zl.out1 -- xl.in1, zl.out0 -- ra.in0, xl.out0 -- rs.in0
+inputs za.in0, zl.in0, fb.in0, rb.in0
+outputs za.out1, ra.out0, g3.out0, rs.out0
+\end{lstlisting}
+
 \subsection{Proved lemmas and instances}
 
 \begin{signature}
@@ -1547,6 +1728,7 @@ returns the kernel theorem of the lemma with its symbol formal, proved on first 
 Let $\Theta$ be \py!proved(entry)! and $(A,B)$ the sides at \py!value!.
 \begin{enumerate}
 \item \emph{Substitution} (\py!_substituted!): when \py!value! is one symbol $s$ plus an integer $c$ and the lemma symbol is a box multiplicity of $\Theta$'s left side, apply \py!kernel.subst! with the clause $\text{symbol}=s+c$ (a multiplicity shift with $a=1$, fresh symbol $s$; a negative $c$ holds for $s\ge-c$) and join isomorphisms to $A$ and $B$; a \py!KernelError! or \py!DecideGrammarError! moves on.
+\item For a lemma with \py!proves_instances! and its own prover, \py!prove(A, B, symbol)!.
 \item \py!kernel.contraction(A, B)!.
 \item On its \py!KernelError!: \py!kernel.path_sum(A, B)!; then, for a lemma with its own prover, \py!kernel.instance(Theta, symbol, value)! between isomorphisms (\py!_renamed!); then \py!decide_equal(A, B, samples=[])!, which must be \texttt{EQUAL} (else \py!LemmaError! \code!lemma NAME at VALUE: E!, $E$ the contraction's error), proved by \py!kernel.from_decision! (a \py!KernelError! raises \py!LemmaError! with its message).
 \end{enumerate}
@@ -1554,7 +1736,7 @@ Let $\Theta$ be \py!proved(entry)! and $(A,B)$ the sides at \py!value!.
 
 \subsection{Rewriting with lemmas}
 
-\paragraph{Candidate values.} \py!_values(diagram, entry)! lists, in order of first appearance over the nodes in id order and their input then output ports, the values $e$, $e-1$ and $e-2$ for each port dimension $2^e$ with symbolic $e$.
+\paragraph{Candidate values.} \py!_values(diagram, entry)! is \py!entry.values(diagram)! when the lemma has a value finder: \py!_cooley_tukey_values! lists, for each binder whose output meets an X spider (nodes in id order), the pair of its input dimensions $(s,t)$, without repeats; \py!_radix_values! lists, for each \bbox{} with links whose multiplicity is symbolic and some port of whose nodes has a dimension $d^e$ ($d$ the symbol \code!d!), its multiplicity, without repeats. Otherwise it lists, in order of first appearance over the nodes in id order and their input then output ports, the values $e$, $e-1$ and $e-2$ for each port dimension $2^e$ with symbolic $e$.
 
 \paragraph{Candidate regions.} \py!_regions(diagram, pattern)! enumerates, without repetition, node sets of the diagram that assign to each pattern node (in sorted id order) a distinct node of the same generator type, such that every pattern wire between assigned nodes joins assigned nodes that are adjacent in the diagram (in either direction). It is a backtracking search in pattern-node order.
 

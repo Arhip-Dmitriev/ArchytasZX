@@ -646,6 +646,25 @@ written \code!((k / !$b$\code! % !$b_i$\leanx! : ℕ) : ℤ)! with $b$ the produ
 (\code!k / b! for the first digit, \code!k % b_i! for the last).
 \end{definition}
 
+\subsubsection{Digit polynomials (\texttt{digit\_poly})}\label{sec:lean-export-net-digitpoly}
+
+\module{archytaszx.semantics.digit_poly} fits a phase table $v_0,\ldots,v_{D-1}$ (numerators over $\mathit{den}$, entries past the given ones $0$) by an integer polynomial in the digits of the index.
+
+\begin{definition}[Digit polynomials]\label{def:lean-export-net-digitpoly}
+A \py!DigitPoly! has \py!bases! $(b_0,\ldots,b_{m-1})$ with $\prod b_i=D$, \py!terms! (coefficient, exponent tuple), and \py!den!. The digits of $k$ are $x_i$ with $k=\sum_i x_i\prod_{j>i}b_j$ (most significant first, \py!digits!); \py!value(k)! $=\bigl(\sum_t c_t\prod_i x_i^{e_{t,i}}\bigr)\bmod\mathit{den}$. \py!digit_text(i, var)! prints digit $i$ of \code{var} as \code{((var / B : ℕ) : ℤ)}, \code{((var % b : ℕ) : ℤ)}, or \code{((var / B % b : ℕ) : ℤ)} ($B$ the product of the lower bases; the variable itself for one base), and \py!lean(var)! the polynomial as \code{((c * x ^ e + ...) % den)} (negative coefficients as \code{(c : ℤ)}).
+\end{definition}
+
+\begin{algorithm}[\texttt{digit\_poly(nums, den, dim)}]\label{alg:lean-export-net-digitpoly}
+Return \py!None! when $\mathit{dim}<2$, more than $\mathit{dim}$ numerators are given, or a numerator is outside $[0,\mathit{den})$. For $m=1,\ldots,$ \py!MAX_DIGITS! $=4$, then degree $g=1,\ldots,$ \py!MAX_DEGREE! $=3$, then every ordered factorization of $\mathit{dim}$ into $m$ factors above $1$ (\py!_splits!, factors from the divisors in increasing order):
+\begin{enumerate}
+\item \py!_fit!: with $g_i=\min(g,b_i-1)$, refuse when $\prod(g_i+1)\ge\mathit{dim}$; take the values on the grid $\prod[0,g_i]$ of digit tuples and apply forward differences along each axis, giving the coefficients $c_\alpha$ of the binomial basis $\prod_i\binom{x_i}{\alpha_i}$, reduced to the symmetric range modulo $\mathit{den}$.
+\item \py!_probe!: compare the formula with the table at \py!PROBES! $=64$ evenly spaced indices.
+\item \py!_check!: compare at every index (exact integer arithmetic for $\mathit{den}>2^{30}$ or $\max b_i^{3}>2^{62}$, else 64-bit).
+\item On success, expand the binomial basis into monomials (\py!_monomials!), clear denominators by their least common multiple $\lambda$ (so \py!den! becomes $\mathit{den}\cdot\lambda$), and return the \py!DigitPoly!, or \py!None! when it has more than \py!MAX_POLY_TERMS! $=64$ monomials.
+\end{enumerate}
+\py!None! when no split fits.
+\end{algorithm}
+
 \py!_phase(pv)! computes the body and, for a weighted vector, its weight text
 \py!weights(pv)!; the key is the body, or \textit{body}\code!|!\textit{weights}. A new key gets
 the next index; the text \code!fun k => !\textit{body} goes to \py!phases!, the pair (entries in

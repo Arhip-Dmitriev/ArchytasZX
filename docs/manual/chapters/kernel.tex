@@ -599,6 +599,10 @@ Run \py!_chain_window!; on success return a settled \texttt{CHAIN\_WINDOW} outco
 
 A successor's residual can also be the hypothesis diagram only at another value of a real symbol read in phases. The chain window and the induction-theorem builder then induct on the claim for every real value of that symbol, the hypothesis diagrams taken at the value the successor gives it.
 
+\begin{definition}[Generalized constants]\label{def:kernel-generalized-constant}
+\py!generalized_constant(left, right, index) -> (Diagram, Diagram, str, sympy.Expr) | None! collects the magnitudes $|c|$ of the rational coefficients of every term that reads \code!index! in the phase expressions of both sides (pair phases, phase-vector entries, and rules). It requires exactly one magnitude $c$, rational, and neither $0$ nor $1$; then, with a fresh parameter symbol \code!a! (\py!_fresh_symbol_name!), every such term $\pm c\cdot r$ becomes $\pm a\cdot r$ on both sides, and it returns the two lifted sides, the parameter name, and $c$. The decision procedure's generalized induction route (\cref{ch:proofs}) inducts on the lifted claim and takes it at $a=c$ by \py!kernel.phase_instance!.
+\end{definition}
+
 \begin{definition}[Phase parameter]\label{def:kernel-phase-parameter}
 A \term{phase parameter} of a diagram (\py!_phase_symbols(D)!) is a free symbol read in some node phase and read nowhere else: not in the scalar, a multiplicity, a port dimension, or a copy scalar, and not a copy index. \py!parameter_symbol(name)! is the SymPy symbol of that name with \code!real=True!.
 \end{definition}
@@ -703,6 +707,44 @@ For each orientation (as in \cref{alg:kernel-chain-window}):
 \item Otherwise W-fuse the replaced diagram (\py!w_fused!; failure records \code!W fusion: E!) and close the window against each target; success adds \texttt{the leaf copies are a weighted W fused into the W leg feeding them} to the reason.
 \end{enumerate}
 Return unsettled with the joined reasons.
+\end{algorithm}
+
+\section{The Radix Window}\label{sec:kernel-radix-window}
+
+\module{archytaszx.semantics.radix_window} closes a step case whose chain boxes peel at their first copy: library lemmas rewrite the re-peeled successor until the hypothesis is a cut region, the region is replaced by the other side's hypothesis, and the result is tidied and met with the other side's first-copy peel. Every theorem it returns is built by kernel rules (\cref{sec:kernel-rules}). A failure raises \py!RadixWindowError! with its reason; \py!MAX_ROUNDS! $=12$.
+
+\begin{algorithm}[Exposing the hypothesis]\label{alg:kernel-radix-expose}
+\py!_first_peels(source, k)! is \py!kernel.repeel(source, k, a_first=B)!, $B$ every box that is no pair box: each such box peeled at its first copy. \py!expose(peeled, first, own_k, k)! starts from $t=$ \py!kernel.symm(first)!, whose left side must be \py!_same! as \py!peeled! when given (\code!the re-peel does not end at the peeled successor!). In each of at most \py!MAX_ROUNDS! rounds:
+\begin{enumerate}
+\item For \py!joint! false, then true: the \emph{core} is the nodes of every box with links whose multiplicity reads $k$, grown by every unboxed part (one node, or with \py!joint! a connected set of unboxed nodes outside the core) all of whose wire neighbors outside the part lie in the core, until no part joins. When the core is nonempty and \py!find_cut_region(t.rhs, core, own_k)! (\cref{ch:proofs}) finds a region, return $(t,\text{region})$.
+\item Otherwise rewrite with the first library lemma (\cref{tab:proofs-lemmas}) that applies to $t$'s right side and is not being proved (\py!_lemma_round!; \py!LemmaError!, \py!KernelError!, and \py!InductionDomainError! skip a lemma). When none applies, try the pair splits (\py!_pair_splits!): for each Z spider with at least three outputs, four ports, or a phase, each output wired to a \code!Zp! node is split off through the first other output (\py!_split_off!, \py!_split_theorem!), and the first split after which a lemma applies is taken. When nothing applies, raise \code!no library lemma applies and the core is not the hypothesis!.
+\end{enumerate}
+After the last round raise \code!the core is not the hypothesis after the lemma rounds!.
+\end{algorithm}
+
+\begin{algorithm}[Closing]\label{alg:kernel-radix-close}
+\py!close(replaced, other_source, other_peeled, k)!: from \py!kernel.refl(replaced)!, apply in order
+\begin{enumerate}
+\item \py!_align_merges!: while some alignment root merges (\py!align_merged!, \py!kernel.align_merge!), merge it;
+\item \py!_slot_groups!: keep in each box's groups only the boundary nodes, the groups sorted by their first boundary position, and \py!kernel.regroup! when this changes anything;
+\item \py!_box_fusions!: while some unboxed-phase Z spider $\ell$ in a box, with a boundary port, is wired to a Z spider $h$ in exactly the same boxes, fuse $\ell$ into $h$ (\py!_fuse_into!: $h$'s port toward $\ell$ becomes $\ell$'s boundary port, $\ell$'s other ports are appended to $h$'s sides, box scopes, groups, and pair ports follow) and justify the step by the first \py!boxed_splits! candidate that \py!kernel.iso! and \py!kernel.box_split! accept;
+\item \py!_tidy!: while possible, fuse two unboxed Z spiders joined by a wire (\py!_fusion!), else remove an unboxed identity (\code!identity_removal!);
+\item \py!_slot_groups! again.
+\end{enumerate}
+Then $m=$ \py!_first_peels(other_source, k)! must end at \py!other_peeled! when given (\code!the other re-peel does not end at the other peeled successor!); its left side is tidied and slot-grouped to $u$; the result is $t$, \py!kernel.iso! of the two tidied sides, $u$ reversed, and $m$, joined by \py!kernel.trans!.
+\end{algorithm}
+
+\begin{signature}
+\py!step(own_source, own_peeled, own_k, other_source, other_peeled, other_k, k) -> tuple[Theorem, CutRegion, Theorem]!
+\end{signature}
+\noindent \py!expose! on the own side, \py!replace_cut_region! of the exposed region by \py!other_k!, and \py!close!; a \py!KernelError! or \py!InductionDomainError! becomes \py!RadixWindowError!. The induction machinery calls it from its cut window (\cref{sec:kernel-induction}).
+
+\begin{algorithm}[\texttt{regrouped\_induction(left, right, index, k)}]\label{alg:kernel-regrouped-induction}
+\begin{enumerate}
+\item Slot-group both sides (\py!_slot_grouped!): each outermost box without groups and pair partner that holds at least two boundary nodes gets one group per boundary node, in boundary order.
+\item For the own side $0$, then $1$: split the own side's chain boxes (\py!_chain_splits!: while some outermost chain box's nodes fall into at least two parts connected by wires or links (\py!_chain_parts!, ordered by group rank), \py!chain_splitted! and \py!kernel.chain_split!); no split raises \code!no chain box splits!. Run \py!step! on the renamed successors, peeled successors, and hypotheses of the split own side and the grouped other side over \code!index! and \code!k!; prove the base case by \py!kernel.contraction!; build \py!kernel.induction! from the start side with the exposing theorem, the cut, and the step; prefix the splits, reverse for own side $1$, and return \py!kernel.regroup! of it to the original \code!left! and \code!right!.
+\item A \py!RadixWindowError!, \py!KernelError!, or \py!InductionDomainError! records \code!side I: E!; when both sides fail raise \py!RadixWindowError! of the joined reasons.
+\end{enumerate}
 \end{algorithm}
 
 \section{Lemma Decisions and Nesting}\label{sec:kernel-lemma-decision}
@@ -824,6 +866,8 @@ The first success is returned; the failures are joined by \code!; !.
 \item \textsc{Contraction}$(X, P')$.
 \end{enumerate}
 \end{algorithm}
+
+\paragraph{Scope steps.} \texttt{\_\allowbreak{}scope\_\allowbreak{}step(\allowbreak{}replaced,\allowbreak{} target,\allowbreak{} source,\allowbreak{} hypothesis,\allowbreak{} k,\allowbreak{} failed)} re-raises \texttt{failed} when \texttt{source} has no first peelers at $k$; otherwise re-peels \texttt{source} at its first peelers (\py!kernel.repeel(source, k, frozenset(), firsts)!), whose left side must be \py!_same! as \texttt{target} (\code!F; scope: the re-peel does not start at the target!). \py!_scope_cores! takes the chain owner over $k$ of the hypothesis, of \texttt{replaced}, and of the re-peel's right side; all three must exist with one multiplicity (\code!F; scope: no chain box over the index on all sides!); it returns the hypothesis's box scope as an open region and the two other scopes. The step is \py!kernel.local_contraction! of \texttt{replaced} at its scope against the re-peel's right side at its scope over the open region (a \py!KernelError! or \py!InductionDomainError! raises \code!F; scope: E!), followed by the reversed re-peel. \py!_close_by_chain_core! also falls back to \py!_scope_cores! when \py!chain_cores! gives a reason.
 
 \paragraph{Lemma steps.} \texttt{\_\allowbreak{}lemma\_\allowbreak{}congr(\allowbreak{}context,\allowbreak{} cut,\allowbreak{} part,\allowbreak{} other\_\allowbreak{}part,\allowbreak{} target)} takes \texttt{lemma\_\allowbreak{}decision(\allowbreak{}part,\allowbreak{} other\_\allowbreak{}part)} (\texttt{no nested decision proves the parts equal} when \py!None!), reads it as the theorem $\Lambda$ by \py!from_decision!, and returns $\textsc{Congr}(\Lambda,\text{context},\text{cut})\mathbin{;}\textsc{Iso}(\cdot,\text{target})$. \texttt{\_\allowbreak{}local\_\allowbreak{}lemma(\allowbreak{}replaced,\allowbreak{} target,\allowbreak{} local)} finds the cut regions of the two regions read as the local hypothesis (\texttt{a region is not the hypothesis through cut wires}), takes the parts off them (\py!_copy_side! with the scalar ratio), and calls \py!_lemma_congr! at \py!rest_cut! of the replaced diagram. \texttt{\_\allowbreak{}lemma\_\allowbreak{}step(\allowbreak{}replaced,\allowbreak{} target,\allowbreak{} source,\allowbreak{} k,\allowbreak{} failed)} returns \texttt{close\_\allowbreak{}with\_\allowbreak{}lemmas(\allowbreak{}replaced,\allowbreak{} target,\allowbreak{} source,\allowbreak{} k)} of \cref{ch:proofs}, which builds a kernel theorem; a \py!KernelError!, \py!LemmaError!, or \py!InductionDomainError! raises \code!F; lemmas: E!.
 

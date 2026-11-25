@@ -820,6 +820,36 @@ An X spider $1\to1$ on dimension~2 with phase $\tfrac12$ has boundary variables 
 
 \paragraph{Weighted tables.} \py!_weights(node_id, node, d)! reads each coefficient $a_v$ as $q\,\zeta_n^{\,u}\sqrt2^{\,\kappa}$ (one root-of-unity term with a rational $q$; zero allowed). Its turn is $u/n$, plus $\tfrac12$ when $q<0$, mod~1; its squared magnitude $q^2 2^\kappa$. The base is the entry of least squared magnitude; every nonzero entry's ratio to it must be 1 or 2, else \py!PathSumUnsupported!; all-zero weights also raise. The Z (or X) spider then adds the interpolated turns, multiplies $c$ by the base's $|q|$ and adds its $\kappa$ to $e$, adds the amplitude atom $(0,I_0)$ with $I_0$ the $\mathbb F_2$ indicator of the zero entries, and adds $(\sqrt2, I_2)$ with $I_2$ the indicator of the entries of ratio~2. The indicator of a 0/1 table is its Möbius inversion mod~2 (\py!_f2_indicator!).
 
+\subsection{Mixed-dimension path sums}\label{sec:semantics-pathsum-mixed}
+
+\module{archytaszx.semantics.pathsum_mixed} reduces a diagram on the dimensions $2$, $3$, and $6=3\cdot2$ to a binary path sum (\cref{def:semantics-binary-pathsum}) by summing out its $\Z_3$ digits. \py!path_sum! of a diagram uses it whenever \py!is_mixed! holds (a layout argument then raises \py!PathSumUnsupported("a layout of a diagram on dimensions 2, 3 and 6")!), and \py!compare_path_sums! takes the base $2$ for a mixed side.
+
+\begin{definition}[Mixed diagrams]\label{def:semantics-mixed}
+\py!is_mixed(d)!: $d$ has no \bboxes{}, every port dimension is concrete and in $\{1,2,3,6\}$, some port has dimension $2$ or $6$, and some has $3$ or $6$. \py!is_mixed_pair(l, r)!: one side is mixed and both are box-free with every port dimension concrete and in $\{1,2,3,6\}$. A dimension-$6$ port carries two digits, a $\Z_3$ digit (kind \code!'3'!) and a binary digit (kind \code!'2'!); a dimension-$2$ port a binary digit; a dimension-$3$ port a $\Z_3$ digit (\py!_KINDS!).
+\end{definition}
+
+\begin{algorithm}[\texttt{mixed\_sum(d)}]\label{alg:semantics-mixed-sum}
+\begin{enumerate}
+\item Every node must be a Z or X spider, a Fourier box, a binder, or a splitter, have ports, and carry no weights; every boundary port must have dimension $2$. Otherwise raise \py!PathSumUnsupported!.
+\item Union the digits: each port's digits are classes; a wire unites the two ends' digits of each kind (a wire between two dimensions raises); a Z spider unites each port's digit of each kind with the spider's digit of that kind; a binder (output $6$, inputs $3$ then $2$) or splitter (input $6$, outputs $3$ then $2$) unites the whole port's $\Z_3$ digit with the high part's and its binary digit with the low part's, any other shape raising; any other node on dimension $6$ raises.
+\item Give each boundary port a fresh variable; a boundary port whose binary class already has a variable adds the $\mathbb F_2$ constraint $v_{\text{old}}+v=0$. Every other class gets a fresh path variable, binary or ternary by its kind. The scalar of $d$ gives the constant and the $\sqrt2$ exponent.
+\item For each node in id order, with $d$ its first port's dimension:
+\begin{itemize}
+\item Z spider: on dimension $2$ its phase terms join the binary phase $\Phi_2$; on $3$ its qudit table joins the $\Z_3$ phase polynomial $\Phi_3$; on $6$, with phase turns $\theta_j$ for $j<6$ and $\Z_3$ digit $s$, binary digit $f$: for $k<3$, the indicator polynomial $u(s,k)$ times $\theta_{2k}$ and $u(s,k)\,f$ times $\theta_{2k+1}-\theta_{2k}$ join $\Phi_2$. Here $u(s,k)$ uses two fresh binary indicator variables $a_s,b_s$ (mutually exclusive, recorded as a pair): $u(s,1)=a_s$, $u(s,2)=b_s$, $u(s,0)=1-a_s-b_s$.
+\item Fourier box: on $2$, the term $\tfrac12\,x_ox_i$ joins $\Phi_2$ and the $\sqrt2$ exponent drops by $1$; on $3$, the term $x_ox_i$ joins $\Phi_3$ (a self-loop raises) and one root factor is counted.
+\item X spider: a fresh path variable $y$; on $2$, $\pm\tfrac12\,y\,x$ per port (sign by direction) and the phase terms on $y$ join $\Phi_2$, the $\sqrt2$ exponent drops by the port count; on $3$, $\pm y\,x$ per port and the qudit table on $y$ join $\Phi_3$, one root factor per port.
+\end{itemize}
+\item With $r$ root factors, the constant is multiplied by $3^{-\lfloor r/2\rfloor}$, and by $\sqrt3/3$ when $r$ is odd.
+\item While ternary path variables remain and the constant is nonzero, take the first $s$ (in sorted order) on which one of these applies, or raise \code!Z_3 digit(s) S neither linear nor only in indicators!:
+\begin{itemize}
+\item \emph{Linear elimination} (\py!elim3!): $\Phi_3$ has degree $1$ in $s$ and $s$'s indicators carry no fractional term of $\Phi_2$; its coefficient $\ell$ is linear without powers. A constant $\ell$ makes the constant $0$ when $\ell\ne0$, and in every case multiplies it by $3$ and drops $s$. Otherwise, for the first variable $x$ of $\ell$ (sorted) with coefficient $c$, skipping an $x$ whose indicators are used when $\ell$ has other variables: $x$ is solved as $-c^{-1}(\ell-cx)\bmod3$, the indicators of $x$ are rewritten through that value (\py!read_through!: $a_x$, $b_x$ become indicators of the solved digit, or constants for a constant value, monomials holding both of a pair dropped), $x$ is substituted in $\Phi_3$ without $s$, the constant is multiplied by $3$, and $s$, $x$ are dropped.
+\item \emph{Counting} (\py!count3!): $s$ does not occur in $\Phi_3$; it is dropped; when its indicators are unused the constant is multiplied by $3$, otherwise $a_s,b_s$ become binary path variables with the zero constraint $a_sb_s$ recorded as an amplitude atom of value $0$.
+\end{itemize}
+\item A zero constant gives the zero path sum. A remaining $\Z_3$ variable raises \code!a Z_3 phase term outlives its digits!. The constant term of $\Phi_3$ becomes the root $\zeta^{\,t/3}$, the constant term of $\Phi_2$ (mod $1$) the root of that turn. A $\Phi_2$ variable that is neither a binary path variable nor a boundary variable raises \code!indicator variable(s) V outlive their digit!.
+\item Return the path sum with the boundary variables, the binary path variables, $\Phi_2$ (terms sorted by degree and variables), the constant, the $\sqrt2$ exponent, the boundary constraints, and the amplitude atoms.
+\end{enumerate}
+\end{algorithm}
+
 \subsection{Odd prime bases}\label{sec:semantics-qudit}
 
 \begin{definition}[Qudit path sum]\label{def:semantics-qudit-pathsum}

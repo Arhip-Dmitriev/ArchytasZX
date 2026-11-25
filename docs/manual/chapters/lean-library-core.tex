@@ -496,6 +496,7 @@ inductive Kind
   | ZB (cs : List (List ℕ)) | XB (co ci : List (List ℕ)) | WB (cs : List (List ℕ))
   | Bun (m : ℕ) (base : Kind)
   | XW
+  | ZP (dx dy : ℕ) (c : ℤ)
   deriving DecidableEq, Repr
 
 structure Node where
@@ -527,8 +528,9 @@ A \term{kind} is one of: \lean|Z| (Z spider), \lean|X| (X spider), \lean|F| (Fou
 coefficients), \lean|XW| (X spider with complex coefficients), \lean|ZB cs| (Z spider whose last
 \lean|cs.length| inputs bundle along the chains \lean|cs|), \lean|XB co ci| (X spider whose last
 outputs bundle along \lean|co| and last inputs along \lean|ci|), \lean|WB cs| (W node whose last
-outputs bundle along \lean|cs|), and \lean|Bun m base| (copies of \lean|base| along the
-multiplicity symbol \lean|m|). A \term{chain} is a list of multiplicity symbols, outermost first.
+outputs bundle along \lean|cs|), \lean|Bun m base| (copies of \lean|base| along the
+multiplicity symbol \lean|m|), and \lean|ZP dx dy c| (the pair phase $e^{2\pi i\,c\,x\,y/M}$ on two
+legs of dimension indices \lean|dx| and \lean|dy|, $M$ the node's dimension). A \term{chain} is a list of multiplicity symbols, outermost first.
 Equality of kinds and nodes is structural (\lean|DecidableEq|).
 \end{definition}
 
@@ -619,6 +621,7 @@ Kind and arity & Entry \\
 \lean|XB co ci| & $\mathrm{tX}(d,\varphi_p,\mathrm{bundled}(\mu,d,o,co);\mathrm{bundled}(\mu,d,i,ci))$ \\
 \lean|WB cs|, one input $w$ & $\mathrm{tW}(d,\mathrm{bundled}(\mu,d,o,cs),w)$ \\
 \lean|Bun m b| & $\prod_{j<\mu(m)}\mathrm{tensor}(E,b,d,p,\mathrm{copyOuts}(E,b,d,j,o),\mathrm{copyIns}(E,b,d,j,i))$ \\
+\lean|ZP dx dy c|, legs $o\mathbin{+\!\!+}i=[x,y]$ & $\mathrm{tP}(d,c,[x,y])=\mathrm{ex}(c\,x\,y/d)$ ($0$ for any other leg count) \\
 any other case (wrong arity, \lean|B|, \lean|S|) & $0$ \\
 \bottomrule
 \end{tabular}
@@ -1760,7 +1763,9 @@ $\zeta$ and the atom monomial of $\mathrm{ex}(\varphi_p(k))$. With $M$ a multipl
   without its $(\sqrt d)^{-1}$ factors ($\overline\omega=\omega^{d-1}$).
 \item \lean|tensorT S M P|: the formal entry of every kind as in \cref{def:lean-core-tensor}: $F$ is
   $[(1,\tfrac Md\,oi,[\,])]$; $T$, $Ti$, $W$, $I$ are integer constants; bundled kinds bundle first;
-  \lean|Bun m b| folds \lean|tmul| over the copies; \lean|ZW|, \lean|XW| and all other cases give
+  \lean|Bun m b| folds \lean|tmul| over the copies; \lean|ZP dx dy c| on legs $[x,y]$ is
+  \lean|tPT M d c| $=[(1,\ \tfrac Md\,((c\,x\,y)\bmod d),\ [\,])]$ (\lean|tP_cyc|: its value at
+  $\omega_M$ is the pair phase for $d\mid M$, $M>0$); \lean|ZW|, \lean|XW| and all other cases give
   $[\,]$.
 \item \lean|sqc S k d no ni| counts the $(\sqrt d)^{-1}$ factors: $no+ni$ for \lean|X|, $1$ for
   \lean|F|, the bundled lengths for \lean|XB|, $\mu(m)\cdot\mathrm{sqc}(b)$ for \lean|Bun m b|, else $0$.
@@ -2347,6 +2352,7 @@ noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List 
   | .ZB cs, d, ph, os, is => tZ d (E.phase ph) (os ++ bundled E.mult d is cs)
   | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
+  | .ZP _ _ c, d, _, os, is => tP d c (os ++ is)
   | .Bun m b, d, ph, os, is => ((List.range (E.mult m)).map fun i =>
       tensor E b d ph (copyOuts E b d i os) (copyIns E b d i is)).prod
   | _, _, _, _, _ => 0
@@ -2372,7 +2378,13 @@ noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
   | .XB co ci, os, is => tX d (E.phase n.ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, os, [w] => tW d (bundled E.mult d os cs) w
   | .Bun m b, os, is => tensor E (.Bun m b) d n.ph os is
+  | .ZP _ _ c, os, is => tP d c (os ++ is)
   | _, _, _ => 0
+\end{lstlisting}
+\begin{lstlisting}[style=leancore]
+noncomputable def tP (M : ℕ) (c : ℤ) : List ℕ → ℂ
+  | [x, y] => ex ((c : ℝ) * x * y / M)
+  | _ => 0
 \end{lstlisting}
 \begin{lstlisting}[style=leancore]
 noncomputable def sumOver (D : ℕ → ℕ) : List ℕ → ((ℕ → ℕ) → ℂ) → (ℕ → ℕ) → ℂ

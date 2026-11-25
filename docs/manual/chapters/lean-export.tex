@@ -1740,8 +1740,9 @@ Kind & Terms \\
 \lexcode!Ti! (1 in, 1 out) & $[o-i] - [o] + [o][i]$ \\
 \lexcode!W! (1 in) & $\sum_p [o_p - i]\prod_{q\ne p}[o_q] + (1-|\mathit{outs}|)[i]\prod_q[o_q]$ \\
 \lexcode!I! (1 in, 1 out) & $[o-i]$ \\
-\lexcode!B! (1 out, 2 in) & \lexpy!bs_term(d, DT(ph), o, i0, i1)!, when binder and splitter nodes are on \\
-\lexcode!S! (2 out, 1 in) & \lexpy!bs_term(d, DT(ph), i, o0, o1)!, when binder and splitter nodes are on \\
+\lexcode!B! (1 out, 2 in) & \lexpy!bs_term(d, DT(ph), o, i0, i1, s)!, when binder and splitter nodes are on \\
+\lexcode!S! (2 out, 1 in) & \lexpy!bs_term(d, DT(ph), i, o0, o1, s)!, when binder and splitter nodes are on \\
+\lexcode!ZP dx dy c!, two legs $x,y$ & \lexpy!zp_term(d, c, (x, y))!: the single term $(1,\{\},[\,],[(d,\ c\,x\,y)])$ (\lexlean!zpTerm!); any other leg count \lexpy!None! \\
 other & \lexpy!None! (untranslatable) \\
 \bottomrule
 \end{tabular}
@@ -1752,11 +1753,14 @@ $(k, \{s{:}d\}, ds, ps)$ plus, per stored entry $(j, a)$, the two terms with coe
 $k\,a$ and $-k$ and the extra delta $[s - j]$, so that the spider sums $1 + \sum_j [s=j](a_j-1)$.
 \lexpy!spider_c(k, d, s, row, rule, ds, ps)! is \lexpy!cp_terms! when the rule marks a compact table
 that \lexpy!cp_chk! accepts, else \lexpy!spider(k, d, s, row, ds, ps + r_f(s, rule))!.
-\lexpy!bs_term(D_s, D_t, k, a, b)! is \lexpy!None! for a symbolic $D_t$, else the single term
+\lexpy!bs_term(D_s, D_t, k, a, b, s)! is, for a constant $D_t$, the single term
 $[D_sD_t \mid k - D_t a - b]$: the label $k$ of range $D_sD_t$ is the pair $(a, b)$ of ranges
-$D_s$, $D_t$. \lexpy!leg_dms! gives each label's expected dimension: $[D_sD_t, D_s, D_t]$ for the
+$D_s$, $D_t$. For a symbolic $D_t$ (\lexlean!bsSym_den!) it is the character sum over the node's
+variable $s$ of range $D=D_sD_t$: the single term with coefficient \lexpy!rt_d(D, -2)!, the sum $\{s{:}D\}$, no delta, and the phases $(D,\ s\,(k-b))$ and $(D_s,\ -s\,a)$.
+\lexpy!leg_dms! gives each label's expected dimension: $[D_sD_t, D_s, D_t]$ for the
 binder's (output, input, input), $[D_s, D_t, D_sD_t]$ for the splitter's (output, output,
-input), and the node's dimension for every other port.
+input), $[\mathit{DT}(dx),\mathit{DT}(dy)]$ for a \lexcode!ZP! node, and the node's dimension for
+every other port.
 
 \subsubsection{Compact tables}\label{sec:lean-export-sym-compact}
 
@@ -3109,6 +3113,37 @@ eliminated; tables are transposed to match and the full forms in \lexpy!_untrim!
 from the last factor to the first modulo $p$; \lexpy!res_at! (mirror of \lexlean!RFac.at!) indexes a
 table by mixed radix, first label least significant.
 
+\subsubsection{Substitution plans (\texttt{lean\_subst})}\label{sec:lean-export-subst}
+
+\module{archytaszx.semantics.lean_subst} plans and emits the symbolic eliminations of \file{RefuteSym} (\cref{ch:lean-core}) for one network at one boundary assignment $\sigma$; \module{archytaszx.semantics.lean_refute} and \module{archytaszx.semantics.refute_check} call it. Label expressions are tuples \lexpy{('v', x)}, \lexpy{('c', k)}, \lexpy{('add', a, b)}, \lexpy{('mul', k, a)}, \lexpy{('div', a, k)}, \lexpy{('mod', a, k)}, \lexpy{('neg', a, n)}; \lexpy{ev}, \lexpy{vars_}, \lexpy{subst}, \lexpy{ub}, \lexpy{lnorm}, and the smart constructors mirror \lexlean{LX.eval}, \lexlean{LX.vars}, \lexlean{LX.subst}, \lexlean{LX.ub}, \lexlean{LX.norm}, \lexlean{LX.sadd}, \lexlean{LX.smod}, \lexlean{LX.sdiv} (with division and remainder by $0$ giving $0$ and the value itself), and \lexpy{text} prints them as \lexlean{LX} terms. A \lexpy{State} holds bindings, node indices, constraints, and a constant (\lexpy{texpr} reads the first binding); a \lexpy{Plan} holds the states, the free labels after each step, the steps, the leaves, the groups and scopes of the final contraction, its plan, and its value.
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Constant & Value & Use \\
+\midrule
+\lexpy{MAX_SYM_STEPS} & $4000$ & most substitution steps \\
+\lexpy{MAX_XSTEP} & $4096$ & largest X-spider dimension removed by an X step \\
+\lexpy{RUN_STEPS} & $64$ & most steps of one \lexlean{sym_run} segment \\
+\lexpy{LEAF_WALK_MIN} & $2^{18}$ & leaf checks past this size use \lexlean{leafS_ofW} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{algorithm}[\texttt{sym\_plan(refuter, net, sigma)}]\label{alg:lean-export-sym-plan}
+With $d$ the refuter's label dimensions, $p$ its prime, $M$ its order, the free labels the network's summed labels in order, and \emph{pinned} the refuter's \lexpy{sparse_all} flag:
+\begin{enumerate}
+\item When pinned: remove each X spider of dimension $0<d_n\le$ \lexpy{MAX_XSTEP} with $d_n\mid M$ and all phase exponents $0$, adding the constraint $(d_n,\mathrm{xexpr})$ and multiplying the constant by $d_n$ (step \lexpy{("X", i, rest)}). When pinned, every later binding is normalized with the boundary labels read from $\sigma$.
+\item Remove each \lexcode{Bun m X} node with one output, no inputs, and the same bounds, with modulus $d_n^{\mu(m)}$ (step \lexpy{('XB', i, rest)}).
+\item Repeat while free labels remain and fewer than \lexpy{MAX_SYM_STEPS} steps exist, taking the first of: a delta step whose solution reads no free label; a delta step from a constraint; a geometric step; any delta step. A delta step's candidates are, per remaining node in order, every ordered pair of distinct legs of a Z spider (or \lexcode{Bun m Z}) whose first leg's expression is an unbound free label (possibly under \lexcode{neg}), and the three positions of a binder or splitter; then every constraint. A candidate on label $l$ is accepted when $l$ is free and unbound, the solution (as in \lexlean{solve}, with bare constraints allowed when pinned or after an \lexpy{XB} step) does not read $l$, reads only free or boundary labels, and has upper bound below $d(l)$. A geometric step takes the first free unbound label read by exactly two nodes, by no constraint, with $d(l)>0$, $d(l)\mid M$, both nodes of dimension $d(l)$, and both $F$ nodes with \lexpy{_fleg}. A delta step binds $l$ and substitutes everywhere; a geometric step removes the two nodes and adds the constraint $(d(l),X+Z)$, multiplying the constant by $d(l)$ mod $p$.
+\item Finish (\lexpy{_finish}): each remaining node is one group with scope the labels its normalized leg expressions read; its residue table (raising \lexpy{NetUnsupported} past \lexpy{MAX_TABLE} entries) is the product of the refuter's node residues; each constraint's table is its divisibility indicator; the constant is the last leaf. Tables are reduced by dropping every coordinate they do not depend on (\lexpy{_reduce}); the refuter's eliminator orders and eliminates the remaining free labels; its final value is the plan's value.
+\end{enumerate}
+\end{algorithm}
+
+\begin{algorithm}[\texttt{sym\_decls(refuter, tag, net, plan, env, unbnd)}]\label{alg:lean-export-sym-decls}
+Emits, with prefix \lexpy{tag}: one \lexlean{Node} per network node (\lexpy{tag}\lexcode{k}$i$); the states and free lists at the segment ends (\lexcode{s}$k$, \lexcode{R}$k$); \lexcode{hU} (the boundary assignment in range, by \lexcode{decide +kernel}); for each segment a theorem \lexcode{t}$k$: a \lexlean{sym_run} over up to \lexpy{RUN_STEPS} non-geometric steps when pinned, or else one \lexlean{sym_dstep}, \lexlean{sym_xbstep}, or \lexlean{sym_gstep}; the residue declarations of the final contraction; the binding trie \lexcode{xbt} with \lexlean{toBT} checked; one \lexlean{leafS} theorem per group (by \lexlean{leafS_ofT}, or \lexlean{leafS_ofW} when the group's table equals its scope and $\prod d\cdot(\max d-1)/2$ exceeds \lexpy{LEAF_WALK_MIN}); one \lexlean{leafQ} theorem per constraint; and \lexcode{fin} by \lexlean{sym_final} (\lexlean{sym_finalW} for $M>2^{64}$). Every theorem carries \lexcode{set_option maxHeartbeats 0}. It returns the declarations and the chain \lexlean{sym_start} \lexcode{|>.trans} \lexcode{t}$k$ \ldots{} \lexcode{|>.trans (fin hw1)}. \lexpy{wide}, \lexpy{bound}, and \lexpy{prim_head} choose the \lexcode{W} variants, the $M\le 2^{64}$ proof, and \lexlean{prim_of} or \lexlean{prim_ofB} by the size of $M$.
+\end{algorithm}
+
 \subsubsection{The emitted refutation}\label{sec:lean-export-refute-source}
 
 \lexpy!source_res! writes, before the theorem:
@@ -3275,6 +3310,12 @@ table exceeds \lexpy!SYM_FIRST!; the fresh refuter shares the found refuter's no
 \item \lexcode!the residues <res> mod <p> at σ differ from the search's <list>!;
 \item \lexcode!the scaled entries agree mod <p> at σ = <σ>!.
 \end{itemize}
+
+\paragraph{Recheck details.} \lexpy!_order_ok(p, w, m)! holds when $p$ is prime, $w^m\equiv1$, and $w^{m/q}\not\equiv1 \pmod p$ for every prime $q\mid m$. \lexpy!_net_residue(r, net, sigma)! recomputes a network's residue at $\sigma$ by two routes, substitution (\lexpy!sym_plan(r, net, sigma).value!, \cref{sec:lean-export-subst}) and residue tables (one table per node over its legs not in $\sigma$, eliminated by \lexpy!res_eliminate! and read by \lexpy!res_final!), trying substitution first when the widest node table has more than \lexpy!SYM_FIRST! entries and tables first otherwise, the second route on a \lexpy!NetUnsupported!. \lexpy!recheck_residue! builds a fresh \lexpy!_Refuter! with the recorded \lexpy!sparse_all!, recomputes $M$ (which must equal the recorded one), the scaled constants $f_0,f_1$ at $w$ (with the root factor \lexpy!lmul! when \lexpy!sparse_all!), and both residues, which must equal the search's when recorded; it fails when $f_0r_0\equiv f_1r_1\pmod p$.
+
+\lexpy!recheck_numeric(left, right, point, describe, found)! reads the evidence $(\sigma,g_0,g_1,x,y,\rho)$ and fails with \lexcode!the ball contains 0! when $\max(|x|,|y|)\le\rho$; it rebuilds a \lexpy!_NumRefuter!, requires the same $M$ and atoms, recomputes the entry groups of both networks at $\sigma$ (by plan or by brute force, \lexpy!use_plan!), which must equal $g_0,g_1$, and evaluates the difference $v$ with the factors $\prod(1/\sqrt d)^c$ of both sides. It fails when $|v|<$ \lexpy!NUMERIC_FLOOR! $=10^{-25}$ (\lexcode!the difference is 0 numerically!) or when $|\Re v-x|+|\Im v-y|>\rho+$ \lexpy!NUMERIC_SLACK! $=10^{-30}$ (\lexcode!the ball does not hold the difference!).
+
+\lexpy!recheck_interface(left, right)! lists each boundary port's (dimension, multiplicity) on both sides, inputs and outputs separately (\lexpy!_side!, multiplicity the product of the \bbox{} multiplicities over the port); with free symbols it takes the first \lexpy!MAX_POINTS! points of \lexpy!sample_grid! (an exception gives none), else the empty point. It returns \lexpy!None! (the interface refutation holds) at the first point where both sides' flattened dimension lists (\lexpy!_flat!: each dimension repeated by its multiplicity, \lexpy!None! for a non-integer or nonpositive value) exist and differ, and otherwise \lexcode!interface recheck failed: the leg dimensions agree at every sample point!.
 
 \subsection{The group evaluator}\label{sec:lean-export-refute-groups}
 
@@ -3832,8 +3873,10 @@ reads & \lexlean!evalGXR gsL grL! or \lexlean!evalGX gsL! & \lexlean!evalN_peel_
 
 \subsection{Pair-box peels}\label{sec:lean-export-pair}
 
-\lexpy!_strip_pairs(d)! returns \lexcode!(d0, owner, specs)! or \lexpy!None!. The diagram must have
-exactly one box that is no pair box (the owner) and at least one pair box. Each pair box must
+\lexpy!_strip_pairs(d, owner=None)! returns \lexcode!(d0, owner, specs)! or \lexpy!None!. Without
+\lexpy!owner! the diagram must have exactly one box that is no pair box, which becomes the owner; a
+given \lexpy!owner! must be one of the boxes that are no pair boxes (the align-merge export passes
+its root, \cref{sec:lean-export-merge}). At least one pair box must exist. Each pair box must
 pair the owner, have no parent, no copy scalar and multiplicity \lexcode!1!, hold one node, one left
 and one right port; the node is a \lexcode!Zp! with two ports, each on exactly one wire, the two
 wires ending at the distinct left and right ports; each of these is a port of a Z node of the
@@ -3890,6 +3933,29 @@ theorem main : ∀ (E : Env) (ks : ℕ → ℕ) (x : ℕ → ℕ),
         L.evalL E ks (readAt (layout ks G) (x ∘ lperm (layout ks G) (layout ks G'))) :=
   regroup_layout L G G' (by decide +kernel) (by decide +kernel)
 \end{lstlisting}
+
+\subsection{Align merges \texttt{export\_merge}}\label{sec:lean-export-merge}
+
+\module{archytaszx.semantics.lean_merge} exports a kernel \lexcode{align_merge} step (\cref{ch:kernel}) over \lexlean{LDiagram.evalP} (\cref{ch:lean-sym}); the kernel's \lexpy{merged} calls it and passes the source to \lexpy{linked_net} with the tag \lexcode{M}.
+
+\begin{algorithm}[\texttt{export\_merge(before, after)}]\label{alg:lean-export-merge}
+Return \lexpy{None} at the first failing step.
+\begin{enumerate}
+\item The two sides must have equal scalars. Find the root: the first alignment root $r$ (sorted) of \lexpy{before}'s \bboxes{} that exists, passes the kernel's \lexpy{_align_group}, and whose \lexpy{align_merged(before, r)} is \lexpy{_same} as \lexpy{after} (a \lexpy{KernelError} or \lexpy{BangBoxError} skips $r$).
+\item For each side: if it has pair boxes, strip them at $r$ (\lexpy{_strip_pairs}); both sides must yield the same pair specs, and a side without pair boxes is refused when the other had them. Then strip the \lexcode{Zp} nodes (\lexpy{_strip_zp}): each must have one output and one input, lie in exactly one \bbox{} that has no parent, no pair partner, and no links, have each leg on exactly one wire, the two far ends one inside that box and one outside every box, neither on the boundary nor on the node itself, each on one wire. Each becomes $(z,\mathit{box},\mathit{outer},\mathit{inner},\mathit{key},\mathit{out})$ with the phase key and whether the output meets the inner end, and is removed.
+\item The two sides' \lexcode{Zp} lists must agree except for the box id. Seed the tables (\lexpy{_seed}) and build both linked mirrors (\lexpy{_xlinked}); a \lexpy{LinkedUnsupported} or any port box refuses. Both sides must have the same node ids; the right side's nodes are put in the left side's order.
+\item The multiplicity pairs are $(\mathrm{mult}_R(r),\mathrm{mult}_L(r))$ per pair spec and $(\mathrm{mult}_R(b'),\mathrm{mult}_L(b))$ per \lexcode{Zp} pair; \lexpy{merge_ok(L, R, mults)} checks every field of \lexlean{MergeOK} (\cref{ch:lean-sym}) in Python, with every multiplicity pair equal.
+\item The slot data of both sides (\lexpy{slot_data} of their \lexpy{groups}) must have equal counts and equal anchors at every slot.
+\item Emit the Lean file: \lexlean{L}, \lexlean{L'} (\lexpy{_xliteral}); \lexlean{ps}, \lexlean{ps'} (the pair specs as \lexlean{LPair}s of box $r$, then each \lexcode{Zp} node as an \lexlean{LPair} with \lexlean{fixL := true} on its own box, phase rows from the phase table); \lexlean{G}, \lexlean{G'} (\lexpy{_lgroups}); \lexlean{ok : MergeOK L L' ps ps'} with sixteen fields, each \lexcode{by decide +kernel}; \lexlean{ss : SameSlots (L.slotData G) (L'.slotData G')} with three such fields; and
+\begin{lstlisting}[style=lexlean]
+theorem main : ∀ (E : Env) (ks : ℕ → ℕ) (y : ℕ → ℕ),
+    L'.evalP ps' E ks (flatAt (L'.slotData G') ks y) =
+      L.evalP ps E ks (flatAt (L.slotData G) ks y) :=
+  evalP_merge_flat ok ss
+\end{lstlisting}
+in the namespace \lexlean{ArchytasZX.Export}, after \lexlean{import ArchytasZX}.
+\end{enumerate}
+\end{algorithm}
 
 \subsection{Power split \texttt{export\_split}}\label{sec:lean-export-split}
 
