@@ -84,7 +84,7 @@ Every module of this chapter defines a base exception and a grammar subclass for
 Exception & Raised when \\
 \midrule
 \py!CheckError! & base of \module{archytaszx.semantics.check} \\
-\quad\py!CheckGrammarError! & an assignment leaves a symbol uninstantiated; \py!compare_tensors! receives an unknown mode \\
+\quad\py!CheckGrammarError! & an assignment leaves a symbol uninstantiated; \py!compare_tensors! receives an unknown mode; the interop expansion meets a multiplicity symbol without a value \\
 \quad\py!CheckDomainError! & \py!compare_symbolic! receives a mode other than \texttt{EXACT} \\
 \py!DecideError! & base of \module{archytaszx.semantics.decide} \\
 \quad\py!DecideGrammarError! & an argument of \py!decide_equal!, \py!refute_by_oracle!, \py!refute_by_symbolic_witness!, \py!interface_reason! or \py!Decision! has the wrong type or is out of range \\
@@ -93,7 +93,7 @@ Exception & Raised when \\
 \quad\py!CertificateDomainError! & declared; no function of the module raises it \\
 \py!ProveError! & base of \module{archytaszx.semantics.prove} \\
 \quad\py!ProveGrammarError! & a malformed argument, or a start or goal diagram that fails validation \\
-\py!LemmaError! & a lemma is unknown, unproved, being proved, or has no instance where one was asked for \\
+\py!LemmaError! & a lemma is unknown, unproved, or being proved; a step that builds an instance does not apply (\code!lemma NAME at VALUE: ...!) \\
 \bottomrule
 \end{tabularx}
 \caption{Exceptions of this chapter's modules.}

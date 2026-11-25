@@ -32,7 +32,7 @@ Every Python source file begins with a twelve-line Apache~2.0 license header.
 
 \section{The Test Suite}\label{sec:dev-tests}
 
-The tests use \tool{pytest}{https://pytest.org} with \tool{pytest-xdist}{https://pytest-xdist.readthedocs.io} for parallel runs. The suite has 143 Python files in \file{tests/} besides \file{__init__.py} and 3{,}061 test functions; parametrization multiplies the number of collected cases.
+The tests use \tool{pytest}{https://pytest.org} with \tool{pytest-xdist}{https://pytest-xdist.readthedocs.io} for parallel runs. The suite has 144 Python files in \file{tests/} besides \file{__init__.py} and 3{,}071 test functions; parametrization multiplies the number of collected cases.
 
 \subsection{Tiers}\label{sec:dev-tiers}
 
@@ -42,7 +42,7 @@ pytest                 # default tier
 pytest -m slow         # slow tier only
 pytest -m "" -n auto   # both tiers, one worker per core (as in CI)
 \end{lstlisting}
-Eighteen files contain slow tests; \cref{tab:dev-tests} marks them with an asterisk.
+Nineteen files contain slow tests; \cref{tab:dev-tests} marks them with an asterisk.
 
 \subsection{Organization}\label{sec:dev-test-organization}
 
@@ -61,7 +61,7 @@ The module \file{tests/helpers.py} builds the shared worked example, the GHZ sta
 
 Files whose names begin with an underscore are scripts, run as modules, not collected by pytest:
 \begin{itemize}
-\item \file{_cache_determinism_script.py}, \file{_cross_process_determinism_script.py}, \file{_induction_determinism_script.py}, \file{_strategy_determinism_script.py}, and \file{_symbolic_determinism_script.py} print every key and result promised stable across processes. The corresponding test classes run each script in subprocesses under several values of \texttt{PYTHONHASHSEED} and require identical output.
+\item \begin{sloppypar}\file{_cache_determinism_script.py}, \file{_cross_process_determinism_script.py}, \file{_induction_determinism_script.py}, \file{_strategy_determinism_script.py}, and \file{_symbolic_determinism_script.py} print every key and result promised stable across processes. The corresponding test classes run each script in subprocesses under several values of \texttt{PYTHONHASHSEED} and require identical output.\end{sloppypar}
 \item \file{_bench_subjects_script.py} checks, for every specification equation of the benchmark catalogue at every point with $n \le 3$ and $d \le 4$ in its domain, that the naive circuit equals the specification (\cref{ch:bench-pipeline}); by default with two workers, each capped at 1.5\,GiB.
 \item \file{_bench_suite_script.py} tests the parts \texttt{false}, \texttt{schedule}, \texttt{rivals}, \texttt{stats}, \texttt{resume}, and \texttt{trace} of the benchmark suite; by default with two workers, each capped at 6\,GiB of address space.
 \item \file{_trust_mutations_script.py} produces the mutation table of the Lean export (\cref{sec:dev-mutations}).
@@ -85,7 +85,7 @@ Every exported proof or refutation of every example and battery file (\file{test
 
 \subsection{Test Files}\label{sec:dev-test-files}
 
-\Cref{tab:dev-tests} lists every file of \file{tests/} with its number of test functions and its subject. An asterisk marks a file with tests in the slow tier.
+\Cref{tab:dev-tests} lists every file of \file{tests/} with its number of test functions and the project names it imports: its three modules shared by the fewest files of the suite, with at most four imported names each. An asterisk marks a file with tests in the slow tier.
 
 {\small
 \input{chapters/development-tests}

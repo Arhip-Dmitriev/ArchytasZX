@@ -61,17 +61,17 @@ Class & Base & Raised for \\
 \py!DimensionDomainError! & \py!DimensionError! & a concrete dimension below $1$, a negative exponent, an out-of-domain substitution value, \py!to_int! or \py!abstract! on the wrong kind of \py!Dim! \\
 \py!DimensionGrammarError! & \py!DimensionError! & an expression outside \cref{def:algebra-dim-grammar}, a bad symbol name, a \py!bool! argument, a non-symbol substitution key \\
 \py!PhaseError! & \py!Exception! & base of the two below \\
-\py!PhaseDomainError! & \py!PhaseError! & numeric evaluation of a symbolic phase, a bad phase-vector index, a gauge violation at index $0$, fusion over unequal dimensions, a non-integral value for a dimension symbol \\
-\py!PhaseGrammarError! & \py!PhaseError! & a float or infinity, a bad constructor argument, a bad symbol name \\
+\py!PhaseDomainError! & \py!PhaseError! & numeric evaluation of a symbolic phase, a bad phase-vector index, a gauge violation at index $0$, adding phase vectors over unequal dimensions or a pair phase to another phase, a \py!Phase! or non-integral value for a dimension symbol \\
+\py!PhaseGrammarError! & \py!PhaseError! & a float or infinity, a \py!bool! or wrongly typed argument or entry, a bad symbol name or substitution key \\
 \py!ScalarError! & \py!Exception! & base of the four below \\
 \py!ScalarDomainError! & \py!ScalarError! & numeric evaluation of a symbolic scalar, a zero denominator, zero to a negative power \\
 \py!ScalarGrammarError! & \py!ScalarError! & a float, a head outside the scalar grammar, a reserved or invalid name \\
 \py!ScalarSumError! & \py!ScalarError! & a malformed index sum, substitution for a bound index \\
 \py!ScalarBudgetError! & \py!ScalarError! & \py!Scalar.simplify! exceeding its step budget \\
-\py!NotAlgebraicError! & \py!ValueError! & a value with free symbols or no minimal polynomial \\
-\py!NumberFieldError! & \py!ValueError! & a certificate that fails its check, or values without a certificate \\
-\py!PathSumError! & \py!Exception! & an internal inconsistency of a path-sum computation \\
-\py!PathSumUnsupported! & \py!PathSumError! & a diagram or a sum outside the path-sum class \\
+\py!NotAlgebraicError! & \py!ValueError! & a value with free symbols, no minimal polynomial, or no isolating root; a symbolic dimension in \py!canonical_vector! \\
+\py!NumberFieldError! & \py!ValueError! & a certificate that fails \py!check!; no certificate found (no primitive element, isolating interval, real generator, or numeric root); division by zero; an element outside the field \\
+\py!PathSumError! & \py!Exception! & an inexact cyclotomic division, the inverse of zero or of a non-invertible value, an odd remainder in a dyadic, quarter, or turn digit \\
+\py!PathSumUnsupported! & \py!PathSumError! & a diagram or a sum outside the path-sum class; in this package, a scalar that is not a cyclotomic number times a power of $\sqrt2$ or has no inverse found, an XOR lift above its term bound, path variables left at an entry \\
 \bottomrule
 \end{tabularx}
 \caption{Exception classes of \texttt{archytaszx.algebra}.}\label{tab:algebra-errors}
