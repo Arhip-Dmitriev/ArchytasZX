@@ -1093,6 +1093,126 @@ theorem prod_cp (d : ℕ) (hd : 0 < d) (n m : ℕ) (ρ : ℕ → ℕ) (h0 : ρ (
   simp only [pinsCp, pairsF]
   ring
 
+theorem notin_freeC {n t : ℕ} (h3 : t ≠ 3) (h7 : t ≠ 7) (h8 : t ≠ 8) : sl n t ∉ freeC n := by
+  simp only [freeC, mem_cons, not_mem_nil, or_false, not_or]
+  exact ⟨fun e => h3 (sl_injective n e), fun e => h7 (sl_injective n e),
+    fun e => h8 (sl_injective n e)⟩
+
+theorem pend_notinF {n i : ℕ} (hi : i < n) : pend n i ∉ freeC n := by
+  simp only [freeC, mem_cons, not_mem_nil, or_false, not_or]
+  exact ⟨pend_ne hi (by omega), pend_ne hi (by omega), pend_ne hi (by omega)⟩
+
+theorem pendO_notinF {n i : ℕ} (hi : i < n) : pendO n i ∉ freeC n := by
+  simp only [freeC, mem_cons, not_mem_nil, or_false, not_or]
+  exact ⟨pendO_ne hi (by omega), pendO_ne hi (by omega), pendO_ne hi (by omega)⟩
+
+theorem pinsCp_congr {n : ℕ} {ρ σ : ℕ → ℕ} (h : ∀ x ∉ freeC n, ρ x = σ x) :
+    pinsCp n ρ = pinsCp n σ := by
+  simp only [pinsCp]
+  rw [h _ (notin_freeC (by omega) (by omega) (by omega)),
+    h (sl n 0) (notin_freeC (by omega) (by omega) (by omega)),
+    h (sl n (15 + 8 * n)) (notin_freeC (by omega) (by omega) (by omega)),
+    h (sl n 1) (notin_freeC (by omega) (by omega) (by omega))]
+  congr 1
+  refine congrArg _ (List.map_congr_left fun i hi => ?_)
+  have hi := mem_range.1 hi
+  rw [h _ (notin_freeC (by omega) (by omega) (by omega)), h _ (pend_notinF hi),
+    h (sl n (15 + 8 * i)) (notin_freeC (by omega) (by omega) (by omega)), h _ (pendO_notinF hi)]
+
+theorem pairsF_congr {d n x : ℕ} {ρ σ : ℕ → ℕ} (h : ∀ x ∉ freeC n, ρ x = σ x) :
+    pairsF d n ρ x = pairsF d n σ x := by
+  simp only [pairsF]
+  refine congrArg _ (List.map_congr_left fun i hi => ?_)
+  have hi := mem_range.1 hi
+  rw [h _ (pend_notinF hi), h _ (pendO_notinF hi)]
+
+/-- Copy `n` in closed form: its pending-leg factors times the sum over its Fourier value. -/
+theorem eval_cp (d : ℕ) (hd : 0 < d) (n : ℕ) (σ : ℕ → ℕ) (h0 : σ (sl n 0) < d)
+    (h1 : σ (sl n 1) < d) (hA : ∀ i < n, σ (pend n i) < d) (hB : ∀ i < n, σ (pendO n i) < d) :
+    sumOver (labDim (envAt (E0 d) L (n + 1))) (cp n).int
+      (prodVal (envAt (E0 d) L (n + 1)) (cp n).nodes) σ =
+      pinsCp n σ * ∑ x ∈ Finset.range d, fou d x (σ (sl n 0)) * ex (phase d (2 * n + 1) x) *
+        (starRingEnd ℂ) (fou d (σ (sl n 1)) x) * pairsF d n σ x := by
+  set E := envAt (E0 d) L (n + 1)
+  have hn : n < n + 1 := Nat.lt_succ_self n
+  have lp : ∀ t, t < 16 → t ≠ 12 → t ≠ 13 → labDim E (sl n t) = d := fun t ht h12 h13 =>
+    labDim_plain d hn (by omega) h12 h13 fun _ _ _ _ => by omega
+  have lpi : ∀ i < n, ∀ r < 4, labDim E (sl n (16 + 8 * i + r)) = d := fun i hi r hr =>
+    labDim_plain d hn (by omega) (by omega) (by omega) fun j _ s hs => by omega
+  show sumOver _ (freeC n ++ pinC n) _ σ = _
+  rw [sumOver_append]
+  rw [sumOver_congr _ (freeC n) _ (fun ρ => pinsCp n σ * (fou d (ρ (sl n 3)) (σ (sl n 0)) *
+      ex (phase d (2 * n + 1) (ρ (sl n 3))) * (fou d (ρ (sl n 7)) (ρ (sl n 3)) *
+        fou d (ρ (sl n 8)) (ρ (sl n 7)) * fou d (σ (sl n 1)) (ρ (sl n 8))) *
+      pairsF d n σ (ρ (sl n 3)))) σ (fun ρ hρ hr => ?_)]
+  · have n37 : sl n 3 ≠ sl n 7 := by simp [sl]
+    have n38 : sl n 3 ≠ sl n 8 := by simp [sl]
+    have n78 : sl n 7 ≠ sl n 8 := by simp [sl]
+    simp only [freeC, sumOver]
+    rw [lp 3 (by omega) (by omega) (by omega), lp 7 (by omega) (by omega) (by omega),
+      lp 8 (by omega) (by omega) (by omega)]
+    simp only [Function.update_apply, n37, n38, n78, if_false, if_true, Ne.symm n37, Ne.symm n38,
+      Ne.symm n78]
+    rw [Finset.mul_sum]
+    refine Finset.sum_congr rfl fun x _ => ?_
+    have key : ∑ p ∈ Finset.range d, ∑ q ∈ Finset.range d,
+        fou d p x * fou d q p * fou d (σ (sl n 1)) q = (starRingEnd ℂ) (fou d (σ (sl n 1)) x) := by
+      rw [Finset.sum_comm, ← fou_three d (σ (sl n 1)) x hd]
+      refine Finset.sum_congr rfl fun q _ => Finset.sum_congr rfl fun p _ => ?_
+      ring
+    calc ∑ p ∈ Finset.range d, ∑ q ∈ Finset.range d, pinsCp n σ * (fou d x (σ (sl n 0)) *
+          ex (phase d (2 * n + 1) x) * (fou d p x * fou d q p * fou d (σ (sl n 1)) q) *
+          pairsF d n σ x)
+        = ∑ p ∈ Finset.range d, ∑ q ∈ Finset.range d, (pinsCp n σ * fou d x (σ (sl n 0)) *
+          ex (phase d (2 * n + 1) x) * pairsF d n σ x) *
+            (fou d p x * fou d q p * fou d (σ (sl n 1)) q) :=
+          Finset.sum_congr rfl fun p _ => Finset.sum_congr rfl fun q _ => by ring
+      _ = _ := by
+          simp only [← Finset.mul_sum]
+          rw [key]
+          ring
+  · have r0 : ρ (sl n 0) = σ (sl n 0) := hρ _ (notin_freeC (by omega) (by omega) (by omega))
+    have r1 : ρ (sl n 1) = σ (sl n 1) := hρ _ (notin_freeC (by omega) (by omega) (by omega))
+    have r3 : ρ (sl n 3) < d := by
+      have := hr (sl n 3) (by simp [freeC]); rwa [lp 3 (by omega) (by omega) (by omega)] at this
+    have rA : ∀ i < n, ρ (pend n i) < d := fun i hi => by rw [hρ _ (pend_notinF hi)]; exact hA i hi
+    have rB : ∀ i < n, ρ (pendO n i) < d := fun i hi => by
+      rw [hρ _ (pendO_notinF hi)]; exact hB i hi
+    rw [sumOver_single _ (pinC n) (pinC_nodup n) _ ρ (tauC d n ρ) (fun x hx => tauC_off hx) ?hr ?hs,
+      prod_cp d hd n (n + 1) ρ (r0 ▸ h0) (r1 ▸ h1) r3 rA rB, pinsCp_congr hρ, pairsF_congr hρ, r0, r1]
+    case hr =>
+      intro l hl
+      simp only [pinC, mem_append, mem_cons, not_mem_nil, or_false, mem_flatMap, mem_range] at hl
+      rcases hl with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl | rfl | rfl | rfl | rfl⟩
+      · rw [tauC_of_mem (y := ρ (sl n 0)) (by simp [valsC, sl]), lp 2 (by omega) (by omega) (by omega), r0]; exact h0
+      · rw [tauC_of_mem (y := ρ (sl n 3)) (by simp [valsC, sl]), lp 4 (by omega) (by omega) (by omega)]; exact r3
+      · rw [tauC_of_mem (y := ρ (sl n 3)) (by simp [valsC, sl]), lp 5 (by omega) (by omega) (by omega)]; exact r3
+      · rw [tauC_of_mem (y := ρ (sl n 3)) (by simp [valsC, sl]), lp 6 (by omega) (by omega) (by omega)]; exact r3
+      · rw [tauC_of_mem (y := ρ (sl n 1)) (by simp [valsC, sl]), lp 9 (by omega) (by omega) (by omega), r1]; exact h1
+      · rw [tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi, mem_cons_self⟩)),
+          show 16 + 8 * i = 16 + 8 * i + 0 from rfl, lpi i hi 0 (by omega)]; exact rA i hi
+      · rw [tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi,
+          mem_cons_of_mem _ mem_cons_self⟩)),
+          show 17 + 8 * i = 16 + 8 * i + 1 by omega, lpi i hi 1 (by omega)]; exact rB i hi
+      · rw [tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi,
+          mem_cons_of_mem _ (mem_cons_of_mem _ mem_cons_self)⟩)),
+          show 18 + 8 * i = 16 + 8 * i + 2 by omega, lpi i hi 2 (by omega)]; exact r3
+      · rw [tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi,
+          mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _ mem_cons_self))⟩)),
+          show 19 + 8 * i = 16 + 8 * i + 3 by omega, lpi i hi 3 (by omega)]; exact r3
+      · rw [tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi,
+          mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _
+            mem_cons_self)))⟩)), labDim_z d hn hi]
+        exact Nat.mod_lt _ (pow_pos hd _)
+    case hs =>
+      intro τ h0' hr' hne l hl
+      have hz : ∀ i < n, τ (sl n (20 + 8 * i)) < pD d n i := fun i hi => by
+        have hm : sl n (20 + 8 * i) ∈ pinC n :=
+          mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi, by simp⟩)
+        have := hr' _ hm
+        rwa [labDim_z d hn hi] at this
+      rw [cp_support hd hz hne l hl, tauC_congr h0' l]
+
 /-! ## The family -/
 
 /-- The scalar copy `n` adds: `∏_{i<n} d ^ -(n - i + 1)`. -/
