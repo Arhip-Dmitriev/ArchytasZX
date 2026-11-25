@@ -8,12 +8,21 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.pathsum import SQRT2, Cyclo
-from archytaszx.algebra.phase import INDEX
+from archytaszx.algebra.phase import INDEX, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import Mult
-from archytaszx.diagram.generators import Z_SPIDER
-from archytaszx.diagram.graph import Diagram
+from archytaszx.diagram.generators import (
+    TRIANGLE,
+    TRIANGLE_INVERSE,
+    W_NODE,
+    X_SPIDER,
+    Z_SPIDER,
+    GeneratorType,
+)
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.rewrite import rules_axioms as R
+from archytaszx.rewrite.match import find_cap_matches, find_triangle_matches
+from archytaszx.rewrite.match_zxw import find_w_identity_matches
 from archytaszx.semantics.contract_symbolic import (
     ReplicatedBlock,
     ReplicatedFactor,
@@ -90,6 +99,37 @@ def test_diagram_substitute_reaches_box_multiplicities() -> None:
     out = diagram.substitute({"n": 3})
     assert out.bang_boxes[box].multiplicity == Mult.concrete(3)
     assert "n" not in out.parameters
+
+
+def _splice_onto_an_output(first: GeneratorType, second: GeneratorType | None) -> Diagram:
+    """``first`` (then ``second``) from a boundary input into one output of a Z state."""
+    dim = Dim.concrete(2)
+    diagram = Diagram()
+    head = diagram.add_node(first, input_dims=[dim], output_dims=[dim])
+    tail = head
+    if second is not None:
+        tail = diagram.add_node(second, input_dims=[dim], output_dims=[dim])
+        diagram.add_wire(PortRef(head, Direction.OUTPUT, 0), PortRef(tail, Direction.INPUT, 0))
+    state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim, dim])
+    diagram.add_wire(PortRef(tail, Direction.OUTPUT, 0), PortRef(state, Direction.OUTPUT, 0))
+    diagram.set_boundary_inputs([PortRef(head, Direction.INPUT, 0)])
+    diagram.set_boundary_outputs([PortRef(state, Direction.OUTPUT, 1)])
+    return diagram
+
+
+def test_triangle_and_w_identity_keep_boundary_directions() -> None:
+    assert find_triangle_matches(_splice_onto_an_output(TRIANGLE, TRIANGLE_INVERSE)) == ()
+    assert find_triangle_matches(_splice_onto_an_output(TRIANGLE_INVERSE, TRIANGLE)) == ()
+    assert find_w_identity_matches(_splice_onto_an_output(W_NODE, None)) == ()
+
+
+def test_cap_matches_an_all_zero_phase() -> None:
+    dim = Dim.concrete(3)
+    diagram = Diagram()
+    state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim], phase=PhaseVector(dim))
+    effect = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[])
+    diagram.add_wire(PortRef(state, Direction.OUTPUT, 0), PortRef(effect, Direction.INPUT, 0))
+    assert len(find_cap_matches(diagram)) == 1
 
 
 if __name__ == "__main__":

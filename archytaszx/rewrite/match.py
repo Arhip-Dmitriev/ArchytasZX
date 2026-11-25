@@ -1779,7 +1779,7 @@ def find_cap_matches(
                 continue
             if (effect.num_inputs, effect.num_outputs) != (1, 0):
                 continue
-            if state.phase is not None or effect.phase is not None:
+            if not _is_phaseless(state) or not _is_phaseless(effect):
                 continue
             if claimed.get(state_ref, 0) != 1 or claimed.get(effect_ref, 0) != 1:
                 continue
@@ -2339,6 +2339,8 @@ def find_triangle_matches(
             if far_ref.node_id in (first.id, second.id):
                 continue
             if anchors is not None and anchors.isdisjoint((first.id, second.id, far_ref.node_id)):
+                continue
+            if surviving_ref in boundary and far_ref.direction is not surviving_ref.direction:
                 continue
             neighbour = by_port.get(surviving_ref)
             if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:

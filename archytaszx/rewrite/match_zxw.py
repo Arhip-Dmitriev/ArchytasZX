@@ -272,6 +272,8 @@ def find_w_identity_matches(
             continue
         if anchors is not None and anchors.isdisjoint((node_id, far_ref.node_id)):
             continue
+        if surviving_ref in boundary and far_ref.direction is not surviving_ref.direction:
+            continue
         neighbour = by_port.get(surviving_ref)
         if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
             continue
