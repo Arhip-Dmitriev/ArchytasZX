@@ -10,7 +10,7 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.pathsum import SQRT2, Cyclo
 from archytaszx.algebra.phase import INDEX, PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.bangbox import Mult
+from archytaszx.diagram.bangbox import Mult, chain_splitted, merge, peel_one
 from archytaszx.diagram.generators import (
     TRIANGLE,
     TRIANGLE_INVERSE,
@@ -19,10 +19,12 @@ from archytaszx.diagram.generators import (
     Z_SPIDER,
     GeneratorType,
 )
-from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.diagram.validate import validate
 from archytaszx.rewrite import rules_axioms as R
 from archytaszx.rewrite.match import find_cap_matches, find_triangle_matches
 from archytaszx.rewrite.match_zxw import find_w_identity_matches
+from archytaszx.semantics.check import compare
 from archytaszx.semantics.contract_symbolic import (
     ReplicatedBlock,
     ReplicatedFactor,
@@ -130,6 +132,73 @@ def test_cap_matches_an_all_zero_phase() -> None:
     effect = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[])
     diagram.add_wire(PortRef(state, Direction.OUTPUT, 0), PortRef(effect, Direction.INPUT, 0))
     assert len(find_cap_matches(diagram)) == 1
+
+
+def _states(count: int) -> tuple[Diagram, list[NodeId]]:
+    """``count`` one-output Z states on the boundary."""
+    dim = Dim.concrete(2)
+    diagram = Diagram()
+    ids = [diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim]) for _ in range(count)]
+    diagram.set_boundary_outputs([PortRef(i, Direction.OUTPUT, 0) for i in ids])
+    return diagram, ids
+
+
+def test_merge_moves_children_to_the_merged_box() -> None:
+    diagram, (a, c, b) = _states(3)
+    one = diagram.add_bang_box(Mult.symbol("n"), node_scope=frozenset({a, c}))
+    two = diagram.add_bang_box(Mult.symbol("n"), node_scope=frozenset({b}))
+    child = diagram.add_bang_box(Mult.symbol("m"), node_scope=frozenset({a}), parent=one)
+    assert not validate(diagram).errors
+    out = merge(diagram, one, two)
+    assert out.bang_boxes[child].parent in out.bang_boxes
+    assert not validate(out).errors
+
+
+def test_peel_one_on_a_multi_port_box() -> None:
+    dim = Dim.concrete(2)
+    diagram = Diagram()
+    a = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim, dim])
+    x = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim, dim])
+    diagram.set_boundary_inputs([PortRef(a, Direction.INPUT, 0)])
+    diagram.set_boundary_outputs(
+        [PortRef(a, Direction.OUTPUT, i) for i in range(3)]
+        + [PortRef(x, Direction.OUTPUT, 1), PortRef(x, Direction.OUTPUT, 0)]
+    )
+    scope = frozenset(
+        {
+            PortRef(a, Direction.OUTPUT, 0),
+            PortRef(a, Direction.OUTPUT, 2),
+            PortRef(x, Direction.OUTPUT, 1),
+        }
+    )
+    box = diagram.add_bang_box(Mult.symbol("n") + Mult.concrete(1), port_scope=scope)
+    peeled = peel_one(diagram, box).diagram
+    assert len(peeled.bang_boxes[box].port_scope) == 3
+    for k in (0, 2):
+        assert compare(diagram, peeled, {"n": k}).matched
+
+
+def test_peel_one_copies_leave_out_a_regrown_hub() -> None:
+    dim = Dim.concrete(2)
+    diagram = Diagram()
+    hub = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
+    inner = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[])
+    diagram.add_wire(PortRef(hub, Direction.OUTPUT, 0), PortRef(inner, Direction.INPUT, 0))
+    diagram.set_boundary_inputs([PortRef(hub, Direction.INPUT, 0)])
+    box = diagram.add_bang_box(Mult.symbol("n") + Mult.concrete(1), node_scope=frozenset({inner}))
+    result = peel_one(diagram, box)
+    assert len(result.copy_node_ids) == 1
+    (copy,) = result.copy_node_ids
+    assert result.diagram.nodes[copy].generator_type.name == X_SPIDER.name
+
+
+def test_chain_splitted_keeps_the_parent_link() -> None:
+    diagram, (a, b, c) = _states(3)
+    parent = diagram.add_bang_box(Mult.symbol("m"), node_scope=frozenset({a, b, c}))
+    box = diagram.add_bang_box(Mult.symbol("n"), node_scope=frozenset({a, b}), parent=parent)
+    out = chain_splitted(diagram, box, [frozenset({a}), frozenset({b})])
+    made = [i for i in out.bang_boxes if i not in diagram.bang_boxes]
+    assert [out.bang_boxes[i].parent for i in made] == [parent]
 
 
 if __name__ == "__main__":

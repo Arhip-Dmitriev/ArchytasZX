@@ -1491,16 +1491,23 @@ def chain_splitted(diagram: Diagram, box_id: BangBoxId, parts: list[frozenset[No
     def own(part: frozenset[NodeId]) -> tuple[tuple[PortRef, PortRef], ...]:
         return tuple((p, q) for p, q in box.links if p.node_id in part and q.node_id in part)
 
+    children = [c for c, child in sorted(diagram.bang_boxes.items()) if child.parent == box_id]
     out.set_bang_box_extension(box_id, node_scope=parts[0], links=own(parts[0]), groups=())
     for part in parts[1:]:
-        out.add_bang_box(
+        new_id = out.add_bang_box(
             box.multiplicity,
             node_scope=part,
+            parent=box.parent,
             sheets=box.sheets,
             links=own(part),
             index=box.index,
             align=box_id,
         )
+        for child in children:
+            held = diagram.bang_boxes[child]
+            nodes = held.node_scope | {ref.node_id for ref in held.port_scope}
+            if nodes <= part:
+                out.set_bang_box_extension(child, parent=new_id)
     return out
 
 
@@ -2364,15 +2371,26 @@ def _predecessor(multiplicity: Mult) -> Mult:
 
 
 def _peel_port_scope(diagram: Diagram, box: BangBox) -> None:
-    """Split the scoped leg into the box's own leg plus one bare leg after it."""
-    (ref,) = sorted(box.port_scope, key=lambda r: r.sort_key())
-    _grow_port(diagram, ref, 2)
+    """Split each scoped leg into the box's own leg plus one bare leg after it."""
+    count = len(box.port_scope)
+    pending = sorted(box.port_scope, key=lambda r: r.sort_key())
+    while pending:
+        ref = pending.pop(0)
+        new_node_id = _grow_port(diagram, ref, 2)
+        pending = [
+            moved
+            for old in pending
+            for moved in _remap_grown_port(
+                old, ref.node_id, new_node_id, ref.direction, ref.index, 2
+            )
+        ]
     grown = sorted(diagram.bang_boxes[box.id].port_scope, key=lambda r: r.sort_key())
-    if len(grown) != 2:
+    if len(grown) != 2 * count:
         raise BangBoxGrammarError(
-            f"peeling port-scope box {box.id!r} grew its scope to {len(grown)} legs, not two"
+            f"peeling port-scope box {box.id!r} grew its scope to {len(grown)} legs, "
+            f"not {2 * count}"
         )
-    diagram.set_bang_box_port_scope(box.id, frozenset({grown[0]}))
+    diagram.set_bang_box_port_scope(box.id, frozenset(grown[0::2]))
 
 
 def _peel_node_scope(diagram: Diagram, box: BangBox, first: bool = False) -> dict[NodeId, NodeId]:
@@ -2928,6 +2946,7 @@ def peel_one(
         raise BangBoxGrammarError(f"aligned box {box_id!r} has no peel_one")
     predecessor = _predecessor(box.multiplicity)
     before = frozenset(working.nodes)
+    made: frozenset[NodeId] | None = None
     if box.is_fed:
         raise BangBoxGrammarError(f"fed box {box_id!r} has no peel_one")
     if box.is_tree:
@@ -2937,7 +2956,7 @@ def peel_one(
     elif box.is_extended:
         _peel_extended(working, box, predecessor.to_sympy(), last, first)
     elif box.is_node_scope:
-        _peel_node_scope(working, box)
+        made = frozenset(_peel_node_scope(working, box).values())
     else:
         _peel_port_scope(working, box)
     working.set_bang_box_multiplicity(box_id, predecessor)
@@ -2949,6 +2968,8 @@ def peel_one(
         for n in b.node_scope
     )
     copy_node_ids = frozenset(working.nodes) - before - boxed if separable else frozenset()
+    if made is not None:
+        copy_node_ids &= made
     return PeelResult(working, copy_node_ids, separable)
 
 
@@ -3287,12 +3308,19 @@ def merge(
             f"{box_2.multiplicity!r}); pass assume_equal=True to merge anyway, asserting "
             "the two counts equal"
         )
+    children = [
+        child_id
+        for child_id, child in sorted(working.bang_boxes.items())
+        if child.parent in (box_id_1, box_id_2)
+    ]
     working.remove_bang_box(box_id_1)
     working.remove_bang_box(box_id_2)
-    working.add_bang_box(
+    new_id = working.add_bang_box(
         box_1.multiplicity,
         node_scope=box_1.node_scope | box_2.node_scope,
         parent=box_1.parent,
         sheets=box_1.sheets and box_2.sheets,
     )
+    for child_id in children:
+        working.set_bang_box_extension(child_id, parent=new_id)
     return working
