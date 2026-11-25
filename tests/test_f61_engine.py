@@ -10,7 +10,14 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.pathsum import SQRT2, Cyclo
 from archytaszx.algebra.phase import INDEX
 from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.bangbox import Mult
 from archytaszx.rewrite import rules_axioms as R
+from archytaszx.semantics.contract_symbolic import (
+    ReplicatedBlock,
+    ReplicatedFactor,
+    SymbolicTensor,
+    _mark_symbol,
+)
 
 
 def test_index_sum_nested_keeps_both_indices() -> None:
@@ -62,6 +69,15 @@ def test_symbolic_unit_vector_reduces_index_mod_d() -> None:
         assert rule.xreplace({INDEX: top}) == 1
     j = sp.Symbol("j", integer=True)
     assert R._rule_coefficient(R.unit_vector(-j, d)).xreplace({INDEX: d.to_sympy() - j}) == 1
+
+
+def test_flatten_keeps_pair_factors_on_the_marked_branch() -> None:
+    marked = ReplicatedFactor(Mult.concrete(2), Scalar(2), marked=Scalar(3), pairs=Scalar(5))
+    tensor = SymbolicTensor((), Scalar(_mark_symbol(0)), (ReplicatedBlock(0, ()),), (marked,))
+    assert tensor.flatten().entry.to_sympy() == 60
+    plain = ReplicatedFactor(Mult.concrete(2), Scalar(2), pairs=Scalar(5))
+    tensor = SymbolicTensor((), Scalar(1), (ReplicatedBlock(0, ()),), (plain,))
+    assert tensor.flatten().entry.to_sympy() == 20
 
 
 if __name__ == "__main__":

@@ -317,13 +317,14 @@ class SymbolicTensor:
             per_copy = [
                 _rename(factor, {**fixed_names, **names, **at[c]}) for c, names in enumerate(copies)
             ]
-            product = sp.Mul(*per_copy, *_pair_terms(group, g, copies, fixed_names))
+            pair_product = sp.Mul(*_pair_terms(group, g, copies, fixed_names))
+            product = sp.Mul(*per_copy) * pair_product
             mark = _mark_symbol(g)
             if group.marked is None or mark not in expr.free_symbols:
                 expr = expr * product
                 continue
             marked = group.marked.to_sympy()
-            chosen = sp.Add(
+            chosen = pair_product * sp.Add(
                 *(
                     _rename(marked, {**fixed_names, **copies[p], **at[p]})
                     * sp.Mul(*(per_copy[:p] + per_copy[p + 1 :]))
