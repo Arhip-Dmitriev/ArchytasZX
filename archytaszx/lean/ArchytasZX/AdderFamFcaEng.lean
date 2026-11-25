@@ -702,6 +702,205 @@ theorem eval_engR (d : ℕ) (hd : 0 < d) {n : ℕ} (hn : 0 < n) (σ : ℕ → �
   rw [prodVal_engR, hH, hBs, hX, hSs, hE]
   ring
 
+/-! ## The boxed side at its pinned labels -/
+
+theorem tz_a0 (n : ℕ) (τ : ℕ → ℕ) {m j : ℕ} (hm : m < j) (hj : j < n) :
+    tz n τ (a0 n j m) = τ (n + j) := by
+  rw [show a0 n j m = 10 * n + (tri n * 0 + (tri j + m)) by simp only [a0]; ring,
+    tz_pair n τ (by omega) (a0_lt hm hj), if_pos rfl, jOf_tri hm]
+
+theorem tz_a9 (n : ℕ) (τ : ℕ → ℕ) {m j : ℕ} (hm : m < j) (hj : j < n) :
+    tz n τ (a9 n j m) = τ j := by
+  rw [show a9 n j m = 10 * n + (tri n * 3 + (tri j + m)) by simp only [a9]; ring,
+    tz_pair n τ (by omega) (a0_lt hm hj), if_neg (by omega), if_pos rfl, jOf_tri hm]
+
+theorem tz_a2 (n : ℕ) (τ : ℕ → ℕ) {m j : ℕ} (hm : m < j) (hj : j < n) :
+    tz n τ (a2 n m j) = τ (cb n m + 1) := by
+  rw [show a2 n m j = 10 * n + (tri n * 1 + i2 n m j) by simp only [a2]; ring,
+    tz_pair n τ (by omega) (i2_lt hm hj), if_neg (by omega), if_neg (by omega), mOf_off hm hj]
+  rfl
+
+theorem tz_a5 (n : ℕ) (τ : ℕ → ℕ) {m j : ℕ} (hm : m < j) (hj : j < n) :
+    tz n τ (a5 n m j) = τ (cb n m + 1) := by
+  rw [show a5 n m j = 10 * n + (tri n * 2 + i2 n m j) by simp only [a5]; ring,
+    tz_pair n τ (by omega) (i2_lt hm hj), if_neg (by omega), if_neg (by omega), mOf_off hm hj]
+  rfl
+
+theorem tz_cb (n : ℕ) (τ : ℕ → ℕ) {m r : ℕ} (hm : m < n) (hr : r < 8) :
+    tz n τ (cb n m + r) = if r = 0 then τ (n + m) else if r = 7 then τ m
+      else if r = 2 ∨ r = 3 ∨ r = 4 then τ (cb n m + 1) else τ (cb n m + r) :=
+  tz_chain n τ hm hr
+
+theorem tz_low (n : ℕ) (τ : ℕ → ℕ) {x : ℕ} (hx : x < 2 * n) : tz n τ x = τ x := by
+  unfold tz; rw [if_neg (by omega), if_neg (by omega)]
+
+theorem tz_off (n : ℕ) (τ : ℕ → ℕ) {x : ℕ} (hx : x ∉ chainP n ++ pairP n) : tz n τ x = τ x := by
+  have hc : ¬(2 * n ≤ x ∧ x < 10 * n ∧ ((x - 2 * n) % 8 = 0 ∨ (x - 2 * n) % 8 = 2 ∨
+      (x - 2 * n) % 8 = 3 ∨ (x - 2 * n) % 8 = 4 ∨ (x - 2 * n) % 8 = 7)) := fun ⟨h1, h2, h3⟩ =>
+    hx (mem_append_left _ (mem_flatMap.2 ⟨(x - 2 * n) / 8, mem_range.2 (by omega),
+      mem_map.2 ⟨(x - 2 * n) % 8, by simp only [mem_cons, not_mem_nil, or_false]; omega,
+        by omega⟩⟩))
+  have hp : ¬(10 * n ≤ x ∧ x < 10 * n + 4 * tri n) := fun ⟨h1, h2⟩ =>
+    hx (mem_append_right _ (mem_map.2 ⟨x - 10 * n, mem_range.2 (by omega), by omega⟩))
+  unfold tz
+  split_ifs <;> first | rfl | (exfalso; omega)
+
+theorem labDim_low (d : ℕ) {n x : ℕ} (hn : 0 < n) (hx : x < rb n) : labDim (engE d n) x = d := by
+  unfold labDim
+  rw [show (engE d n).labs = engLabs n from rfl, Fca.lookup_none _ _ (by
+    simp only [engLabs, map_map, mem_map, mem_range, Function.comp_def, not_exists, not_and]
+    intro k _ e; omega)]
+  exact engD_zero d hn
+
+theorem tz_lt (d : ℕ) {n : ℕ} {τ : ℕ → ℕ} (hf : ∀ m < n, τ (cb n m + 1) < d)
+    (hb : ∀ x < 2 * n, τ x < d) : ∀ l ∈ chainP n ++ pairP n, tz n τ l < d := by
+  intro l hl
+  rcases mem_append.1 hl with hc | hp
+  · simp only [chainP, mem_flatMap, mem_range, mem_map, mem_cons, not_mem_nil, or_false] at hc
+    obtain ⟨m, hm, r, hr, rfl⟩ := hc
+    rw [show 2 * n + 8 * m + r = cb n m + r from rfl,
+      tz_cb n τ hm (by rcases hr with rfl | rfl | rfl | rfl | rfl <;> omega)]
+    rcases hr with rfl | rfl | rfl | rfl | rfl <;> simp <;> first
+      | exact hb _ (by omega) | exact hf m hm
+  · simp only [pairP, mem_map, mem_range] at hp
+    obtain ⟨k, hk, rfl⟩ := hp
+    have hT : 0 < tri n := by
+      rcases Nat.eq_zero_or_pos (tri n) with h0 | h0
+      · rw [h0] at hk; omega
+      · exact h0
+    have hs' : k % tri n < tri n := Nat.mod_lt _ hT
+    have hg : k / tri n < 4 := by rw [Nat.div_lt_iff_lt_mul hT]; linarith
+    rw [(Nat.div_add_mod k (tri n)).symm, tz_pair n τ hg hs']
+    have := jOf_lt hs'
+    have := (mOf_spec hs').1
+    split_ifs
+    · exact hb _ (by omega)
+    · exact hb _ (by omega)
+    · exact hf _ (by omega)
+
+/-- Copy `m`'s nodes at the pinned labels, as a function of its free labels' values. -/
+noncomputable def Tm (d n : ℕ) (σ : ℕ → ℕ) (m x u v : ℕ) : ℂ :=
+  fou d x (σ (n + m)) * ex (engP d n (m + 1) x) * fou d u x * fou d v u * fou d (σ m) v *
+    ((later n m).map fun j => tP (engD d n (j - m)) 1 [σ (n + j), x] *
+      tP (engD d n (j - m)) (-1) [σ j, x]).prod
+
+theorem prodVal_tz (d : ℕ) {n : ℕ} (hn : 0 < n) {τ : ℕ → ℕ}
+    (hf : ∀ m < n, τ (cb n m + 1) < d) (hb : ∀ x < 2 * n, τ x < d) :
+    prodVal (engE d n) (engL n).nodes (tz n τ) = ((range n).map fun m =>
+      Tm d n τ m (τ (cb n m + 1)) (τ (cb n m + 5)) (τ (cb n m + 6))).prod := by
+  set E := engE d n
+  have eD0 : E.dimv 0 = d := engD_zero d hn
+  have eP0 : E.phase 0 = fun _ => 0 := engP_zero d n
+  have hz1 : ∀ {os is : List ℕ} {k : ℕ}, (∀ v ∈ (os ++ is).map (tz n τ), v = k) → os ++ is ≠ [] →
+      k < d → val E (tz n τ) (nd .Z os is) = 1 := fun {os is k} hv hne hk => by
+    simp only [nd, val]
+    rw [eD0, eP0, ← map_append, Fca.tZ_all _ k _ _ (by simpa using hne) hv hk, ex_zero]
+  have hcb : ∀ m < n, ∀ r < 8, tz n τ (cb n m + r) = if r = 0 then τ (n + m) else if r = 7 then τ m
+      else if r = 2 ∨ r = 3 ∨ r = 4 then τ (cb n m + 1) else τ (cb n m + r) :=
+    fun m hm r hr => tz_cb n τ hm hr
+  have hG0 : ((range n).map fun j => val E (tz n τ)
+      (nd .Z [cb n j] ((n + j) :: (range j).map (a0 n j)))).prod = 1 := by
+    refine List.prod_eq_one fun y hy => ?_
+    obtain ⟨j, hj, rfl⟩ := mem_map.1 hy
+    have hj := mem_range.1 hj
+    refine hz1 (k := τ (n + j)) ?_ (by simp) (hb _ (by omega))
+    intro v hv
+    simp only [map_append, map_cons, map_map, mem_append, mem_cons, mem_map, mem_range,
+      Function.comp_def, map_nil, not_mem_nil, or_false] at hv
+    rcases hv with rfl | rfl | ⟨k, hk, rfl⟩
+    · rw [show cb n j = cb n j + 0 from rfl, hcb j hj 0 (by omega)]; rfl
+    · exact tz_low n τ (by omega)
+    · exact tz_a0 n τ hk hj
+  have hG2 : ((range n).map fun j => val E (tz n τ)
+      (nd .Z ((cb n j + 2) :: (later n j).map (a2 n j)) [cb n j + 1])).prod = 1 := by
+    refine List.prod_eq_one fun y hy => ?_
+    obtain ⟨j, hj, rfl⟩ := mem_map.1 hy
+    have hj := mem_range.1 hj
+    refine hz1 (k := τ (cb n j + 1)) ?_ (by simp) (hf j hj)
+    intro v hv
+    simp only [map_append, map_cons, map_map, mem_append, mem_cons, mem_map,
+      Function.comp_def, map_nil, not_mem_nil, or_false] at hv
+    rcases hv with (rfl | ⟨k, hk, rfl⟩) | rfl
+    · rw [hcb j hj 2 (by omega)]; simp
+    · obtain ⟨h1, h2⟩ := mem_later.1 hk; exact tz_a2 n τ h1 h2
+    · rw [hcb j hj 1 (by omega)]; simp
+  have hG5 : ((range n).map fun j => val E (tz n τ)
+      (nd .Z ((cb n j + 4) :: (later n j).map (a5 n j)) [cb n j + 3])).prod = 1 := by
+    refine List.prod_eq_one fun y hy => ?_
+    obtain ⟨j, hj, rfl⟩ := mem_map.1 hy
+    have hj := mem_range.1 hj
+    refine hz1 (k := τ (cb n j + 1)) ?_ (by simp) (hf j hj)
+    intro v hv
+    simp only [map_append, map_cons, map_map, mem_append, mem_cons, mem_map,
+      Function.comp_def, map_nil, not_mem_nil, or_false] at hv
+    rcases hv with (rfl | ⟨k, hk, rfl⟩) | rfl
+    · rw [hcb j hj 4 (by omega)]; simp
+    · obtain ⟨h1, h2⟩ := mem_later.1 hk; exact tz_a5 n τ h1 h2
+    · rw [hcb j hj 3 (by omega)]; simp
+  have hG9 : ((range n).map fun j => val E (tz n τ)
+      (nd .Z [j] ((cb n j + 7) :: (range j).map (a9 n j)))).prod = 1 := by
+    refine List.prod_eq_one fun y hy => ?_
+    obtain ⟨j, hj, rfl⟩ := mem_map.1 hy
+    have hj := mem_range.1 hj
+    refine hz1 (k := τ j) ?_ (by simp) (hb _ (by omega))
+    intro v hv
+    simp only [map_append, map_cons, map_map, mem_append, mem_cons, mem_map, mem_range,
+      Function.comp_def, map_nil, not_mem_nil, or_false] at hv
+    rcases hv with rfl | rfl | ⟨k, hk, rfl⟩
+    · exact tz_low n τ (by omega)
+    · rw [hcb j hj 7 (by omega)]; simp
+    · exact tz_a9 n τ hk hj
+  have hC : ∀ m ∈ range n, ((chainN n m).map (val E (tz n τ))).prod =
+      fou d (τ (cb n m + 1)) (τ (n + m)) * ex (engP d n (m + 1) (τ (cb n m + 1))) *
+        fou d (τ (cb n m + 5)) (τ (cb n m + 1)) * fou d (τ (cb n m + 6)) (τ (cb n m + 5)) *
+        fou d (τ m) (τ (cb n m + 6)) := by
+    intro m hm
+    have hm := mem_range.1 hm
+    simp only [chainN, nd, map_cons, map_nil, prod_cons, prod_nil, mul_one, val]
+    rw [show cb n m = cb n m + 0 from rfl, hcb m hm 0 (by omega), hcb m hm 1 (by omega),
+      hcb m hm 2 (by omega), hcb m hm 3 (by omega), hcb m hm 4 (by omega),
+      hcb m hm 5 (by omega), hcb m hm 6 (by omega), hcb m hm 7 (by omega), eD0]
+    simp only [show (1 : ℕ) ≠ 0 by omega, show (1 : ℕ) ≠ 7 by omega, show (2 : ℕ) ≠ 0 by omega,
+      show (2 : ℕ) ≠ 7 by omega, show (3 : ℕ) ≠ 0 by omega, show (3 : ℕ) ≠ 7 by omega,
+      show (5 : ℕ) ≠ 0 by omega, show (5 : ℕ) ≠ 7 by omega, show (6 : ℕ) ≠ 0 by omega,
+      show (6 : ℕ) ≠ 7 by omega, show (7 : ℕ) ≠ 0 by omega, show (4 : ℕ) ≠ 0 by omega,
+      show (4 : ℕ) ≠ 7 by omega, if_true, if_false, true_or, or_true,
+      show ¬((1 : ℕ) = 2 ∨ (1 : ℕ) = 3 ∨ (1 : ℕ) = 4) by omega,
+      show ¬((5 : ℕ) = 2 ∨ (5 : ℕ) = 3 ∨ (5 : ℕ) = 4) by omega,
+      show ¬((6 : ℕ) = 2 ∨ (6 : ℕ) = 3 ∨ (6 : ℕ) = 4) by omega]
+    rw [show [τ (cb n m + 1)] ++ [τ (cb n m + 1)] = [τ (cb n m + 1), τ (cb n m + 1)] from rfl,
+      Fca.tZ_all _ (τ (cb n m + 1)) _ _ (by simp) (by simp) (hf m hm)]
+    rw [show E.phase (m + 1) = engP d n (m + 1) from rfl]
+    ring
+  have hP0 : ∀ m ∈ range n, ((later n m).map fun j => val E (tz n τ)
+      ⟨.ZP 0 0 1, [a0 n j m], [a2 n m j], j - m, 0⟩).prod =
+      ((later n m).map fun j => tP (engD d n (j - m)) 1 [τ (n + j), τ (cb n m + 1)]).prod := by
+    intro m _
+    congr 1
+    refine List.map_congr_left fun j hj => ?_
+    obtain ⟨h1, h2⟩ := mem_later.1 hj
+    simp only [val, map_cons, map_nil, cons_append, nil_append]
+    rw [tz_a0 n τ h1 h2, tz_a2 n τ h1 h2]; rfl
+  have hP3 : ∀ m ∈ range n, ((later n m).map fun j => val E (tz n τ)
+      ⟨.ZP 0 0 (-1), [a9 n j m], [a5 n m j], j - m, 0⟩).prod =
+      ((later n m).map fun j => tP (engD d n (j - m)) (-1) [τ j, τ (cb n m + 1)]).prod := by
+    intro m _
+    congr 1
+    refine List.map_congr_left fun j hj => ?_
+    obtain ⟨h1, h2⟩ := mem_later.1 hj
+    simp only [val, map_cons, map_nil, cons_append, nil_append]
+    rw [tz_a9 n τ h1 h2, tz_a5 n τ h1 h2]; rfl
+  simp only [engL, prodVal, map_append, prod_append, map_flatMap, prod_flatMapC, map_map,
+    Function.comp_def]
+  rw [hG0, hG2, hG5, hG9, List.map_congr_left hC, List.map_congr_left hP0,
+    List.map_congr_left hP3]
+  simp only [Fca.lprod_range, mul_one]
+  rw [← Finset.prod_mul_distrib, ← Finset.prod_mul_distrib]
+  refine Finset.prod_congr rfl fun m _ => ?_
+  simp only [Tm, List.prod_map_mul]
+  ring
+
+
 /-! ## The adder arithmetic over all copies -/
 
 section arith
