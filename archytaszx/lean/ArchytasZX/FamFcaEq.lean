@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0.
 import ArchytasZX.FamFcaWire
 import ArchytasZX.ChainLabel
 import ArchytasZX.ChainFam
+import ArchytasZX.FamEval
 
 /-!
 # The boxed Fourier constant adder's expansion is `engL`
@@ -174,6 +175,105 @@ theorem ports0 (n : ℕ) : (D0.famExpand n).portsOK := by
         | exact (okP (pw1_mem n) hq).2.2.1
         | exact (okP (pw0_mem n) hq).2.1
         | exact (okP (pw1_mem n) hq).2.1
+
+/-! ## The entry -/
+
+theorem growC_zero (c : Port → ℕ) (x : ℕ) (out : Bool) (ds : List ℕ) (h : ∀ v ∈ ds, v = 0) :
+    ∀ v ∈ Diagram.growC c x out ds, v = 0 := by
+  intro v hv
+  simp only [Diagram.growC, List.mem_flatMap, List.mem_replicate] at hv
+  obtain ⟨i, -, -, rfl⟩ := hv
+  rcases Nat.lt_or_ge i ds.length with hi | hi
+  · rw [List.getD_eq_getElem _ _ hi]; exact h _ (List.getElem_mem hi)
+  · rw [List.getD_eq_default _ _ hi]
+
+theorem legs_zero (n : ℕ) : ∀ y ∈ (D0.famExpand n).nodes, (∀ v ∈ y.outs, v = 0) ∧ ∀ v ∈ y.ins, v = 0 := by
+  intro y hy
+  simp only [FamDiagram.famExpand, List.mem_append] at hy
+  rcases hy with hy | hy
+  · obtain ⟨x, hx, j, hj, rfl⟩ := mem_nodesX hy
+    rw [node_eq0 hx hj]
+    have hx' := hx
+    simp only [D0, List.mem_cons, List.not_mem_nil, or_false] at hx'
+    refine ⟨growC_zero _ _ _ _ ?_, growC_zero _ _ _ _ ?_⟩ <;>
+      rcases hx' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+  · rw [pairs_flat, List.mem_append] at hy
+    rcases hy with hy | hy <;>
+    · simp only [FamDiagram.pairNodes, List.mem_map] at hy
+      obtain ⟨q, -, rfl⟩ := hy
+      simp
+
+theorem getD_zero {l : List ℕ} (h : ∀ v ∈ l, v = 0) (i : ℕ) : l.getD i 0 = 0 := by
+  rcases Nat.lt_or_ge i l.length with hi | hi
+  · rw [List.getD_eq_getElem _ _ hi]; exact h _ (List.getElem_mem hi)
+  · rw [List.getD_eq_default _ _ hi]
+
+theorem portDim0 (n : ℕ) (p : Port) : (D0.famExpand n).portDim p = 0 := by
+  unfold Diagram.portDim
+  split
+  · next y hy =>
+    have := legs_zero n y (List.mem_of_find?_eq_some hy)
+    split
+    · exact getD_zero this.1 _
+    · exact getD_zero this.2 _
+  · rfl
+
+theorem bnd_len0 (n : ℕ) : (D0.famExpand n).bnd.length = 2 * n := by
+  rw [bnd0']; simp; ring
+
+theorem wires_len0 (n : ℕ) : (D0.famExpand n).wires.length = (engL n).int.length := by
+  have := (int0 n).length_eq; simpa using this
+
+theorem lab_int {n : ℕ} {w : Port × Port} (hw : w ∈ (D0.famExpand n).wires) :
+    2 * n ≤ lab0 n w.1 ∧ lab0 n w.1 < rb n := by
+  have h := (int0 n).subset (List.mem_map_of_mem (f := fun w => lab0 n w.1) hw)
+  simp only [engL, List.mem_map, List.mem_range] at h
+  obtain ⟨k, hk, e⟩ := h
+  rw [← e, rb_eq]; omega
+
+/-- The expanded boxed side's entry is `engL n`'s. -/
+theorem evalL0 (d n : ℕ) (σ : ℕ → ℕ) (hσ : (D0.famExpand n).InRange (engE d n) σ) :
+    (D0.famExpand n).eval (engE d n) σ = ArchytasZX.eval (engE d n) (engL n) σ := by
+  have hbnd : ∀ i (hi : i < (D0.famExpand n).bnd.length), lab0 n (D0.famExpand n).bnd[i] = i := by
+    intro i hi
+    have hl := bnd_len0 n
+    rw [List.getElem_of_eq (bnd0' n)]
+    by_cases h : i < n
+    · rw [List.getElem_append_left (by simpa using h)]
+      simp only [List.getElem_map, List.getElem_range]
+      rw [lab0_cp' (by decide) h]; rfl
+    · rw [List.getElem_append_right (by simpa using h)]
+      simp only [List.getElem_map, List.getElem_range, List.length_map, List.length_range]
+      rw [lab0_cp' (by decide) (by omega)]
+      simp only [labX]; omega
+  have hnd : ((D0.famExpand n).wires.map fun w => lab0 n w.1).Nodup :=
+    (int0 n).nodup_iff.2 ((List.nodup_range).map fun a b h => by simpa using h)
+  have hdim : ∀ j (hj : j < (D0.famExpand n).wires.length),
+      labDim (engE d n) (lab0 n (D0.famExpand n).wires[j].1) =
+        (engE d n).dimv ((D0.famExpand n).wireDim j) := by
+    intro j hj
+    have hn : 0 < n := by
+      rcases Nat.eq_zero_or_pos n with rfl | h
+      · rw [wires_len0] at hj; simp [engL, tri] at hj
+      · exact h
+    have hl := lab_int (List.getElem_mem hj)
+    rw [labDim_low d hn hl.2]
+    simp only [Diagram.wireDim, List.getElem?_eq_getElem hj, Option.map_some, Option.getD_some,
+      portDim0]
+    exact (engD_zero d hn).symm
+  have hbd : ∀ i < (D0.famExpand n).bnd.length,
+      labDim (engE d n) i = (engE d n).dimv ((D0.famExpand n).bdims.getD i 0) := by
+    intro i hi
+    rw [bnd_len0] at hi
+    have hn : 0 < n := by omega
+    have hb : (D0.famExpand n).bdims.getD i 0 = 0 := by
+      exact getD_zero (fun v hv => by
+        obtain ⟨a, -, rfl⟩ := List.mem_map.1 hv; exact portDim0 n a) i
+    rw [hb, labDim_low d hn (by rw [rb_eq]; omega)]
+    exact (engD_zero d hn).symm
+  rw [Diagram.eval_netBy _ _ (lab0 n) hbnd (hw0 n) (ports0 n) hnd
+    (fun w hw => by rw [bnd_len0]; exact (lab_int hw).1) hdim hbd σ hσ]
+  exact eval_perm_net _ _ _ (nodes0 n) (int0 n) σ
 
 end FamFca
 
