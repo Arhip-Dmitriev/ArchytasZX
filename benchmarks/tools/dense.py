@@ -138,9 +138,7 @@ def _single(g: ir.Gate, dv: int, n: int, d: int) -> np.ndarray:
     if isinstance(g, (ir.ZPhase, ir.XPhase)):
         ph = []
         for k in range(dv):
-            if k == 0:
-                ph.append(1.0)
-            elif g.rule is not None:
+            if g.rule is not None:
                 ph.append(_turn(_num(g.rule, n, d, k)))
             else:
                 ph.append(_turn(_num(g.entries.get(k, 0), n, d)))

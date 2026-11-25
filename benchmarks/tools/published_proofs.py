@@ -182,10 +182,13 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
             return common.unsupported(f"{project} proof file {rel} missing")
         text = path.read_bytes()
         os.environ["PATH"] = str(coqc(project).parent) + os.pathsep + path0
-        with tempfile.TemporaryDirectory() as tmp:
-            target = str(Path(tmp) / (path.stem + ".vo"))
-            cmd = [str(coqc(project)), *_flags(root), "-o", target, str(path)]
-            res = rival.run_binary(cmd, limit)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                target = str(Path(tmp) / (path.stem + ".vo"))
+                cmd = [str(coqc(project)), *_flags(root), "-o", target, str(path)]
+                res = rival.run_binary(cmd, limit)
+        finally:
+            os.environ["PATH"] = path0
         cpu += res.get("cpu", 0.0)
         wall += res.get("wall", 0.0)
         accepted = res["status"] == "ok" and res.get("returncode") == 0
@@ -202,7 +205,7 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
                 "accepted": accepted,
             }
         )
-    prep = time.process_time() - c0 - cpu
+    prep = time.process_time() - c0
     status, verdict, lim = summary(files)
     res = {
         "status": status,

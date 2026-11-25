@@ -24,16 +24,16 @@ def main() -> None:
     with open(sys.argv[1], encoding="utf-8") as fh:
         p = json.load(fh)
     tool = p["tool"]
-    c0, w0 = time.process_time(), time.perf_counter()
     if tool == "pyzx":
         import pyzx as zx
-
+    else:
+        import quizx
+    c0, w0 = time.process_time(), time.perf_counter()
+    if tool == "pyzx":
         lhs = zx.Circuit.from_qasm(p["qasm"]).to_graph()
         rhs = _build(zx.Graph(), p["rhs"])
         reduce = zx.full_reduce
     else:
-        import quizx
-
         lhs = quizx.qasm(p["qasm"])
         rhs = _build(quizx.VecGraph(), p["rhs"])
         reduce = quizx.full_simp
@@ -111,6 +111,7 @@ def _build(g, spec):
 LOG_LIMIT = 600.0
 LOG_TOL = 1e-9
 PHASE_TOL = 1e-6
+ZERO_TOL = 1e-12
 
 
 def _ip(a, b, reduce):
@@ -136,11 +137,11 @@ def scalar_parts(s):
     factors = [complex(s.floatfactor)]
     factors += [1 + cmath.exp(1j * math.pi * float(p)) for p in s.phasenodes]
     if s.sum_of_phases:
-        t = sum(c * cmath.exp(1j * math.pi * float(p)) for p, c in s.sum_of_phases.items())
-        if t != 0:
-            factors.append(t)
+        factors.append(
+            sum(c * cmath.exp(1j * math.pi * float(p)) for p, c in s.sum_of_phases.items())
+        )
     for z in factors:
-        if z == 0:
+        if abs(z) <= ZERO_TOL:
             return True, -math.inf, 0.0
         logm += math.log(abs(z))
         ang += cmath.phase(z)

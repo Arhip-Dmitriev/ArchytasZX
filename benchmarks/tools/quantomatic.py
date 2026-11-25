@@ -28,7 +28,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from benchmarks import stages, subject
+from benchmarks import subject
 from benchmarks.tools import common, rival
 
 ENV = "quantomatic"
@@ -129,7 +129,7 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         return common.unsupported(why or "qubits only (d = 2)")
     c0 = time.process_time()
     try:
-        left, right = stages.diagrams(subject.script(inst, n, 2).text)
+        left, right = rival.loaded_diagrams(subject.script(inst, n, 2).text)
         payload = {
             "theory": "red_green",
             "rules": str(rules()),
@@ -155,7 +155,11 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         try:
             res |= json.loads(text[text.index("{") :])
         except (json.JSONDecodeError, ValueError):
-            res = {"status": "error", "detail": text[-300:]}
+            res = {
+                "status": "error",
+                "detail": text[-300:],
+                **{k: res[k] for k in ("cpu", "wall", "peak_mb") if k in res},
+            }
     out = rival.finish(inst, res, prep, {"quantomatic": "0762b5f"})
     if res.get("vertices_after") is not None:
         out["b3"] = {

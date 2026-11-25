@@ -85,4 +85,4 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     prep = time.process_time() - c0
     payload = {"d": d, "n": len(a.wires), "a": ops_a, "b": ops_b}
     res = rival.run_driver(ENV, "dizx", payload, float(job["config"]["stages"]["timeout_seconds"]))
-    return rival.finish(inst, res, prep, {"dizx": "benchmarks/.venvs/src/dizx"})
+    return rival.finish(inst, res, prep, {"dizx": "e387226"})

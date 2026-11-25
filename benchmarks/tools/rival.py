@@ -60,7 +60,7 @@ def python(env: str) -> Path:
 
 def installed(env: str) -> str | None:
     """None when the environment exists, else the reason."""
-    return None if python(env).exists() else f"environment benchmarks/.venvs/{env} not installed"
+    return None if python(env).exists() else f"environment {VENVS / env} not installed"
 
 
 def qubit_ir(inst: Any, n: int | None) -> ir.Circuit:
@@ -382,18 +382,23 @@ class SpecBound(Exception):
     error); the message is the loader's."""
 
 
-def spec_diagram(inst: Any, n: int | None, d: int) -> Any:
-    """The specification diagram at (n, d), instantiated, loaded with the parser's input
-    bounds lifted (parser.lifted_bounds); SpecBound when the loader still refuses the script."""
+def loaded_diagrams(text: str) -> tuple[Any, Any]:
+    """(circuit, specification) of an engine script, loaded with the parser's input bounds
+    lifted (parser.lifted_bounds); SpecBound when the loader still refuses the script."""
     from archytaszx.repl.parser import lifted_bounds
-    from archytaszx.semantics import check
 
-    sc = subject.script(inst, n, d)
     try:
         with lifted_bounds():
-            _, right = stages.diagrams(sc.text)
+            return stages.diagrams(text)
     except RuntimeError as exc:
         raise SpecBound(str(exc).splitlines()[0][:400]) from exc
+
+
+def spec_diagram(inst: Any, n: int | None, d: int) -> Any:
+    """The specification diagram at (n, d), instantiated (:func:`loaded_diagrams`)."""
+    from archytaszx.semantics import check
+
+    _, right = loaded_diagrams(subject.script(inst, n, d).text)
     return check.instantiate(right, {})
 
 

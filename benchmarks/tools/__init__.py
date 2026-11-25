@@ -79,7 +79,7 @@ def preflight(names: list[str]) -> list[str]:
             )
             if r.returncode != 0:
                 last = (r.stderr.strip().splitlines() or ["exit " + str(r.returncode)])[-1]
-                problems.append(f"{name}: benchmarks/.venvs/{env}: {last}")
+                problems.append(f"{name}: {rival.VENVS / env}: {last}")
         except (OSError, subprocess.TimeoutExpired) as exc:
-            problems.append(f"{name}: benchmarks/.venvs/{env}: {type(exc).__name__}: {exc}")
+            problems.append(f"{name}: {rival.VENVS / env}: {type(exc).__name__}: {exc}")
     return problems

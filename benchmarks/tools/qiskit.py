@@ -60,12 +60,12 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
             return common.unsupported(f"{m} qubits: too large to simulate")
         qc, inits, posts = rival.qiskit_circuit(c)
         rhs = rival.spec_tensor(inst, n, 2)
+        text, phase = rival.qasm_and_phase(qc)
     except rival.Unsupported as exc:
         return common.unsupported(str(exc))
     with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as fh:
         np.save(fh, rhs)
         path = fh.name
-    text, phase = rival.qasm_and_phase(qc)
     payload = {
         "tool": "qiskit",
         "qasm": text,

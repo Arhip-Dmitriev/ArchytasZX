@@ -56,7 +56,7 @@ def cirq_tensor(p):
             circuit, initial_state=idx, qubit_order=qs, dtype=np.complex128
         )
         return phase * np.asarray(state).reshape([d] * m), True
-    u = cirq.unitary(circuit) if ops else np.eye(d**m)
+    u = circuit.unitary(qubit_order=qs, dtype=np.complex128) if ops else np.eye(d**m)
     return phase * np.asarray(u).reshape([d] * (2 * m)), False
 
 
@@ -65,6 +65,11 @@ def main():
     with open(sys.argv[1], encoding="utf-8") as fh:
         p = json.load(fh)
     rhs = np.load(p["rhs"])
+    if p["tool"] == "qiskit":
+        import qiskit.qasm2
+        import qiskit.quantum_info  # noqa: F401
+    else:
+        import cirq  # noqa: F401
     c0, w0 = time.process_time(), time.perf_counter()
     t, is_state = (qiskit_tensor if p["tool"] == "qiskit" else cirq_tensor)(p)
     m = p["wires"]

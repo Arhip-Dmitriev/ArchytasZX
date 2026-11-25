@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from benchmarks import stages, subject, translate
+from benchmarks import stages, subject
 from benchmarks.outcomes import is_wrong
 from benchmarks.tools import common
 
@@ -55,10 +55,7 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         }
 
     mark("generate")
-    try:
-        g = stages.timed(gen, limit)
-    except translate.Unsupported as exc:
-        return common.unsupported(str(exc))
+    g = stages.timed(gen, limit)
     if g["status"] == "error" and "Unsupported" in str(g.get("detail", "")):
         return common.unsupported(g["detail"])
     out["stages"]["generate"] = g
