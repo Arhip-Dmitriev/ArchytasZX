@@ -728,17 +728,22 @@ def align_merge(d: Diagram, merged: Diagram) -> Theorem:
     from archytaszx.diagram.bangbox import BangBoxError, align_merged
 
     roots = sorted({b.align for b in d.bang_boxes.values() if b.align is not None})
+    refusals: list[str] = []
     for root in roots:
         if root not in d.bang_boxes:
             continue
         try:
             _align_group(d, root)
             candidate = align_merged(d, root)
-        except (KernelError, BangBoxError):
+        except (KernelError, BangBoxError) as exc:
+            refusals.append(f"box {root}: {exc}")
             continue
         if _same(candidate, merged):
             return Theorem(_TOKEN, d, merged, Inference("align_merge", data={"box": root}))
-    raise KernelError("align_merge: the diagram is no aligned box merge of the other")
+    raise KernelError(
+        "align_merge: the diagram is no aligned box merge of the other"
+        + (f" ({'; '.join(refusals)})" if refusals else "")
+    )
 
 
 def _chain_group(d: Diagram, root: BangBoxId) -> list[BangBoxId]:
@@ -2527,9 +2532,11 @@ def lean(
     if isinstance(theorem, Symbolic):
         if name == "main":
             return theorem.source
+        if theorem.domain or theorem.assumptions:
+            return _renamed(theorem.source, name)
         try:
             return lean_sym.export_symbolic(theorem.lhs, theorem.rhs, name, describe)
-        except lean_net.NetUnsupported as exc:
+        except (lean_net.NetUnsupported, ScalarUnsupported) as exc:
             raise KernelError(f"no symbolic proof: {exc}") from exc
     if isinstance(theorem, Refutation):
         if theorem.source and name == "main":
@@ -2538,7 +2545,7 @@ def lean(
             return lean_refute.export_refutation(
                 theorem.lhs, theorem.rhs, theorem.point, name, describe
             )
-        except lean_net.NetUnsupported as exc:
+        except (lean_net.NetUnsupported, ScalarUnsupported) as exc:
             raise KernelError(f"no Lean refutation: {exc}") from exc
     if not isinstance(theorem, Theorem):
         raise KernelError(f"lean takes a Theorem, got {type(theorem).__name__}")
@@ -2548,13 +2555,13 @@ def lean(
         source: str | None = None
         try:
             source = lean_net.export(theorem, name, describe)
-        except lean_net.NetUnsupported:
+        except (lean_net.NetUnsupported, ScalarUnsupported):
             pass
         if source is not None and "\naxiom unproved_" not in source:
             return source
         try:
             return lean_sym.export_symbolic(theorem.lhs, theorem.rhs, name, describe)
-        except lean_net.NetUnsupported:
+        except (lean_net.NetUnsupported, ScalarUnsupported):
             pass
         family = lean_adder.export_family(theorem.lhs, theorem.rhs, theorem.variables, name)
         if family is not None:
@@ -2789,6 +2796,23 @@ def _nest(source: str, tag: str) -> tuple[str, list[str], str]:
             ln = "local " + ln
         body.append(ln)
     return "\n".join(body).strip(), imports, f"{ns}.{tag}"
+
+
+_DECL_MAIN = re.compile(
+    r"^(?:noncomputable )?(?:theorem|lemma|def|abbrev|axiom) (main(?:_[\w']*)?)(?![\w'])",
+    re.MULTILINE,
+)
+"""A top-level declaration named ``main`` or ``main_<suffix>``."""
+
+
+def _renamed(source: str, name: str) -> str:
+    """``source`` with each top-level declaration ``main`` or ``main_<suffix>`` and every bare
+    reference to it renamed to ``name`` or ``name_<suffix>``."""
+    decls = set(_DECL_MAIN.findall(source))
+    if not decls:
+        raise KernelError("no theorem main in the export")
+    pattern = "|".join(re.escape(x) for x in sorted(decls, key=len, reverse=True))
+    return re.sub(rf"(?<![\w.'])({pattern})(?![\w'])", lambda m: name + m[1][len("main") :], source)
 
 
 def _lean_restricted(

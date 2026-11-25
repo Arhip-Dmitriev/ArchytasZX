@@ -430,3 +430,50 @@ def test_a_shift_range_discharges_only_values_inside_it() -> None:
     assert _discharged(shift, parse_restriction("n >= 3"))
     assert not _discharged(shift, parse_restriction("n = 0"))
     assert not _discharged(shift, parse_restriction("m = 5"))
+
+
+def _wire_line(*types: GeneratorType) -> Diagram:
+    from archytaszx.algebra.dimension import Dim
+    from archytaszx.diagram.graph import Direction, PortRef
+
+    g = Diagram()
+    ids = [g.add_node(ty, [Dim.symbol("d")], [Dim.symbol("d")]) for ty in types]
+    for a, b in itertools.pairwise(ids):
+        g.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+    g.set_boundary_inputs([PortRef(ids[0], Direction.INPUT, 0)])
+    g.set_boundary_outputs([PortRef(ids[-1], Direction.OUTPUT, 0)])
+    return g
+
+
+def test_named_symbolic_export_keeps_the_restriction() -> None:
+    from archytaszx.diagram.generators import Z_SPIDER
+    from archytaszx.semantics.restrict import DIMENSION, GE, Clause, Restriction
+
+    small = _wire_line(Z_SPIDER)
+    inner = K.symbolic(small, small)
+    assert K._renamed(inner.source, "foo") == K.lean(inner, "foo")
+    floor = Restriction((Clause("d", DIMENSION, GE, c=3),))
+    sym = K.restricted_symbolic(K.RestrictedProof(inner, floor, small, small, False))
+    named = K.lean(sym, "foo")
+    assert named == K._renamed(K.lean(sym), "foo")
+    assert "restricted to" in named and re.search(r"^theorem foo\b", named, re.MULTILINE)
+    assert not re.search(r"(?<![\w.'])main(?![\w'])", named)
+
+
+def test_lean_refuses_unsupported_scalars(monkeypatch: pytest.MonkeyPatch) -> None:
+    from archytaszx.diagram.generators import Z_SPIDER
+    from archytaszx.semantics import lean_refute, lean_sym
+    from archytaszx.semantics.lean_scalar import ScalarUnsupported
+
+    small = _wire_line(Z_SPIDER)
+
+    def refuse(*_: object, **__: object) -> str:
+        raise ScalarUnsupported("probe")
+
+    sym = K.symbolic(small, small)
+    monkeypatch.setattr(lean_sym, "export_symbolic", refuse)
+    monkeypatch.setattr(lean_refute, "export_refutation", refuse)
+    with pytest.raises(K.KernelError, match="probe"):
+        K.lean(sym, "foo")
+    with pytest.raises(K.KernelError, match="probe"):
+        K.lean(K.Refutation(small, small, {}), "foo")

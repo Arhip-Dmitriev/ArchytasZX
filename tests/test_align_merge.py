@@ -164,3 +164,13 @@ def test_lean_checks_an_align_merge_and_refuses_a_moved_copy_reading(tmp_path: o
     assert bad != source
     ok, output = lean_check(bad, f"{tmp_path}/bad.lean")
     assert not ok
+
+
+def test_align_merge_names_the_group_refusal() -> None:
+    d = parse_dsl(ALIGNED)
+    merged = align_merged(d, _root(d))  # type: ignore[arg-type]
+    member = next(b for b, box in d.bang_boxes.items() if box.align is not None)
+    tampered = d.copy()
+    tampered.set_bang_box_multiplicity(member, Mult("n") + 1)
+    with pytest.raises(kernel.KernelError, match="differ in kind, count or index"):
+        kernel.align_merge(tampered, merged)
