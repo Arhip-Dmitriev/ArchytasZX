@@ -48,11 +48,18 @@ def test_rewrite_finds_the_left_side(name: str) -> None:
     kernel.iso(theorem.rhs, right)
 
 
-def test_radix_add_instance_at_symbolic_p() -> None:
-    n = Mult.symbol("n").to_sympy()
-    theorem = cast(kernel.Theorem, lemmas.instance(lemmas.RADIX_ADD, n))
-    left, right = lemmas.sides(lemmas.RADIX_ADD, n)
+@pytest.mark.parametrize("shift", [0, 1])
+def test_radix_add_instance_at_symbolic_p(shift: int = 0) -> None:
+    p = Mult.symbol("n").to_sympy() + shift
+    theorem = cast(kernel.Theorem, lemmas.instance(lemmas.RADIX_ADD, p))
+    left, right = lemmas.sides(lemmas.RADIX_ADD, p)
     assert kernel._same(theorem.lhs, left) and kernel._same(theorem.rhs, right)
+
+
+def test_radix_moduli_take_symbolic_sub_monomials() -> None:
+    d = Dim.symbol("d").to_sympy()
+    n = Mult.symbol("n").to_sympy()
+    assert d * d**n in scalar._radix_moduli(d**2 * d**n)
 
 
 def test_sign_flipped_row_split_up_is_refused() -> None:
@@ -83,7 +90,9 @@ if __name__ == "__main__":
         if name in REWRITTEN:
             test_rewrite_finds_the_left_side(name)
         print(name, "ok")
-    test_radix_add_instance_at_symbolic_p()
+    test_radix_add_instance_at_symbolic_p(0)
+    test_radix_add_instance_at_symbolic_p(1)
+    test_radix_moduli_take_symbolic_sub_monomials()
     test_sign_flipped_row_split_up_is_refused()
     test_bounds_take_symbolic_coefficients_of_known_sign()
     print("instance, flipped, bounds ok")

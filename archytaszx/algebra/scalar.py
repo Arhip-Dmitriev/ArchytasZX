@@ -1484,7 +1484,35 @@ def _radix_moduli(modulus: sp.Expr) -> list[sp.Expr]:
         out += [sp.Integer(c) * whole for c in sp.divisors(int(integer))[1:-1]]
     if integer.is_Integer and int(integer) > 1:
         out += [sp.Integer(c) for c in reversed(sp.divisors(int(integer))[1:])]
+    out += [c for c in _sub_monomials(whole) if c not in out]
     return out
+
+
+def _sub_monomials(whole: sp.Expr) -> list[sp.Expr]:
+    """The monomials ``prod b^(k_b + s_b)`` strictly between 1 and ``whole = prod b^(e_b +
+    S_b)`` (``e_b`` the integer, ``S_b`` the symbolic part of each exponent), ``k_b <= e_b`` and
+    ``s_b`` in ``{0, S_b}``, largest integer degree first."""
+    powers = sorted(sp.Mul(whole).as_powers_dict().items(), key=lambda item: str(item[0]))
+    if len(powers) > 4:
+        return []
+    choices: list[list[tuple[sp.Expr, int]]] = []
+    for base, exponent in powers:
+        integer, symbolic = sp.expand(exponent).as_coeff_Add()
+        if not integer.is_Integer or int(integer) < 0 or int(integer) > 8:
+            return []
+        options = [(base ** sp.Integer(k), k) for k in range(int(integer) + 1)]
+        if symbolic != 0:
+            options += [
+                (base**symbolic * base ** sp.Integer(k), k) for k in range(int(integer) + 1)
+            ]
+        choices.append(options)
+    found: list[tuple[int, str, sp.Expr]] = []
+    for combo in itertools.product(*choices):
+        value = sp.Mul(*(c for c, _k in combo))
+        if value == 1 or sp.expand(value - whole) == 0:
+            continue
+        found.append((-sum(k for _c, k in combo), str(value), value))
+    return [value for _deg, _name, value in sorted(found, key=lambda item: item[:2])]
 
 
 def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
