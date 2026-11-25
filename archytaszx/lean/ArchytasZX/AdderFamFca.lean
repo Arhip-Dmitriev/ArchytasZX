@@ -507,13 +507,14 @@ theorem rhs_support (d : ℕ) {n m : ℕ} {τ : ℕ → ℕ}
 /-- A sum over `ws` whose summand vanishes away from `τ0` is the summand at `τ0`. -/
 theorem sumOver_single (D : ℕ → ℕ) (ws : List ℕ) (hnd : ws.Nodup) (f : (ℕ → ℕ) → ℂ)
     (σ τ0 : ℕ → ℕ) (h0 : ∀ x ∉ ws, τ0 x = σ x) (hr : ∀ l ∈ ws, τ0 l < D l)
-    (hs : ∀ τ, (∀ x ∉ ws, τ x = σ x) → f τ ≠ 0 → ∀ l ∈ ws, τ l = τ0 l) :
+    (hs : ∀ τ, (∀ x ∉ ws, τ x = σ x) → (∀ x ∈ ws, τ x < D x) → f τ ≠ 0 →
+      ∀ l ∈ ws, τ l = τ0 l) :
     sumOver D ws f σ = f τ0 := by
   rw [sumOver_congr D ws f (fun τ => if ∀ l ∈ ws, τ l = τ0 l then f τ else 0) σ
-    (fun τ h1 _ => by
+    (fun τ h1 h2 => by
       split_ifs with h
       · rfl
-      · by_contra hne; exact h (hs τ h1 hne)), sumOver_pinV ws hnd τ0 hr]
+      · by_contra hne; exact h (hs τ h1 h2 hne)), sumOver_pinV ws hnd τ0 hr]
   congr 1
   funext x
   split_ifs with h
@@ -632,7 +633,7 @@ theorem eval_rhsN (d : ℕ) (hd : 0 < d) {n m : ℕ} (hm : n ≤ m) (σ : ℕ �
     · rw [tauR_cv ht, labDim_cv d (by omega)]; exact topv_lt ha t ht
     · rw [tauR_cw ht, labDim_cw d (by omega)]; exact topv_lt hb t ht
   case hs =>
-    intro τ h0 hne l hl
+    intro τ h0 _ hne l hl
     have hsup := rhs_support d hne
     obtain ⟨t, ht, rfl | rfl⟩ := rhsInt_mem hl
     · rw [(hsup t ht).1, tauR_cv ht, topv_congr (fun i _ => h0 _ (sl_notin_rhsInt (by omega))) t ht]
@@ -890,6 +891,207 @@ theorem cp_support {d m n : ℕ} (hd : 0 < d) {τ : ℕ → ℕ}
   · rw [tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi,
       mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _
         mem_cons_self)))⟩)), ez i hi]
+
+theorem lookup_some_of_mem (l : List (ℕ × ℕ)) {x : ℕ} (h : x ∈ l.map Prod.fst) :
+    ∃ v, l.lookup x = some v := by
+  induction l with
+  | nil => simp at h
+  | cons p l ih =>
+    obtain ⟨k, v⟩ := p
+    by_cases hk : x = k
+    · subst hk; exact ⟨v, by simp [List.lookup]⟩
+    · have : (x == k) = false := by simpa using hk
+      simp only [List.lookup, this]
+      exact ih (by simpa [hk] using h)
+
+theorem tauC_congr {d n : ℕ} {τ ρ : ℕ → ℕ} (h : ∀ x ∉ pinC n, τ x = ρ x) (x : ℕ) :
+    tauC d n τ x = tauC d n ρ x := by
+  by_cases hx : x ∈ pinC n
+  · obtain ⟨v, hv⟩ := lookup_some_of_mem (valsC d n ρ) (by rw [valsC_fst]; exact hx)
+    simp only [tauC, valsC_congr h, hv, Option.getD_some]
+  · rw [tauC_off hx, tauC_off hx, h x hx]
+
+theorem labDim_blk (d : ℕ) {t m x : ℕ} (htm : t < m) (hx : B t ≤ x) (hx' : x < B (t + 1)) :
+    labDim (envAt (E0 d) L m) x = dimv d (((blockL t).lookup x).getD 0) := by
+  obtain ⟨j, rfl⟩ : ∃ j, m = t + 1 + j := ⟨m - (t + 1), by omega⟩
+  rw [labDim_mono d hx' j]
+  have hL : L (t + 1) = L t ++ blockL t := by simp [L, range_succ, flatMap_append]
+  simp only [labDim, envAt, E0, hL]
+  rw [lookup_append_none x _ _ fun p hp e => by have := L_keys t p hp; omega]
+
+theorem blockL_fst (n : ℕ) : (blockL n).map Prod.fst = (([12, 13] ++ (range n).flatMap fun i =>
+    [0, 1].map fun r => 20 + 8 * i + r)).map (sl n) := by
+  simp only [blockL, map_append, map_flatMap, map_cons, map_nil, sl]
+  ring_nf
+
+theorem labDim_plain (d : ℕ) {n m t : ℕ} (hnm : n < m) (ht : t < 8 * n + 22) (h12 : t ≠ 12)
+    (h13 : t ≠ 13) (hb : ∀ i < n, ∀ r < 2, t ≠ 20 + 8 * i + r) :
+    labDim (envAt (E0 d) L m) (sl n t) = d := by
+  rw [labDim_blk d hnm (by simp [sl]) (by rw [B_succ]; unfold sl; omega),
+    lookup_none _ _ (by
+      rw [blockL_fst]; intro h
+      obtain ⟨u, hu, e⟩ := mem_map.1 h
+      have e := sl_injective n e
+      subst e
+      simp only [mem_append, mem_cons, not_mem_nil, or_false, mem_flatMap, mem_range,
+        mem_map] at hu
+      rcases hu with (rfl | rfl) | ⟨i, hi, r, hr, rfl⟩
+      all_goals first | omega | exact hb i hi r (by omega) rfl)]
+  rfl
+
+theorem labDim_z (d : ℕ) {n m i : ℕ} (hnm : n < m) (hi : i < n) :
+    labDim (envAt (E0 d) L m) (sl n (20 + 8 * i)) = pD d n i := by
+  rw [labDim_blk d hnm (by simp [sl]) (by rw [B_succ]; unfold sl; omega),
+    lookup_of_mem (blockL n) (by
+      rw [blockL_fst]
+      exact (nodup_blocks n 20 _ _ (by decide) (by decide) (by decide) (by decide)).map
+        (sl_injective n)) (k := sl n (20 + 8 * i)) (v := n - i + 2)
+      (mem_append_right _ (mem_flatMap.2 ⟨i, mem_range.2 hi, mem_cons_self⟩))]
+  show d ^ (n - i + 1) = _; rfl
+
+/-- The pending-leg factors of copy `n`. -/
+def pinsCp (n : ℕ) (σ : ℕ → ℕ) : ℂ :=
+  (if σ (sl n (14 + 8 * n)) = σ (sl n 0) then 1 else 0) *
+    (if σ (sl n (15 + 8 * n)) = σ (sl n 1) then 1 else 0) *
+    ((range n).map fun i => (if σ (sl n (14 + 8 * i)) = σ (pend n i) then (1 : ℂ) else 0) *
+      (if σ (sl n (15 + 8 * i)) = σ (pendO n i) then 1 else 0)).prod
+
+/-- The pair factors of copy `n` at the Fourier value `x`. -/
+noncomputable def pairsF (d n : ℕ) (σ : ℕ → ℕ) (x : ℕ) : ℂ :=
+  ((range n).map fun i => fou (pD d n i) x (σ (pend n i)) *
+    fou (pD d n i) x ((pD d n i - σ (pendO n i) % pD d n i) % pD d n i)).prod
+
+theorem tZ3 (D a b : ℕ) (φ : ℕ → ℝ) (hφ : ∀ k, φ k = 0) (ha : a < D) :
+    tZ D φ [a, b, a] = if b = a then 1 else 0 := by
+  unfold tZ
+  simp only [List.mem_cons, List.not_mem_nil, or_false, forall_eq_or_imp, forall_eq, hφ, ex_zero]
+  rw [Finset.sum_eq_single a (fun k _ hk => if_neg fun h' => hk h'.1.symm)
+    (fun h' => absurd (Finset.mem_range.2 ha) h')]
+  by_cases h : b = a <;> simp [h]
+
+theorem tZ_all (D k : ℕ) (φ : ℕ → ℝ) (vs : List ℕ) (hne : vs ≠ []) (hv : ∀ v ∈ vs, v = k)
+    (hk : k < D) : tZ D φ vs = ex (φ k) := by
+  obtain ⟨v, hv0⟩ := List.exists_mem_of_ne_nil vs hne
+  unfold tZ
+  rw [Finset.sum_eq_single k (fun j _ hj => if_neg fun h' => hj ((h' v hv0).symm.trans (hv v hv0)))
+    (fun h' => absurd (Finset.mem_range.2 hk) h'), if_pos hv]
+
+theorem notin_low {n t : ℕ} (ht : t < 16) (h2 : t ≠ 2) (h4 : t ≠ 4) (h5 : t ≠ 5) (h6 : t ≠ 6)
+    (h9 : t ≠ 9) : sl n t ∉ pinC n :=
+  notin_pinC (by omega) h2 h4 h5 h6 h9 fun _ _ _ _ => by omega
+
+/-- Copy `n`'s nodes at the pinned labels. -/
+theorem prod_cp (d : ℕ) (hd : 0 < d) (n m : ℕ) (ρ : ℕ → ℕ) (h0 : ρ (sl n 0) < d) (h1 : ρ (sl n 1) < d)
+    (h3 : ρ (sl n 3) < d) (hA : ∀ i < n, ρ (pend n i) < d) (hB : ∀ i < n, ρ (pendO n i) < d) :
+    prodVal (envAt (E0 d) L m) (cp n).nodes (tauC d n ρ) = pinsCp n ρ *
+      (fou d (ρ (sl n 3)) (ρ (sl n 0)) * ex (phase d (2 * n + 1) (ρ (sl n 3))) *
+        (fou d (ρ (sl n 7)) (ρ (sl n 3)) * fou d (ρ (sl n 8)) (ρ (sl n 7)) *
+          fou d (ρ (sl n 1)) (ρ (sl n 8))) * pairsF d n ρ (ρ (sl n 3))) := by
+  have eD : ∀ e, (envAt (E0 d) L m).dimv e = dimv d e := fun _ => rfl
+  have eP : ∀ p, (envAt (E0 d) L m).phase p = phase d p := fun _ => rfl
+  have t2 : tauC d n ρ (sl n 2) = ρ (sl n 0) := tauC_of_mem (by simp [valsC, sl])
+  have t4 : tauC d n ρ (sl n 4) = ρ (sl n 3) := tauC_of_mem (by simp [valsC, sl])
+  have t5 : tauC d n ρ (sl n 5) = ρ (sl n 3) := tauC_of_mem (by simp [valsC, sl])
+  have t6 : tauC d n ρ (sl n 6) = ρ (sl n 3) := tauC_of_mem (by simp [valsC, sl])
+  have t9 : tauC d n ρ (sl n 9) = ρ (sl n 1) := tauC_of_mem (by simp [valsC, sl])
+  have o0 : tauC d n ρ (sl n 0) = ρ (sl n 0) := tauC_off (notin_low (by omega) (by omega)
+    (by omega) (by omega) (by omega) (by omega))
+  have o1 : tauC d n ρ (sl n 1) = ρ (sl n 1) := tauC_off (notin_low (by omega) (by omega)
+    (by omega) (by omega) (by omega) (by omega))
+  have o3 : tauC d n ρ (sl n 3) = ρ (sl n 3) := tauC_off (notin_low (by omega) (by omega)
+    (by omega) (by omega) (by omega) (by omega))
+  have o7 : tauC d n ρ (sl n 7) = ρ (sl n 7) := tauC_off (notin_low (by omega) (by omega)
+    (by omega) (by omega) (by omega) (by omega))
+  have o8 : tauC d n ρ (sl n 8) = ρ (sl n 8) := tauC_off (notin_low (by omega) (by omega)
+    (by omega) (by omega) (by omega) (by omega))
+  have oP : tauC d n ρ (sl n (14 + 8 * n)) = ρ (sl n (14 + 8 * n)) := tauC_off (notin_pinC
+    (by omega) (by omega) (by omega) (by omega) (by omega) (by omega) fun _ _ _ _ => by omega)
+  have oQ : tauC d n ρ (sl n (15 + 8 * n)) = ρ (sl n (15 + 8 * n)) := tauC_off (notin_pinC
+    (by omega) (by omega) (by omega) (by omega) (by omega) (by omega) fun _ _ _ _ => by omega)
+  have hfix : (([zN [sl n 2, sl n (14 + 8 * n)] [sl n 0],
+     fN 0 (sl n 3) (sl n 2),
+     zN (sl n 4 :: (range n).map fun i => sl n (18 + 8 * i)) [sl n 3],
+     zN [sl n 5] [sl n 4] (2 * n + 1),
+     zN (sl n 6 :: (range n).map fun i => sl n (19 + 8 * i)) [sl n 5],
+     fN 0 (sl n 7) (sl n 6),
+     fN 0 (sl n 8) (sl n 7),
+     fN 0 (sl n 9) (sl n 8),
+     zN [sl n 1, sl n (15 + 8 * n)] [sl n 9]] : List Node).map
+       (val (envAt (E0 d) L m) (tauC d n ρ))).prod =
+      (if ρ (sl n (14 + 8 * n)) = ρ (sl n 0) then 1 else 0) *
+      (if ρ (sl n (15 + 8 * n)) = ρ (sl n 1) then 1 else 0) *
+      (fou d (ρ (sl n 3)) (ρ (sl n 0)) * ex (phase d (2 * n + 1) (ρ (sl n 3))) *
+        (fou d (ρ (sl n 7)) (ρ (sl n 3)) * fou d (ρ (sl n 8)) (ρ (sl n 7)) *
+          fou d (ρ (sl n 1)) (ρ (sl n 8)))) := by
+    have tl : ∀ i ∈ range n, tauC d n ρ (sl n (18 + 8 * i)) = ρ (sl n 3) := fun i hi =>
+      tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, hi,
+        mem_cons_of_mem _ (mem_cons_of_mem _ mem_cons_self)⟩))
+    have tl' : ∀ i ∈ range n, tauC d n ρ (sl n (19 + 8 * i)) = ρ (sl n 3) := fun i hi =>
+      tauC_of_mem (mem_append_right _ (mem_flatMap.2 ⟨i, hi,
+        mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _ mem_cons_self))⟩))
+    simp only [map_cons, map_nil, prod_cons, prod_nil, mul_one, val, zN, fN, cons_append,
+      nil_append, eD, eP, dimv, map_map]
+    rw [t2, oP, o0, o3, t4, t5, t6, o7, o8, t9, o1, oQ,
+      tZ3 _ _ _ _ (phase_zero d) h0, tZ3 _ _ _ _ (phase_zero d) h1,
+      tZ_all d (ρ (sl n 3)) _ _ (by simp) (fun v hv => by
+        simp only [mem_cons, mem_append, mem_map, Function.comp, mem_singleton, not_mem_nil,
+          or_false] at hv
+        rcases hv with rfl | ⟨i, hi, rfl⟩ | rfl <;> simp_all) h3,
+      tZ_all d (ρ (sl n 3)) _ _ (by simp) (fun v hv => by simp at hv; omega) h3,
+      tZ_all d (ρ (sl n 3)) _ _ (by simp) (fun v hv => by
+        simp only [mem_cons, mem_append, mem_map, Function.comp, mem_singleton, not_mem_nil,
+          or_false] at hv
+        rcases hv with rfl | ⟨i, hi, rfl⟩ | rfl <;> simp_all) h3,
+      phase_zero, ex_zero]
+    ring
+  have hpair : ∀ i ∈ range n, (((pairN n i).map (val (envAt (E0 d) L m) (tauC d n ρ))).prod) =
+      ((if ρ (sl n (14 + 8 * i)) = ρ (pend n i) then (1 : ℂ) else 0) *
+        (if ρ (sl n (15 + 8 * i)) = ρ (pendO n i) then 1 else 0)) *
+      (fou (pD d n i) (ρ (sl n 3)) (ρ (pend n i)) *
+        fou (pD d n i) (ρ (sl n 3)) ((pD d n i - ρ (pendO n i) % pD d n i) % pD d n i)) := by
+    intro i hi'
+    have hi := mem_range.1 hi'
+    have hpD : 0 < pD d n i := pow_pos hd _
+    have mem : ∀ {k : ℕ × ℕ}, k ∈ [(sl n (16 + 8 * i), ρ (pend n i)),
+        (sl n (17 + 8 * i), ρ (pendO n i)), (sl n (18 + 8 * i), ρ (sl n 3)),
+        (sl n (19 + 8 * i), ρ (sl n 3)),
+        (sl n (20 + 8 * i), (pD d n i - ρ (pendO n i) % pD d n i) % pD d n i)] →
+        k ∈ valsC d n ρ := fun hk => mem_append_right _ (mem_flatMap.2 ⟨i, hi', hk⟩)
+    have t16 : tauC d n ρ (sl n (16 + 8 * i)) = ρ (pend n i) := tauC_of_mem (mem mem_cons_self)
+    have t17 : tauC d n ρ (sl n (17 + 8 * i)) = ρ (pendO n i) :=
+      tauC_of_mem (mem (mem_cons_of_mem _ mem_cons_self))
+    have t18 : tauC d n ρ (sl n (18 + 8 * i)) = ρ (sl n 3) :=
+      tauC_of_mem (mem (mem_cons_of_mem _ (mem_cons_of_mem _ mem_cons_self)))
+    have t19 : tauC d n ρ (sl n (19 + 8 * i)) = ρ (sl n 3) :=
+      tauC_of_mem (mem (mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _ mem_cons_self))))
+    have t20 : tauC d n ρ (sl n (20 + 8 * i)) = (pD d n i - ρ (pendO n i) % pD d n i) % pD d n i :=
+      tauC_of_mem (mem (mem_cons_of_mem _ (mem_cons_of_mem _ (mem_cons_of_mem _
+        (mem_cons_of_mem _ mem_cons_self)))))
+    have o14 : tauC d n ρ (sl n (14 + 8 * i)) = ρ (sl n (14 + 8 * i)) := tauC_off (notin_pinC
+      (by omega) (by omega) (by omega) (by omega) (by omega) (by omega) fun _ _ _ _ => by omega)
+    have o15 : tauC d n ρ (sl n (15 + 8 * i)) = ρ (sl n (15 + 8 * i)) := tauC_off (notin_pinC
+      (by omega) (by omega) (by omega) (by omega) (by omega) (by omega) fun _ _ _ _ => by omega)
+    have op : tauC d n ρ (pend n i) = ρ (pend n i) := tauC_off (pend_notin hi)
+    have op' : tauC d n ρ (pendO n i) = ρ (pendO n i) := tauC_off (pendO_notin hi)
+    have hcup : ((pD d n i - ρ (pendO n i) % pD d n i) % pD d n i + ρ (pendO n i)) % pD d n i
+        = 0 := by
+      have hr := Nat.mod_lt (ρ (pendO n i)) hpD
+      rw [Nat.add_mod, Nat.mod_mod]
+      rcases Nat.eq_zero_or_pos (ρ (pendO n i) % pD d n i) with h0 | h0
+      · rw [h0]; simp
+      · rw [Nat.mod_eq_of_lt (by omega : pD d n i - ρ (pendO n i) % pD d n i < pD d n i),
+          Nat.sub_add_cancel hr.le, Nat.mod_self]
+    simp only [pairN, map_cons, map_nil, prod_cons, prod_nil, mul_one, val, zN, fN, cons_append,
+      nil_append, eD, eP, dimv]
+    rw [t16, t17, t18, t19, t20, o14, o15, op, op',
+      tZ3 _ _ _ _ (phase_zero d) (hA i hi), tZ3 _ _ _ _ (phase_zero d) (hB i hi),
+      show d ^ (n - i + 1) = pD d n i from rfl,
+      tX_cup _ hpD (phase d 0) (phase_zero d), if_pos hcup]
+    ring
+  simp only [cp, prodVal, map_append, prod_append, map_flatMap, prod_flatMapC]
+  rw [hfix, List.map_congr_left hpair, List.prod_map_mul]
+  simp only [pinsCp, pairsF]
+  ring
 
 /-! ## The family -/
 
