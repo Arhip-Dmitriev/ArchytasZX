@@ -2594,6 +2594,13 @@ def _decide_by_induction(
     token = _INDUCING.set(True)
     try:
         settled = _induction_rung(left, right, shift=outer, **options)
+        unproved = isinstance(settled, str) or (
+            settled[0] is EqualityVerdict.EQUAL and settled[3].get("induction_proof") is None
+        )
+        if outer and unproved:
+            regrouped = _regrouped_induction(left, right)
+            if regrouped is not None:
+                return regrouped
         if outer and isinstance(settled, str):
             lifted = _generalized_induction(left, right, **options)
             if lifted is not None:
@@ -2601,6 +2608,37 @@ def _decide_by_induction(
         return settled
     finally:
         _INDUCING.reset(token)
+
+
+def _regrouped_induction(
+    left: Diagram, right: Diagram
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | None:
+    """An EQUAL carrying :func:`~archytaszx.semantics.radix_window.regrouped_induction`'s
+    kernel theorem over the one free multiplicity; None when it does not settle."""
+    from archytaszx.semantics import radix_window
+
+    mults = free_mult_symbols(left) | free_mult_symbols(right)
+    if len(mults) != 1:
+        return None
+    (index,) = mults
+    k = "k" if index != "k" else "k1"
+    errors: tuple[type[Exception], ...] = (radix_window.RadixWindowError, *_INDUCTION_ERRORS)
+    with _trace.span("decide.induction.regrouped"):
+        try:
+            theorem = radix_window.regrouped_induction(left, right, index, k)
+        except errors:
+            return None
+    reason = (
+        "slot nodes grouped and chain boxes split into aligned chains; induction over "
+        f"{index} by the radix window, the grouping undone by regroup; holds for {index} >= 0; "
+        "kernel proof built"
+    )
+    return (
+        EqualityVerdict.EQUAL,
+        DecisionMethod.INDUCTION,
+        reason,
+        {"induction_proof": theorem, "assumptions": ()},
+    )
 
 
 def _generalized_induction(
