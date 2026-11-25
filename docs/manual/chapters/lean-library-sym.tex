@@ -767,6 +767,85 @@ where $\mu_j$ is the multiplicity index of $j\,h$: the box $\mathit{owners}_{k-1
 \end{enumerate}
 \end{algorithm}
 
+\section{Linked Diagrams with Aligned Boxes, Port Dimensions, and Pair Phases}\label{sec:lean-sym-linked-ext}
+
+\file{Linked.lean} extends \lean|LDiagram| by four lists besides \lean|links| and \lean|cph|: \lean|cdim : List (Port × ℕ × ℕ × ℕ)| (ports whose dimension reads a copy index), \lean|aligned : List DAlign| (aligned box-to-box wires), and \lean|cnd : List (ℕ × ℕ × ℕ × ℕ)| (nodes whose dimension reads a copy index); all default to empty. A \lean|DAlign| has ends \lean|a|, \lean|b| and a permutation \lean|perm : List ℕ|; \lean|pick t perm| $=[t_{\mathit{perm}_0},t_{\mathit{perm}_1},\ldots]$ (default $0$).
+
+\subsection{Aligned wires and copy-indexed port dimensions}
+
+\begin{definition}[Aligned digit pairs and their sum]\label{def:lean-sym-evalX}
+\lean|alignPairs ks w| pairs digit $(w.a,t)$ with $(w.b,\mathrm{pick}(t,w.\mathit{perm}))$ for every copy tuple $t$ of $w.a$'s chain; \lean|dpairsX ks| is \lean|dpairs ks| followed by the aligned pairs of every entry of \lean|aligned|. \lean|pinsX ks ν| is \lean|pinsL| with \lean|dpairsX| in place of \lean|dpairs|. With $(p,i,a,b)$ the \lean|cdim| entry of port $p$, \lean|dimAt ks p t| $=\mathrm{Nat.pair}\bigl(\mathrm{portDim}(p),\ t_{\mathrm{depth}(i,p.\mathit{node})}+a\cdot k_b\bigr)$, and \lean|portDim p| for a port without entry. Then
+\begin{align*}
+\mathrm{evalW}(L,E,ks,F,\sigma)&=\sum_{\nu}\bigl[\nu\text{ satisfies }\mathrm{pinsX}\bigr]\,F(\nu)\quad\text{(each digit $l$ over $E.\mathrm{dimv}(\mathrm{dimAt}(\mathrm{dport}\,l,\mathrm{dtup}\,l))$, slots from $\sigma$)},\\
+\mathrm{evalX}(L,E,ks,\sigma)&=\mathrm{evalW}(L,E,ks,\mathrm{prodL}(L,E,ks),\sigma).
+\end{align*}
+\lean|evalX_eq_evalL|: with no \lean|cdim| and no \lean|aligned| entries, \lean|evalX| is \lean|evalL|. \lean|evalW_relabel|, \lean|evalW_relabelφ|, \lean|evalX_relabel|, and \lean|evalX_relabelφ| are the relabelling theorems of \cref{sec:lean-sym-linked} for \lean|evalW| and \lean|evalX|: the label map $\rho$ (or the digit map $\varphi$ with \lean|pmap|, \lean|pswap|, and \lean|bndMap|) must be a bijection of the digits that keeps \lean|dimAt| dimensions and sends \lean|dpairsX| into \lean|dpairsX| (in either orientation) and onto it.
+\end{definition}
+
+\subsection{Pair phases}
+
+\file{LinkedPair.lean} (imports \file{LinkedFirst}).
+
+\begin{definition}[Pair phases]\label{def:lean-sym-lpair}
+An \lean|LPair| has a box id \lean|box|, ports \lean|left| and \lean|right|, a phase row \lean|ph|, flags \lean|swap|, \lean|fixL|, \lean|fixR| (default false), and offsets \lean|rj|, \lean|rm| (default $(0,0)$). Its phase index for copies $j,m$ is
+\[
+\mathrm{idx}(j,m)=\mathrm{Nat.pair}\bigl(\mathit{ph},\ \mathrm{Nat.pair}(j+r_{j,1}k_{r_{j,2}},\ m+r_{m,1}k_{r_{m,2}})\bigr),
+\]
+and its factor
+\[
+\mathrm{pv}(j,m,t_l,t_r,\nu)=\mathrm{ex}\Bigl(E.\mathrm{phase}\bigl(\mathrm{idx}(j,m)\bigr)\bigl(\mathrm{Nat.pair}(\nu(\mathrm{dlab}(\mathit{left},t_l)),\ \nu(\mathrm{dlab}(\mathit{right},t_r)))\bigr)\Bigr),
+\]
+the two values exchanged under \lean|swap|. Over $K$ copies its value is $\prod_{m<K}\prod_{j<m}\mathrm{pv}(j,m,[j],[m])$; with \lean|fixL|, $\prod_{m<K}\mathrm{pv}(0,m,[\,],[m])$; with \lean|fixR|, $\prod_{j<K}\mathrm{pv}(j,0,[j],[\,])$. \lean|resid p m1| sets $\mathit{rj}=\mathit{rm}=(1,m_1)$; \lean|fixLeft p l0 m1| sets $\mathit{left}=l_0$, \lean|fixL|, $\mathit{rm}=(1,m_1)$; \lean|fixRight p r0 c| sets $\mathit{right}=r_0$, \lean|fixR|, $\mathit{rm}=(1,c)$. \lean|pairF L ps E ks ν| is the product of the values of the pairs, each over $k_{\mathrm{multOf}(p.\mathit{box})}$ copies, and
+\[
+\mathrm{evalP}(L,ps,E,ks,\sigma)=\mathrm{evalW}\bigl(L,E,ks,\ \nu\mapsto\mathrm{prodL}(\nu)\cdot\mathrm{pairF}(ps,\nu),\ \sigma\bigr)
+\]
+(\lean|evalP_nil|: $\mathrm{evalP}(L,[\,])=\mathrm{evalX}(L)$).
+\end{definition}
+
+\begin{theorem}[Peeling a pair box]\label{thm:lean-sym-pair-peel}
+\lean|val_first| and \lean|val_last| split the pair value at $k+1$ copies: the first copy as $\mathrm{val}(\mathrm{resid}(p))\cdot\mathrm{val}(\mathrm{fixLeft}(p,l_0))$ at $k$ (for $k_{m_1}=1$), the last as $\mathrm{val}(p)\cdot\mathrm{val}(\mathrm{fixRight}(p,r_0))$ at $k$ (for $k_c=k$), under the digit correspondences of the peel. \lean|PairFirst| (pairs of box \lean|bid| of multiplicity index $m_b$ in $L$ and $c$ in $R$, all unflagged with zero offsets and single-entry chains $[m_b]$ on nodes of $B$, and $ps'$ the list $\mathrm{resid},\mathrm{fixLeft}(\mathrm{cpP}(cp,\mathit{left}))$ per pair) and \lean|PairLast| ($ps'$ the list $p,\mathrm{fixRight}(\mathrm{cpP}(cp,\mathit{right}),c)$ per pair) give \lean|PairFirst.pairF| and \lean|PairLast.pairF|. Then for $k_{m_b}=k_c+1$:
+\begin{lstlisting}[style=lean]
+theorem evalP_first (h : FirstOK L Lr R Rr bid mb c B cp) (hx : FirstX L R bid m1 B cp)
+    (hp : PairFirst L R ps ps' bid mb c m1 B cp) (E : Env) (ks : ℕ → ℕ)
+    (hk : ks mb = ks c + 1) (hm : ks m1 = 1) (σ' : ℕ → List ℕ → ℕ) :
+    R.evalP ps' E ks σ' = L.evalP ps E ks (bndMap L.base R.base (firstφ B cp) σ')
+theorem evalP_peel (h : PeelX L L' bid mb c B cp) (hp : PairLast L L' ps ps' bid mb c B cp)
+    (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1) (σ' : ℕ → List ℕ → ℕ) :
+    L'.evalP ps' E ks σ' = L.evalP ps E ks (bndMap L.base L'.base (peelφ B cp (ks c)) σ')
+\end{lstlisting}
+and their flat forms \lean|evalP_peel_first_flat| (under \lean|PeelFirst|) and \lean|evalP_peel_flat| (under \lean|PeelFlat|), which read both sides at the flat boundary \lean|flatAt sd ks y|. \lean|evalW_first| is the first-copy peel for any integrand $F$ that the digit map preserves; \lean|evalP_congr| states that \lean|evalP| reads $\sigma$ only on the boundary's copy tuples.
+\end{theorem}
+
+\subsection{First-copy peels}
+
+\file{LinkedFirst.lean} (imports \file{LinkedSplice}) peels the first copy of box \lean|bid| where \cref{sec:lean-sym-peel} peels the last. The digit map is
+\[
+\mathrm{first}\varphi(B,cp)(p,t)=\begin{cases}(\mathrm{cpP}(cp,p),\ t.\mathrm{tail}) & p.\mathit{node}\in B,\ t_0=0,\\ (p,\ \mathrm{decT}(t)) & p.\mathit{node}\in B,\ t_0>0,\\ (p,t) & \text{otherwise,}\end{cases}
+\]
+with $\mathrm{cpP}(cp,p)=\langle cp(p.\mathit{node}),p.\mathit{out},p.\mathit{pos}\rangle$ and $\mathrm{decT}$ decrementing the first coordinate. \lean|FirstOK L Lr R Rr bid mb c B cp| asks \lean|RevOK| both ways between \lean|L.strip| and \lean|Lr| (multiplicity index $m_b$) and between \lean|R.strip| and \lean|Rr| (index $c$), and \lean|PeelOK Lr Rr bid mb c B cp| (\cref{sec:lean-sym-peel}); \lean|L.strip| is $L$ without \lean|cph|, \lean|cdim|, and \lean|aligned|. \lean|FirstX L R bid m1 B cp| asks: no aligned wires on either side; copies of $B$'s nodes lie outside $B$; nodes outside $B$ keep their \lean|cph| entry and its depth; nodes in $B$ read the box \lean|bid| at depth $0$ with coefficient $0$ in $L$ and as $(1,m_1)$ in $R$ (\lean|rdS|), their copies as in \lean|rdC0|; ports outside $B$ keep their \lean|cdim| entry. Then
+\begin{lstlisting}[style=lean]
+theorem evalX_first (h : FirstOK L Lr R Rr bid mb c B cp) (hx : FirstX L R bid m1 B cp)
+    (E : Env) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1) (hm : ks m1 = 1) (σ' : ℕ → List ℕ → ℕ) :
+    R.evalX E ks σ' = L.evalX E ks (bndMap L.base R.base (firstφ B cp) σ')
+\end{lstlisting}
+and \lean|evalX_peel_first| at the flat boundary under \lean|PeelFirst L R B cp mb c sd sd'| (slot counts equal to the boundary lengths, each boundary slot's chain the port's chain, outside slots mapped to slots of the same chain, inside slots split into a main slot with chain $m_b::$ and a copy slot, the images distinct and onto, and the anchors agreeing, \lean|agree| and \lean|copyVs0|). The last-copy peel over \lean|evalX| is \lean|evalX_peel| under \lean|PeelX L L' bid mb c B cp| (\lean|PeelOK| on the stripped diagrams, no aligned wires, depth $0$ of \lean|bid| at $B$'s nodes, \lean|cph| and \lean|cdim| entries and their depths kept at every node and port, and the copies' entries related to $B$'s by \lean|rdC|), with digit map $\mathrm{peel}\varphi(B,cp,s)(p,t)=(\mathrm{cpP}(cp,p),t.\mathrm{tail})$ for $p.\mathit{node}\in B$ and $t_0=s$, else $(p,t)$; \lean|evalX_peel_flat| is its flat form under \lean|PeelFlat|.
+
+\subsection{Aligned merges}
+
+\file{LinkedMerge.lean} (imports \file{LinkedPair}). \lean|idAl L a| holds when the aligned wire $a$ has the identity permutation and equal chains at both ends. \lean|cphAt| and \lean|cdimAt| give a node's or port's reading as (depth, coefficient, multiplicity index). \lean|MergeOK L L' ps ps'| is the structure: equal nodes, outputs, and inputs; equal node chains, tails, and chains of every read port (\lean|readLegs|: ports, boundary, wire first ends, aligned first ends); equal readings \lean|cphAt| and \lean|cdimAt|; no links on either side; every wire of $L$ in $L'$; every aligned wire of $L$ aligned in $L'$ or an identity alignment that is a wire of $L'$; every wire of $L'$ a wire of $L$ or such an identity alignment; every aligned wire of $L'$ aligned in $L$; and $ps'$ equal to $ps$ except for the box id, with the same multiplicity index. Then \lean|evalP_merge : L'.evalP ps' E ks σ = L.evalP ps E ks σ| (by \lean|MergeOK.dlabs|, \lean|MergeOK.cdim|, \lean|MergeOK.portDim|, \lean|MergeOK.pins|, \lean|MergeOK.prodL|, \lean|MergeOK.pairF|; \lean|MergeOK.pins| rests on \lean|MergeOK.dpairs_sub| and \lean|MergeOK.dpairs_sup|), and \lean|evalP_merge_flat| reads both at the flat boundary when the slot data agree (\lean|SameSlots|: equal slot counts, anchors, and chains).
+
+\subsection{Dropping an identity with port dimensions}
+
+\file{LinkedDropX.lean} (imports \file{LinkedGhost}). \lean|dropIdX L x w v P| is \lean|dropId| (\cref{sec:lean-sym-drop}) keeping \lean|cdim| and \lean|aligned|; \lean|DropOKX L x w u v P| asks \lean|DropOK| of the stripped diagram, no aligned wires, no \lean|cph| entry at $x$, no \lean|cdim| entry on $x$'s ports or at $P$. Under it and a zero phase row at $x$, \lean|DropOKX.evalX_drop : L.evalX E ks σ = (L.dropIdX x.id w v P).evalX E ks σ|; \lean|evalX_dropAt| does the same after moving $x$ last (\lean|dropAtX|, \lean|moveLast|).
+
+\subsection{Copy-indexed node dimensions}
+
+\file{LinkedRead.lean} (imports \file{LinkedDropX}, \file{LinkedSplice}). With $(x,i,a,b)$ the \lean|cnd| entry of node $x$, \lean|rdVal ks x k t (some (i, a, b))| $=\mathrm{Nat.pair}(k,\ t_{\mathrm{depth}(i,x)}+a\cdot k_b)$ and $k$ without entry; \lean|ndimAt ks n t| is that value at $k=n.\mathit{dim}$, \lean|dnodeN| is \lean|dnodeL| with that dimension, \lean|prodN| the node product over \lean|dnodeN|, and
+\[
+\mathrm{evalN}(L,E,ks,\sigma)=\mathrm{evalW}(L,E,ks,\mathrm{prodN}(L,E,ks),\sigma)\quad(\text{\lean|evalN_evalW|; \lean|evalN_plain|: }\mathrm{evalN}=\mathrm{evalX}\text{ without \lean|cnd|}).
+\]
+\lean|evalGXR L gs gr| is the ghost sum (\cref{sec:lean-sym-ghost}) over \lean|dimAt| dimensions with \lean|prodN|, \lean|dpairsX|, and each ghost slot bounded by the dimension \lean|gbd| that the ghost reading list \lean|gr : List (Port × ℕ × ℕ × ℕ)| gives; $\mathrm{evalN}=\mathrm{evalGXR}([\,],[\,])$. The peel, ghost, and drop theorems carry over: \lean|evalN_peel| and \lean|evalN_peel_flat| under \lean|PeelN| (\lean|PeelX| with \lean|cnd| entries and depths kept at every node and the copies' entries related by \lean|rdC|), \lean|evalGXR_ghostAt| under \lean|GhostN| (\lean|ghostDropN|, \lean|ghostAtN|, with \lean|grAdd| recording the dropped node's dimension reading on the ghost), and \lean|evalN_dropAt| under \lean|DropN| (\lean|dropIdN|, \lean|dropAtN|), each requiring a zero phase row at the dropped node.
+
 \section{Symbolic Sums}\label{sec:lean-sym-sym}
 
 Module \file{Sym.lean} (imports \file{Closed.lean}; namespace \lean!ArchytasZX.Sym!) defines expressions that denote complex numbers as functions of three kinds of unknowns: \term{dimension symbols} $d_0,d_1,\dots$ (positive naturals), \term{coefficient atoms} $a_0,a_1,\dots$ (nonzero complex numbers; the exporter sets $a_j=\mathrm{ex}(g_j)$ for real phase parameters $g_j$), and \term{index variables} $x_0,x_1,\dots$ (integers). A term is a coefficient times nested sums over bound index variables of a product of Kronecker deltas $[M\mid p]$ and roots of unity $\omega_D^{p}$, with $p$ an integer polynomial in index variables and $M$, $D$ monomials in dimension symbols. Character sums of this kind are the discrete Fourier analysis behind Gauss sums~\cite{berndt1998gauss}; the normalizer below evaluates them symbolically, in the spirit of path-sum reduction~\cite{amy2018pathsums}.
@@ -949,12 +1028,55 @@ For an admissible $\rho$, each of \lean!elimUnused!, \lean!elimDelta1!, \lean!el
 
 The four proofs are the four range sums of \cref{thm:lean-sym-range}. \lean!elimDelta1_ok! applies \lean!sum_delta_periodic! with modulus $\mathrm{den}(M)$: the factors reading $x$ have moduli dividing $M$, so the summand is periodic modulo $\mathrm{den}(M)$ (\lean!fac_congr!), and the pinned value is $-sb$. \lean!charData_spec! shows that the roots reading $x$ multiply to $\omega_D^{\,jA+B}$; \lean!sum_om_lin! turns the sum into the delta $[D\mid A]$ times $D$ times $\omega_D^{\,B}$. \lean!elimGcd1_ok! is \lean!sum_dvd_lin!.
 
-\begin{definition}[\lean!elimStep!, \lean!elimAll!]
-$\mathrm{elimStep}(t)$ scans the splits $(\mathit{pre},(x,D),\mathit{post})$ of $t.\mathrm{sums}$ in order, skips a variable bound again in $\mathit{pre}\mathbin{+\!\!+}\mathit{post}$, and at the first $x$ with $\mathrm{elimVar}(x,D,t.\mathrm{dels},t.\mathrm{phs})=\mathrm{some}\,e$ returns $(\mathrm{CMon.mul}(t.c,e.k),\ \mathit{pre}\mathbin{+\!\!+}\mathit{post},\ e.ds,\ e.ps)$. $\mathrm{elimAll}(n,t)$ applies $\mathrm{elimStep}$ until it fails, at most $n$ times.
+\subsection{Splitting a delta by the range of a bound variable}\label{sec:lean-sym-split-delta}
+
+A delta $[M\mid sy+c+DU]$ with $y$ bound once over a constant range $D$ that divides $M$ is the product of a delta modulo $D$ that pins $y$ and a delta modulo $M/D$ on the quotient.
+
+\begin{definition}[\lean!InR!, \lean!ipQuo!]
+$\mathrm{InR}(dv,R,\nu)$ states $0\le\nu(x)<\mathrm{den}_{dv}(D)$ for every $(x,D)\in R$. $\mathrm{ipQuo}(k,p)$ divides every coefficient by $k$ (Euclidean); \lean!ipDen_quo!: $k\ne0$ and $\mathrm{ipDivBy}(k,p)$ give $k\cdot\mathrm{ipDen}(\mathrm{ipQuo}(k,p))=\mathrm{ipDen}(p)$. \lean!ipDen_filter! splits a polynomial's value over a filter and its complement; \lean!ipDen_consts! evaluates the constant terms.
 \end{definition}
 
-\begin{theorem}[\lean!elimStep_ok!, \lean!elimAll_ok!]
-For an admissible $\rho$, $\mathrm{elimStep}(t)=\mathrm{some}\,t'$ gives $t'.\mathrm{den}_\rho(\nu)=t.\mathrm{den}_\rho(\nu)$, and $\mathrm{elimAll}(n,t).\mathrm{den}_\rho(\nu)=t.\mathrm{den}_\rho(\nu)$ for every $n$.
+\begin{proposition}[\lean!dvd_split!, \lean!mult_between!, \lean!delV_two!]
+For $0<D$ and $m$ with $D\mid L\Rightarrow L=mD$: $DQ\mid L+DU\iff D\mid L\land Q\mid U+m$. For $0<k$, $lo\,k<kt<(lo+2)k$ implies $t=lo+1$. A delta whose divisibility is the conjunction of two others has the product of their values.
+\end{proposition}
+
+\begin{definition}[\lean!splitDel!]\label{def:lean-sym-splitdel}
+$\mathrm{splitDel}(R,y,D,f)$, for a delta $f=(M,p)$, requires $D$ constant with $D.c\ge2$, $\mathrm{dvd}(D,M)$, $y$ bound exactly once in $R$ and $(y,D)\in R$, $\mathrm{ipLin}(y,p)=\mathrm{some}(a,b)$ and $\mathrm{ipConst}(a)=\mathrm{some}\,s$ with $s=\pm1$; otherwise it is $\mathrm{none}$. With $k=D.c$, $c$ the sum of the constant terms of $b$ and $\mathit{rest}$ the other terms of $b$:
+\begin{enumerate}
+\item The candidates $z$ are the variables of the linear terms of $\mathit{rest}$ with coefficient $-s$, in order. The first $z\neq y$ that is bound once in $R$ with $(z,D)\in R$ and whose only term in $\mathit{rest}$ is $([z],-s)$ is chosen. With $\mathit{rem}$ the terms of $\mathit{rest}$ other than $z$'s: if $\mathrm{ipDivBy}(k,\mathit{rem})$ and $k\mid c$, the result is
+\[
+\bigl((D,\ s\,x_y-s\,x_z),\ (M/D,\ \mathrm{ipQuo}(k,\mathit{rem})+c/k),\ [(y,D),(z,D)]\bigr),
+\]
+and $\mathrm{none}$ otherwise.
+\item Without a chosen $z$: if $\mathrm{ipDivBy}(k,\mathit{rest})$, with $c'=c\bmod k$ and $m=[s=1\land c'\ne0]$, the result is
+\[
+\bigl((D,\ s\,x_y+c'),\ (M/D,\ \mathrm{ipQuo}(k,\mathit{rest})+(c-c')/k+m),\ [(y,D)]\bigr),
+\]
+and $\mathrm{none}$ otherwise.
+\end{enumerate}
+The third component lists the bound variables whose ranges the split reads.
+\end{definition}
+
+\begin{theorem}[\lean!splitDel_ok!]
+If $\mathrm{splitDel}(R,y,D,f)=\mathrm{some}(f_1,f_2,U)$, every $p\in U$ lies in $R$ and is bound once there, and for every $\nu$ with $\mathrm{InR}(dv,U,\nu)$, $\mathrm{delV}_\nu(f)=\mathrm{delV}_\nu(f_1)\,\mathrm{delV}_\nu(f_2)$.
+\end{theorem}
+
+The proof is \lean!dvd_split! with $L=s\,\nu(y)+c'$ (or $s\nu(y)-s\nu(z)$): on the ranges $L$ lies strictly between two multiples of $k$ apart by $2k$, so \lean!mult_between! fixes the multiple $m$.
+
+\begin{definition}[\lean!splitApply!, \lean!splitStep!]
+\begin{sloppypar}$\mathrm{splitApply}(t,y,D,\mathit{pre},f,\mathit{post})$ replaces the delta $f$ in place by $f_1,f_2$ when $\mathrm{splitDel}(t.\mathrm{sums},y,D,f)=\mathrm{some}(f_1,f_2,\_)$. $\mathrm{splitStep}(t)$ tries every split $(\mathit{pre},f,\mathit{post})$ of $t.\mathrm{dels}$ in order, and for each every sum $(y,D)$ of $t.\mathrm{sums}$ in order, and returns the first success.\end{sloppypar}
+\end{definition}
+
+\begin{theorem}[\lean!sumsV_congr_rng!, \lean!splitApply_ok!, \lean!splitStep_ok!]
+\lean!sumsV_congr_rng!: nested sums over $s$ of $f$ and $g$ agree when $f=g$ on every $\nu'$ with $\mathrm{InR}(R)$, each $(x,D)\in R$ with $x$ bound in $s$ lies in $s$ once, and each other $(x,D)\in R$ is in range at $\nu$. Consequently $\mathrm{splitApply}$ and $\mathrm{splitStep}$ keep $t.\mathrm{den}_\rho(\nu)$ for every $\rho$ and $\nu$.
+\end{theorem}
+
+\begin{definition}[\lean!elimFirst!, \lean!elimStep!, \lean!elimAll!]
+$\mathrm{elimFirst}(t)$ scans the splits $(\mathit{pre},(x,D),\mathit{post})$ of $t.\mathrm{sums}$ in order, skips a variable bound again in $\mathit{pre}\mathbin{+\!\!+}\mathit{post}$, and at the first $x$ with $\mathrm{elimVar}(x,D,t.\mathrm{dels},t.\mathrm{phs})=\mathrm{some}\,e$ returns $(\mathrm{CMon.mul}(t.c,e.k),\ \mathit{pre}\mathbin{+\!\!+}\mathit{post},\ e.ds,\ e.ps)$. $\mathrm{elimStep}(t)$ is $\mathrm{elimFirst}(t)$ when that succeeds and $\mathrm{splitStep}(t)$ otherwise. $\mathrm{elimAll}(n,t)$ applies $\mathrm{elimStep}$ until it fails, at most $n$ times.
+\end{definition}
+
+\begin{theorem}[\lean!elimFirst_ok!, \lean!elimStep_ok!, \lean!elimAll_ok!]
+For an admissible $\rho$, $\mathrm{elimFirst}(t)=\mathrm{some}\,t'$ or $\mathrm{elimStep}(t)=\mathrm{some}\,t'$ gives $t'.\mathrm{den}_\rho(\nu)=t.\mathrm{den}_\rho(\nu)$, and $\mathrm{elimAll}(n,t).\mathrm{den}_\rho(\nu)=t.\mathrm{den}_\rho(\nu)$ for every $n$.
 \end{theorem}
 
 \lean!sumsV_pull! moves the eliminated sum innermost, where \cref{thm:lean-sym-elimok} applies; \lean!sumsV_const_mul! pulls out the gained coefficient.
@@ -1044,7 +1166,7 @@ Two Z spiders of one input and one output, dimension $d$ (monomial $D=(1,[1])$),
 
 \section{Networks as Symbolic Sums}\label{sec:lean-sym-net}
 
-Module \file{SymNet.lean} (imports \file{SymCanon.lean}) translates a generator's entry into an expression over its port labels and one bound variable, a network's entry into an expression over its boundary labels, and proves \lean!Equal! from the normal form of the scaled difference of two networks being empty, for every value of the dimension symbols and coefficient atoms (\lean!equal_sym!).
+Module \file{SymNet.lean} (imports \file{SymCanon.lean}) translates a generator's entry (Z, X, F, T, Ti, W, I, the binder B, the splitter S and the pair phase ZP) into an expression over its port labels and one bound variable, a network's entry into an expression over its boundary labels, and proves \lean!Equal! from the normal form of the scaled difference of two networks being empty, for every value of the dimension symbols and coefficient atoms (\lean!equal_sym!).
 
 \subsection{Tables and constants}
 
@@ -1081,13 +1203,16 @@ With $D=\mathit{dt}(n.\mathrm{dim})$ and bound variable $s$, a node translates a
 \toprule
 Kind & Expression \\
 \midrule
-Z & $\mathrm{spider}(1,D,s,\mathit{pt}(n.\mathrm{ph}),\mathrm{zLegs}(D,s,os\mathbin{+\!\!+}is),\mathrm{rF}(s,\mathit{rl}(n.\mathrm{ph})))$ \\
-X & $\mathrm{spider}(\mathrm{rtD}(D,-(|os|+|is|)),D,s,\mathit{pt}(n.\mathrm{ph}),[],(D,x_s(\mathrm{sumL}\,os-\mathrm{sumL}\,is))\mathbin{::}\mathrm{rF}(s,\mathit{rl}(n.\mathrm{ph})))$ \\
+Z & $\mathrm{spiderC}(1,D,s,\mathit{pt}(n.\mathrm{ph}),\mathit{rl}(n.\mathrm{ph}),\mathrm{zLegs}(D,s,os\mathbin{+\!\!+}is),[])$ \\
+X & $\mathrm{spiderC}(\mathrm{rtD}(D,-(|os|+|is|)),D,s,\mathit{pt}(n.\mathrm{ph}),\mathit{rl}(n.\mathrm{ph}),[],[(D,x_s(\mathrm{sumL}\,os-\mathrm{sumL}\,is))])$ \\
 F $[o],[i]$ & $[(\mathrm{rtD}(D,-1),[],[],[(D,x_ox_i)])]$ \\
 T $[o],[i]$ & $[(1,[],[(D,x_o)],[]),\ (1,[],[(D,x_o-x_i)],[]),\ (-1,[],[(D,x_o),(D,x_i)],[])]$ \\
 Ti $[o],[i]$ & $[(1,[],[(D,x_o-x_i)],[]),\ (-1,[],[(D,x_o)],[]),\ (1,[],[(D,x_o),(D,x_i)],[])]$ \\
 W $os,[i]$ & $\mathrm{wS}(D,i,[],os)\mathbin{+\!\!+}[(1-|os|,[],(D,x_i)\mathbin{::}\mathrm{wZeros}(D,os),[])]$ \\
 I $[a],[b]$ & $[(1,[],[(D,x_a-x_b)],[])]$ \\
+B $[k],[a,b]$ & $\mathrm{bsTerm}(D,\mathit{dt}(n.\mathrm{ph}),k,a,b,s)$ \\
+S $[a,b],[k]$ & $\mathrm{bsTerm}(D,\mathit{dt}(n.\mathrm{ph}),k,a,b,s)$ \\
+ZP$(d_x,d_y,c)$ & $\mathrm{zpTerm}(D,c,os\mathbin{+\!\!+}is)$ \\
 \bottomrule
 \end{tabularx}
 \caption{The expressions of \lean!trNode! ($os$, $is$ the output and input labels; coefficients written as rationals stand for $\mathrm{ofQ}$).}\label{tab:lean-sym-trnode}
@@ -1095,12 +1220,41 @@ I $[a],[b]$ & $[(1,[],[(D,x_a-x_b)],[])]$ \\
 
 T is $[o=0]+[o=i]-[o=0][i=0]$ and Ti is $[o=i]-[o=0]+[o=0][i=0]$ by inclusion and exclusion; W uses $\mathrm{tW}(d,vs,I)=\mathrm{sF}(vs,I)-(|vs|-1)[I=0]\,\mathrm{zF}(vs)$ (\lean!tW_sF!, with $\mathrm{zF}$ all ports zero and $\mathrm{sF}$ one port equal to $I$ and the others zero; \lean!wZeros_den!, \lean!wS_den!); X uses $\mathrm{fou}$ and $\sum_k\omega^{k(\sum o-\sum i)}$.
 
+\begin{definition}[\lean!bsTerm!, \lean!zpTerm!]\label{def:lean-sym-bsterm}
+For the binder and splitter, with $D_s=\mathit{dt}(n.\mathrm{dim})$ and $D_t=\mathit{dt}(n.\mathrm{ph})$: when $D_t$ is constant ($D_t.e=[]$),
+\[
+\mathrm{bsTerm}=[(1,[],[(D_sD_t,\ x_k-D_t.c\,x_a-x_b)],[])],
+\]
+the delta $[D_sD_t\mid k-D_t.c\,a-b]$; otherwise it is the character sum
+\[
+\mathrm{bsTerm}=\bigl[\bigl(\mathrm{rtD}(D_sD_t,-2),\ [(s,D_sD_t)],\ [],\ [(D_sD_t,\ x_s(x_k-x_b)),\ (D_s,\ -x_sx_a)]\bigr)\bigr].
+\]
+\lean!bs_delta! ($k<st$, $a<s$, $b<t$: $st\mid k-ta-b\iff k=at+b$), \lean!om_eq_pow! ($\omega_S=\omega_{ST}^T$) and \lean!bsSym_den! (the character-sum term has value $\mathrm{tB}(\mathrm{den}\,D_s,\mathrm{den}\,D_t,K,A,B)$ at in-range $K,A,B$, $s\notin\{k,a,b\}$) evaluate both. $\mathrm{zpTerm}(D,c,[x,y])=[(1,[],[],[(D,c\,x_xx_y)])]$, the pair phase $\omega_D^{cxy}$ (Lean \lean!tP!), and $\mathrm{none}$ for any other leg list.
+\end{definition}
+
+\begin{definition}[Compact phase tables]\label{def:lean-sym-compact}
+A rule $r=(D_r,cs)$ of modulus monomial $(0,[])$ marks a \term{compact table}: $\mathrm{cpData}(r)=\mathrm{some}(k,M,c,d)$ when $cs=[k,M,c,d]$ (each cast to $\N$ but $c$), and $\mathrm{none}$ otherwise (\lean!cpData_mark!; \lean!rV_mark!: a rule of modulus $0$ has value $1$). The numerator at index $j$ is $\mathrm{cpNum}(q,j)=c\,j$ for kind $k=1$ and $c\lfloor j/d\rfloor(j\bmod d)$ otherwise; the table's phase at $j$ is $\mathrm{cpNum}(q,j)/M$ turns.
+\begin{itemize}
+\item $\mathrm{ptOK}(l,c,\mathit{pt})$: $0<c$, the keys of $\mathit{pt}$ are distinct, every entry $(j,A)$ has $A=\mathrm{phC}(l_j/c,[])$, and every index of $l$ off the keys has $c\mid l_j$. \lean!tab_ph!: then $\mathrm{ex}(l_j/c)=\mathrm{phF}(\mathit{pt},j)$ (\lean!sum_key!, \lean!sum_nokey!, \lean!phC_den0!). $\mathrm{chunkOK}(C,L)$: every chunk but the last has length $C$, the last at most $C$; \lean!getD_chunks!, \lean!tab_phC!: \lean!tab_ph! for a table stored in chunks of $C$.
+\item \begin{sloppypar}$\mathrm{cpRow}(D,q)$ lists $(j,\mathrm{phC}(\mathrm{cpNum}(q,j)/M,[]))$ for the $j<D$ with $M\nmid\mathrm{cpNum}(q,j)$ (\lean!ptOK_cpRow!, \lean!ptOK_cpRow_mod!, \lean!ptOK_cpRow_of!, \lean!phC_emod!, \lean!getD_map_range!). $\mathrm{cpTab}(D,\mathit{pt},q)$ holds when $\mathit{pt}=\mathrm{cpRow}(D,q)$ and $0<M$, or else $\mathrm{ptOK}$ of the numerators (\lean!cpTab_ptOK!).\end{sloppypar}
+\item $\mathrm{cpX}(s)=3\,000\,000+2s$ is the first digit variable of the bound variable $s$, $\mathrm{cpX}(s)+1$ the second.
+\item $\mathrm{cpTerms}(k,D,s,q,ds,ps)$: for kind $1$, the term $(k,[(s,D)],ds,ps\mathbin{+\!\!+}[((M,[]),c\,x_s)])$; otherwise, with $x=\mathrm{cpX}(s)$, $y=x+1$, the term $\bigl(k,[(s,D),(x,(d,[])),(y,(d,[]))],\ ds\mathbin{+\!\!+}[(D,x_s-d\,x_x-x_y)],\ ps\mathbin{+\!\!+}[((M,[]),c\,x_xx_y)]\bigr)$.
+\item $\mathrm{cpChk}(D,\mathit{pt},q,s,ds,ps)$: $D$ constant, $0<D.c$, $\mathrm{cpTab}(D.c,\mathit{pt},q)$, and for kind $\ne1$, $d^2=D.c$ and no factor of $ds\mathbin{+\!\!+}ps$ reads $\mathrm{cpX}(s)$ or $\mathrm{cpX}(s)+1$.
+\item $\mathrm{spiderC}(k,D,s,\mathit{pt},r,ds,ps)$ is $\mathrm{cpTerms}(k,D,s,q,ds,ps)$ when $\mathrm{cpData}(r)=\mathrm{some}\,q$ and $\mathrm{cpChk}$ holds, and $\mathrm{spider}(k,D,s,\mathit{pt},ds,ps\mathbin{+\!\!+}\mathrm{rF}(s,r))$ otherwise.
+\end{itemize}
+\lean!cp_ph! (a compact table's phases below $D.c$ are $\omega_M^{\mathrm{cpNum}(q,j)}$), \lean!digit_sum! ($j<d^2$: $\sum_{a,b<d}[d^2\mid j-da-b]F(a,b)=F(\lfloor j/d\rfloor,j\bmod d)$), \lean!cp_body2!, \lean!cpTerms_den! and \lean!spiderC_den! give: if every stored index is below $\mathrm{den}(D)$ and $\mathrm{ex}(\varphi(j))=\mathrm{phF}(\mathit{pt},j)\,\mathrm{rV}(r,j)$, then $\mathrm{exDen}_\rho(\nu,\mathrm{spiderC}(\ldots))=\mathrm{den}(k)\sum_{j<\mathrm{den}(D)}\mathrm{ex}(\varphi(j))\,\mathrm{bodyOf}_{\nu[s\mapsto j]}(ds,ps)$.
+\end{definition}
+
+\begin{definition}[\lean!bsKind!, \lean!zpKind!, \lean!legDMs!]
+$\mathrm{bsKind}$ holds of \lean!B! and \lean!S!, $\mathrm{zpKind}$ of \lean!ZP!. $\mathrm{legDMs}(\mathit{dt},n)$ lists each leg's dimension monomial in the order $os\mathbin{+\!\!+}is$: $[D_sD_t,D_s,D_t]$ for \lean!B! $[k],[a,b]$; $[D_s,D_t,D_sD_t]$ for \lean!S! $[a,b],[k]$; $[\mathit{dt}(d_x),\mathit{dt}(d_y)]$ for \lean!ZP!$(d_x,d_y,\_)$; and $\mathit{dt}(n.\mathrm{dim})$ for every leg otherwise.
+\end{definition}
+
 \begin{definition}[\lean!NodeOK!]
 $\mathrm{NodeOK}(E,\rho,\mathit{dt},\mathit{pt},\mathit{rl},n)$: $E.\mathrm{dimv}(n.\mathrm{dim})=\mathrm{den}_\rho(\mathit{dt}\,n.\mathrm{dim})$; $0<(\mathit{dt}\,n.\mathrm{dim}).c$; $\mathrm{ex}(E.\mathrm{phase}(n.\mathrm{ph},j))=\mathrm{phF}(\mathit{pt}\,n.\mathrm{ph},j)\,\mathrm{rV}(\mathit{rl}\,n.\mathrm{ph},j)$ for all $j$; every stored index is below $\mathrm{den}(\mathit{dt}\,n.\mathrm{dim})$.
 \end{definition}
 
-\begin{theorem}[\lean!val_tr!]
-For admissible $\rho$, $\mathrm{NodeOK}$, $s$ not a label of $n$, $\mathrm{LegsAt}(E.\mathrm{dimv}\,n.\mathrm{dim},\sigma,\nu,\text{labels of }n)$ (each label below the dimension under $\sigma$, with $\nu=\sigma$ there) and $\mathrm{trNode}(\ldots,s,n)=\mathrm{some}\,e$: $\mathrm{val}(E,\sigma,n)=\mathrm{exDen}_\rho(\nu,e)$. (\lean!delV_lt!, \lean!delV_zero!, \lean!legs_cons!, \lean!dvd_iff_eq_lt! support it.)
+\begin{theorem}[\lean!val_tr!, \lean!val_trB!, \lean!val_trP!, \lean!val_trG!]
+\begin{sloppypar}For admissible $\rho$, $\mathrm{NodeOK}$, $\mathrm{bsKind}(n)=\mathit{false}$, $s$ not a label of $n$, $\mathrm{LegsAt}(E.\mathrm{dimv}\,n.\mathrm{dim},\sigma,\nu,\text{labels of }n)$ (each label below the dimension under $\sigma$, with $\nu=\sigma$ there) and $\mathrm{trNode}(\ldots,s,n)=\mathrm{some}\,e$: $\mathrm{val}(E,\sigma,n)=\mathrm{exDen}_\rho(\nu,e)$. (\lean!delV_lt!, \lean!delV_zero!, \lean!legs_cons!, \lean!dvd_iff_eq_lt! support it.) \lean!val_trB! is the same for a binder or splitter with $E.\mathrm{dimv}(n.\mathrm{ph})=\mathrm{den}(\mathit{dt}\,n.\mathrm{ph})$ and every leg $l$ paired with its monomial $D_l$ by $\mathrm{legDMs}$ in range, $\sigma(l)<\mathrm{den}(D_l)$, $\nu(l)=\sigma(l)$; \lean!val_trP! for a pair phase with $\nu=\sigma$ on its legs; \lean!val_trG! combines the three cases under the $\mathrm{legDMs}$ hypothesis (\lean!mem_zip_map!, \lean!om_zpow_exR!).\end{sloppypar}
 \end{theorem}
 
 \subsection{Networks}
@@ -1116,7 +1270,7 @@ when both exist and $\mathrm{exMulOK}(a,b)$, and $\mathrm{none}$ otherwise; $\ma
 \end{definition}
 
 \begin{definition}[\lean!nodeChk!, \lean!netChk!]
-$\mathrm{nodeChk}(n)$: $(\mathit{dt}\,n.\mathrm{dim}).c\neq0$ and every stored index below $\mathrm{den}_{\mathrm{flv}\,\mathit{fl}}(\mathit{dt}\,n.\mathrm{dim})$. $\mathrm{netChk}(\mathit{IX},N)$: every node passes $\mathrm{nodeChk}$, has its dimension index in $\mathit{IX}$, and every label of it is below $\mathrm{OFF}$, a boundary or summed label, of monomial $\mathrm{labDM}(l)=\mathit{dt}(n.\mathrm{dim})$ and of index in $\mathit{IX}$; every summed label has its index in $\mathit{IX}$.
+$\mathrm{nodeChk}(n)$: $(\mathit{dt}\,n.\mathrm{dim}).c\neq0$ and every stored index below $\mathrm{den}_{\mathrm{flv}\,\mathit{fl}}(\mathit{dt}\,n.\mathrm{dim})$. $\mathrm{netChk}(\mathit{IX},N)$: every node passes $\mathrm{nodeChk}$, has its dimension index in $\mathit{IX}$ (and, for a binder or splitter, its phase index), every label of it is below $\mathrm{OFF}$, a boundary or summed label, and of index in $\mathit{IX}$, and every leg $l$ has $\mathrm{labDM}(l)$ equal to its monomial in $\mathrm{legDMs}$; every summed label has its index in $\mathit{IX}$. \lean!netChk_ok! unpacks $\mathrm{netChk}=\mathit{true}$ into the per-node hypotheses of \lean!trNodesB_ok! ($\mathrm{NodeOK}$, the binder's phase dimension, labels below $\mathrm{OFF}$ and summed or boundary, $\mathrm{labDim}(E,l)=\mathrm{den}(D_l)$) and the dimension of every summed label. $\mathrm{maskOf}(ls)$ is the bit mask of $ls$ (\lean!testBit_maskOf!, \lean!filter_free!, \lean!lookup_getD_zero!); $\mathrm{netChkF}(\ldots,\mathit{mk},N)$ is $\mathrm{netChk}$ for label tables of index $0$ throughout, with the network's labels read from the mask $\mathit{mk}=\mathrm{maskOf}(N.\mathrm{bnd}\mathbin{+\!\!+}N.\mathrm{int})$ (\lean!netChkF_ok!: it implies $\mathrm{netChk}$).
 \end{definition}
 
 \begin{theorem}[\lean!trNodesB_ok!, \lean!eval_tr!, \lean!eval_trF!]
@@ -1124,7 +1278,7 @@ Under admissible $\rho$, $\mathrm{FloorOK}$, $E.\mathrm{dimv}(i)=\mathrm{den}(\m
 \end{theorem}
 
 \begin{definition}[\lean!symCheck!]
-$\mathrm{exNeg}$ negates every rational coefficient (\lean!exDen_neg!); $\mathrm{exConst}(e)$ holds when no term has sums, deltas or roots (\lean!exDen_const!: the value is independent of $\nu$). $\mathrm{checkWith}(\mathit{tr},N_0,N_1,S_0,S_1)$ holds when $\mathit{tr}(N_0)=\mathrm{some}\,e_0$, $\mathit{tr}(N_1)=\mathrm{some}\,e_1$, $\mathrm{exMulOK}(S_0,e_0)$, $\mathrm{exMulOK}(\mathrm{exNeg}\,S_1,e_1)$ and
+$\mathrm{exNeg}$ negates every rational coefficient (\lean!exDen_neg!); $\mathrm{exConst}(e)$ holds when no term has sums or deltas and no root of unity reads a variable ($\mathrm{tmVars}=[]$) (\lean!exDen_const!: the value is independent of $\nu$). $\mathrm{checkWith}(\mathit{tr},N_0,N_1,S_0,S_1)$ holds when $\mathit{tr}(N_0)=\mathrm{some}\,e_0$, $\mathit{tr}(N_1)=\mathrm{some}\,e_1$, $\mathrm{exMulOK}(S_0,e_0)$, $\mathrm{exMulOK}(\mathrm{exNeg}\,S_1,e_1)$ and
 \[
 \mathrm{nfEx}\bigl(\mathit{fl},\ \mathrm{exMul}(S_0,e_0)\mathbin{+\!\!+}\mathrm{exMul}(\mathrm{exNeg}\,S_1,e_1)\bigr)=[].
 \]
@@ -1217,6 +1371,148 @@ $N_0$ has the F nodes $(o{=}0,i{=}2)$ and $(o{=}2,i{=}1)$, summed label $2$; $N_
 Module \file{SymF2Bridge.lean} checks in linear time that a network is $D.\mathrm{toNet}(\mathit{off})$ of a diagram $D$ and that $D.\mathrm{check}$ holds for the labels $[(l,0)\mid l<M]$, for a diagram whose ports all have dimension index $0$. A port's key is $\mathrm{pkey}_P(p)=(2p.\mathit{node}+[\lnot p.\mathit{out}])P+p.\mathit{pos}$; the wires are packed in one number $\mathit{WB}=\sum_j(k_{j,1}+2^Kk_{j,2})\,2^{2Kj}$ (\lean!packW!), and $\mathrm{legOK}$ says a port is at label $l$: boundary slot $l$ for $l<\mathit{off}$, else a key of wire $l-\mathit{off}$ in $\mathit{WB}$. $\mathrm{nodeOKQ}$ compares a node of $D$ with a network node (kind, dimension, phase, port counts, each port at its label). $\mathrm{bridgeQ}(P,K,\mathit{off},M,\mathit{WB},D,N)$ requires $|D.\mathrm{bnd}|\le\mathit{off}$, $\mathit{off}+|D.\mathrm{wires}|\le M$, all port dimensions $0$ and port counts at most $P$, every boundary port and wire end of position below $P$ and key below $2^K$, all keys distinct, $\mathit{WB}=\mathrm{packW}$, $N.\mathrm{int}=[\mathit{off},\dots,\mathit{off}+|\mathit{wires}|-1]$, $N.\mathrm{bnd}=[0,\dots,|\mathrm{bnd}|-1]$ and $\mathrm{nodeOKQ}$ node by node. \lean!bridge_ok! gives $D.\mathrm{check}(\ldots)=\mathit{true}$ and $D.\mathrm{toNet}(\mathit{off})=N$ (\lean!lookup_range!, \lean!portDim_zero!).
 
 Module \file{SymF2Chain.lean} adds the command \lean!qchain n IM R ks!: it evaluates \lean!runQ IM! over the steps \lean!R! by compiled code, cuts the run into blocks of sizes \lean!ks! (an error when a block fails or the blocks do not cover the steps), declares each block's final state as the abbreviation \lean!n_s<j+1>! of raw numerals (\lean!qStE!, \lean!qListE!, \lean!qIntE!), proves each block \lean!runQ IM ((R.drop i).take k) prev = some cur! by \lean!decide! as the theorem \lean!n_h<j>!, checked by the Lean kernel at once (\lean!qAddThm!), composes them with \lean!runQ_seg! and \lean!runQ_end!, and adds \lean!n_fin! and \lean!n : runQ IM R st0 = some n_fin!. The tactic \lean!qscal! proves a scalar $\frac ab\sqrt2^{\,K}$ equal to its stated form by \lean!norm_num!, \lean!field_simp! and \lean!ring_nf!.
+
+\section{Node-by-Node Translation Checks}\label{sec:lean-sym-chunk}
+
+\file{SymChunk.lean} (imports \file{SymNet}) splits the translation of a network into symbolic sums (\cref{sec:lean-sym-net}) into steps that an export states and checks one at a time.
+
+\begin{definition}[Translation steps]\label{def:lean-sym-trstep}
+\lean|trStepB fl dt pt rl labs int pre i n b| translates node $n$ at offset $\mathtt{OFF}+i$ (\lean|trNode|); when that succeeds and \lean|exMulOK a b| holds, it returns $\mathrm{nfEx}(fl,\ \mathrm{exSums}(\mathrm{labSums}(dt,labs,\mathrm{firstAt}(int,pre,n)),\ \mathrm{exMul}(a,b)))$: the node's expression times the tail's $b$, with the summed labels that first occur at $n$ summed, normalized. \lean|trNodesB_nil| gives the empty node list the constant expression $[\langle 1,[\,],[\,],[\,]\rangle]$; \lean|trNodesB_cons| reduces \lean|trNodesB| on $n::ns$ to \lean|trStepB| on the result for $ns$; \lean|trNet_of| gives \lean|trNet| from \lean|trNodesB| over the network's nodes, its labels that no node reads summed in front; \lean|symCheck_of| gives \lean|symCheck| from the two networks' stated expressions $e_0,e_1$, equal boundaries up to order, \lean|netChk| of both, constant scalars $S_0,S_1$, and $\mathrm{nfEx}(S_0e_0-S_1e_1)=[\,]$.
+\end{definition}
+
+\begin{definition}[Forced evaluation]\label{def:lean-sym-forced}
+\lean|fN|, \lean|fZ|, \lean|fQ|, \lean|fL|, \lean|fP|, \lean|fDM|, \lean|fFac|, \lean|fCM|, and \lean|fTm| pass a value to a continuation after matching on every constructor of it (a natural number, an integer, a rational's numerator and denominator, each list element, both pair components, and every field of a dimension monomial, a factor, a coefficient monomial, and a term); each equals the plain application (\lean|fN_eq| through \lean|fTm_eq|). \lean|elimAllS|, \lean|normTmS|, \lean|nfGo|, and \lean|trStepS| are \lean|elimAll|, \lean|normTm|, \lean|nfEx|, and \lean|trStepB| with each intermediate term forced (\lean|elimAllS_eq|, \lean|normTmS_eq|, \lean|nfGo_eq|, \lean|trStepS_eq|). \lean|blockPre pre ns| appends the legs of $ns$ to $pre$; \lean|trBlockS| translates a block of nodes from a stated tail expression $b_0$, and \lean|trNodesB_block| splits \lean|trNodesB| on $xs\mathbin{+\!\!+}ys$ into the block $xs$ over the stated result for $ys$.
+\end{definition}
+
+\section{Hinted Normalization of Symbolic Sums}\label{sec:lean-sym-hint}
+
+\file{SymHint.lean} (imports \file{SymChunk}) lets an export choose, per node and per term, the normalization of \cref{sec:lean-sym-norm,sec:lean-sym-canon}, and replaces the search of \lean|elimAll| by a stated list of steps.
+
+\begin{definition}[Translation with a per-node normalizer]\label{def:lean-sym-trG}
+\lean|trNodesG nf …| is \lean|trNodesB| (\cref{def:lean-sym-trstep}) with the normalizer \lean|nf i| applied after node $i$ in place of \lean|nfEx fl|; \lean|trNetG|, \lean|trStepG|, \lean|trBlockG| are the network, step, and block forms (\lean|trNetG_of|, \lean|trNodesG_block|). \lean|trStepM|, \lean|trNodesM|, \lean|trBlockM|, and \lean|blockPreM| track the labels already read as a bit mask \lean|pm| (\lean|maskOf|): a label is summed at the first node that reads it and is not yet in the mask (\lean|trNodesM_block|, \lean|trNodesM_eq|).
+\end{definition}
+
+\begin{definition}[Hinted elimination]\label{def:lean-sym-elimH}
+\lean|elimVarH x D ds ps r j| sums out the variable $x$ of range $D$ by rule $r$: $0$ \lean|elimUnused| (no delta or phase reads $x$), $1$ \lean|elimDelta1| (delta $j$ solves for $x$), $2$ \lean|elimChar| (a character sum), and any other value \lean|elimGcd1| at delta $j$ (\cref{sec:lean-sym-norm}). \lean|splitH t i j| splits delta $j$ by the range of sum $i$ (\lean|splitApply|, \cref{sec:lean-sym-split-delta}). \lean|elimStepH t i r j| is \lean|splitH| for $r=4$ and otherwise eliminates sum $i$ by \lean|elimVarH| when its variable occurs in no other sum, multiplying the coefficient by the elimination's constant. \lean|elimAllH| applies a hint list $(i,r,j)$, stopping at the first failure. With \lean|pivPassM m| (a pivot pass over the deltas whose index bit is set in $m$, \lean|pivPassB|) and \lean|canonTmP pf fl t| (the canonical term of \cref{sec:lean-sym-canon} with the pivot pass $pf$), \lean|canonTmH c fl t| is \lean|canonTmP (pivPassM c) fl| of $t$ with its bound variables renamed in order (\lean|renList t 0 (bvs t)|). \lean|pivPassH c ds ps| pivots the first $c$ deltas, then the rest by \lean|pivTail| (\lean|pivPassH_ok|). A round hint \lean|RHint| $=(c,es)$ runs \lean|elimAllH es| then \lean|canonTmH c|; \lean|normTmH fl hs| runs the rounds in order.
+\end{definition}
+
+\begin{definition}[Kept deltas and term hints]\label{def:lean-sym-normTmK}
+\lean|selK k 0 ds| keeps the deltas whose index bit is set in $k$, \lean|selN| the others; \lean|freeOfSums s l| holds when no factor of $l$ reads a summed variable of $s$ (\lean|facHas|); \lean|ilv m n 0 a b| interleaves $a$ and $b$, taking from $a$ where bit $i$ of $m$ is set. \lean|normTmK fl k m hs t|: if the selected deltas are free of the sums, normalize the term without them and, if they are still free of the result's sums, put them back by \lean|ilv m|; if not, return $t$ unchanged; if they are not free at the start, normalize the whole term. A term hint \lean|THint| $=(k,m,hs)$; \lean|nfGoH fl H| normalizes each term of an expression by its own hint (default $(0,0,[\,])$), drops terms whose normalization fails, and adds the rest; \lean|nfH fl H i e = nfGoH fl (H i) [] e|.
+\end{definition}
+
+\begin{theorem}[Soundness]\label{thm:lean-sym-hint}
+\begin{sloppypar}\lean|nfH_den|: for admissible $\rho$ and \lean|FloorOK fl ρ|, $\mathrm{exDen}(\rho,\nu,\mathrm{nfH}(fl,H,i,e))=\mathrm{exDen}(\rho,\nu,e)$ for every $\nu$ (from \lean|elimVarH_ok|, \lean|splitH_ok|, \lean|elimStepH_ok|, \lean|elimAllH_ok|, \lean|canonTmH_ok|, \lean|normTmH_ok|, \lean|normTmK_ok|, \lean|nfGoH_den|). \lean|equal_symG| is the symbolic-sum equality theorem of \cref{sec:lean-sym-net} with \lean|trNetG| and any value-preserving per-node normalizers \lean|nf0|, \lean|nf1|:\end{sloppypar}
+\begin{lstlisting}[style=lean]
+theorem equal_symG (E : Env) (ρ : Val) (hρ : ρ.OK) (fl : List ℕ) (hfl : FloorOK fl ρ)
+    (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (labs : List (ℕ × ℕ))
+    (IX : List ℕ) (hE : ∀ i ∈ IX, E.dimv i = (dt i).den ρ.dv)
+    (hP : ∀ ph j, ex (E.phase ph j) = phF ρ (pt ph) j * rV ρ (rl ph) j) (hL : E.labs = labs)
+    (N0 N1 : Net) (S0 S1 : List STm) (s0 s1 : ℂ) (hs0 : s0 = exDen ρ (fun _ => 0) S0)
+    (hs1 : s1 = exDen ρ (fun _ => 0) S1) (nf0 nf1 : ℕ → List STm → List STm)
+    (hnf0 : ∀ i e ν, exDen ρ ν (nf0 i e) = exDen ρ ν e)
+    (hnf1 : ∀ i e ν, exDen ρ ν (nf1 i e) = exDen ρ ν e) (e0 e1 : List STm)
+    (h0 : trNetG nf0 dt pt rl labs N0 = some e0) (h1 : trNetG nf1 dt pt rl labs N1 = some e1)
+    (h : (N0.bnd.isPerm N1.bnd && netChk fl dt pt rl labs IX N0 && netChk fl dt pt rl labs IX N1
+      && exConst S0 && exConst S1 && (exMulOK S0 e0 && exMulOK (exNeg S1) e1
+      && (nfEx fl (exMul S0 e0 ++ exMul (exNeg S1) e1)).isEmpty)) = true) :
+    Equal E s0 N0 s1 N1
+\end{lstlisting}
+\lean|equal_symS| states the same with the final check split into its parts and the final normalizer \lean|nfz| any value-preserving map in place of \lean|nfEx fl|.
+\end{theorem}
+
+\section{Zero Certificates for Remainders over Roots of Unity}\label{sec:lean-sym-fourier}
+
+\file{SymFourier.lean} (imports \file{SymHint}, \file{PathSumSem}) proves that a sum-free remainder whose moduli all divide $N$ vanishes, by expanding it into a combination of powers of $\omega_N$ indexed by linear forms and checking that the coefficients cancel on every slot.
+
+\begin{definition}[Expansion into characters]\label{def:lean-sym-expTerm}
+A character list is a list of pairs $(q,P)$, a rational $q$ and an integer linear polynomial $P$, with value $\mathrm{expV}(N,\nu,L)=\sum_{(q,P)}q\,\omega_N^{P(\nu)}$. A factor is \lean|facOK N| when its modulus is a positive constant $c\mid N$. \lean|mulPh N f L| adds $(N/c)\,f$ to every polynomial (a phase factor $\omega_c^{f}$); \lean|mulDel N f L| replaces each $(q,P)$ by $(q/c,\ P+k(N/c)f)$ for $k<c$ (a delta factor $[c\mid f]=\frac1c\sum_{k<c}\omega_c^{kf}$). \lean|cExp N c| is $[(c.q,\ (c.r\,N).\mathrm{num})]$ for a coefficient with no square, root, atom, or Gauss part and $c.r\,N$ an integer. \lean|expTerm N t| (no sums, every factor \lean|facOK|) folds the deltas, then the phases, over \lean|cExp|; \lean|expEx| concatenates over the terms.
+\end{definition}
+
+\begin{definition}[Slots and zero certificates]\label{def:lean-sym-fzOK}
+For variables $vs$, \lean|linOK vs P| holds when every monomial of $P$ is constant or one variable of $vs$; \lean|digitsOf vs N P| lists the coefficients of $1,vs_0,vs_1,\ldots$ modulo $N$, and \lean|slotOf| reads them as base-$N$ digits (\lean|Nat.ofDigits|). \lean|subTm x v| substitutes $v$ for $x$; \lean|modOK D t| requires no sums and every factor's modulus to divide $D$; \lean|cdel f| decides a constant delta; \lean|pruneTm| drops terms with a false constant delta and removes true ones; \lean|explode D xs [] e| substitutes every value combination $vv$ of the pinned variables $xs$, each term tagged with $vv$. A zero certificate \lean|FzCert| $=(pv,vs,rows)$ with rows $(vv,P,m,o,q)$ contributes the items $(vv,-q,P+(o+i\,N/m))$ for $i<m$ (\lean|certItems|), each a full sum of $m$-th roots of unity, which vanishes for $m>1$, $m\mid N$ (\lean|rowsOK|). \lean|fzOK N cert e| requires $N>1$, \lean|rowsOK|, \lean|modOK N| for every term, that the expansion of the exploded terms exists (\lean|charsOf|), that every item has $|vv|=|pv|$, values below $N$, and a polynomial linear in $vs$, and that after sorting all items (expansion and certificate rows) by \lean|slot2| $=\mathrm{ofDigits}_N(vv\mathbin{+\!\!+}\mathrm{digitsOf}(vs,N,P))$ the coefficients of each run of equal slots sum to $0$ (\lean|runsGo|). \lean|fzNf N cert nf e| is $[\,]$ when \lean|fzOK N cert (nf e)| and \lean|nf e| otherwise; \lean|fzNf_den| keeps values.
+\end{definition}
+
+\begin{theorem}[Equality with a zero certificate]\label{thm:lean-sym-equal-symF}
+\lean|checkWithF N cert tr fl N0 N1 S0 S1| accepts when the normalized difference $\mathrm{nfEx}(fl,S_0e_0-S_1e_1)$ is empty or passes \lean|fzOK N cert|; \lean|symCheckF| adds the boundary, \lean|netChk|, and constant-scalar checks and accepts either translation. \lean|equal_symF|: under the hypotheses of \cref{thm:lean-sym-hint}, \lean|symCheckF N cert fl dt pt rl labs IX N0 N1 S0 S1 = true| gives \lean|Equal E s0 N0 s1 N1| (by \lean|equal_of_checkF| and \lean|fz_zero|). \lean|tab_zero| and \lean|tab_zeroZ| give $\mathrm{ex}(l_j/c)=1$ for a table entry $j$ outside the listed nonzero positions $R$.
+\end{theorem}
+
+\section{Pinned Ranges, Range Certificates, and Geometric Steps}\label{sec:lean-sym-range}
+
+\file{SymRange.lean} (imports \file{SymFourier}) adds eliminations that use the ranges of summed and boundary variables, and certificates that split a remainder over a finite set of boundary values.
+
+\begin{definition}[Pin eliminations]\label{def:lean-sym-elimPin}
+\lean|elimPin1 x D pre f post ps|: when $f$'s modulus is $D$, a positive constant $c$, and $f$ is $s\,x+b$ with $s=\pm1$ and $b$ a constant, the sum over $x$ is the body with $x\mapsto(-s\,b)\bmod c$ in the other deltas and every phase, coefficient $1$. \lean|elimPin| tries every split of the deltas (\lean|splits|, \lean|firstSome|); \lean|elimVarR| tries \lean|elimPin| before \lean|elimVar|; \lean|elimFirstR|, \lean|splitStepR| (\lean|splitApply| for any sum whose variable is not the delta's modulus variable), \lean|elimStepR|, and \lean|elimAllR n| are the search of \cref{sec:lean-sym-norm} with these.
+\end{definition}
+
+\begin{definition}[Range certificates]\label{def:lean-sym-rgcert}
+\lean|InLab R ν| holds when $0\le\nu(x)<N$ for every $(x,N)\in R$. \lean|rsplit R e| substitutes every combination of values of the labels of $R$ into $e$ (\lean|subTm|). A range certificate \lean|RgCert| $=(n,R,cs)$: \lean|rgGo rc e| requires every term of $e$ to have no sums and, for the $i$-th combination, the pruned terms (\lean|pruneTm|) to be empty or to pass the zero certificate \lean|fzOK| of $cs_i$ (\lean|caseR|, \lean|allCases|); \lean|rgOK rc e = rgGo rc (e.map (elimAllR n))|; \lean|rgNf rc nf e| is $[\,]$ when \lean|rgOK rc (nf e)| and \lean|nf e| otherwise. \lean|labOK labs IX dt bnd R| requires every label of $R$ to be a boundary label whose dimension index is in $IX$ with constant dimension equal to its bound. \lean|checkWithR rc tr fl N0 N1 S0 S1| translates both networks by $tr$ and checks $\mathrm{rgNf}(rc,\mathrm{nfEx}\,fl)(S_0e_0-S_1e_1)=[\,]$; \lean|symCheckR| adds the boundary, \lean|labOK|, \lean|netChk|, and constant-scalar checks and accepts either translation \lean|trNet| or \lean|trNetF| (\cref{sec:lean-sym-net}).
+\end{definition}
+
+\begin{theorem}[Equality with range certificates]\label{thm:lean-sym-equal-symR}
+\lean|equal_symR|: under the hypotheses of \cref{thm:lean-sym-hint} on $E$, $\rho$, $dt$, $pt$, $rl$, $labs$, $IX$, $s_0$, $s_1$, \lean|symCheckR rc fl dt pt rl labs IX N0 N1 S0 S1 = true| gives \lean|Equal E s0 N0 s1 N1|. \lean|equal_symSR| is \lean|equal_symS| with a final normalizer that preserves values only on \lean|InLab R| and \lean|labOK| for $R$.
+\end{theorem}
+
+\begin{definition}[Fingerprinted sums]\label{def:lean-sym-fp}
+\lean|fpZ h z| $=\bigl(1000003\,h+2|z|+[z<0]\bigr)\bmod(2^{61}-1)$, folded over a dimension monomial (\lean|fpDM|), a factor (\lean|fpFac|), and a term's sums, deltas, and phases (\lean|fpTm|). \lean|tmAddP k t acc| adds $t$ to the entry with fingerprint $k$ and the same shape, dropping it when the rational coefficient sum is $0$; \lean|nfGoP| and \lean|nfHP| are \lean|nfGoH| and \lean|nfH| over that keyed accumulator (\lean|nfHP_eq|, \lean|nfHP_den|).
+\end{definition}
+
+\begin{definition}[Geometric and interval eliminations]\label{def:lean-sym-geo}
+\lean|geoData x L ps| sums, over the phases that read $x$ (each with positive constant modulus $c\mid L$ and linear in $x$ as $a\,x+b$), the scaled parts $(L/c)a$ and $(L/c)b$. \lean|elimGeo1 x D pre f post ps|: for a positive constant range $D=d$, a delta $f$ of positive constant modulus $c$, no delta reading $x$, and $f\equiv\pm A\pmod c$ for the geometric part $(A,B)$ at $L=cd$, the sum over $x$ is the coefficient \lean|CMon.rtD D 2| times the body with $f$ replaced by the delta $(cd,A)$, the phases reading $x$ removed, and the phase $(cd,B)$ added. \lean|ivl rg p| bounds a linear polynomial over the ranges $rg$ (constant terms exactly, a single-variable term $c\,u$ by $[\min(0,c(D_u-1)),\max(0,c(D_u-1))]$). \lean|elimXpin1 rg x D pre f post ps| is \lean|carry16| as an elimination (\cref{def:lean-sym-carryfac}). \lean|rgOf R S| is the sums' ranges followed by those of $R$ not summed; \lean|elimXR R r| is \lean|elimGeo1| for $r=5$ and \lean|elimXpin1| over \lean|rgOf| otherwise; \lean|rgLoc R S x f| gives the ranges of the variables of $f$ other than $x$ that occur once among the sums or in $R$. \lean|elimStepX R t i r j| is \lean|elimStepL| (\lean|elimXpin1| over \lean|rgLoc|) for $r=20$, \lean|elimXR| for $r\in\{5,6\}$ when the other sums' variables are distinct and differ from $x$, and \lean|elimStepH| otherwise; \lean|elimAllX|, \lean|normTmX|, \lean|nfGoX|, and \lean|rxNf R fl H e| $=\mathrm{nfGoX}(R,fl,H,[\,],e)$ follow \lean|elimAllH|, \lean|normTmH|, \lean|nfGoH| (\lean|normTmX_step|, \lean|normTmX_stop|, \lean|nfGoX_some|, \lean|nfGoX_none|). \lean|ElimOKR ρ rg x D ds ps e| is the elimination equation on $\nu$ in the ranges $rg$; \lean|TmResR| states a term's result (zero for \lean|none|) on \lean|InLab R|.
+\end{definition}
+
+\begin{theorem}[Soundness of ranged normalization]\label{thm:lean-sym-rxNf}
+\lean|rxNf_den|: for admissible $\rho$, \lean|FloorOK fl ρ|, a value-preserving $nf$, and $\nu$ with \lean|InLab R ν|, $\mathrm{exDen}(\rho,\nu,\mathrm{rxNf}(R,fl,H,nf\,e))=\mathrm{exDen}(\rho,\nu,e)$ (from \lean|elimGeo1_ok|, \lean|elimXpin1_ok|, \lean|elimXR_ok|, \lean|elimStepL_ok|, \lean|elimStepX_ok|, \lean|elimAllX_ok|, \lean|normTmX_ok|, \lean|nfGoX_den|).
+\end{theorem}
+
+\section{Carry Rules of the Symbolic Normalizer}\label{sec:lean-sym-carry}
+
+\file{SymCarry.lean} adds rule numbers $7$ to $16$ to the hinted elimination of \file{SymHint} (\cref{sec:lean-sym-hint}); a hint $(i,r,j)$ applies rule $r$ at sum or factor index $i$ to delta $j$ of a term.
+
+\begin{definition}[Carry rules]\label{def:lean-sym-carryfac}
+For a term with sums $S$ and the deltas $\mathit{pre}\mathbin{+\!\!+}f::\mathit{post}$ and phases $ps$, \lean|carryFac R S i r pre f post ps| is:
+\begin{itemize}
+\item $r=7$ (\lean|carry7|): sum $i$ is $(x,D)$; $f$'s modulus is a positive constant $c$ and $f$'s polynomial is linear in $x$ with coefficient $s=\pm1$ and rest $b$ (\lean|ipLin|, \lean|ipConst|): $f$'s polynomial becomes $x-((\mathrm{pinVal}(s,b))\bmod c)$;
+\item $r=8$, $9$ (\lean|carry89| with $\sigma=1$, $-1$): delta $g$ at index $i$ of $\mathit{pre}\mathbin{+\!\!+}\mathit{post}$ has $f$'s positive constant modulus $c$: $f$'s polynomial becomes $(f+\sigma g)\bmod c$;
+\item $r=10$ (\lean|carry10|): sum $i$'s range is a positive constant $c'$ dividing $f$'s constant modulus: the delta $(c',f\bmod c')$ is inserted after $f$;
+\item $r=11$ (\lean|carry11|): delta $g$ at index $i$ has a positive constant modulus that $f$'s positive constant modulus $c$ divides, and $g\equiv\pm f\pmod c$: $f$ is dropped;
+\item $r=12$ (\lean|carry12|): with the ranges \lean|rgU R S i f| (\lean|rgLoc| of the sums with $i+1$ bounded by $[i]$), if the range $D$ of variable $i$ is not $f$'s modulus, $f$ is split by \lean|splitDel| (\cref{sec:lean-sym-split-delta}) into $f_1,f_2$;
+\item $r=13$ (\lean|carry13|): $f$ has a pivot $(q,\ldots)$ (\lean|pivotOf|) and a positive constant modulus $c$, phase $g$ at index $i$ has a positive constant modulus $c_g$, and every monomial of $g$ containing $q$ has a coefficient with $c\cdot\mathit{coef}\equiv 0\pmod{c_g}$: $q$ is substituted in $g$ by $f$'s solved value (\lean|facSub|, \lean|pinVal|);
+\item $r=14$ (\lean|carry14|): $f$'s polynomial is negated;
+\item $r=16$ (\lean|carry16|): variable $i$ has range $D$ equal to $f$'s positive constant modulus and $f$ is linear in $x=i$ with coefficient $\pm1$ and rest $b$ whose interval (\lean|ivl|) $[lo,hi]$ satisfies $hi<\lfloor lo/c\rfloor c+c$: $x$ is substituted by $\mathrm{pinVal}(s,b)-\lfloor lo/c\rfloor c$ in every other delta and every phase;
+\item otherwise none.
+\end{itemize}
+Rule $15$ (\lean|rcStep t i j|) multiplies two root-coefficient entries $a$, $b$ (indices $i$, $j$) of the term's coefficient whose product is a perfect square: they are removed and the rational part multiplied by $\sqrt{ab}$ (\lean|CMon.sqrtS|). \lean|elimStepC R t i r j| applies rule $15$, rules $7$--$16$ to delta $j$, or for other $r$ the step of \file{SymHint} (\lean|elimStepX|). \lean|elimAllC| applies a hint list, stopping at the first failure; \lean|elimAllCS| fails instead (\lean|elimAllC_of_S|). \lean|normTmC R fl| runs a list of hint rounds $(c,es)$: \lean|elimAllC| of $es$, then \lean|canonTmH c fl| (\lean|normTmC_one|, \lean|normTmC_step|, \lean|normTmC_stop|); \lean|nfGoC| normalizes each term of an expression with its own round list and adds it (\lean|tmAdd|) to the result (\lean|nfGoC_some|, \lean|nfGoC_none|); \lean|rxNfC R fl H e| $=\mathrm{nfGoC}(R,fl,H,[\,],e)$.
+\end{definition}
+
+\begin{theorem}[Soundness of the carry rules]\label{thm:lean-sym-rxNfC}
+\begin{lstlisting}[style=lean]
+theorem rxNfC_den (ρ : Val) (hρ : ρ.OK) (R : List (ℕ × ℕ)) (fl : List ℕ) (hfl : FloorOK fl ρ)
+    (H : List (List RHint)) (nf : List STm → List STm)
+    (hnf : ∀ e ν, exDen ρ ν (nf e) = exDen ρ ν e) (e : List STm) (ν : ℕ → ℤ) (hν : InLab R ν) :
+    exDen ρ ν (rxNfC R fl H (nf e)) = exDen ρ ν e
+\end{lstlisting}
+From \lean|carry7_ok| through \lean|carry16_ok|, \lean|carryFac_ok|, \lean|rcStep_ok|, \lean|elimStepC_ok|, \lean|elimAllC_ok|, \lean|normTmC_ok|, and \lean|nfGoC_den|: every step keeps a term's value at every admissible valuation $\rho$ and every labelling $\nu$ in the label ranges $R$ (\lean|InLab|).
+\end{theorem}
+
+\section{Phase Splits and Binder--Spider--Splitter Folds}\label{sec:lean-sym-fold}
+
+\file{SymFold.lean} (imports \file{SymCarry}) adds two hinted rules and a translation that reads three consecutive nodes as one term.
+
+\begin{definition}[Rules 17 and 18]\label{def:lean-sym-fold-rules}
+\lean|carry17 i pre f post ps|: delta $g$ at index $i$ of $\mathit{pre}\mathbin{+\!\!+}\mathit{post}$ has a constant modulus $c_g$ and a pivot $(q,s,\ldots)$ (\lean|pivotOf|); $f$ has a positive constant modulus $c$ and is linear in $q$ with constant coefficient $a$; if $a\,s\,c_g\equiv 0\pmod c$, $f$'s polynomial becomes $(f-a\,s\,g)\bmod c$. \lean|phSplit t i j|: phase $g$ at index $i$ has positive constant modulus $c_g$, sum $j$ has variable $x$ and positive constant range $D$ with $D\mid c_g$, and every monomial of $g$ that contains $x$ has a coefficient divisible by $c_g/D$; then $g$ loses those monomials, and the phase $(D,\ \text{those monomials divided by }c_g/D)$ is appended (\lean|ipWith|, \lean|ipWithout|). \lean|elimStepF R t i r j| applies \lean|phSplit| for $r=18$, \lean|carry17| to delta $j$ for $r=17$, and \lean|elimStepC| otherwise; \lean|elimAllF|, \lean|elimAllFS| (\lean|elimAllF_of_S|), \lean|normTmF| (\lean|normTmF_one|, \lean|normTmF_step|, \lean|normTmF_stop|), \lean|nfGoF| (\lean|nfGoF_some|, \lean|nfGoF_none|), and \lean|rxNfF| follow \cref{def:lean-sym-carryfac}; \lean|rxNfF_den| is the soundness theorem of \cref{thm:lean-sym-rxNfC} for them.
+\end{definition}
+
+\begin{definition}[Binder--spider--splitter folds]\label{def:lean-sym-foldBZS}
+\lean|foldBZS dt pt rl n1 n2 n3| recognizes a binder $n_1$ with output $k$ and inputs $a,b$, a Z spider $n_2$ from $k$ to $k'$, and a splitter $n_3$ from $k'$ to outputs $a',b'$, with the six labels distinct, $n_1$'s radix, dimension, and $n_3$'s dimension and radix all one constant monomial $D=c$, $n_2$'s dimension the constant $c^2$, and $n_2$'s phase table a copy phase (\lean|cpData|) of kind $2$ with modulus data $(M,\kappa,c)$ whose numerators pass \lean|ptOK|. It returns the term
+\[
+\bigl\langle 1,\ [\,],\ [(D,a'-a),\ (D,b'-b)],\ [(M,\ \kappa\,a\,b)]\bigr\rangle
+\]
+(two deltas and one phase) with the internal labels $k,k'$. \lean|foldOK int pre k k' ns| requires $k,k'$ unread before ($\mathit{pre}$) and after ($ns$) and summed in $int$ as $[k,k']$ or $[k',k]$; \lean|firstBlk| lists the block's other first-read summed labels. \lean|trNodesK| translates node by node as \lean|trNodesB| without normalization (\lean|kSingle|), but replaces each recognized triple by the folded term summed over its first-read labels (\lean|kBlock|); \lean|trNetK| is the network form. \lean|trNodesKM| and \lean|trNetKM| track read labels as a bit mask (\lean|foldOKM|, \lean|kSingleM|, \lean|kBlockM|), and \lean|trNetKM_eq| equates them with \lean|trNetK|. \lean|NodesOKF| and \lean|TailOK| are the invariants of the soundness proof (\lean|trNodesK_ok|, \lean|eval_trK|, \lean|foldBZS_val|).
+\end{definition}
+
+\begin{theorem}[Equality through folded translations]\label{thm:lean-sym-equal-symSK}
+\lean|equal_symSK| is \lean|equal_symSR| (\cref{thm:lean-sym-equal-symR}) with both networks translated by \lean|trNetK|: \lean|trNetK dt pt rl labs N0 = some e0|, \lean|trNetK dt pt rl labs N1 = some e1|, equal boundaries up to order, \lean|netChk| of both, constant scalars, \lean|exMulOK| of both products, a final normalizer \lean|nfz| that preserves values on \lean|InLab R|, an empty normalized difference, and \lean|labOK| for $R$ give \lean|Equal E s0 N0 s1 N1|.
+\end{theorem}
 
 \section{Python Mirrors of the Symbolic Checkers}\label{sec:lean-sym-py-sym}
 

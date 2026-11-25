@@ -1,12 +1,12 @@
 \chapter{The Lean Library: Path Sums}\label{ch:lean-pathsum}
 \begingroup\sloppy
 
-This chapter specifies the fifteen modules of the \tool{Lean~4}{https://lean-lang.org} library
+This chapter specifies the eighteen modules of the \tool{Lean~4}{https://lean-lang.org} library
 \cite{demoura2021lean4} that certify path-sum computations: \file{PathSum}, \file{PathSumSem},
-\file{PathSumRules}, \file{PathSumAmp}, \file{PathSumSupport}, \file{PathSumChain},
+\file{PathSumRules}, \file{PathSumParity}, \file{PathSumAmp}, \file{PathSumSupport}, \file{PathSumChain},
 \file{PathSumNet}, \file{PathSumDigits}, \file{PathSumW}, \file{PathSumNetW},
-\file{PathSumNetAmp}, \file{PathSumQudit}, \file{PathSumQuditChain}, \file{PathSumQuditNet}, and
-\file{PathSumQuditDigits}, all under \file{archytaszx/lean/ArchytasZX/}. A \term{path sum} is
+\file{PathSumNetAmp}, \file{PathSumQudit}, \file{PathSumQuditChain}, \file{PathSumQuditNet},
+\file{PathSumQuditDigits}, \file{PathSumMixed}, and \file{PathSumMixedNet}, all under \file{archytaszx/lean/ArchytasZX/}. A \term{path sum} is
 Amy's sum-over-paths representation of a linear map \cite{amy2018pathsums,vilmart2021sop}: a sum,
 over Boolean (or $\Zd{p}$-valued) path variables, of a phase $\operatorname{ex}(P/M)$ restricted to
 the solutions of polynomial constraints, times a constant. The Python engine reduces path sums by
@@ -35,7 +35,11 @@ $\to$ \file{PathSumNetW} $\to$ \file{PathSumNetAmp},\\
 \end{center}
 with \file{PathSumNetW} also importing \file{PathSumChain}, \file{PathSumNetAmp} also importing
 \file{PathSumAmp}, \file{PathSumQuditChain} also importing \file{PathSumChain}, and
-\file{PathSumQuditNet} also importing \file{PathSumDigits} and \file{GaussSign}. The qubit
+\file{PathSumQuditNet} also importing \file{PathSumDigits} and \file{GaussSign},
+\file{PathSumParity} importing \file{PathSumRules} and imported by \file{PathSumChain},
+\file{PathSumMixed} importing \file{PathSumQudit} and \file{PathSumAmp}, and \file{PathSumMixedNet}
+importing \file{PathSumMixed}, \file{PathSumNetAmp}, \file{PathSumQuditNet}, and
+\file{PathSumQuditDigits}. The mixed definitions live in namespace \textnormal{\texttt{ArchytasZX.MSem}}. The qubit
 definitions live in namespace \textnormal{\texttt{ArchytasZX.\allowbreak{}PSem}}, the qudit definitions in
 \textnormal{\texttt{ArchytasZX.\allowbreak{}QSem}}, and the rule identities of \file{PathSum} in \textnormal{\texttt{ArchytasZX}}. The last
 section of the chapter specifies the Python exporters that write Lean files against these modules:
@@ -242,7 +246,7 @@ permutation of its input; no lemma states sortedness.
 \textnormal{\texttt{normP M P}} &= \textnormal{\texttt{foldr (\allowbreak{}insH M) []}}\,\bigl(\textnormal{\texttt{sortB}}_{\textnormal{\texttt{mle}}}\,[(\textnormal{\texttt{mnorm}}\,m, k) : (m,k)\in P]\bigr),\\
 \textnormal{\texttt{normPM M P}} &= \textnormal{\texttt{foldr (\allowbreak{}insHM M) []}}\,(\textnormal{\texttt{sortB}}_{\textnormal{\texttt{mleM}}}\,P),\\
 \textnormal{\texttt{normFL Q}} &= \textnormal{\texttt{foldr cancelH []}}\,(\textnormal{\texttt{sortB}}_{\textnormal{\texttt{mle}}}\,(Q.\textnormal{\texttt{map mnorm}})),\\
-\textnormal{\texttt{normFD Q}} &= \textnormal{\texttt{sortB}}_{\textnormal{\texttt{mleM}}}\,[k\le\textnormal{\texttt{orF Q}} : \text{bit } k \text{ of } \textnormal{\texttt{xorF Q}} \text{ set}],\\
+\textnormal{\texttt{normFD Q}} &= \textnormal{\texttt{pickX}}\,(\textnormal{\texttt{xorF Q}},\ \textnormal{\texttt{orF Q}},\ |Q|,\ \textnormal{\texttt{sortB}}_{\textnormal{\texttt{mleM}}}\,[k\le\textnormal{\texttt{orF Q}} : \text{bit } k \text{ of } \textnormal{\texttt{xorF Q}} \text{ set}]),\\
 \textnormal{\texttt{normFM Q}} &= \begin{cases}\textnormal{\texttt{normFD Q}} & \textnormal{\texttt{orF Q}} < 4|Q|+64\\
    \textnormal{\texttt{foldr cancelHM []}}\,(\textnormal{\texttt{sortB}}_{\textnormal{\texttt{mleM}}}\,Q) & \text{else,}\end{cases}\\
 \textnormal{\texttt{normF Q}} &= \begin{cases}\textnormal{\texttt{normFL Q}} & |Q|<32\\
@@ -252,6 +256,28 @@ where $\textnormal{\texttt{xorF Q}} = \bigoplus_{k\in Q} 2^k$ (the set of masks 
 set) and $\textnormal{\texttt{orF Q}} = \bigvee_{k\in Q} k$ (an upper bound of every mask of $Q$, \textnormal{\texttt{le\_\allowbreak{}orF}}).
 Equal adjacent terms after sorting merge (\textnormal{\texttt{normP}}) or cancel in pairs (\textnormal{\texttt{normF}}), so on
 sorted input the output lists each monomial once with a nonzero coefficient.
+\end{definition}
+
+\begin{definition}[Submask enumeration: \texttt{pickX}]\label{def:lean-pathsum-pickx}
+\begin{itemize}
+\item \lean!subsM : List ℕ → List ℕ!: $\textnormal{\texttt{subsM []}}=[0]$ and
+  $\textnormal{\texttt{subsM (b :: R)}} = 0 :: \bigl([b\mathbin{|}s : s\in\textnormal{\texttt{subsM R}}]\mathbin{+\!\!+}(\textnormal{\texttt{subsM R}}).\textnormal{\texttt{tail}}\bigr)$,
+  the number $0$ and the bitwise or of every nonempty sublist of $bs$; for $bs$ a list of
+  ascending powers of two the output is in \lean!mleM! order.
+\item \lean!bitsOf (m : ℕ) : List ℕ! lists $2^i$ for the set bits $i\le\lfloor\log_2 m\rfloor$ of $m$,
+  ascending.
+\item \lean!fromX (x b : ℕ) : List ℕ! is \textnormal{\texttt{subsM (bitsOf b)}} filtered to the $k$ with bit
+  $k$ of $x$ set: the submasks of $b$ that $x$ marks, in \lean!mleM! order.
+\item \lean!pickX (x : Unit → ℕ) (b n : ℕ) (R : List ℕ) : List ℕ! is \textnormal{\texttt{fromX (x ()) b}}
+  when $b<4n+64$ and $\textnormal{\texttt{xorF (fromX (x ()) b)}} = x()$, and $R$ otherwise. The thunk $x$ is
+  evaluated only when $b<4n+64$.
+\end{itemize}
+In \lean!normFD!, $x=\textnormal{\texttt{xorF Q}}$, $b=\textnormal{\texttt{orF Q}}$, $n=|Q|$: the set masks are
+read off the submasks of \lean!orF Q! in order, and the merge-sorted bit list is the fallback.
+\lean!fz_xorF_eq!: two mask lists with equal \lean!xorF! have equal \lean!fz! values over every
+$vs$; \lean!fz_pickX!: if $x()=\textnormal{\texttt{xorF Q}}$ and $R$ has the value of $Q$, then
+\textnormal{\texttt{pickX x b n R}} has the value of $Q$ (the test $\textnormal{\texttt{xorF (fromX \ldots)}} = x()$
+is the side condition the proof reads).
 \end{definition}
 
 \begin{proposition}[Normalization preserves values]\label{prop:lean-pathsum-norm}
@@ -282,10 +308,43 @@ $\{0,1\}$ value, $-2$ written $M-2$:
 $\lfloor x+y\rfloor = \lfloor x\rfloor+\lfloor y\rfloor-2\lfloor x\rfloor\lfloor y\rfloor$.
 \textnormal{\texttt{liftNM M c B}} (masks) is $c$ times the lift, normalized by \textnormal{\texttt{normPM}} after each mask:
 $\textnormal{\texttt{liftNM M c (\allowbreak{}m :: B)}} = \textnormal{\texttt{normPM M (\allowbreak{}(\allowbreak{}m,\allowbreak{} c) :: (\allowbreak{}L ++ L.\allowbreak{}map (\allowbreak{}fun t => (\allowbreak{}m ||| t.\allowbreak{}1,\allowbreak{} (\allowbreak{}M -{} 2) * t.\allowbreak{}2))))}}$.
-\textnormal{\texttt{liftN M c B}} is $[(m,c): m\in B]$ when $2c\equiv 0\pmod M$, and otherwise
-\textnormal{\texttt{(\allowbreak{}liftNM M c (\allowbreak{}B.\allowbreak{}map (\allowbreak{}toM vs))).\allowbreak{}map (\allowbreak{}conv vs)}} with $vs=\textnormal{\texttt{vlist B}}$.
+\textnormal{\texttt{liftN M c B}} is $[(m,c): m\in B]$ when $2c\equiv 0\pmod M$; otherwise, with
+$vs=\textnormal{\texttt{vlist B}}$, it is the dense lift \textnormal{\texttt{liftD M c vs B}} when
+$2^{|vs|}\le16|B|$, and
+\textnormal{\texttt{(\allowbreak{}liftNM M c (\allowbreak{}B.\allowbreak{}map (\allowbreak{}toM vs))).\allowbreak{}map (\allowbreak{}conv vs)}} else.
 \textnormal{\texttt{pn\_\allowbreak{}liftN}} ($2\le M$): $\textnormal{\texttt{pn \ensuremath{\sigma} (\allowbreak{}liftN M c B)}}\equiv c\lfloor\textnormal{\texttt{fz \ensuremath{\sigma} B}}\rfloor\pmod M$;
-the first case is \textnormal{\texttt{pn\_\allowbreak{}linlift}} (when $2c\equiv0$ the cross terms vanish mod $M$).
+the first case is \textnormal{\texttt{pn\_\allowbreak{}linlift}} (when $2c\equiv0$ the cross terms vanish mod $M$),
+the second \lean!pn_liftD!.
+\end{definition}
+
+\begin{definition}[The dense lift: \texttt{Tb}, \texttt{liftD}]\label{def:lean-pathsum-liftd}
+\lean!Tb! is the inductive type of binary tables with constructors \lean!leaf (k : ℕ)! and
+\lean!node (lo hi : Tb)!; over a variable list $v::vs$, \lean!node lo hi! holds \lean!lo! where
+$v=0$ and \lean!hi! where $v=1$. \lean!Tb.dep n t! states that $t$ is a complete tree of depth $n$.
+\lean!Tb.at σ vs t! reads the leaf at $\sigma$ (a leaf answers at once; a \lean!node! over $[\,]$
+reads \lean!lo!). The operations are:
+\begin{itemize}
+\item \lean!Tb.zip f!: leafwise $f$ on two trees of one shape (the first tree when the shapes
+  differ); \lean!Tb.scale c!: every leaf times $c$;
+\item \lean!Tb.xorN a b = node a (zip (x+y mod 2) a b)!; \lean!Tb.subN M a b = node a (zip (fun x y => x + (M - y % M)) b a)!;
+\item \lean!tabF : List ℕ → F2 → Tb!: $\textnormal{\texttt{tabF [] B}}=\textnormal{\texttt{leaf (|B| mod 2)}}$,
+  $\textnormal{\texttt{tabF (v :: vs) B}} = \textnormal{\texttt{xorN (tabF vs A}}_0\textnormal{\texttt{) (tabF vs A}}_1\textnormal{\texttt{)}}$ with
+  $(A_1,A_0)=\textnormal{\texttt{splitAt v B}}$: the $0/1$ values of $B$ on the assignments of $vs$;
+\item \lean!Tb.mob M!: $\textnormal{\texttt{mob (leaf k)}}=\textnormal{\texttt{leaf k}}$,
+  $\textnormal{\texttt{mob (node l h)}}=\textnormal{\texttt{subN M (mob l) (mob h)}}$, the multilinear (M\"obius)
+  coefficients mod $M$;
+\item \lean!Tb.poly M vs t!: the terms of the leaves with $k\bmod M\ne0$, each monomial the
+  variables at $1$ (\lean!node l h! over $v::vs$ gives the terms of $l$, then those of $h$ with $v$
+  prepended);
+\item \lean!liftD M c vs B = Tb.poly M vs (Tb.mob M (Tb.scale c (tabF vs B)))!.
+\end{itemize}
+\lean!pn_liftD! ($0<M$, every variable of $B$ in $vs$):
+$\textnormal{\texttt{pn \ensuremath{\sigma} (liftD M c vs B)}}\equiv c\lfloor\textnormal{\texttt{fz \ensuremath{\sigma} B}}\rfloor\pmod M$.
+It rests on \lean!dep_tabF!, \lean!Tb.dep_zip!, \lean!Tb.dep_scale!, \lean!Tb.dep_mob! (depth
+$|vs|$ is kept), \lean!at_tabF! (the table holds $[\textnormal{\texttt{fz \ensuremath{\sigma} B}}\ne0]$), \lean!zn_empty!,
+\lean!Tb.at_zip!, \lean!Tb.at_scale!, \lean!pn_mapcons!, \lean!pn_polyLeaf!, \lean!peq_natmod!,
+\lean!pn_poly_sub! and \lean!pn_poly_mob! (the polynomial of the M\"obius table takes the table's
+value mod $M$).
 \end{definition}
 
 \begin{definition}[Substitution]\label{def:lean-pathsum-subst}
@@ -296,17 +355,36 @@ For a variable $z$ and $B\in\mathbb F_2[x]$:
 \textnormal{\texttt{substF z B Q}} &= \textstyle\bigcup_{m\in Q}
   \begin{cases}[m\setminus z\mathbin{+\!\!+}u : u\in B] & z\in m\\ [m] & \text{else,}\end{cases}
 \end{align*}
-($\bigcup$ is \textnormal{\texttt{flatMap}}, $m\setminus z$ is \textnormal{\texttt{m.\allowbreak{}filter (\allowbreak{}\ensuremath{\cdot} != z)}}). \textnormal{\texttt{substFN z B Q}} is
-\textnormal{\texttt{normF (\allowbreak{}substF z B Q)}} computed on masks over $vs = \textnormal{\texttt{vlist (\allowbreak{}Q ++ B)}}$: each monomial
-holding $z$ becomes the masks $\textnormal{\texttt{toM vs}}(m\setminus z)\mathbin{|}u$ for $u$ in the masks of
-$B$, then \textnormal{\texttt{normFM}}, then \textnormal{\texttt{ofM vs}}.
+($\bigcup$ is \textnormal{\texttt{flatMap}}, $m\setminus z$ is \textnormal{\texttt{m.\allowbreak{}filter (\allowbreak{}\ensuremath{\cdot} != z)}}).
+\textnormal{\texttt{substFV vs z B Q}} is \textnormal{\texttt{normF (\allowbreak{}substF z B Q)}} computed on masks over
+$vs$: each monomial holding $z$ becomes the masks $\textnormal{\texttt{toM vs}}(m\setminus z)\mathbin{|}u$ for
+$u$ in the masks $B_m$ of $B$, every other monomial its mask; the list goes through
+\textnormal{\texttt{pickX}} with $x=\textnormal{\texttt{xorSub z vs B}}_m\textnormal{\texttt{ Q}}$,
+$b=\textnormal{\texttt{orF}}(Q\text{'s masks})\mathbin{|}\textnormal{\texttt{orF}}\,B_m$, $n=|Q|(|B|+1)$ and fallback
+\textnormal{\texttt{normFM}} of the list, then \textnormal{\texttt{ofM vs}}. \textnormal{\texttt{xorSub}} folds the same masks
+into one \lean!xorF! without building the list (\lean!xorSub_eq!, from \lean!xorF_append!).
+\textnormal{\texttt{substFN z B Q = substFV (vlist (Q ++ B)) z B Q}}.
+\end{definition}
+
+\begin{definition}[Substitution skipping normal forms]\label{def:lean-pathsum-substn}
+\lean!ascB m! holds when the monomial is strictly ascending; \lean!normalF Q! when every monomial
+is strictly ascending and $Q$ is strictly ascending by \lean!mle!; \lean!normalP M P! when moreover
+every coefficient lies in $[1,M)$ (strictly ascending monomials, strictly ascending by \lean!mle!).
+\begin{align*}
+\textnormal{\texttt{substNF z B q}} &= \begin{cases} q & z\text{ occurs in no monomial of }q\text{ and }\textnormal{\texttt{normalF q}}\\ \textnormal{\texttt{normF (substF z B q)}} & \text{else,}\end{cases}\\
+\textnormal{\texttt{substNP M z B P}} &= \begin{cases} P & z\notin\textnormal{\texttt{pvars P}}\text{ and }\textnormal{\texttt{normalP M P}}\\ \textnormal{\texttt{normP M (substP M z B P)}} & \text{else.}\end{cases}
+\end{align*}
 \end{definition}
 
 \begin{proposition}[Substitution lemmas]\label{prop:lean-pathsum-subst}
 With $\sigma' = \sigma[z\mapsto\textnormal{\texttt{fz \ensuremath{\sigma} B}}]$ and $2\le M$:
 $\textnormal{\texttt{pn \ensuremath{\sigma} (\allowbreak{}substP M z B P)}}\equiv\textnormal{\texttt{pn \ensuremath{\sigma}' P}}\pmod M$ (\textnormal{\texttt{pn\_\allowbreak{}substP}}),
 $\textnormal{\texttt{fz \ensuremath{\sigma} (\allowbreak{}substF z B Q)}} = \textnormal{\texttt{fz \ensuremath{\sigma}' Q}}$ (\textnormal{\texttt{fz\_\allowbreak{}substF}}), and
-$\textnormal{\texttt{fz \ensuremath{\sigma} (\allowbreak{}substFN z B Q)}} = \textnormal{\texttt{fz \ensuremath{\sigma}' Q}}$ (\textnormal{\texttt{fz\_\allowbreak{}substFN}}).
+$\textnormal{\texttt{fz \ensuremath{\sigma} (\allowbreak{}substFN z B Q)}} = \textnormal{\texttt{fz \ensuremath{\sigma}' Q}}$ (\textnormal{\texttt{fz\_\allowbreak{}substFN}}),
+$\textnormal{\texttt{fz \ensuremath{\sigma} (substFV vs z B Q)}} = \textnormal{\texttt{fz \ensuremath{\sigma}' Q}}$ when every variable of $Q$
+and $B$ is in $vs$ (\lean!fz_substFV!),
+$\textnormal{\texttt{fz \ensuremath{\sigma} (substNF z B q)}} = \textnormal{\texttt{fz \ensuremath{\sigma}' q}}$ (\lean!fz_substNF!), and
+$\textnormal{\texttt{pn \ensuremath{\sigma} (substNP M z B P)}}\equiv\textnormal{\texttt{pn \ensuremath{\sigma}' P}}\pmod M$ (\lean!pn_substNP!).
 \end{proposition}
 
 \subsection{Sums over path variables}
@@ -353,6 +431,8 @@ Each step has a side condition \textnormal{\texttt{xOK}}, a transformer \textnor
 
 \paragraph{Permutation.} \textnormal{\texttt{permS l s := \{ s with path := l \}}}. \textnormal{\texttt{perm\_\allowbreak{}sound}}: if
 \textnormal{\texttt{decide (\allowbreak{}s.\allowbreak{}path.\allowbreak{}Perm l) = true}} then $\textnormal{\texttt{val M c s \ensuremath{\sigma}}} = \textnormal{\texttt{val M c (\allowbreak{}permS l s) \ensuremath{\sigma}}}$.
+\textnormal{\texttt{frontS x s := \{ s with path := x :: s.path.erase x \}}} moves $x$ to the front;
+\lean!front_sound!: if \textnormal{\texttt{decide (x \ensuremath{\in} s.path) = true}} then the value is kept.
 
 \paragraph{[Elim].} \textnormal{\texttt{elimOK s}} holds when $\text{path} = y :: ys$ with $y\notin ys$,
 $y\notin\textnormal{\texttt{pvars phase}}$, and $y\notin\textnormal{\texttt{fvars (\allowbreak{}cons ++ rows)}}$. \textnormal{\texttt{elimS}} drops the head.
@@ -389,8 +469,8 @@ $\sum_{y}(-1)^{yQ} = 2[Q=0]$ with $Q$ the quotient.
 $y\ne z$, $y\notin ys$, $z\notin ys$, \textnormal{\texttt{halfOK M y phase}}, $y\notin\textnormal{\texttt{fvars (\allowbreak{}cons ++ rows)}}$,
 $[z]\in\textnormal{\texttt{quot y phase}}$, and $z$ in no other monomial of the quotient
 (\textnormal{\texttt{z \ensuremath{\notin} (\allowbreak{}(\allowbreak{}quot y phase).\allowbreak{}erase [z]).\allowbreak{}flatMap id}}). With $B = (\textnormal{\texttt{quot y phase}}).\textnormal{\texttt{erase [z]}}$:
-\textnormal{\texttt{hhPivotS M s}} has path $ys$, phase \textnormal{\texttt{normP M (\allowbreak{}substP M z B (\allowbreak{}rest y phase))}}, and each
-constraint and row $q$ replaced by \textnormal{\texttt{normF (\allowbreak{}substF z B q)}}.
+\textnormal{\texttt{hhPivotS M s}} has path $ys$, phase \textnormal{\texttt{substNP M z B (\allowbreak{}rest y phase)}}, and each
+constraint and row $q$ replaced by \textnormal{\texttt{substNF z B q}} (\cref{def:lean-pathsum-substn}).
 \begin{theorem}[\textnormal{\texttt{hhPivot\_\allowbreak{}sound}}]
 $\textnormal{\texttt{hhPivotOK M s}}\Rightarrow\textnormal{\texttt{val M c s \ensuremath{\sigma}}} = \textnormal{\texttt{val M (\allowbreak{}2 * c) (\allowbreak{}hhPivotS M s) \ensuremath{\sigma}}}$:
 $\sum_z\sum_y(-1)^{y(z+B)}g(z) = 2g(B)$ (lemma \textnormal{\texttt{pick}}:
@@ -422,9 +502,15 @@ $\textnormal{\texttt{val M cL sL \ensuremath{\sigma}}} = \textnormal{\texttt{val
 
 \paragraph{Boolean elimination: \textnormal{\texttt{gather}}.} $\textnormal{\texttt{f2mul a b}} = [m\mathbin{+\!\!+}u: m\in a, u\in b]$
 (\textnormal{\texttt{fz\_\allowbreak{}f2mul}}: the value is the product), \textnormal{\texttt{f2mulM}} the mask version with bitwise or, and
-$\textnormal{\texttt{f2mulN a b}} = \textnormal{\texttt{normF (\allowbreak{}f2mul a b)}}$ on masks over \textnormal{\texttt{vlist (\allowbreak{}a ++ b)}}.
-$\textnormal{\texttt{gatherM vs C}} = \textnormal{\texttt{foldr}}\,(c,acc\mapsto\textnormal{\texttt{normFM (\allowbreak{}f2mulM (\allowbreak{}0 :: c') acc)}})\,[0]$ with
-$c'$ the masks of $c$, i.e.\ $\prod_{c\in C}(1+c)$ normalized after each factor;
+\textnormal{\texttt{xorMul a b}} folds $2^{m\mathbin{|}u}$ by XOR over $m\in a$, $u\in b$
+($=\textnormal{\texttt{xorF (f2mulM a b)}}$, \lean!xorMul_eq!), and
+$\textnormal{\texttt{mulM a b}} = \textnormal{\texttt{pickX}}(\textnormal{\texttt{xorMul a b}},\ \textnormal{\texttt{orF a ||| orF b}},\ |a|\,|b|,\ \textnormal{\texttt{normFM (f2mulM a b)}})$
+(\lean!fz_mulM!: the value is the product).
+$\textnormal{\texttt{f2mulN a b}} = \textnormal{\texttt{normF (\allowbreak{}f2mul a b)}}$ on masks over \textnormal{\texttt{vlist (\allowbreak{}a ++ b)}},
+computed as \textnormal{\texttt{mulM}} of the masks.
+$\textnormal{\texttt{gatherM vs C}} = \textnormal{\texttt{foldr}}\,(c,acc\mapsto\textnormal{\texttt{if c = [] then acc else mulM (\allowbreak{}0 :: c') acc}})\,[0]$ with
+$c'$ the masks of $c$, i.e.\ $\prod_{c\in C}(1+c)$ normalized after each factor, a zero constraint
+skipped;
 \textnormal{\texttt{gatherPoly C}} is its monomial form over \textnormal{\texttt{vlist (\allowbreak{}C.\allowbreak{}flatMap id)}}.
 \textnormal{\texttt{fz\_\allowbreak{}gather}}: $\textnormal{\texttt{fz \ensuremath{\tau} (\allowbreak{}gatherPoly C)}} = 1\iff\forall q\in C,\ \textnormal{\texttt{fz \ensuremath{\tau} q}} = 0$.
 \textnormal{\texttt{gatherOK s}} holds when \textnormal{\texttt{s.\allowbreak{}path = []}} (its docstring also mentions a constraint to
@@ -525,7 +611,8 @@ $\sum_{y,y'}(-1)^{yQ+y'Q'} = 2\sum_y(-1)^{y(Q\vee Q')}$ (\textnormal{\texttt{yTe
 \paragraph{[Pin].} \textnormal{\texttt{pinAt v B q}} holds when \textnormal{\texttt{pivotable v q}} and $q.\textnormal{\texttt{erase [v]}} = B$.
 \textnormal{\texttt{pinOK B s}}: path $= v :: ys$, $v\notin ys$, and some constraint satisfies \textnormal{\texttt{pinAt v B}}.
 With $q$ the first such constraint, $\textnormal{\texttt{pinS M B s}}$ drops $v$ from the path, removes $q$, and
-substitutes $v:=B$ in the phase, the other constraints, and the rows. Factor $1$.
+substitutes $v:=B$ in the phase (\textnormal{\texttt{substNP M v B}}), the other constraints, and the rows
+(\textnormal{\texttt{substNF v B}}). Factor $1$.
 \begin{theorem}[\textnormal{\texttt{pin\_\allowbreak{}sound}}]
 $2\le M$, $\textnormal{\texttt{pinOK B s}}\Rightarrow\textnormal{\texttt{val M c s \ensuremath{\sigma}}} = \textnormal{\texttt{val M c (\allowbreak{}pinS M B s) \ensuremath{\sigma}}}$.
 \end{theorem}
@@ -599,6 +686,70 @@ proof evaluates the sum over the digits as \textnormal{\texttt{dyProd}} (\textno
 variables as $\prod_j 2[\textnormal{\texttt{fz \ensuremath{\tau} b\_\allowbreak{}j}} = 0]$ (\textnormal{\texttt{bsum\_\allowbreak{}new}}, \textnormal{\texttt{prod\_\allowbreak{}ite}}).
 \end{theorem}
 
+\paragraph{[Dyadic] by column addition.} A second form of [Dyadic] needs no fresh variables: it
+writes the divisibility $2^k\mid S$ as constraints over existing variables $c_0,\dots,c_{k-1}$
+that occur in $S$ as linear terms of weights $\pm2^i$, and the digits of the rest of $S$ as $\mathbb
+F_2$ polynomials computed by binary column addition.
+\begin{itemize}
+\item \lean!cntAdd : List F2 → F2 → List F2! adds a bit $x$ to a binary counter of $\mathbb F_2$
+  digits, low digit first, the carry past the top dropped:
+  $\textnormal{\texttt{cntAdd [] x}}=[\,]$,
+  $\textnormal{\texttt{cntAdd (b :: bs) x}} = \textnormal{\texttt{normF (b ++ x)}} :: \textnormal{\texttt{cntAdd bs (f2mulN b x)}}$.
+  $\textnormal{\texttt{inum \ensuremath{\tau} [b\_0, b\_1, \ldots]}} = \sum_i 2^i\lfloor\textnormal{\texttt{fz \ensuremath{\tau} b\_i}}\rfloor$ and
+  $\textnormal{\texttt{csum \ensuremath{\tau} col}}$ is the number of items of a column with value $1$.
+  \lean!inum_cntAdd!: $\textnormal{\texttt{inum (cntAdd bs x)}}\equiv\textnormal{\texttt{inum bs}}+\lfloor\textnormal{\texttt{fz x}}\rfloor\pmod{2^{|bs|}}$;
+  \lean!inum_foldl!: folding a column into a counter adds its count mod $2^{|bs|}$; \lean!cntAdd_length!,
+  \lean!foldl_cntAdd_length!, \lean!inum_zero!, \lean!inum_bounds! ($0\le\textnormal{\texttt{inum}}<2^{|L|}$).
+\item \textnormal{\texttt{carry cs cols}} appends carry $c_i$ to column $i$ (the first carry to the first
+  column); $\textnormal{\texttt{cval \ensuremath{\tau} cols}} = \sum_i 2^i\,\textnormal{\texttt{csum}}(\text{column } i)$;
+  \lean!cval_carry!: $\textnormal{\texttt{cval (carry cs cols)}} = \textnormal{\texttt{cval cols}}+\textnormal{\texttt{inum cs}}$ when $|cs|\le|cols|$.
+\item \textnormal{\texttt{colRun n cols}}: $\textnormal{\texttt{colRun 0 \_}}=[\,]$, $\textnormal{\texttt{colRun (n+1) []}}=[\,]$, and for
+  $col::rest$ the column is folded into the zero counter of $n+1$ digits by \lean!cntAdd!; its low
+  digit $b$ is the output digit, and its higher digits $bt$ are carried into the remaining columns:
+  $b::\textnormal{\texttt{colRun n (carry bt rest)}}$. \lean!colRun_spec!: for $n$ columns,
+  $\textnormal{\texttt{cval cols}}\equiv\textnormal{\texttt{inum (colRun n cols)}}\pmod{2^n}$ and the output has length $n$.
+\item \textnormal{\texttt{colsOf k T}}: column $j<k$ holds $[m]$ for each term $(m,a)$ of $T$ with bit $j$ of $a$
+  set (\lean!pn_halves!, \lean!cval_colsOf!: $\textnormal{\texttt{cval (colsOf k T)}}\equiv\textnormal{\texttt{pn T}}\pmod{2^k}$).
+\item \textnormal{\texttt{colRows cs ds}} is $[\textnormal{\texttt{normF ([c\_i] :: d\_i)}}]_i$ (\lean!rows_iff!: all rows vanish iff
+  $\textnormal{\texttt{inum}}([[c_i]]_i)=\textnormal{\texttt{inum ds}}$); \textnormal{\texttt{cpoly w cs}} is the terms $([c_i],w2^i)$
+  (\lean!pn_cpoly!); \textnormal{\texttt{colP cs S}} and \textnormal{\texttt{colR cs S}} are the terms of $S$ on, and off,
+  the monomials $[c_i]$.
+\item \textnormal{\texttt{colCheck k S cs pos}}: $|cs|=k$ and
+  $\textnormal{\texttt{normP}}_{2^k}(\pm\textnormal{\texttt{colP cs S}}) = \textnormal{\texttt{normP}}_{2^k}(\textnormal{\texttt{cpoly 1 cs}})$, the sign $+$
+  for $pos$ (else \lean!negP!).
+  \textnormal{\texttt{colBits k S cs pos = colRows cs (colRun k (colsOf k R'))}} with $R'=-\textnormal{\texttt{colR cs S}}$ mod $2^k$
+  for $pos$ and $R'=\textnormal{\texttt{colR cs S}}$ else.
+  \lean!col_bits! (from \lean!dvd_iff_eq!, \lean!pair_iff!): \lean!colCheck! gives
+  $2^k\mid\textnormal{\texttt{pn \ensuremath{\tau} S}}\iff\forall b\in\textnormal{\texttt{colBits k S cs pos}},\ \textnormal{\texttt{fz \ensuremath{\tau} b}}=0$.
+\item \textnormal{\texttt{colRest M ds S s}}: $0<M$; $2^{|ds|}\mid M$; the path begins with $ds$; the path has no
+  repeats; no digit is in a constraint or row; no monomial of $S$ contains a digit; and
+  $\textnormal{\texttt{normP M}}(\text{phase terms with a digit}) = \textnormal{\texttt{normP M (dyTerms M (2\^{}|ds|) S ds 1)}}$.
+  \lean!dycol_core!: given the divisibility fact for constraints $bs$ and \lean!colRest!, the value equals
+  $2^{|ds|}c$ times the value of the path after $ds$, the phase terms free of $ds$, the constraints
+  $cons\mathbin{+\!\!+}bs$ and the same rows.
+\item \textnormal{\texttt{pickU K w bad S}} is the least $u\notin bad$ with a term $([u],a)$ of $S$, $a\bmod K=w$;
+  \textnormal{\texttt{pickCs K pos bad S n acc}} picks $n$ more variables after $acc$, the next of weight
+  $2^{|acc|}\bmod K$ ($pos$) or $(K-2^{|acc|}\bmod K)\bmod K$, each excluded afterwards.
+  \textnormal{\texttt{colBad ds S s}} lists the path, the variables of the constraints and rows, of the phase
+  terms off the digits, and of the monomials of $S$ of degree at least $2$.
+  \textnormal{\texttt{colData M ds s}}: for $ds=d::\_$ and $K=2^{|ds|}$,
+  $S=\textnormal{\texttt{normP K}}[(m\setminus d,\ a/(M/K)) : (m,a)\in\textnormal{\texttt{yTerms d phase}}]$; the choice
+  \textnormal{\texttt{pickCs K true}} is tried first, then \textnormal{\texttt{pickCs K false}}; \lean!none! for $ds=[\,]$ or no
+  choice.
+\item \textnormal{\texttt{columnsOK M ds s}}: \textnormal{\texttt{colData}} gives $(S,cs,pos)$, \textnormal{\texttt{colRest M ds S s}} and
+  \textnormal{\texttt{colCheck |ds| S cs pos}}. \textnormal{\texttt{columnsS M ds s}} drops $ds$ from the path and their phase
+  terms and appends \textnormal{\texttt{colBits |ds| S cs pos}} to the constraints.
+\end{itemize}
+\begin{theorem}[\textnormal{\texttt{columns\_sound}}]
+$\textnormal{\texttt{columnsOK M ds s = true}}\Rightarrow\textnormal{\texttt{val M c s \ensuremath{\sigma}}} = \textnormal{\texttt{val M (2\^{}|ds| * c) (columnsS M ds s) \ensuremath{\sigma}}}$.
+The proof is \lean!dycol_core! with \lean!col_bits!.
+\end{theorem}
+
+\paragraph{Canonical pivot with the phase kept.} \textnormal{\texttt{canonHS v s}} is \textnormal{\texttt{canonS}} without the
+phase substitution: the first constraint $q$ pivotable at $v$ becomes the row \textnormal{\texttt{normF q}}, and
+$v:=q.\textnormal{\texttt{erase [v]}}$ is substituted (\textnormal{\texttt{normF (substF v B r)}}) in the other constraints and the
+rows. \lean!canonH_sound! (side condition \textnormal{\texttt{canonOK v s}}, no bound on $M$): value unchanged.
+
 \paragraph{Phase terms off the constraints.} \textnormal{\texttt{dropT C m}} holds when for some constraint $q$
 the mask xor of $m\cdot(1+q)$, over the variables of $q$, is $0$ ($m(1+q)=0$ identically, so $m$
 vanishes where $q$ holds; \textnormal{\texttt{dropT\_\allowbreak{}zero}}, \textnormal{\texttt{fz\_\allowbreak{}xorF\_\allowbreak{}zero}}, \textnormal{\texttt{fz\_\allowbreak{}mapor}}).
@@ -644,6 +795,9 @@ and \textnormal{\texttt{run M [] s = s}}, \textnormal{\texttt{run M (\allowbreak
 \textnormal{\texttt{pdrop}} & \textnormal{\texttt{true}} / \textnormal{\texttt{pdropS}} & $1$ & phase terms off the support\\
 \textnormal{\texttt{dyadicB ds S fs bs}} & \textnormal{\texttt{dyadicBOK M ds S fs bs}} / \textnormal{\texttt{dyadicBS M ds fs bs}} & $1$ & [Dyadic], given digits\\
 \textnormal{\texttt{bsub v}} & \textnormal{\texttt{canonOK v}} / \textnormal{\texttt{bsubS M v}} & $1$ & boundary substitution\\
+\textnormal{\texttt{front x}} & \textnormal{\texttt{decide (x \ensuremath{\in} s.path)}} / \textnormal{\texttt{frontS x}} & $1$ & reorder\\
+\textnormal{\texttt{canonH v}} & \textnormal{\texttt{canonOK v}} / \textnormal{\texttt{canonHS v}} & $1$ & canonical pivot, phase kept\\
+\textnormal{\texttt{columns ds}} & \textnormal{\texttt{columnsOK M ds}} / \textnormal{\texttt{columnsS M ds}} & $2^{|ds|}$ & [Dyadic], columns\\
 \bottomrule
 \end{xltabular}
 
@@ -666,6 +820,36 @@ with \textnormal{\texttt{final\_\allowbreak{}sound}}, whose \textnormal{\texttt{
 and whose constant identity is the separately proved \textnormal{\texttt{consts}} theorem; see
 \cref{sec:lean-pathsum-python}.
 \end{example}
+
+\section{Phase differences: \texorpdfstring{\file{PathSumParity}}{PathSumParity}}\label{sec:lean-pathsum-parity}
+
+\file{PathSumParity} (imports \file{PathSumRules}; namespace \textnormal{\texttt{ArchytasZX.PSem}}) compares two
+reduced sums whose rows were made by \textnormal{\texttt{canonH}} steps, so that their phases still read the
+pivots. The comparison substitutes each row's pivot into the difference of the two phases.
+
+\begin{definition}[\texttt{substRows}, \texttt{rowsOK}, \texttt{diffP}, \texttt{finalPOK}]\label{def:lean-pathsum-diffp}
+\begin{itemize}
+\item \textnormal{\texttt{substRows M (v :: vs) (r :: rs) D = substRows M vs rs (normP M (substP M v (r.erase [v]) D))}},
+  and \textnormal{\texttt{substRows M \_ \_ D = D}} when either list is empty: each pivot replaced by the rest of
+  its row, in order.
+\item \textnormal{\texttt{rowsOK vs rs}}: the two lists have one length and each row is \textnormal{\texttt{pivotable}} at its
+  pivot.
+\item \textnormal{\texttt{diffP M vs sL sR = substRows M vs sL.rows (normP M (sL.phase ++ negP M sR.phase))}}.
+\item \textnormal{\texttt{finalPOK M vs sL sR}} is the conjunction, in this order: both paths empty; every
+  constraint of both sides \textnormal{\texttt{[]}}; equal row lists; \textnormal{\texttt{rowsOK vs sL.rows}}; and
+  \textnormal{\texttt{strip (diffP M vs sL sR) = []}}.
+\end{itemize}
+\end{definition}
+
+\begin{theorem}[\textnormal{\texttt{pn\_substRows}}, \textnormal{\texttt{finalP\_sound}}]
+For $2\le M$: if \textnormal{\texttt{rowsOK vs rs}} and every row of $rs$ vanishes at $\sigma$, then
+$\textnormal{\texttt{pn \ensuremath{\sigma} (substRows M vs rs D)}}\equiv\textnormal{\texttt{pn \ensuremath{\sigma} D}}\pmod M$. If
+\textnormal{\texttt{finalPOK M vs sL sR = true}}, $\textnormal{\texttt{constK (diffP M vs sL sR)}}=k$, and $c_L\,\omega_M^k = c_R$,
+then $\textnormal{\texttt{val M cL sL \ensuremath{\sigma}}} = \textnormal{\texttt{val M cR sR \ensuremath{\sigma}}}$ for every $\sigma$.
+\end{theorem}
+\noindent On the support of the rows each pivot equals the rest of its row
+(\textnormal{\texttt{z2\_eq\_of\_add}}), so the substituted difference has the value of the plain difference
+there; off the support both summands are $0$. \file{PathSumChain} imports this module.
 
 \section{Amplitude atoms: \texorpdfstring{\file{PathSumAmp}}{PathSumAmp}}\label{sec:lean-pathsum-amp}
 
@@ -728,10 +912,14 @@ $j_1$, $j_2$ and equal polynomials; \textnormal{\texttt{amergeS j}} replaces the
 
 \paragraph{Substitution in atoms.} \textnormal{\texttt{asubQ v s}} is the first constraint or row (in
 \textnormal{\texttt{cons ++ rows}} order) that is pivotable at $v$ and off the path; \textnormal{\texttt{asubOK v t}} holds when it
-exists; \textnormal{\texttt{asubS v t}} replaces $v$ by $q.\textnormal{\texttt{erase [v]}}$ in every atom (\textnormal{\texttt{normF}}).
+exists; \textnormal{\texttt{asubS v t}} replaces $v$ by $B=q.\textnormal{\texttt{erase [v]}}$ in every atom, each atom polynomial
+by \textnormal{\texttt{substFV vs v B}} over the one variable list $vs=\textnormal{\texttt{vlist (B ++ atoms.flatMap (\ensuremath{\cdot}.2))}}$
+(\lean!vlist_atoms!: every variable lies in $vs$; \lean!aval_mapOn!: mapping every atom polynomial by
+a value-preserving $F$ keeps \lean!aval!).
 \textnormal{\texttt{asub\_\allowbreak{}sound}}: value unchanged; the proof factors the constraint out of the inner sum as an
 indicator (\textnormal{\texttt{val\_\allowbreak{}ind}}). \textnormal{\texttt{asubBOK v B t}}: some constraint or row off the path satisfies
-\textnormal{\texttt{pinAt v B}}; \textnormal{\texttt{asubBS v B}} substitutes $v:=B$ in every atom (\textnormal{\texttt{asubB\_\allowbreak{}sound}}).
+\textnormal{\texttt{pinAt v B}}; \textnormal{\texttt{asubBS v B}} substitutes $v:=B$ in every atom by \textnormal{\texttt{substFV}} over
+\textnormal{\texttt{vlist (B ++ atoms.flatMap (\ensuremath{\cdot}.2))}} (\textnormal{\texttt{asubB\_\allowbreak{}sound}}).
 
 \paragraph{[Average].} For a held variable $y$ and $g\in\mathbb F_2[x]$:
 \textnormal{\texttt{oneY y g}} $=(1+y)g$, \textnormal{\texttt{onlyY y g}} $= yg$, \textnormal{\texttt{reads y a}} holds when atom $a$ reads
@@ -1052,6 +1240,27 @@ product of the summands), \textnormal{\texttt{summand\_\allowbreak{}frag\_\allow
 \textnormal{\texttt{disj\_\allowbreak{}join\_\allowbreak{}right}}, \textnormal{\texttt{disj\_\allowbreak{}join\_\allowbreak{}left}}, \textnormal{\texttt{disj\_\allowbreak{}unit\_\allowbreak{}left}}, \textnormal{\texttt{disj\_\allowbreak{}unit\_\allowbreak{}right}},
 \textnormal{\texttt{disj\_\allowbreak{}joinAll\_\allowbreak{}right}}, \textnormal{\texttt{disj\_\allowbreak{}joinAll\_\allowbreak{}left}}.
 
+\begin{definition}[Disjointness in one pass]\label{def:lean-pathsum-disjb}
+\begin{itemize}
+\item \textnormal{\texttt{nodupB xs acc}} walks $xs$ with a bit mask of the values seen: false at the first
+  $x$ with bit $x$ of $acc$ set, else $acc:=acc\mathbin{|}2^x$. \lean!nodupB_sound!: true implies $xs$ has
+  no repeats and sets no bit of $acc$. \textnormal{\texttt{nodupF xs}} is \textnormal{\texttt{nodupB xs 0}} when every value is
+  below $2^{24}$, else \lean!decide xs.Nodup! (\lean!nodupF_nodup!).
+\item \textnormal{\texttt{maskOf xs acc}} sets the bits of $xs$ in $acc$ (\lean!testBit_maskOf!);
+  \textnormal{\texttt{fragVars f = f.path ++ pvars f.phase ++ fvars f.cons}}.
+\item \textnormal{\texttt{disjB fs A B}} with $A$ the mask of the earlier fragments' variables and $B$ of their
+  path variables: for $f::fs$, the path mask of $f$ meets no bit of $A$, the variable mask of $f$
+  meets no bit of $B$, and \textnormal{\texttt{disjB fs (A ||| vars f) (B ||| path f)}} holds.
+  \lean!disjB_sound!, \lean!land_zero_bit!, and \lean!disjB_pairwise!: \textnormal{\texttt{disjB fs 0 0 = true}}
+  implies \textnormal{\texttt{fs.Pairwise (fun a b => Disj a b \ensuremath{\wedge} Disj b a)}}, the hypothesis of
+  \lean!fval_joinAll!.
+\item \textnormal{\texttt{allIn ys xs}}: every value of $xs$ has its bit set in \textnormal{\texttt{maskOf ys 0}}
+  (\lean!allIn_sound!); \lean!cover_of!: \textnormal{\texttt{allIn (N.int ++ N.bnd) (labelsOf N.nodes)}} gives every
+  node label summed or boundary; \lean!sub_of!: \textnormal{\texttt{allIn labs (N.int ++ N.bnd)}} gives every
+  summed or boundary label in $labs$.
+\end{itemize}
+\end{definition}
+
 \paragraph{Labels of dimension 2.} $\textnormal{\texttt{bits \ensuremath{\sigma} l}} = (\sigma(l) : \Zd2)$; \textnormal{\texttt{bits\_\allowbreak{}update}} commutes
 it with updates. \textnormal{\texttt{sumOver\_\allowbreak{}bsum}}: if $f(\sigma) = g(\textnormal{\texttt{bits \ensuremath{\sigma}}})$ whenever every $\sigma(l)<2$, and
 every label of $ls$ has dimension $2$, then $\textnormal{\texttt{sumOver D ls f \ensuremath{\sigma}}} = \textnormal{\texttt{bsum ls g (\allowbreak{}bits \ensuremath{\sigma})}}$ for
@@ -1138,6 +1347,23 @@ $\mathit{dig}:\N\to$ \textnormal{\texttt{List \ensuremath{\mathbb{N}}}} gives ea
 \textnormal{\texttt{dbits\_\allowbreak{}update}} ($\textnormal{\texttt{dbits own \ensuremath{\sigma}[l\ensuremath{\mapsto}j]}} = \textnormal{\texttt{setBits (\allowbreak{}dig l) j (\allowbreak{}dbits own \ensuremath{\sigma})}}$),
 \textnormal{\texttt{eq\_\allowbreak{}of\_\allowbreak{}digits}} (values below $2^k$ with equal first $k$ digits are equal),
 \textnormal{\texttt{digit\_\allowbreak{}bit}}, \textnormal{\texttt{bits\_\allowbreak{}eq'}}.
+
+\begin{definition}[Owner and dimension tables in one pass]\label{def:lean-pathsum-owntab}
+A \term{digit table} $T$ is a list of pairs (label, its digit variables, low digit first).
+\begin{itemize}
+\item \textnormal{\texttt{ownRow l i xs}} is $[(x_0,(l,i)),(x_1,(l,i+1)),\dots]$; \textnormal{\texttt{ownRows T}} concatenates
+  \textnormal{\texttt{ownRow l 0 ds}} over $(l,ds)\in T$.
+\item \textnormal{\texttt{ownT own labs T}}: $labs$ is the list of keys of $T$, $own=\textnormal{\texttt{ownRows T}}$, and
+  \textnormal{\texttt{nodupF}} holds of the owner variables and of $labs$.
+  \lean!ownOK_tab!: \textnormal{\texttt{ownT own labs T}} gives \textnormal{\texttt{ownOK own labs (fun l => (T.lookup l).getD [])}}
+  (from \lean!ownRow_keys!, \lean!mem_ownRow!, \lean!getElem_mem_ownRow!, \lean!lookup_of_mem!).
+\item \textnormal{\texttt{dimsM D L T}} checks, in one merged pass, that the keys of $T$ are a subsequence of the
+  keys of $L$ in order, each with $D(k)=2^{|ds|}$ for its $L$ value $k$ (\lean!dimsM_sound!).
+  \textnormal{\texttt{dimsT E labs T}}: $labs$ is the keys of $T$, \textnormal{\texttt{nodupF}} of the keys of $T$ and of
+  \textnormal{\texttt{E.labs}}, and \textnormal{\texttt{dimsM E.dimv E.labs T}}. \lean!dims_tab!: every $l\in labs$ has
+  $\textnormal{\texttt{labDim E l}} = 2^{|(T.\mathrm{lookup}\,l).\mathrm{getD}\,[\,]|}$.
+\end{itemize}
+\end{definition}
 
 \begin{theorem}[\textnormal{\texttt{sumOver\_\allowbreak{}dbits}}]
 For \textnormal{\texttt{ownOK own labs dig}}, labels $L\subseteq labs$ of dimension $2^{|\mathit{dig}(l)|}$, and
@@ -1582,6 +1808,193 @@ $\textnormal{\texttt{eval E N \ensuremath{\sigma}}} = \textnormal{\texttt{val p 
 (\textnormal{\texttt{freeIn}}), both owner tables look up $vs$ alike, the boundaries are equal, and the scaled
 sums agree at every $\tau$, then \textnormal{\texttt{Equal E s\ensuremath{_1} N\ensuremath{_1} s\ensuremath{_2} N\ensuremath{_2}}}.
 \end{theorem}
+
+\section{Mixed path sums on dimensions 2, 3, and 6: \texorpdfstring{\file{PathSumMixed}}{PathSumMixed}}\label{sec:lean-pathsum-mixed}
+
+\file{PathSumMixed} (imports \file{PathSumQudit}, \file{PathSumAmp}; namespace
+\textnormal{\texttt{ArchytasZX.MSem}}) defines path sums with a qubit part over $\Zd2$ and a qutrit part over
+$\Zd3$, coupled through \term{indicator entries}: $\mathbb F_2$ variables that read the indicator
+$[a z+b=k]$ of a $\Zd3$ variable $z$. A label of dimension $6$ is the digit pair $(s,f)$ of its
+value $2s+f$, $s\in\Zd3$, $f\in\Zd2$.
+
+\begin{definition}[Indicators]\label{def:lean-pathsum-ind}
+$\textnormal{\texttt{ind k s}} = [s = k]\in\Zd2$ for $k\in\N$, $s\in\Zd3$. The identities are
+\begin{gather*}
+\textnormal{\texttt{ind\_one\_two}}:\ \textnormal{\texttt{ind 1 s}}\cdot\textnormal{\texttt{ind 2 s}}=0,\\
+\textnormal{\texttt{ind\_zero}}:\ \lfloor\textnormal{\texttt{ind 0 s}}\rfloor = 1-\lfloor\textnormal{\texttt{ind 1 s}}\rfloor-\lfloor\textnormal{\texttt{ind 2 s}}\rfloor,\\
+\textnormal{\texttt{ind\_affine}}\ (a\ne0):\ \textnormal{\texttt{ind k (a z + b)}} = \textnormal{\texttt{ind}}\bigl(((k-b)a^{-1}).\mathrm{val}\bigr)\,z,\\
+\textnormal{\texttt{ind\_const}}:\ \textnormal{\texttt{ind k b}} = [b=k].
+\end{gather*}
+\end{definition}
+
+\begin{theorem}[Sums over $\Zd3$ and $6$]\label{thm:lean-pathsum-elim3}
+\begin{itemize}
+\item \textnormal{\texttt{sum\_six}}: $\sum_{j<6}G(j) = \sum_{s\in\Zd3}\sum_{f\in\Zd2}G(2\,s.\mathrm{val}+f.\mathrm{val})$.
+\item \textnormal{\texttt{elim3}} ([Elim3]): $\sum_{s\in\Zd3}\psi_3(sL)\,H = 3[L=0]\,H$, with $\psi_3$ the additive
+  character of \cref{def:lean-pathsum-psi}.
+\item \textnormal{\texttt{count3}} ([Count3]): for $F:\Zd2\to\Zd2\to\C$,
+  $\sum_{s\in\Zd3}F(\textnormal{\texttt{ind 1 s}},\textnormal{\texttt{ind 2 s}}) = \sum_{u,v\in\Zd2}[uv=0]\,F(u,v)$.
+\end{itemize}
+\end{theorem}
+
+\begin{definition}[Lifts of assignments]\label{def:lean-pathsum-lifta}
+\textnormal{\texttt{lift es \ensuremath{\rho} \ensuremath{\tau}}} sets, for each entry $(u,s,k)$ of $es$ (the first entry set last), the
+$\mathbb F_2$ variable $u$ to $\textnormal{\texttt{ind k (\ensuremath{\rho} s)}}$. An \term{indicator entry}
+\lean!Ent := ℕ × ℕ × ℕ × ℕ × ℕ!, $(u,z,a,b,k)$, makes $u$ the value
+$\textnormal{\texttt{entVal \ensuremath{\rho} e}} = \textnormal{\texttt{ind k (a \ensuremath{\rho}(z) + b)}}$; \textnormal{\texttt{liftA es \ensuremath{\rho} \ensuremath{\tau}}} sets every entry's
+variable likewise. \textnormal{\texttt{pinE x z' a' b' e}} rewrites an entry on $x$ through
+$x=a'z'+b'$: $(u,z',\ a a'\bmod3,\ (a b'+b)\bmod3,\ k)$; other entries stay.
+\end{definition}
+\noindent Lemmas: \textnormal{\texttt{lift\_out}}, \textnormal{\texttt{lift\_rho}} (a lift reads $\rho$ only at the entries'
+variables), \textnormal{\texttt{entVal\_pinE}} and \textnormal{\texttt{liftA\_pinE}} (given $\rho(x)=a'\rho(z')+b'$, \textnormal{\texttt{pinE}}
+keeps the values), \textnormal{\texttt{liftA\_rho}}, \textnormal{\texttt{entVal\_norm}} (an entry with a unit coefficient reads
+$\textnormal{\texttt{ind}}(((k-b)a^{-1}).\mathrm{val})(\rho z)$). \textnormal{\texttt{lift\_count}} is [Count3] for one $\Zd3$ variable
+$s$ read only by the first two entries $(u_1,s,1)$, $(u_2,s,2)$: the sum over $s$ is the sum over
+$u_1,u_2\in\Zd2$ with $[u_1u_2=0]$; \textnormal{\texttt{lift\_elim}} is [Elim3] for a variable $s$ that $H$ and $L$
+do not read.
+
+\begin{definition}[Mixed value]\label{def:lean-pathsum-mval}
+For a qubit path sum with atoms $q$ (\lean!PSem.AData!, \cref{sec:lean-pathsum-amp}), a qudit path sum
+$t$ (\lean!QSem.Data! over $p=3$), entries $es$, $\tau:\N\to\Zd2$ and $\rho:\N\to\Zd3$,
+\begin{gather*}
+\textnormal{\texttt{wt3 t \ensuremath{\rho}}} = [\forall r\in t.\mathrm{cons}\mathbin{+\!\!+}t.\mathrm{rows},\ \textnormal{\texttt{qv \ensuremath{\rho} r}}=0]\ \psi_3(\textnormal{\texttt{qv \ensuremath{\rho} t.phase}}),\\
+\textnormal{\texttt{mval M c A q t es \ensuremath{\tau} \ensuremath{\rho}}} = \textnormal{\texttt{qsum}}\ t.\mathrm{path}\ \bigl(\rho'\mapsto\textnormal{\texttt{wt3 t \ensuremath{\rho}'}}\cdot\textnormal{\texttt{valA M c A q (liftA es \ensuremath{\rho}' \ensuremath{\tau})}}\bigr)\ \rho .
+\end{gather*}
+\end{definition}
+
+\begin{theorem}[Steps on mixed path sums]\label{thm:lean-pathsum-mixed-steps}
+\begin{itemize}
+\item \textnormal{\texttt{valA\_zero\_atom}}: two held variables $u_1\ne u_2$, both not held in $q$, with the atom
+  $(j,[[u_1,u_2]])$ and $A(j)=0$, give $\sum_{x,y\in\Zd2}[xy=0]$ of the value of $q$ at
+  $\tau[u_2\mapsto y][u_1\mapsto x]$ (the zero atom $0^{u_1u_2}$). \textnormal{\texttt{bsum\_zero}} sums the zero
+  function to $0$.
+\item \textnormal{\texttt{mval\_count3}} ([Count3]): if $t.\mathrm{path}=s::rest$, $s\notin rest$, $s$ is off the $\Zd3$ phase
+  and constraints, no other entry reads $s$, $A(j)=0$, $u_1\ne u_2$, both not held in $q$, then
+  \textnormal{\texttt{mval}} with the entries $(u_1,s,1,0,1)::(u_2,s,1,0,2)::es$ equals \textnormal{\texttt{mval}} with
+  $u_1::u_2::q.\mathrm{held}$, the atom $(j,[[u_1,u_2]])$ prepended, the path $rest$, and entries $es$.
+\item \textnormal{\texttt{mval\_hhPivot}}: if $t.\mathrm{path}=y::z::ys$, \textnormal{\texttt{hhPivotOK 3 t}}, no entry reads $y$, and
+  $es'$ reads at $\rho$ what $es$ reads at $\rho[z\mapsto\textnormal{\texttt{qv \ensuremath{\rho} (pivVal 3 z (yk y 1 t.phase))}}]$, then
+  \textnormal{\texttt{mval \ldots t es}} $=3\cdot$\textnormal{\texttt{mval \ldots (hhPivotS 3 t) es'}}.
+\item \textnormal{\texttt{mval\_hhCons}}, \textnormal{\texttt{mval\_elim}}: with the head $y$ read by no entry,
+  \textnormal{\texttt{hhConsOK t}} (resp.\ \textnormal{\texttt{elimOK t}}) gives the factor $3$ and \textnormal{\texttt{hhConsS t}}
+  (resp.\ \textnormal{\texttt{elimS t}}).
+\item \textnormal{\texttt{mval\_norm}}: \textnormal{\texttt{normS 3}} of the $\Zd3$ part keeps the value.
+\item \textnormal{\texttt{mval\_pin}}: \textnormal{\texttt{pinOK 3 x t}}, $t.\mathrm{path}=y::ys$, $x\ne y$ give
+  \textnormal{\texttt{pinS 3 x t}} with the entries mapped by \textnormal{\texttt{pinE y x 1 0}}.
+\end{itemize}
+\textnormal{\texttt{wt3\_update}} (a variable off the $\Zd3$ phase and constraints does not change the weight),
+\textnormal{\texttt{qsum\_const\_mul}}, and the instance \textnormal{\texttt{fact3 : Fact (Nat.Prime 3)}} support the
+proofs; each step unfolds \textnormal{\texttt{mval}} and applies the corresponding qudit soundness theorem of
+\cref{sec:lean-pathsum-qudit} under \textnormal{\texttt{liftA\_rho}}.
+\end{theorem}
+
+\section{Mixed networks: \texorpdfstring{\file{PathSumMixedNet}}{PathSumMixedNet}}\label{sec:lean-pathsum-mixednet}
+
+\file{PathSumMixedNet} (imports \file{PathSumMixed}, \file{PathSumNetAmp}, \file{PathSumQuditNet},
+\file{PathSumQuditDigits}; namespace \textnormal{\texttt{ArchytasZX.MSem}}) translates a network whose labels have
+dimension $2$, $3$, or $6$ into a mixed path sum. \cref{ch:lean-export} specifies its caller
+\lean!export_mixed_net!.
+
+\begin{definition}[Mixed labels]\label{def:lean-pathsum-mlab}
+\lean!MLab := ℕ × ℕ × ℕ × ℕ!, $(l,k,b,t)$: the label $l$ of dimension $k\in\{2,3,6\}$ with the
+$\mathbb F_2$ variable $b$ (used for $k=2,6$) and the $\Zd3$ variable $t$ (used for $k=3,6$).
+\textnormal{\texttt{mbit j}} $= j\bmod 2$ in $\Zd2$; \textnormal{\texttt{mtrit k j}} is $\lfloor j/2\rfloor$ in $\Zd3$ for $k=6$ and $j$
+otherwise. \textnormal{\texttt{bvars ms}} lists the $b$ of the labels with $k\ne3$, \textnormal{\texttt{tvars ms}} the $t$ of the
+labels with $k\ne2$. \textnormal{\texttt{mbits ms \ensuremath{\sigma}}} and \textnormal{\texttt{mtrits ms \ensuremath{\sigma}}} read the digit assignments from
+label values (the first label set last, $0$ elsewhere). \textnormal{\texttt{mOK ms}}: distinct labels, distinct
+$\mathbb F_2$ variables, distinct $\Zd3$ variables, every dimension $2$, $3$, or $6$.
+\textnormal{\texttt{MIn ms \ensuremath{\sigma}}}: $\sigma(l)<k$ for every $(l,k,\_,\_)\in ms$.
+\end{definition}
+\noindent Lemmas: \textnormal{\texttt{mbits\_agree}}, \textnormal{\texttt{mtrits\_agree}}, \textnormal{\texttt{mem\_bvars}}, \textnormal{\texttt{mem\_tvars}},
+\textnormal{\texttt{mbits\_update}}, \textnormal{\texttt{mtrits\_update}} (setting a label updates its digit variables),
+\textnormal{\texttt{mbits\_get}}, \textnormal{\texttt{mtrits\_get}}, \textnormal{\texttt{bsum\_sum3}}, \textnormal{\texttt{sum\_range\_three}}, \textnormal{\texttt{sum\_two}}.
+
+\begin{theorem}[\textnormal{\texttt{sumOver\_mixed}}]
+If \textnormal{\texttt{mOK ms}}, every $m\in L$ lies in $ms$ and has $D(l)=k$, then for every $\sigma$
+\begin{multline*}
+\textnormal{\texttt{sumOver D (L.map (\ensuremath{\cdot}.1))}}\ \bigl(\sigma'\mapsto g(\textnormal{\texttt{mbits ms \ensuremath{\sigma}'}},\textnormal{\texttt{mtrits ms \ensuremath{\sigma}'}})\bigr)\ \sigma\\
+ = \textnormal{\texttt{bsum (bvars L)}}\bigl(\tau\mapsto\textnormal{\texttt{qsum (tvars L) (g \ensuremath{\tau}) (mtrits ms \ensuremath{\sigma})}}\bigr)\,(\textnormal{\texttt{mbits ms \ensuremath{\sigma}}}).
+\end{multline*}
+The proof is induction on $L$ with \textnormal{\texttt{sum\_six}} for dimension $6$.
+\end{theorem}
+
+\begin{definition}[\texttt{NetPSM}]\label{def:lean-pathsum-netpsm}
+\textnormal{\texttt{NetPSM E N M A ms mi es ps}} is a structure of proofs, with
+$ps$ a list of $((n, J), F, \mathit{ats})$: a node, its $\Zd3$ fragment, its $\mathbb F_2$ fragment, and
+its atoms. Fields: \textnormal{\texttt{ok}} (\textnormal{\texttt{mOK ms}}); \textnormal{\texttt{nodes}} ($N$'s nodes are the $n$ of $ps$);
+\textnormal{\texttt{node}} (for \textnormal{\texttt{MIn ms \ensuremath{\sigma}}},
+$\textnormal{\texttt{val E \ensuremath{\sigma} n}} = \textnormal{\texttt{QSem.fval 3 J (mtrits ms \ensuremath{\sigma})}}\cdot\textnormal{\texttt{fvalA M A F ats (liftA es (mtrits ms \ensuremath{\sigma}) (mbits ms \ensuremath{\sigma}))}}$);
+\textnormal{\texttt{disj3}} (the $\Zd3$ fragments pairwise \textnormal{\texttt{QDisj}} both ways); \textnormal{\texttt{disj2}} (the $\mathbb F_2$
+fragments with atoms pairwise \textnormal{\texttt{DisjA}} both ways); \textnormal{\texttt{dims}} (\textnormal{\texttt{labDim E l = k}} for
+every label of $ms$); \textnormal{\texttt{sub}} ($mi\subseteq ms$); \textnormal{\texttt{int}} ($N.\mathrm{int}$ is the labels of $mi$);
+\textnormal{\texttt{bnd}} (every boundary label is a label of $ms$); \textnormal{\texttt{cover}} (every node label is summed or
+boundary).
+\end{definition}
+
+\begin{theorem}[\textnormal{\texttt{NetPSM.eval\_eq}}, \textnormal{\texttt{NetPSM.eval\_mval}}]
+Under \textnormal{\texttt{NetPSM}} and $\sigma$ in range on $N.\mathrm{bnd}$, \textnormal{\texttt{eval E N \ensuremath{\sigma}}} is
+\textnormal{\texttt{bsum (bvars mi)}} of \textnormal{\texttt{qsum (tvars mi)}} of
+$\textnormal{\texttt{QSem.fval 3 (qjoinAll J's)}}\cdot\textnormal{\texttt{fvalA M A (joinAll F's) (atoms) (liftA es \ensuremath{\rho} \ensuremath{\tau})}}$, at
+\textnormal{\texttt{mtrits ms (clamp N.bnd \ensuremath{\sigma})}} and \textnormal{\texttt{mbits ms (clamp N.bnd \ensuremath{\sigma})}}. If moreover no summed
+$\mathbb F_2$ variable is an entry variable and no entry reads a path variable of the joined $\Zd3$
+fragment, \textnormal{\texttt{eval E N \ensuremath{\sigma}}} $= J.c\cdot\textnormal{\texttt{mval M F.c A q t es}}$ with
+$q = \langle\langle[\,],F.\mathrm{phase},F.\mathrm{cons},[\,]\rangle,\ \textnormal{\texttt{bvars mi}}\mathbin{+\!\!+}F.\mathrm{path},\ \text{atoms}\rangle$ and
+$t=\langle\textnormal{\texttt{tvars mi}}\mathbin{+\!\!+}J.\mathrm{path},\ J.\mathrm{phase},\ J.\mathrm{cons},\ [\,]\rangle$ for the joined
+fragments $J$, $F$ (\textnormal{\texttt{sum\_mval}}, from \textnormal{\texttt{bsum\_qsum}}, \textnormal{\texttt{liftA\_update}},
+\textnormal{\texttt{bsum\_liftA}}, \textnormal{\texttt{fvalA\_valA}}).
+\end{theorem}
+
+\paragraph{Node lemmas.} Each gives the \textnormal{\texttt{node}} field for one kind of generator.
+\begin{itemize}
+\item \textnormal{\texttt{node\_q3}}: a node on dimension $3$ whose labels $l$ are the mixed labels $(l,3,l,l)$, with a
+  $\Zd3$ fragment $f$ over its labels, has entry \textnormal{\texttt{QSem.fval 3 f (mtrits ms \ensuremath{\sigma})}} times the unit
+  $\mathbb F_2$ fragment.
+\item \textnormal{\texttt{node\_q2}}: a node on dimension $2$ whose labels are $(l,2,l,l)$, $\mathit{dig}(l)=[l]$, not entry
+  variables, with an $\mathbb F_2$ fragment with atoms over \textnormal{\texttt{dbits own}} (variables in $vs$, each
+  on the fragment's path or a label), has the unit $\Zd3$ fragment times that fragment at
+  \textnormal{\texttt{liftA es \ensuremath{\rho} (mbits ms \ensuremath{\sigma})}} (\textnormal{\texttt{fvalA\_agree}}, \textnormal{\texttt{bsum\_agree}}, \textnormal{\texttt{liftA\_out}}).
+\item \textnormal{\texttt{node\_b}}: a $(3,2)$ binder or splitter on labels $k$ ($6$), $a$ ($3$), $b$ ($2$), each its own
+  digit variable and $k,b$ not entry variables, is
+  $\textnormal{\texttt{bFrag3 k a}}=\langle[\,],[\,],[\textnormal{\texttt{eqQ 3 k a}}],1\rangle$ times
+  $\textnormal{\texttt{bFrag2 k b}}=\langle[\,],[\,],[[[k],[b]]],1\rangle$ (\textnormal{\texttt{tB\_six}}:
+  $\mathrm{tB}(3,2,x,y,z) = [\textnormal{\texttt{mtrit 6 x}}=\textnormal{\texttt{mtrit 3 y}}]\,[\textnormal{\texttt{mbit x}}=\textnormal{\texttt{mbit z}}]$ in range;
+  \textnormal{\texttt{bFrag\_val}}; \textnormal{\texttt{val\_binder}}, \textnormal{\texttt{val\_splitter}} give the entries of \lean!B! and \lean!S! with
+  $\mathrm{dimv}(n.\mathrm{dim})=3$, $\mathrm{dimv}(n.\mathrm{ph})=2$).
+\item \textnormal{\texttt{node\_z6}}: a Z spider on dimension $6$ with anchor $l_0$, indicator variables $u_1$, $u_2$ and
+  entries $(u_1,l_0,1,0,1)$, $(u_2,l_0,1,0,2)$, phases $\varphi_v = ts_v/M$, a table
+  \textnormal{\texttt{tableOK M [l0, u1, u2] P ts8}} (\cref{sec:lean-pathsum-digits}) and
+  \textnormal{\texttt{sixOK ts8 ts}}, is $\textnormal{\texttt{z6Frag3 l0 legs}}=\langle[\,],[\,],[\textnormal{\texttt{eqQ 3 l0 l}}]_l,1\rangle$ times
+  $\textnormal{\texttt{z6Frag2 l0 legs P}}=\langle[\,],P,[[[l_0],[l]]]_l,1\rangle$. Here
+  $\textnormal{\texttt{sixIdx x}} = x\bmod2+2[\lfloor x/2\rfloor=1]+4[\lfloor x/2\rfloor=2]$ indexes the value $x=2s+f$ on the
+  variables $(f,u_1,u_2)$, and \textnormal{\texttt{sixOK ts8 ts}} states $ts8[\textnormal{\texttt{sixIdx x}}]=ts[x]$ for
+  $x<6$ (\textnormal{\texttt{six\_eq}}, \textnormal{\texttt{six\_bits}}, \textnormal{\texttt{sixIdx\_lt}}, \textnormal{\texttt{liftA\_get}}).
+\end{itemize}
+
+\paragraph{Steps of the $\Zd3$ replay.}
+\textnormal{\texttt{mval\_perm}} permutes the $\Zd3$ path. \textnormal{\texttt{substA M z B q}} replaces $z$ by $B$ in the phase
+(\textnormal{\texttt{substP}}), constraints, rows, and atoms (\textnormal{\texttt{substF}}) of $q$; \textnormal{\texttt{valA\_subst}} ($2\le M$; $z$
+and the variables of $B$ neither held nor on the path; no path variable read by the atoms before or
+after): the value of $q$ at $\tau[z\mapsto\textnormal{\texttt{fz \ensuremath{\tau} B}}]$ is the value of \textnormal{\texttt{substA M z B q}} at $\tau$
+(\textnormal{\texttt{bsum\_update\_dep}}). \textnormal{\texttt{liftA\_dup}}: two entries with one reading take one value;
+\textnormal{\texttt{mval\_dup}} drops the entry $e'$ whose reading equals that of $e$ and substitutes $[[e.1]]$ for
+$e'.1$ in $q$. \textnormal{\texttt{entN e}} puts an entry with a unit coefficient in the form
+$(u,z,1,0,((k+2b)a)\bmod 3)$ (\textnormal{\texttt{ind\_unit}}, \textnormal{\texttt{entVal\_entN}}, \textnormal{\texttt{liftA\_entN}},
+\textnormal{\texttt{liftA\_perm}}); \textnormal{\texttt{mval\_entN}} maps every entry by it.
+
+\paragraph{The end of the replay.} \textnormal{\texttt{cB e}} is $[[\,]]$ when $b\equiv k\pmod 3$ and $[\,]$ otherwise, the
+constant of an entry with coefficient $a\equiv0$ (\textnormal{\texttt{entVal\_const}}, \textnormal{\texttt{cB\_nil}});
+\textnormal{\texttt{substEs M es q}} substitutes every entry variable by its constant, first entry first
+(\textnormal{\texttt{mem\_substF\_const}}, \textnormal{\texttt{avars\_substA\_const}}, \textnormal{\texttt{valA\_substEs}}).
+\textnormal{\texttt{mval\_fin}}: with no $\Zd3$ path left and constant entries,
+$\textnormal{\texttt{mval}} = \textnormal{\texttt{wt3 t \ensuremath{\rho}}}\cdot\textnormal{\texttt{valA M c A (substEs M es q) \ensuremath{\tau}}}$; \textnormal{\texttt{wt3\_one}}: zero phase and
+zero constraints give weight $1$; \textnormal{\texttt{mval\_end}}: then, with no entries, $\textnormal{\texttt{mval}} = \textnormal{\texttt{valA M c A q \ensuremath{\tau}}}$.
+
+\paragraph{Disjointness in one pass.} \textnormal{\texttt{disjG P V fs A B}} generalizes \textnormal{\texttt{disjB}}
+(\cref{def:lean-pathsum-disjb}) to any item type with projections $P$ (path variables) and $V$
+(variables); \textnormal{\texttt{disjG\_sound}}. \textnormal{\texttt{disj3\_of}} and \textnormal{\texttt{disj2\_of}} give the \textnormal{\texttt{disj3}} and
+\textnormal{\texttt{disj2}} fields of \textnormal{\texttt{NetPSM}} from \textnormal{\texttt{disjG \ldots{} fs 0 0 = true}}. \textnormal{\texttt{mbits\_dbits}}: for
+labels $(x,2,x,x)$ with $\mathit{dig}(x)=[x]$ under \textnormal{\texttt{ownOK}}, \textnormal{\texttt{mbits ms \ensuremath{\sigma} x}} $=$
+\textnormal{\texttt{dbits own \ensuremath{\sigma} x}}.
 
 \section{Auxiliary lemmas}\label{sec:lean-pathsum-aux}
 

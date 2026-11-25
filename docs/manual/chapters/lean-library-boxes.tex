@@ -1273,6 +1273,466 @@ theorem main : ∀ k, Equal E (perS sT A p k) (famNet W u tl cp hd bd k)
 \end{lstlisting}
 followed, at each index of \py!checks!, by the instantiated sides matched to \lbx!famNet! and \lbx!G! and proved equal under their own scalars (\lbx!At{k}.inst!). The mirrors \py!_sh!, \py!_fam!, \py!_blk! compute \lbx!sh!, \lbx!famNet!, \lbx!blkNet!.
 
+\section{Phase Rows Read Through a Map}\label{sec:boxes-phasemap}
+
+\file{PhaseMap.lean} (imports \file{Bundle}) moves an equation to an environment whose phase rows are numbered differently.
+
+\begin{definition}[Phase maps]\label{def:boxes-phmap}
+\lbx!phMap ps x = (ps.lookup x).getD x! reads a finite map $\mathit{ps}$ of phase-row indices, the identity off its keys. \lbx!Node.mapPh g n! replaces the phase index $n.\mathit{ph}$ by $g(n.\mathit{ph})$ for every kind except the binder $B$ and the splitter $S$, which keep theirs; \lbx!Net.mapPh g N! maps every node and keeps the summed and boundary labels. \lbx!phIn qs N! holds when every node of $N$ is a binder, a splitter, or has its phase index in $\mathit{qs}$.
+\end{definition}
+
+\lbx!tensor_mapPh!, \lbx!val_mapPh!, and \lbx!eval_mapPh! state that a generator's tensor, a node's value, and a network's evaluation are unchanged when the phase index is read through $g$ in an environment $E'$ with the same dimensions (\lbx!dimv!), labels (\lbx!labs!), and multiplicities (\lbx!mult!) as $E$ whose phase and coefficient rows agree, $E'.\mathit{phase}(g\,q)=E.\mathit{phase}(q)$ and $E'.\mathit{coef}(g\,q)=E.\mathit{coef}(q)$, at every index $q\in\mathit{qs}$ the network reads. \lbx!Fam.env_dimv_congr! gives equal dimension maps for two families with equal \lbx!dims! and \lbx!bund!.
+
+\begin{theorem}[Equations through phase maps]\label{thm:boxes-of-phRows}
+\begin{lstlisting}[style=leanbox]
+theorem Equal.of_phRows (E E' : Env) (gN gM : ℕ → ℕ) (qN qM : List ℕ)
+    (hd : E'.dimv = E.dimv) (hl : E'.labs = E.labs) (hm : E'.mult = E.mult)
+    (hpN : ∀ q ∈ qN, E'.phase (gN q) = E.phase q) (hcN : ∀ q ∈ qN, E'.coef (gN q) = E.coef q)
+    (hpM : ∀ q ∈ qM, E'.phase (gM q) = E.phase q) (hcM : ∀ q ∈ qM, E'.coef (gM q) = E.coef q)
+    (N M N' M' : Net) (hqN : phIn qN N = true) (hqM : phIn qM M = true)
+    (hN : N.mapPh gN = N') (hM : M.mapPh gM = M') {s s' : ℂ} (h : Equal E s N s' M) :
+    Equal E' s N' s' M'
+\end{lstlisting}
+\end{theorem}
+\noindent The boundary-range hypothesis transfers by \lbx!hd! and \lbx!hl!; both evaluations are rewritten by \lbx!eval_mapPh!, and the equation \lbx!h! applies. Each side has its own map, so the two networks of an equation may number the same phase row differently.
+
+\section{Closed Chain Boxes}\label{sec:boxes-closedchain}
+
+Four modules prove that the expansion of a chain box (\cref{sec:boxes-chain}) at $k$ copies, for a box with no boundary port, is the chain family $\mathit{famNet}$ of \cref{def:boxes-famNet}, and that two such boxes are equal at every $k$ when one copy step is.
+
+\subsection{A diagram's network under a port labelling}
+
+\file{ChainLabel.lean} (imports \file{Elim}).
+
+\begin{definition}[Labelled network]\label{def:boxes-netBy}
+For a labelling $\mathit{lab}:\mathrm{Port}\to\N$,
+\[
+\mathrm{netBy}(D,\mathit{lab})=\bigl\langle D.\mathit{nodes}\mapsto n.\mathrm{node}(\mathit{lab}),\ \ [\mathit{lab}(w.1)\mid w\in D.\mathit{wires}],\ \ [0,\ldots,|D.\mathit{bnd}|-1]\bigr\rangle:
+\]
+every node with each port labelled by $\mathit{lab}$, wire $w$ summed at the label of its first end, and the boundary the slots $0,\ldots,m-1$ with $m=|D.\mathit{bnd}|$. \lbx!portsOK D! holds when every output and input port of every node passes \lbx!okPort! (it lies on the boundary or on a wire).
+\end{definition}
+
+\begin{theorem}[Labelled network]\label{thm:boxes-equal-netBy}
+\begin{lstlisting}[style=leanbox]
+theorem equal_netBy (D : Diagram) (E : Env) (o : ℕ) (lab : Port → ℕ)
+    (ho : D.bnd.length ≤ o) (hb : ∀ i (hi : i < D.bnd.length), lab D.bnd[i] = i)
+    (hw : ∀ w ∈ D.wires, lab w.1 = lab w.2) (hok : D.portsOK)
+    (hnd : (D.wires.map fun w => lab w.1).Nodup) (hlo : ∀ w ∈ D.wires, D.bnd.length ≤ lab w.1)
+    (hdim : ∀ j (hj : j < D.wires.length), labDim E (lab D.wires[j].1) = labDim E (o + j)) :
+    Equal E 1 (D.toNet o) 1 (D.netBy lab)
+\end{lstlisting}
+\end{theorem}
+\noindent In \lbx!D.toNet o! wire $j$ is summed at $o+j$; the sum over those labels is reindexed to the labels $\mathit{lab}(w_j.1)$ (distinct by \lbx!hnd!, above the slots by \lbx!hlo!, of the same dimension by \lbx!hdim!). \lbx!lab_of_locate! shows that every port that passes \lbx!okPort! reads the same value in both networks, and \lbx!node_lab! lifts that to node values.
+
+\subsection{The expansion in closed form}
+
+\file{ChainForm.lean} (imports \file{ChainBox}).
+
+\begin{definition}[Closed chain]\label{def:boxes-closedchain}
+For a chain $c$ (a box $c.\mathit{box}$ and links $c.\mathit{links}$, \cref{sec:boxes-chain}), \lbx!chainBase D c! is $D$ without the wires that touch a link end (\lbx!onLink!). \lbx!ClosedChain D c! is the structure: $D.\mathit{boxes}=[c.\mathit{box}]$ (\lbx!boxes!); the box has no ports (\lbx!ports!); no boundary port lies on a box node (\lbx!bnd!); every wire of \lbx!chainBase D c! has both ends inside the box or both outside (\lbx!side!). \lbx!cpNodeAt D c j n! is $n$ with the copy id \lbx!D.cpId c.box j n.id!; \lbx!chainWire D c k w! is the $k$ copies $(\mathrm{cpPort}_j(w.1),\mathrm{cpPort}_j(w.2))$, $j<k$, of a wire inside the box and $[w]$ for one outside.
+\end{definition}
+
+\begin{proposition}[Closed form of the expansion]\label{prop:boxes-expand-closed}
+Under \lbx!ClosedChain D c!, for every $k$:
+\begin{lstlisting}[style=leanbox]
+(D.expandChain c k).bnd = D.bnd                                         -- bnd_expand
+(D.expandChain c k).nodes = D.nodes.flatMap fun n =>
+  if n.id ∈ c.box.nodes then (List.range k).map fun j => D.cpNodeAt c j n else [n]
+                                                                        -- nodes_expand
+(D.expandChain c k).wires =
+  (D.chainBase c).wires.flatMap (D.chainWire c k) ++ c.links.flatMap (D.linkWires c k)
+                                                                        -- wires_expand
+\end{lstlisting}
+\end{proposition}
+\noindent \lbx!ClosedChain.cross!, \lbx!ClosedChain.nimg_out!, and \lbx!chNimg_in! give the port images of \lbx!copyNodes! (a port outside the box maps to itself, one inside to its $k$ copies); \lbx!growSide_off! keeps a side with no crossing port; \lbx!flatMap_swap! exchanges the two lists of a double \lbx!flatMap! up to permutation; \lbx!zip_map_range! and \lbx!zipIdx_singles! are list identities.
+
+\subsection{The chain-family labelling}
+
+\file{ChainBridge.lean} (imports \file{ChainForm}, \file{ChainLabel}, \file{PeriodicChain}) labels a closed chain's template once and reads each copy's labels from it. Fix $D$, $c$, and a level width $W$.
+
+\begin{definition}[Template labels]\label{def:boxes-chlab}
+\lbx!chIn! and \lbx!chOut! are the wires of \lbx!chainBase D c! whose first end lies inside, respectively outside, the box. \lbx!chU = [W, ..., W + |links| - 1]! are the link labels. The outside labelling $\mathrm{chLab0}(p)$ is, in order of the first match: $i$ when $p$ is boundary port $i$; $m+i$ when $p$ is an end of \lbx!chOut! wire $i$ ($m=|D.\mathit{bnd}|$); $W+t$ when $p$ is the partner (\lbx!D.partner!) of either end of link $t$; else $0$. The inside labelling $\mathrm{chLabT}(q)$ is: $W+|\mathit{links}|+i$ when $q$ is an end of \lbx!chIn! wire $i$; $W+t$ when $q$ is the second end of link $t$; $2W+t$ when $q$ is its first end; else $0$.
+\end{definition}
+
+\begin{definition}[Tail, copy, head]\label{def:boxes-chparts}
+\lbx!chHd x! holds when node $x$ is the partner of the first end of some link. With $\mathit{out}$ the nodes outside the box,
+\begin{itemize}
+\item \lbx!chTl!: the nodes of $\mathit{out}$ with $\lnot\mathrm{chHd}$, labelled by $\mathrm{chLab0}$; summed labels $m,\ldots,m+|\mathrm{chOut}|-1$; no boundary;
+\item \lbx!chCp!: the box nodes labelled by $\mathrm{chLabT}$; summed labels $W+|\mathit{links}|,\ldots,W+|\mathit{links}|+|\mathrm{chIn}|-1$; no boundary;
+\item \lbx!chHdN!: the nodes of $\mathit{out}$ with $\mathrm{chHd}$, labelled by $\mathrm{chLab0}$; no summed labels; boundary the labels of those nodes below $m$.
+\end{itemize}
+\lbx!chFam D c W k = famNet W (chU c W) (chTl) (chCp) (chHdN) [0, ..., m - 1] k!. The labelling of the expansion at $k$ copies is
+\[
+\mathrm{chLabK}_k(p)=\begin{cases}
+\mathrm{sh}_W\bigl(\lfloor (p.\mathit{node}-F)/b\rfloor,\ \mathrm{chLabT}(\langle s_{(p.\mathit{node}-F)\bmod b},p.\mathit{out},p.\mathit{pos}\rangle)\bigr) & F\le p.\mathit{node},\\
+\mathrm{sh}_W(k,\mathrm{chLab0}(p)) & \mathrm{chHd}(p.\mathit{node}),\\
+\mathrm{chLab0}(p) & \text{otherwise},
+\end{cases}
+\]
+with $F=$ \lbx!D.fresh! ($1+\max$ of the node ids), $b$ the number of box nodes, and $s$ the box node ids sorted ascending (default $0$ past the end). Copy ids are \lbx!cpId D b j x = D.fresh + j * b + idx!, where $\mathit{idx}$ is the position of $x$ among the sorted box node ids; so copy $j$ reads its template labels raised $j$ levels, and the head its labels raised $k$ levels.
+\end{definition}
+
+\begin{definition}[Chain-family conditions]\label{def:boxes-chainFamOK}
+\lbx!chLinkOK t! holds when link $t=(l_1,l_2)$ exists, both partners $P=\mathrm{partner}(l_1)$ and $Q=\mathrm{partner}(l_2)$ exist, $l_1,l_2$ lie in the box and $P,Q$ outside, $\mathrm{chHd}(P)$ and $\lnot\mathrm{chHd}(Q)$, both partners have ids below $F$, $\mathrm{chLab0}(P)=\mathrm{chLab0}(Q)=W+t$, $\mathrm{chLabT}(l_2)=W+t$, and $\mathrm{chLabT}(l_1)=2W+t$. \lbx!chPortOK q! holds for a port inside the box on a \lbx!chIn! wire or a link end, and for one outside on the boundary, a \lbx!chOut! wire, or a link partner. \lbx!ChainFamOK D c W! is the structure:
+\begin{itemize}
+\item \lbx!wOK!: $m+|\mathrm{chOut}|+|\mathit{links}|+|\mathrm{chIn}|<W$;
+\item \lbx!closed!: \cref{def:boxes-closedchain}; \lbx!nb!: the box has a node;
+\item \lbx!bndL!: $\mathrm{chLab0}(D.\mathit{bnd}_i)=i$; \lbx!outW!, \lbx!outW2!: the \lbx!chOut! wires read $m,m+1,\ldots$ at their first ends and the same label at both ends; \lbx!inW!, \lbx!inW2!: the \lbx!chIn! wires likewise read $W+|\mathit{links}|,\ldots$ under $\mathrm{chLabT}$;
+\item \lbx!links!: \lbx!chLinkOK t! for every link; \lbx!bndIds!, \lbx!outIds!: boundary ports and \lbx!chOut! wire ends have ids below $F$;
+\item \lbx!ports!: every port of every node passes \lbx!chPortOK!.
+\end{itemize}
+\module{archytaszx.semantics.lean_chainfam} proves every field, the four fields of \lbx!ClosedChain! included, by \lbx!decide +kernel!.
+\end{definition}
+
+\subsection{The expansion is its chain family}
+
+\file{ChainFam.lean} (imports \file{ChainBridge}).
+
+\begin{theorem}[Closed chain box as a chain family]\label{thm:boxes-expand-chFam}
+\begin{lstlisting}[style=leanbox]
+theorem expand_chFam (h : ChainFamOK D c W) (E : Env) (hD : ∀ x y, labDim E x = labDim E y)
+    (o : ℕ) (ho : D.bnd.length ≤ o) (k : ℕ) :
+    Equal E 1 ((D.expandChain c k).toNet o) 1 (D.chFam c W k)
+\end{lstlisting}
+\end{theorem}
+\noindent Let $X$ be the expansion. With
+\[
+\mathrm{famQ}(k)=\mathrm{chTl}.\mathit{int}\mathbin{+\!\!+}\mathrm{flatMap}_{j<k}\,\mathrm{sh}_j(\mathrm{chCp}.\mathit{int})\mathbin{+\!\!+}\mathrm{flatMap}_{j\le k}\,\mathrm{sh}_j(\mathrm{chU}),
+\]
+\lbx!intX! shows that the wire labels of $X$ under $\mathrm{chLabK}_k$ are a permutation of $\mathrm{famQ}(k)$, \lbx!famQ_nodup! that these are distinct, \lbx!famQ_ge! that they are at least $m$, \lbx!famInt! that $\mathrm{famQ}(k)$ is a permutation of the family's summed labels, \lbx!nodesX! that the labelled nodes are a permutation of the family's nodes, \lbx!hwX! that both ends of each wire read one label, and \lbx!portsX! that $X$ passes \lbx!portsOK!. \Cref{thm:boxes-equal-netBy} at $\mathrm{chLabK}_k$ and \lbx!Equal.reorder! give the theorem. \lbx!link_labels! computes the link wires' labels, $\mathrm{sh}_j(W+t)$ for $j\le k$ (\lbx!lw_mem!, \lbx!sh_lvl!: $\mathrm{sh}_W(j,W+t)=W+t+jW$ for $t<W$). The module's example \lbx!every! proves \cref{thm:boxes-expand-chFam} for the three-node diagram identity, Z spider, identity (each with one output and one input, dimension index $0$, phase index $0$) whose Z spider is boxed with the link $(1.\mathit{out}_0,1.\mathit{in}_0)$, at $W=8$, $o=2$.
+
+\subsection{Two closed chain boxes}
+
+\file{ChainPair.lean} (imports \file{ChainFam}).
+
+\begin{theorem}[Pairs of chain families]\label{thm:boxes-fam-pair}
+\begin{lstlisting}[style=leanbox]
+theorem fam_pair (E : Env) (hD : ∀ x y, labDim E x = labDim E y) {W : ℕ} {u bd : List ℕ}
+    {tA cA hA tB cB hB : Net} (okA : famOK W u tA cA hA bd = true)
+    (okB : famOK W u tB cB hB bd = true) {rA rB a b : ℂ}
+    (sA : Equal E rA (blkNet W u cA hA 1) 1 (headNet u hA))
+    (sB : Equal E rB (blkNet W u cB hB 1) 1 (headNet u hB))
+    (b0 : Equal E a (famNet W u tA cA hA bd 0) b (famNet W u tB cB hB bd 0)) :
+    ∀ k, Equal E (a * rA ^ k) (famNet W u tA cA hA bd k) (b * rB ^ k)
+      (famNet W u tB cB hB bd k)
+\end{lstlisting}
+\end{theorem}
+\noindent Induction on $k$: at $k+1$, \lbx!fam_stepR! (\cref{thm:boxes-fam-step} with the scalar on the left, \lbx!Equal E r (famNet (k + p)) 1 (famNet k)!) at $p=1$ for each side, composed with the hypothesis at $k$.
+
+\begin{theorem}[Pairs of closed chain boxes]\label{thm:boxes-chain-pair}
+\lbx!chain_pair! takes \lbx!ChainFamOK DA cA W!, \lbx!ChainFamOK DB cB W!, equal link counts and boundary lengths, the \lbx!famOK! conditions of both templates over the link labels $\mathrm{chU}(c_A)$ and the boundary $[0,\ldots,m-1]$, the one-copy steps \lbx!sA!, \lbx!sB! as in \cref{thm:boxes-fam-pair}, and \lbx!b0 : Equal E a (DA.chFam cA W 0) b (DB.chFam cB W 0)!, and concludes for every $k$
+\begin{lstlisting}[style=leanbox]
+Equal E (a * rA ^ k) ((DA.expandChain cA k).toNet o) (b * rB ^ k) ((DB.expandChain cB k).toNet o)
+\end{lstlisting}
+by \cref{thm:boxes-fam-pair} between two applications of \cref{thm:boxes-expand-chFam}.
+\end{theorem}
+
+\lbx!Node.plainKind! holds for the kinds $Z$, $X$, $F$, and the identity. \lbx!Equal.env! moves an equation to an environment $E'$ that reads every label dimension alike and, at every node of both networks (all plain), the same dimension and phase row; \lbx!Equal.env0! is the decidable form for networks whose nodes all have dimension index $0$ and phase index $0$.
+
+\section{A Chain Box Against a Node Box}\label{sec:boxes-chainnode}
+
+\file{ChainNode.lean} (imports \file{ChainLink}) proves one equation between a chain box and a node box for every copy count $k$. Nodes are written $\langle\mathit{kind},\mathit{outs},\mathit{ins},\mathit{dim},\mathit{ph}\rangle$ (\lbx!Node!) and diagram nodes $\langle\mathit{id},\mathit{kind},\mathit{dim},\mathit{ph},\mathit{outs},\mathit{ins}\rangle$ (\lbx!DNode!); every node below has dimension index $0$ and phase index $0$.
+
+\begin{definition}[The two diagrams]\label{def:boxes-DL-DR}
+\begin{itemize}
+\item \lbx!DL!: nodes $0{:}Z$, $1{:}Z$, $2{:}I$, $3{:}I$, each with one output and one input; wires $2.\mathit{out}_0\to 1.\mathit{in}_0$ and $1.\mathit{out}_0\to 3.\mathit{in}_0$; outputs $[0.\mathit{out}_0,3.\mathit{out}_0]$, inputs $[2.\mathit{in}_0,0.\mathit{in}_0]$; one box (id $0$, multiplicity index $0$, no parent) over the nodes $[0,1]$ with no ports. The chain \lbx!cL! has that box and the single link $(1.\mathit{out}_0,1.\mathit{in}_0)$.
+\item \lbx!DR!: nodes $0{:}Z$, $1{:}Z$ with one output and one input each; no wires; outputs $[1.\mathit{out}_0,0.\mathit{out}_0]$, inputs $[0.\mathit{in}_0,1.\mathit{in}_0]$; one node box over $[1]$.
+\end{itemize}
+\end{definition}
+
+\begin{theorem}[Cyclic every]\label{thm:boxes-cyclic-every}
+\begin{lstlisting}[style=leanbox]
+theorem cyclic_every (E : Env) (hD : ∀ x, labDim E x = E.dimv 0) (hφ : ∀ j, E.phase 0 j = 0)
+    (k o : ℕ) (ho : 2 * k + 2 ≤ o) :
+    Equal E 1 ((DL.expandChain cL k).toNet o) 1 ((DR.expand (ksOf [k])).toNet o)
+\end{lstlisting}
+\end{theorem}
+
+\noindent The proof computes both expansions as diagrams and as networks.
+\begin{itemize}
+\item \lbx!expandR!: \lbx!DR.expand (ksOf [k])! is \lbx!closedR k!: nodes $0$ and $2+j$ ($j<k$), no wires, outputs $[(2+j).\mathit{out}_0]_{j<k}\mathbin{+\!\!+}[0.\mathit{out}_0]$, inputs $0.\mathit{in}_0\mathbin{::}[(2+j).\mathit{in}_0]_{j<k}$. With the boundary order \lbx!bR!, \lbx!netR_closed! gives the network $\langle Z,[k],[k{+}1]\rangle\mathbin{::}\mathrm{ws}(k)$ with no summed labels and boundary $[0,\ldots,2k+1]$, where $\mathrm{ws}(k)=[\langle Z,[j],[k+2+j]\rangle]_{j<k}$.
+\item \lbx!expandL!: \lbx!DL.expandChain cL k! is \lbx!closedL k!: copy $j$ of node $0$ has id $4+2j$, of node $1$ id $5+2j$; the identities $2,3$ stay; the link wires are \lbx!wL k i! for $i\le k$, from $2.\mathit{out}_0$ (at $i=0$) or $(5+2(i-1)).\mathit{out}_0$ to $3.\mathit{in}_0$ (at $i=k$) or $(5+2i).\mathit{in}_0$ (\lbx!links_closed!, \lbx!partner1!, \lbx!partner2!, \lbx!cp1!, \lbx!copyL!). \lbx!netL_closed! gives the network
+\[
+\mathrm{ws}(k)\mathbin{+\!\!+}[\langle Z,[o+j+1],[o+j]\rangle]_{j<k}\mathbin{+\!\!+}[\langle I,[o],[k+1]\rangle,\langle I,[k],[o+k]\rangle]
+\]
+with summed labels $o,\ldots,o+k$ and boundary $[0,\ldots,2k+1]$; the label lemmas \lbx!labL_*! and \lbx!locateL_wire! compute every port's label.
+\item The network of \lbx!closedL k! is, up to node order, \lbx!chainN o k .Z k!, where \lbx!chainN o k c m! is $\mathrm{ws}(k)\mathbin{+\!\!+}[\mathrm{hd}]\mathbin{+\!\!+}[\langle c,[o+j+1],[o+j]\rangle]_{j<m}\mathbin{+\!\!+}[\langle I,[k],[o+m]\rangle]$ with $\mathrm{hd}=\langle I,[o],[k+1]\rangle$, summed labels $o,\ldots,o+m$, and boundary $[0,\ldots,2k+1]$.
+\item \lbx!val_z11!: under \lbx!hφ! a one-output, one-input Z spider on phase row $0$ has the identity's value, so \lbx!chain_z_i! replaces the $Z$ steps by identities (through \lbx!Equal.of_prod!: equal summed labels, equal boundary, and equal node products give \lbx!Equal E 1 N 1 M!). \lbx!chain_drop! removes the last identity step (\lbx!Equal.dropIdentity!), \lbx!chain_collapse! all $m$ of them, and \lbx!chain_netR! identifies \lbx!chainN o k .I 0! with \lbx!netR k!; \lbx!chain_equal_goal! composes the three.
+\end{itemize}
+
+\section{Copy-Indexed Phases Through Pinned Gadgets}\label{sec:boxes-copyphase}
+
+A linked diagram (\lbx!LDiagram!, \cref{ch:lean-sym}) whose \lbx!cph! entry $(x,y,a,b)$ makes the phase of node $x$ read its copy index has the phase index $\mathrm{Nat.pair}(x.\mathit{ph},u)$ at copy $t$, where $u=t_{\mathrm{depth}(y,x)}+a\cdot k_b$ (\lbx!phAt!). Two modules replace that reading by a phaseless node with one more input pinned to a boundary leg.
+
+\subsection{Pins}
+
+\file{CopyPin.lean} (imports \file{Ball}, \file{Mixed}, \file{FamK}). With the definitions of \cref{ch:lean-core},
+\begin{gather*}
+\mathrm{ex}(\theta)=e^{2\pi i\theta},\qquad \mathrm{fou}(d,j,k)=\omega_d^{jk}/\sqrt d,\qquad
+\mathrm{tZ}(d,\varphi,vs)=\textstyle\sum_{k<d}[\forall v\in vs.\ v=k]\,\mathrm{ex}(\varphi(k)),\\
+\mathrm{tX}(d,\varphi,os,is)=\textstyle\sum_{k<d}\mathrm{ex}(\varphi(k))\prod_{o\in os}\mathrm{fou}(d,o,k)\prod_{i\in is}\overline{\mathrm{fou}(d,i,k)},
+\end{gather*}
+the pins are:
+\begin{align*}
+&\textstyle\sum_{w<d}\mathrm{tZ}(d,0,vs\mathbin{+\!\!+}[w])\,\mathrm{fou}(d,w,u)=\mathrm{tZ}\bigl(d,\ k\mapsto uk/d,\ vs\bigr)/\sqrt d &&\text{(\lbx!tZ_pin!)}\\
+&\mathrm{tX}(d,0,os,is\mathbin{+\!\!+}[u])=\mathrm{tX}\bigl(d,\ k\mapsto -uk/d,\ os,is\bigr)/\sqrt d &&\text{(\lbx!tX_pin!)}\\
+&\mathrm{ex}\bigl((u\bmod d)\,k/d\bigr)=\mathrm{ex}(uk/d)\ \ (d>0) &&\text{(\lbx!ex_mod!)}\\
+&\overline{\mathrm{ex}(\theta)}=\mathrm{ex}(-\theta) &&\text{(\lbx!conj_ex!)}
+\end{align*}
+\lbx!Equal.pin!: from \lbx!Equal E s₁ N₁ s₂ N₂!, for every in-range $\sigma$ with $\sigma(K)=v$, $s_1\,\mathrm{eval}(E,N_1,\sigma[K\mapsto v])=s_2\,\mathrm{eval}(E,N_2,\sigma[K\mapsto v])$. \lbx!evalD_eq_of_checks!: two diagrams that pass \lbx!FamOK F o₁!, \lbx!FamOK F o₂! (\cref{sec:boxes-famcheck}), with equal boundary data, positive dimensions, and equal bundled networks under \lbx!F.env ks! scaled by $s_1,s_2$, have $s_1\,\mathrm{evalD}_1=s_2\,\mathrm{evalD}_2$ at every slot assignment $\rho$ in range.
+
+\subsection{Gadgets}
+
+\file{CopyBridge.lean} (imports \file{CopyPin}, \file{Linked}).
+
+\begin{definition}[Gadget diagrams]\label{def:boxes-gad}
+\lbx!gnode z n! is $n$ with phase index $z$ and one more input of dimension $n.\mathit{dim}$; \lbx!gnodes L x z! applies it to node $x$ of $L.\mathit{base}$. \lbx!rdOf L! is $(\mathrm{depth}(y,x),a,b)$ for the single entry $(x,y,a,b)$ of \lbx!L.cph! (else $(0,0,0)$), and \lbx!rdU L ks t = t.getD r 0 + a * ks b! for $\mathrm{rdOf}=(r,a,b)$. \lbx!GadBase L G x! holds when $L$ has no links, no \lbx!cdim! and no \lbx!aligned! entries, its \lbx!cph! names $x$ only, $x$ is a base node, $G$ has the outputs of $L.\mathit{base}$, every base port keeps its tail and dimension in $G$, every base node its node chain, and the new input $\langle x.\mathit{id},\mathit{false},|x.\mathit{ins}|\rangle$ has an empty tail and dimension $x.\mathit{dim}$. Then:
+\begin{itemize}
+\item \lbx!GadZ L G x f z i!: $x$ is a Z spider; $G$'s nodes are \lbx!gnodes L x.id z! followed by an $F$ node $\langle f,F,x.\mathit{dim},z,[x.\mathit{dim}],[x.\mathit{dim}]\rangle$; $G$'s wires are $L$'s with $(f.\mathit{out}_0,\ x.\mathit{in}_{|x.\mathit{ins}|})$ inserted at position $i$; $G$'s inputs are $L$'s followed by $f.\mathit{in}_0$; $f$ has $x$'s node chain, empty tails, and dimension $x.\mathit{dim}$.
+\item \lbx!GadX L G x z!: $x$ is an X spider; $G$'s nodes are \lbx!gnodes L x.id z!, its wires $L$'s, and its inputs $L$'s followed by the new input of $x$.
+\end{itemize}
+\lbx!Gad! is \lbx!GadZ ∨ GadX!; all three are decidable. \lbx!gsg k! is $1$ for $Z$ and $-1$ otherwise.
+\end{definition}
+
+\begin{theorem}[Gadget evaluation]\label{thm:boxes-evalL-gad}
+For \lbx!h : Gad L G x f z i!, \lbx!WF L.base!, \lbx!WF G!, environments $E,E'$ with equal \lbx!dimv!, \lbx!coef!, \lbx!mult!, equal phase rows at every base node other than $x$, $E.\mathit{phase}(z)\equiv 0$, $0<E.\mathit{dimv}(x.\mathit{dim})=:d_x$, and
+\[
+\mathrm{ex}\bigl(E'.\mathit{phase}(\mathrm{Nat.pair}(x.\mathit{ph},u))(k)\bigr)=\mathrm{ex}\bigl(\mathrm{gsg}(x.\mathit{kind})\cdot uk/d_x\bigr)\quad\text{for all }u,k,
+\]
+every slot assignment $\sigma$ of $L$ in range and every $\rho$ that agrees with $\sigma$ on $L$'s slots and reads $\mathrm{rdU}(t)\bmod d_x$ at the new slot for every copy $t$ of $x$:
+\begin{lstlisting}[style=leanbox]
+G.evalD E ks ρ = (rt (E.dimv x.dim))⁻¹ ^ size ks (L.base.nodeChain x.id) * L.evalL E' ks σ
+\end{lstlisting}
+(\lbx!evalL_gad!, by \lbx!evalL_gadZ! and \lbx!evalL_gadX!).
+\end{theorem}
+\noindent Both sides are rewritten as sums over the wire digits with each port reading its pinned value (\lbx!evalD_pv!, \lbx!evalL_pv!, \lbx!sum_pin!; \lbx!pv D ks τ x! reads $\tau(\mathrm{pinD}(x))$ for a pinned digit and $\tau(x)$ otherwise). Off $x$ the node factors agree (\lbx!GadBase.fac_off!); at each copy of $x$ \lbx!tZ_pin! or \lbx!tX_pin! turns the extra leg into the copy-indexed phase and one factor $1/\sqrt{d_x}$ (\lbx!tZ_congr!, \lbx!tX_congr!, \lbx!ex_mod!). In the Z case the extra wire is summed copy by copy (\lbx!sumOver_prod_sep!, \lbx!prod_map_div!, \lbx!prod_single!); in the X case the new input is the slot itself. \lbx!range_ext! extends the range hypothesis to the new slot; \lbx!Gad.bnd! gives $G.\mathit{bnd}=L.\mathit{base}.\mathit{bnd}\mathbin{+\!\!+}[K]$ with $K$ on $x$'s node chain.
+
+\begin{theorem}[Linked equality from gadget equality]\label{thm:boxes-evalL-eq-of-gad}
+\lbx!evalL_eq_of_gad! takes two gadgets $G_1,G_2$ of $L_1,L_2$ with one zero phase row $z$, both passing \lbx!FamOK F o!, with equal boundary data, positive family dimensions, the same node chain, dimension, and \lbx!rdOf! at $x_1,x_2$, the same base boundary data, an environment $E'$ that agrees with \lbx!F.env ks! as in \cref{thm:boxes-evalL-gad} at both, and \lbx!Equal (F.env ks) s₁ (G₁.toNetB o₁) s₂ (G₂.toNetB o₂)!. It concludes \lbx!s₁ * L₁.evalL E' ks σ = s₂ * L₂.evalL E' ks σ! for every $\sigma$ in range: the gadget slot reads $\mathrm{rdU}(t)\bmod d_x$, \lbx!evalD_eq_of_checks! applies, and the common factor $(1/\sqrt{d_x})^{\mathrm{size}}$ cancels.
+\end{theorem}
+
+\section{Pair Boxes}\label{sec:boxes-pair}
+
+A pair box holds one node instantiated once for every pair of copies $j<k$ of its parent node box, its input wired to copy $j$ and its output to copy $k$. Five modules define the expansion (\file{PairBox}), identify its network (\file{PairNet}), evaluate it (\file{PairEval}), prove pair families equal at every copy count (\file{PairFam}), and give the pair product in closed form (\file{PairSum}).
+
+\subsection{The expansion}
+
+\file{PairBox.lean} (imports \file{ChainLabel}, \file{Relabel}).
+
+\begin{definition}[Pair boxes]\label{def:boxes-dpair}
+\lbx!DPair! has the fields \lbx!id!, \lbx!parent! (the node box's id), \lbx!left!, \lbx!right! (ports of the box's nodes), and \lbx!node! (a \lbx!DNode!). \lbx!PDiagram! extends \lbx!Diagram! by \lbx!pairs : List DPair! (default empty); \lbx!PDiagram.expandP P K! is \lbx!expandPair! for exactly one pair box and $P$ itself otherwise.
+\end{definition}
+
+\begin{definition}[Pair expansion]\label{def:boxes-expandPair}
+Copy ids are $\mathrm{pcp}(j,x)=2\,\mathrm{pair}(j,x)$ and pair-node ids $\mathrm{pfid}(j,k)=2\,\mathrm{pair}(j,k)+1$, with $\mathrm{pair}$ Mathlib's bijection \lbx!Nat.pair! $:\N\times\N\to\N$ (inverse \lbx!Nat.unpair!). At $K$ copies, copy $j$ grows \lbx!left! to $K-1-j$ ports (one per later copy) and \lbx!right! to $j$ ports (one per earlier copy): $\mathrm{pcnt}(K,j,q)$ is $K-1-j$ for $q=\mathit{left}$, $j$ for $q=\mathit{right}$, else $1$; \lbx!growC c x out ds! repeats the $i$-th dimension of a side $c(\langle x,\mathit{out},i\rangle)$ times; $\mathrm{posC}(c,q)=\sum_{i<q.\mathit{pos}}c(\langle q.\mathit{node},q.\mathit{out},i\rangle)$ is a port's new position; $\mathrm{pimg}(K,j,q)=\langle\mathrm{pcp}(j,q.\mathit{node}),q.\mathit{out},\mathrm{posC}(\mathrm{pcnt}(K,j),q)\rangle$. With $\mathrm{later}(K,j)=[j+1,\ldots,K-1]$:
+\begin{itemize}
+\item nodes: for each $j<K$ the copies \lbx!pcpNode p K j n! of every node (id $\mathrm{pcp}(j,n.\mathit{id})$, sides grown), then for each $j<K$ and $k\in\mathrm{later}(K,j)$ the pair node with id $\mathrm{pfid}(j,k)$;
+\item wires: for each $j$, the images of $D$'s wires under $\mathrm{pimg}(K,j)$, the left pair wires $\mathrm{plw}(K,j,k)$ from copy $j$'s left port at position $\mathrm{posC}(\mathit{left})+(k-j-1)$ to the input of pair node $(j,k)$ for $k\in\mathrm{later}(K,j)$, and the right pair wires $\mathrm{prw}(K,i,j)$ from the output of pair node $(i,j)$ to copy $j$'s right port at position $\mathrm{posC}(\mathit{right})+i$ for $i<j$;
+\item outputs and inputs: copy by copy, the images of $D$'s.
+\end{itemize}
+\end{definition}
+
+\begin{definition}[Pair form]\label{def:boxes-pairOK}
+\lbx!keepP q! holds when $q$ is neither pair port. $\mathrm{sideLen}(x,\mathit{out})$ is the number of outputs or inputs of node $x$ ($0$ for no node). \lbx!lastP q! holds when $q$ is the last port of its side, or $q=\mathit{left}$, $\mathit{right}$ is the next port on the same side, and that is the last. \lbx!PairOK D p b! (a \lbx!Bool!) holds when: $D.\mathit{boxes}=[b]$, $b$ has no parent and no ports, $p.\mathit{parent}=b.\mathit{id}$; every node lies in $b$; node ids are distinct; $D$ has no inputs; $\mathit{left}\ne\mathit{right}$, both are in range and \lbx!lastP!, and neither is on the boundary; no wire touches a pair port and every wire end is in range; every output is in range; every kept port passes \lbx!okPort!; $D.\mathrm{label}(m,\mathit{outs}_i)=i$ for $i<m=|D.\mathit{outs}|$; both ends of wire $i$ have label $m+i$; the pair node is an $F$ node with outputs $[0]$, inputs $[0]$, and dimension index $0$; every node has dimension index $0$. \lbx!PairOK.spec! unpacks it into the structure \lbx!PairSpec!.
+\end{definition}
+
+\begin{definition}[Template and labelled network]\label{def:boxes-pairNet}
+\lbx!tNode m n! is $n$ as a \lbx!Node! labelled by \lbx!D.label m!, its pair ports omitted; \lbx!tmpl D p! is $\langle$the template nodes, $[m,\ldots,m+|\mathit{wires}|-1]$, $[0,\ldots,m-1]\rangle$. With $L=|D.\mathit{wires}|$, copy $j$ moves template labels by
+\[
+\mathrm{shJ}(K,m,L,j,x)=\begin{cases} jm+x & x<m,\\ Km+jL+(x-m) & x\ge m,\end{cases}
+\]
+and the pair legs have the labels $\mathrm{gL}(j,k)=G+2\,\mathrm{pair}(j,k)$ and $\mathrm{gR}(j,k)=G+2\,\mathrm{pair}(j,k)+1$ with $G=\mathrm{pG}(K,m,L)=Km+KL$. \lbx!plab K q! labels the expansion: a copy port (even node id) by \lbx!clab! (the left side's grown ports $\mathrm{gL}(j,j+1+t)$ for $t<K-1-j$, then $\mathrm{gR}(i,j)$; the right side's $\mathrm{gR}(i,j)$; else $\mathrm{shJ}$ of the template label), a pair node's output by $\mathrm{gR}$ and its input by $\mathrm{gL}$. \lbx!exL K j x out! lists the pair labels a copy side gains. \lbx!pairNet K! is
+\[
+\Bigl\langle \mathrm{flatMap}_{j<K}\bigl[\mathrm{pNode}(K,j,n)\bigr]_{n}\mathbin{+\!\!+}\mathrm{flatMap}_{j<K}\bigl[\mathrm{pFNode}(K,j,k)\bigr]_{k\in\mathrm{later}(K,j)},\ \ \mathrm{flatMap}_{j<K}\mathrm{pInt}(K,j),\ \ [0,\ldots,Km-1]\Bigr\rangle,
+\]
+where $\mathrm{pNode}$ is the template node with its labels moved by $\mathrm{shJ}$ and its \lbx!exL! labels appended, $\mathrm{pFNode}(K,j,k)$ the pair node with output $\mathrm{gR}(j,k)$ and input $\mathrm{gL}(j,k)$, and $\mathrm{pInt}(K,j)$ copy $j$'s wire labels $Km+jL+i$, its left pair labels, and its right pair labels.
+\end{definition}
+
+\subsection{The expansion's network}
+
+\file{PairNet.lean} (imports \file{PairBox}).
+
+\begin{theorem}[Pair expansion as a network]\label{thm:boxes-equal-expandPair}
+\begin{lstlisting}[style=leanbox]
+theorem equal_expandPair (h : D.PairOK p b = true) (E : Env) (hE : ∀ x y, labDim E x = labDim E y)
+    (K o : ℕ) (ho : K * D.outs.length ≤ o) :
+    Equal E 1 ((D.expandPair p K).toNet o) 1 (D.pairNet p K)
+\end{lstlisting}
+\end{theorem}
+\noindent \lbx!netBy_eq! shows \lbx!(D.expandPair p K).netBy (D.plab p K) = D.pairNet p K! from \lbx!nodes_eq! (\lbx!pnode_lab!, \lbx!fnode_lab!), \lbx!int_eq!, and \lbx!bnd_map!; \lbx!wire_ends!, \lbx!ports_ok!, \lbx!int_nodup! (by the block index \lbx!blkOf! of each label, \lbx!mem_pInt!), and \lbx!bnd_len! supply the hypotheses of \cref{thm:boxes-equal-netBy}. The position lemmas (\lbx!posC_keep!, \lbx!posC_left!, \lbx!posC_right!, \lbx!glen!, \lbx!leg_cases!, \lbx!side_labels!) compute every grown side.
+
+\subsection{Evaluation}
+
+\file{PairEval.lean} (imports \file{PairNet}).
+
+\begin{definition}[Pins]\label{def:boxes-pinOK}
+\lbx!pinChain ns cert s! checks a certificate $\mathit{cert}=[(i_0,x_0),\ldots,(i_r,x_r)]$: every $n_{i_t}$ is a Z spider with $x_t$ among its labels, $x_t$ is also a label of $n_{i_{t+1}}$, and the last label $x_r$ is the slot $s$. \lbx!pinOK D p q cert s! holds when $s<m$, the first certificate entry's node holds the port $q$, and \lbx!pinChain! holds on the template's nodes. \lbx!Node.dropL gs n! removes the labels $\mathit{gs}$ from $n$'s sides.
+\end{definition}
+
+\begin{theorem}[Pair network evaluated]\label{thm:boxes-eval-pairNet}
+\begin{lstlisting}[style=leanbox]
+theorem eval_pairNet (h : D.PairOK p b = true) (E : Env) (hE : ∀ x, labDim E x = E.dimv 0)
+    (K : ℕ) (cl cr : List (ℕ × ℕ)) (sL sR : ℕ) (hcl : D.pinOK p p.left cl sL = true)
+    (hcr : D.pinOK p p.right cr sR = true) (σ : ℕ → ℕ) :
+    eval E (D.pairNet p K) σ =
+      ((List.range K).map fun j =>
+          eval E (D.tmpl p) (σ ∘ shJ K D.outs.length D.wires.length j)).prod *
+      ((List.range K).map fun j => ((later K j).map fun k =>
+          fou (E.dimv 0) (σ (k * D.outs.length + sR)) (σ (j * D.outs.length + sL))).prod).prod
+\end{lstlisting}
+\end{theorem}
+\noindent A Z spider's value is nonzero only where its labels agree (\lbx!tZ_const!), so on the support every pair label reads the slot its pin chain ends at (\lbx!pinChain_val!); the pair labels, each read by one Z spider of the right dimension, are summed out (\lbx!sum_dropZ!); the copies, on disjoint labels, factor (\lbx!sumOver_disj!).
+
+\subsection{Pair families}
+
+\file{PairFam.lean} (imports \file{PairEval}).
+
+\begin{theorem}[Pair family]\label{thm:boxes-pair-family}
+\begin{lstlisting}[style=leanbox]
+theorem pair_family {DA DB : Diagram} {pA pB : DPair} {bA bB : DBox}
+    (hA : DA.PairOK pA bA = true) (hB : DB.PairOK pB bB = true)
+    (hm : DB.outs.length = DA.outs.length) (clA crA clB crB : List (ℕ × ℕ)) (sL sR : ℕ)
+    (hlA : DA.pinOK pA pA.left clA sL = true) (hrA : DA.pinOK pA pA.right crA sR = true)
+    (hlB : DB.pinOK pB pB.left clB sL = true) (hrB : DB.pinOK pB pB.right crB sR = true)
+    (E : Env) (hE : ∀ x, labDim E x = E.dimv 0) {a b : ℂ}
+    (ht : Equal E a (DA.tmpl pA) b (DB.tmpl pB)) (c : ℂ) (K : ℕ) :
+    Equal E (c * a ^ K) ((DA.expandPair pA K).toNet (K * DA.outs.length))
+      (c * b ^ K) ((DB.expandPair pB K).toNet (K * DA.outs.length))
+\end{lstlisting}
+\end{theorem}
+\noindent Both sides are their pair networks (\cref{thm:boxes-equal-expandPair}); \cref{thm:boxes-eval-pairNet} writes each as the product of its template at the $K$ copies' slots times one pair factor, the same on both sides since the pins end at the same slots; \lbx!ht! equates the template factors copy by copy.
+
+\subsection{The pair product in closed form}
+
+\file{PairSum.lean} (imports \file{PairFam}). With $\mathrm{pairS}(x,0)=0$ and $\mathrm{pairS}(x,K+1)=\mathrm{pairS}(x,K)+x_K\sum_{j<K}x_j$ (so $\mathrm{pairS}(x,K)=\sum_{j<k<K}x_jx_k$), $S=\sum_{j<K}x_j$, and $Q=\sum_{j<K}x_j^2$:
+\begin{align*}
+&2\,\mathrm{pairS}(x,K)+Q=S^2\ \text{ over }\N &&\text{(\lbx!two_pairS!)}\\
+&\omega_{2d}^{\,2}=\omega_d\quad(d>0) &&\text{(\lbx!om_two!)}\\
+&\textstyle\prod_{j<K}\prod_{k\in\mathrm{later}(K,j)}\mathrm{fou}(d,x_k,x_j)=(\sqrt d)^{-K(K-1)/2}\,\omega_{2d}^{\,S^2-Q}\quad(d>0) &&\text{(\lbx!pair_fou!)}
+\end{align*}
+\lbx!eval_pairNet_sum! is \cref{thm:boxes-eval-pairNet} with both pins at one slot $s$ and the pair factor replaced by \lbx!pair_fou!, $x_j=\sigma(jm+s)$.
+
+\section{Adder Families}\label{sec:boxes-adder}
+
+Three modules state family theorems for adders built one copy at a time: \file{AdderFam} (an induction interface, carry chains, and Fourier identities), \file{AdderFamEnv} (the interface over a growing label list), and \file{AdderFamFca} (the Fourier constant adder as a network family).
+
+\subsection{The induction interface}
+
+\file{AdderFam.lean} (imports \file{Closed}, \file{ChainInduct}).
+
+\begin{definition}[Adder interface]\label{def:boxes-adderIface}
+\lbx!AdderIface α! is the structure with, for each $n$, a left side \lbx!lhs n!, a right side \lbx!rhs n!, a relation \lbx!rel n! on \lbx!α n! that is transitive (\lbx!trans!), and a map \lbx!glue n : α n → α (n + 1)!, subject to
+\begin{lstlisting}[style=leanbox]
+base  : rel 0 (lhs 0) (rhs 0)
+peel  : ∀ n, rel (n + 1) (lhs (n + 1)) (glue n (lhs n))
+congr : ∀ n a b, rel n a b → rel (n + 1) (glue n a) (glue n b)
+close : ∀ n, rel (n + 1) (glue n (rhs n)) (rhs (n + 1))
+\end{lstlisting}
+\lbx!AdderIface.fam I : ∀ n, I.rel n (I.lhs n) (I.rhs n)! by recursion on $n$: at $n+1$, \lbx!peel n!, then \lbx!congr! applied to the result at $n$, then \lbx!close n!, joined by \lbx!trans!. \lbx!fam_8! and \lbx!fam_24! are its instances at $8$ and $24$.
+\end{definition}
+
+\begin{definition}[Gluing a copy]\label{def:boxes-glueNet}
+For a level width $W$ and the cut labels $\mathit{cut}$ (the labels a copy shares with the earlier ones),
+\[
+\mathrm{glueNet}(W,\mathit{cut},\mathit{copy},k,N)=\bigl\langle C.\mathit{nodes}\mathbin{+\!\!+}N.\mathit{nodes},\ C.\mathit{int}\mathbin{+\!\!+}\mathit{cs}\mathbin{+\!\!+}N.\mathit{int},\ \mathrm{filter}_{\notin\mathit{cs}}(N.\mathit{bnd})\mathbin{+\!\!+}\mathrm{filter}_{\notin\mathit{cs}}(C.\mathit{bnd})\bigr\rangle,
+\]
+with $C$ the copy relabelled by $x\mapsto x+kW$ and $\mathit{cs}=\mathit{cut}+kW$: the cut labels become summed. \lbx!Fits W cut k N! holds when every label of $N$ is below $kW+W$ and no summed label of $N$ is a shifted cut label. \lbx!glue_fits! and \lbx!glue_equal! (under \lbx!copyOK W cut cp!) keep \lbx!Fits! and \lbx!Equal! through a glue. \lbx!netIface E W cut copy lhs rhs ...! is the \lbx!AdderIface! on pairs (scalar, network) with \lbx!rel n a b := Fits W cut n a.2 ∧ Fits W cut n b.2 ∧ Equal E a.1 a.2 b.1 b.2!, \lbx!glue n a := (a.1, glueNet W cut (copy n) n a.2)!, and its \lbx!base!, \lbx!peel!, \lbx!close! hypotheses taken as arguments; \lbx!netIface_fam! is its family theorem.
+\end{definition}
+
+\begin{definition}[Gluing at level blocks]\label{def:boxes-glueAt}
+\lbx!glueAt cut cp N! is $\langle \mathit{cp}.\mathit{nodes}\mathbin{+\!\!+}N.\mathit{nodes},\ \mathit{cp}.\mathit{int}\mathbin{+\!\!+}\mathit{cut}\mathbin{+\!\!+}N.\mathit{int},\ \mathrm{filter}_{\notin\mathit{cut}}(N.\mathit{bnd})\mathbin{+\!\!+}\mathrm{filter}_{\notin\mathit{cut}}(\mathit{cp}.\mathit{bnd})\rangle$, with no relabelling. For level starts $B:\N\to\N$ and cut lists $\mathit{cut}(n)$, \lbx!FitsAt B cut n N! holds when every label of $N$ is below $B(n)$ and no summed label of $N$ lies in $\mathit{cut}(m)$ for $m\ge n$. \lbx!CopyAt B cut cp! is the structure: $B$ is monotone (\lbx!mono!); $\mathit{cut}(n)<B(n)$ (\lbx!cutLt!); every label of copy $n$ is in $\mathit{cut}(n)$ or in $[B(n),B(n+1))$ (\lbx!own!); a summed label of copy $n$ is in no later cut (\lbx!intOff!); the cuts of distinct levels are disjoint (\lbx!cutOff!). \lbx!glueAt_fits!, \lbx!glueAt_equal!, \lbx!netIfaceAt!, and \lbx!netIfaceAt_fam! are the analogues of the previous definition.
+\end{definition}
+
+\begin{proposition}[Carry chains]\label{prop:boxes-carry}
+With $\mathrm{digVal}(d,x,0)=0$, $\mathrm{digVal}(d,x,n+1)=d\,\mathrm{digVal}(d,x,n)+x_n$ (digit $x_0$ most significant) and a carry chain $x_k+e_{k+1}=x'_k+d\,e_k$ for $k<n$:
+\begin{align*}
+&\omega_{d^{m+1}}^{\,d}=\omega_{d^m};\quad \omega_{d^{k+1}}^{\,y\,d c}=\omega_{d^k}^{\,yc} &&\text{(\lbx!om_tower!, \lbx!om_tower_mul!; } d>0)\\
+&\textstyle\prod_{k<n}\omega_{d^{k+1}}^{\,y x_k}\cdot\omega_{d^n}^{\,y e_n}=\omega_{1}^{\,y e_0}\cdot\prod_{k<n}\omega_{d^{k+1}}^{\,y x'_k} &&\text{(\lbx!telescope!)}\\
+&\mathrm{digVal}(d,x,n)+e_n=e_0\,d^n+\mathrm{digVal}(d,x',n) &&\text{(\lbx!chain_value!)}\\
+&\textstyle\sum_{y<d}\overline{\mathrm{fou}(d,o,y)}\;\omega_d^{\,ys}\;\mathrm{fou}(d,y,i)=[(s+i)\bmod d=o\bmod d] &&\text{(\lbx!fourier_shift!)}\\
+&\textstyle\sum_{a,b<d}\mathrm{fou}(d,o,a)\,\mathrm{fou}(d,a,b)\,\mathrm{fou}(d,b,i)=\overline{\mathrm{fou}(d,o,i)} &&\text{(\lbx!fou_three!)}
+\end{align*}
+\lbx!digit_carry!, \lbx!carry_lt_two! ($(x+c)/d<2$ for $x<d$, $c\le d$), and \lbx!chain_digit! give the digit-carry identity of one copy; \lbx!telescope_off! is \lbx!telescope! with root orders $d^{k+r+1}$. With $\mathrm{cell}(d,x,e_{\mathrm{in}},x',e_{\mathrm{out}})=[x+e_{\mathrm{in}}=x'+d\,e_{\mathrm{out}}]$, $\mathrm{carrySum}(d,C,x,x',0,e_{\mathrm{in}},e_{\mathrm{out}})=[e_{\mathrm{in}}=e_{\mathrm{out}}]$, and $\mathrm{carrySum}(\ldots,n+1,e_{\mathrm{in}},e_{\mathrm{out}})=\sum_{c<C}\mathrm{cell}(d,x_n,e_{\mathrm{in}},x'_n,c)\cdot\mathrm{carrySum}(\ldots,n,c,e_{\mathrm{out}})$:
+\begin{itemize}
+\item \lbx!carrySum_closed!: for $d>0$, $C\ge 2$, all digits below $d$, and $e_{\mathrm{in}}\le d$, $\mathrm{carrySum}(n,e_{\mathrm{in}},e_{\mathrm{out}})=[\mathrm{digVal}(x,n)+e_{\mathrm{in}}=e_{\mathrm{out}}d^n+\mathrm{digVal}(x',n)]$;
+\item \lbx!om_pow_up!: $\omega_{d^{n+r}}^{\,c\,d^n}=\omega_{d^r}^{\,c}$; \lbx!phase_digVal!: $\prod_{k<n}\omega_{d^{k+r+1}}^{\,y x_k}=\omega_{d^{n+r}}^{\,y\,\mathrm{digVal}(x,n)}$;
+\item \lbx!telescope_value!: under $\mathrm{digVal}(x,n)+e_{\mathrm{in}}=e_{\mathrm{out}}d^n+\mathrm{digVal}(x',n)$, $\prod_{k<n}\omega_{d^{k+r+1}}^{\,yx_k}\,\omega_{d^{n+r}}^{\,ye_{\mathrm{in}}}=\omega_{d^r}^{\,ye_{\mathrm{out}}}\prod_{k<n}\omega_{d^{k+r+1}}^{\,yx'_k}$;
+\item \lbx!carrySum_phase!: the same equation multiplied by $\mathrm{carrySum}(n,e_{\mathrm{in}},e_{\mathrm{out}})$, without the digit-value hypothesis.
+\end{itemize}
+\end{proposition}
+
+\subsection{A growing label list}
+
+\file{AdderFamEnv.lean} (imports \file{AdderFam}, \file{ChainMixed}). \lbx!envAt E0 L n! is $E_0$ with the label dimensions \lbx!labs := L n!. \lbx!LabsMono E0 L B! holds when $\mathrm{labDim}(\mathrm{envAt}(E_0,L,n+1),x)=\mathrm{labDim}(\mathrm{envAt}(E_0,L,n),x)$ for every $x<B(n)$. \lbx!netIfaceAtE! is \lbx!netIfaceAt! with the relation at level $n$ taken in $\mathrm{envAt}(E_0,L,n)$ and the \lbx!peel! and \lbx!close! hypotheses in $\mathrm{envAt}(E_0,L,n+1)$; its \lbx!congr! moves the level-$n$ equation up by \lbx!Equal.envAt_succ! (from \lbx!LabsMono! and \lbx!FitsAt!). \lbx!netIfaceAtE_fam! is its family theorem.
+
+\subsection{The Fourier constant adder}
+
+\file{AdderFamFca.lean} (imports \file{AdderFamEnv}, \file{Ball}, \file{Weights}, \file{PairEval}) writes the left and right sides of the boxed \texttt{fourier\_constant\_adder} at $n$ copies as networks over $\mathrm{envAt}(E_0(d),L,n)$.
+
+\begin{definition}[Levels, dimensions, phases]\label{def:boxes-fca-env}
+Level $n$ owns the labels $[B(n),B(n+1))$ with $B(n)=4n^2+18n+2$ ($B(n+1)=B(n)+8n+22$); $\mathrm{sl}(n,t)=B(n)+t$ is its slot $t$. The labels $0,1$ are the right side's first binder and splitter values. Dimension index $0$ is $d$ and index $e+1$ is $d^e$ (\lbx!dimv!). Phase index $0$ is the zero phase, $2m+1$ is $k\mapsto 2k/d^{m+1}$, and $2m+2$ is $k\mapsto -2k/d^{m}$ (\lbx!phase!); $E_0(d)$ has these and no listed labels, so an unlisted label has dimension index $0$, dimension $d$ (\lbx!labDim E l = E.dimv ((E.labs.lookup l).getD 0)!). \lbx!blockL n! gives the slots $12$, $13$ of level $n$ dimension index $n+2$ and, for each $i<n$, the slots $20+8i$, $21+8i$ dimension index $n-i+2$; $L(n)=[(0,1),(1,1)]\mathbin{+\!\!+}\mathrm{flatMap}_{t<n}\mathrm{blockL}(t)$.
+\end{definition}
+
+\begin{definition}[Copy $n$]\label{def:boxes-fca-cp}
+The pending legs of copy $i$ before copy $n$ are $\mathrm{pend}(n,i)=\mathrm{sl}(n-1,14+8i)$ and $\mathrm{pendO}(n,i)=\mathrm{sl}(n-1,15+8i)$, and $\mathrm{cut}(n)$ lists both for every $i<n$. With $\mathrm{zN}(os,is,ph)$ a Z spider of dimension index $0$ and $\mathrm{fN}(D,o,i)$ an $F$ node of dimension index $D$, phase index $0$, the pair gadget of copies $(n,i)$ is
+\begin{align*}
+\mathrm{pairN}(n,i)=[\,&\mathrm{fN}(n-i+2,\ \mathrm{sl}_n(18+8i),\ \mathrm{sl}_n(16+8i)),\ \mathrm{zN}([\mathrm{sl}_n(16+8i),\mathrm{sl}_n(14+8i)],[\mathrm{pend}(n,i)]),\\
+&\mathrm{fN}(n-i+2,\ \mathrm{sl}_n(19+8i),\ \mathrm{sl}_n(20+8i)),\ \langle X,[\mathrm{sl}_n(20+8i),\mathrm{sl}_n(17+8i)],[\,],n-i+2,0\rangle,\\
+&\mathrm{zN}([\mathrm{sl}_n(17+8i),\mathrm{sl}_n(15+8i)],[\mathrm{pendO}(n,i)])\,],
+\end{align*}
+and copy $n$ (\lbx!cp n!) has the nodes
+\[
+\begin{aligned}
+&\mathrm{zN}([\mathrm{sl}_n2,\mathrm{sl}_n(14+8n)],[\mathrm{sl}_n0]),\ \mathrm{fN}(0,\mathrm{sl}_n3,\mathrm{sl}_n2),\ \mathrm{zN}(\mathrm{sl}_n4\mathbin{::}[\mathrm{sl}_n(18+8i)]_{i<n},[\mathrm{sl}_n3]),\\
+&\mathrm{zN}([\mathrm{sl}_n5],[\mathrm{sl}_n4],2n+1),\ \mathrm{zN}(\mathrm{sl}_n6\mathbin{::}[\mathrm{sl}_n(19+8i)]_{i<n},[\mathrm{sl}_n5]),\ \mathrm{fN}(0,\mathrm{sl}_n7,\mathrm{sl}_n6),\\
+&\mathrm{fN}(0,\mathrm{sl}_n8,\mathrm{sl}_n7),\ \mathrm{fN}(0,\mathrm{sl}_n9,\mathrm{sl}_n8),\ \mathrm{zN}([\mathrm{sl}_n1,\mathrm{sl}_n(15+8n)],[\mathrm{sl}_n9])
+\end{aligned}
+\]
+followed by $\mathrm{pairN}(n,i)$ for $i<n$; its summed labels are $\mathrm{freeC}(n)=[\mathrm{sl}_n3,\mathrm{sl}_n7,\mathrm{sl}_n8]$ and $\mathrm{pinC}(n)=[\mathrm{sl}_n2,\mathrm{sl}_n4,\mathrm{sl}_n5,\mathrm{sl}_n6,\mathrm{sl}_n9]\mathbin{+\!\!+}[\mathrm{sl}_n(16+8i+r)]_{i<n,\,r<5}$; its boundary is $[\mathrm{sl}_n0,\mathrm{sl}_n1,\mathrm{sl}_n(14+8n),\mathrm{sl}_n(15+8n)]\mathbin{+\!\!+}[\mathrm{sl}_n(14+8i),\mathrm{sl}_n(15+8i)]_{i<n}$. So copy $n$ is $F$, the Z phase $2x/d^{n+1}$, $F^3$ on the digit, with the pair gadget of each earlier copy $i$ reading the Fourier value through $F$ nodes of dimension $d^{\,n-i+1}$.
+\end{definition}
+
+\begin{definition}[The two sides]\label{def:boxes-fca-sides}
+$\mathrm{lhsN}(0)=\langle[\,],[\,],[\,]\rangle$,
+\[
+\mathrm{lhsN}(n+1)=\mathrm{glueAt}(\mathrm{cut}(n),\mathrm{cp}(n),\mathrm{lhsN}(n)),
+\]
+and $\mathrm{lhs}(n)=(1,\mathrm{lhsN}(n))$. With $\mathrm{cv}(0)=0$, $\mathrm{cv}(t+1)=\mathrm{sl}(t,12)$, $\mathrm{cw}(0)=1$, $\mathrm{cw}(t+1)=\mathrm{sl}(t,13)$, the right side $\mathrm{rhsN}(n)$ has the nodes
+\begin{gather*}
+\langle Z,[\mathrm{cv}_0],[\,],1,0\rangle,\quad [\langle B,[\mathrm{cv}_{t+1}],[\mathrm{cv}_t,\mathrm{sl}(n{-}1{-}t,0)],t+1,0\rangle]_{t<n},\quad \langle X,[\mathrm{cw}_n],[\mathrm{cv}_n],n+1,2n+2\rangle,\\
+[\langle S,[\mathrm{cw}_t,\mathrm{sl}(n{-}1{-}t,1)],[\mathrm{cw}_{t+1}],t+1,0\rangle]_{t<n},\quad \langle Z,[\,],[\mathrm{cw}_0],1,0\rangle,\\
+[\mathrm{zN}([\mathrm{pend}(n,i)],[\mathrm{sl}_i0]),\ \mathrm{zN}([\mathrm{pendO}(n,i)],[\mathrm{sl}_i1])]_{i<n},
+\end{gather*}
+summed labels $\mathrm{cv}_t,\mathrm{cw}_t$ for $t\le n$, and boundary $\mathrm{bndL}(n)$ (the boundary of $\mathrm{lhsN}(n)$, \lbx!lhsN_bnd!): the binders build the input register, the X spider of phase $k\mapsto -2k/d^n$ on dimension $d^n$ shifts it, and the splitters split the result. The scalars are $\mathrm{cs}(d,n)=\prod_{i<n}d^{-(n-i+1)}$, $\mathrm{rs}(d,0)=1$, $\mathrm{rs}(d,n+1)=\mathrm{rs}(d,n)\,\mathrm{cs}(d,n)$, and $\mathrm{rhs}(d,n)=(\mathrm{rs}(d,n),\mathrm{rhsN}(n))$.
+\end{definition}
+
+\begin{theorem}[Closed forms]\label{thm:boxes-fca-closed}
+With $\mathrm{topv}(d,\sigma,n,s,0)=0$, $\mathrm{topv}(\ldots,t+1)=d\cdot\mathrm{topv}(\ldots,t)+\sigma(\mathrm{sl}(n-1-t,s))$ (the register value of slot $s$, most significant digit first):
+\begin{itemize}
+\item \lbx!eval_rhsN! ($d>0$, $n\le m$, digits of slots $0,1$ below $d$): $\mathrm{eval}(\mathrm{envAt}(E_0(d),L,m),\mathrm{rhsN}(n),\sigma)$ is $[\mathrm{topv}(\sigma,n,1,n)\equiv\mathrm{topv}(\sigma,n,0,n)+2 \pmod{d^n}]$ times $\prod_{i<n}[\sigma(\mathrm{pend}(n,i))=\sigma(\mathrm{sl}_i0)]\,[\sigma(\mathrm{pendO}(n,i))=\sigma(\mathrm{sl}_i1)]$;
+\item \lbx!eval_cp!: the sum of copy $n$ over its summed labels at level $n+1$ is $\mathrm{pinsCp}(n,\sigma)\cdot\sum_{x<d}\mathrm{fou}(d,x,\sigma(\mathrm{sl}_n0))\,\mathrm{ex}(2x/d^{n+1})\,\overline{\mathrm{fou}(d,\sigma(\mathrm{sl}_n1),x)}\,\mathrm{pairsF}(d,n,\sigma,x)$, where $\mathrm{pinsCp}$ is the product of the equalities that tie each boundary pair of copy $n$, and $\mathrm{pairsF}(d,n,\sigma,x)=\prod_{i<n}\mathrm{fou}(D_i,x,\sigma(\mathrm{pend}(n,i)))\,\mathrm{fou}(D_i,x,(D_i-\sigma(\mathrm{pendO}(n,i))\bmod D_i)\bmod D_i)$ with $D_i=d^{\,n-i+1}$ (\lbx!prod_cp! is the node product at the pinned values);
+\item \lbx!eval_glue!: $\mathrm{eval}(\ldots,\mathrm{glueAt}(\mathrm{cut}(n),\mathrm{cp}(n),\mathrm{rhsN}(n)),\sigma)=\mathrm{IndS}(d,\sigma,n)\cdot\mathrm{pinsCp}(n,\tau)\cdot\mathrm{SumC}(d,n,\tau)$, with $\tau$ reading each pending leg of copy $i$ at $\sigma(\mathrm{sl}_i0)$, $\sigma(\mathrm{sl}_i1)$ (\lbx!tauG!), $\mathrm{IndS}$ the indicator of \lbx!eval_rhsN!, and $\mathrm{SumC}$ the sum of \lbx!eval_cp!.
+\end{itemize}
+\end{theorem}
+
+\begin{theorem}[Family from the close step]\label{thm:boxes-fca-fam}
+\lbx!base d hd : Equal (envAt (E0 d) L 0) (lhs 0).1 (lhs 0).2 (rhs d 0).1 (rhs d 0).2!; \lbx!peel d n! holds by \lbx!Equal.refl!; and
+\begin{lstlisting}[style=leanbox]
+theorem fam_of_close (d : ℕ) (hd : 0 < d)
+    (close : ∀ n, Equal (envAt (E0 d) L (n + 1)) (rhs d n).1
+      (glueAt (cut n) (cp n) (rhs d n).2) (rhs d (n + 1)).1 (rhs d (n + 1)).2) (n : ℕ) :
+    Equal (envAt (E0 d) L n) (lhs n).1 (lhs n).2 (rhs d n).1 (rhs d n).2
+\end{lstlisting}
+by \lbx!netIfaceAtE_fam! with \lbx!labsMono!, \lbx!copyAt!, \lbx!fitsL!, and \lbx!fitsR!.
+\end{theorem}
+
+\begin{theorem}[Close step from the Fourier-sum arithmetic]\label{thm:boxes-fca-arith}
+\lbx!Arith d! is the proposition that for every $n$ and every $\sigma$ whose slot-$0$ and slot-$1$ digits of levels $0,\ldots,n$ are below $d$,
+\[
+\mathrm{IndS}(d,\sigma,n)\cdot\mathrm{SumC}(d,n,\tau)=\mathrm{cs}(d,n)\cdot\mathrm{IndS}(d,\sigma,n+1),\qquad \tau=\mathrm{tauG}(n,\sigma).
+\]
+\lbx!close_of d hd h n! proves the close step at $n$ from \lbx!h : Arith d!: the boundary range gives the digit bounds (\lbx!dig_mem_bndL!: the slots $0,1$ of every level $i<m$ lie on $\mathrm{bndL}(m)$; \lbx!labDim_plain!), \lbx!eval_glue! and \lbx!eval_rhsN! rewrite both sides, \lbx!pinsCp_tauG! ($\mathrm{pinsCp}(n,\mathrm{tauG}(n,\sigma))=\mathrm{pinsN}(n+1,\sigma)$) matches the pin factors, and \lbx!h! closes the equation. \lbx!fam_of_arith d hd h n! is \cref{thm:boxes-fca-fam} with \lbx!close_of!; \lbx!fam_of_arith_8! and \lbx!fam_of_arith_24! are its instances at $n=8$ and $n=24$. At this commit (\texttt{1e4a941}) \lbx!Arith d! is a hypothesis of these theorems; the module does not prove it.
+\end{theorem}
+
 \section{Auxiliary Lemmas}\label{sec:boxes-aux}
 
 \Cref{tab:boxes-aux} states the lemmas of the chapter's modules that the preceding sections use without naming. Hypotheses that every lemma of a section shares (\lbx!SplitData!, \lbx!WF D!, $b\in D.\mathit{boxes}$, $b$ a leaf, $b.\mathit{nodes}=[\,]$ or $b.\mathit{ports}=[\,]$, distinct node ids) are omitted; ``perm'' is \lbx!List.Perm!.

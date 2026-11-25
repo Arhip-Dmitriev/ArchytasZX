@@ -165,8 +165,8 @@ imports, then a module docstring \code|/-! ... -/| headed by a Markdown title, t
 direct imports, its line count, its number of top-level theorems and of top-level definitions
 (\lean|def|, \lean|abbrev|, \lean|structure|, \lean|inductive|), and the chapter that specifies it.
 Imports from Mathlib are counted, not named, except in \texttt{Net}, which carries all 43
-Mathlib imports of the foundation. The library has 48{,}780 lines, 2{,}335 top-level theorems and
-1{,}155 top-level definitions. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
+Mathlib imports of the foundation. The library has 73{,}864 lines, 3{,}575 top-level theorems and
+1{,}793 top-level definitions. \texttt{Light} has no declarations: it imports 87 modules, none of which imports \texttt{Cyclo} or \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). The modules \texttt{AdderFamEnv}, \texttt{LinkedMerge}, and \texttt{LinkedPair} also avoid \texttt{Cyclo} and \texttt{NumField} and are not imported by \texttt{Light}. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
 of this chapter.
 
 {\small
@@ -184,22 +184,33 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \endhead
 \bottomrule
 \endfoot
+\texttt{AdderFam} & Closed, ChainInduct & 504 & 26 & 11 & B \\
+\texttt{AdderFamEnv} & AdderFam, ChainMixed & 69 & 2 & 3 & B \\
+\texttt{AdderFamFca} & AdderFamEnv, Ball, Weights, PairEval & 1390 & 109 & 39 & B \\
 \texttt{Assume} & Bundle & 96 & 4 & 4 & C \\
 \texttt{Ball} & Cyclo, 2 Mathlib & 280 & 36 & 4 & C \\
 \texttt{Bialgebra} & ZXRules & 189 & 4 & 0 & C \\
-\texttt{BoxFree} & Induct & 154 & 7 & 0 & B \\
 \texttt{BoxedBridge} & FamK, DiagramBridge & 631 & 27 & 18 & B \\
+\texttt{BoxFree} & Induct & 154 & 7 & 0 & B \\
 \texttt{Bridge} & Expand & 133 & 0 & 16 & B \\
 \texttt{Bundle} & WZ & 1876 & 109 & 46 & B \\
 \texttt{ChainBox} & Bridge & 85 & 2 & 7 & B \\
+\texttt{ChainBridge} & ChainForm, ChainLabel, PeriodicChain & 244 & 14 & 14 & B \\
 \texttt{ChainEvery} & ChainLink & 313 & 26 & 9 & B \\
+\texttt{ChainFam} & ChainBridge & 520 & 22 & 3 & B \\
+\texttt{ChainForm} & ChainBox & 159 & 13 & 4 & B \\
 \texttt{ChainInduct} & Bundle & 313 & 21 & 5 & B \\
+\texttt{ChainLabel} & Elim & 157 & 3 & 2 & B \\
 \texttt{ChainLink} & ChainBox, ChainInduct & 99 & 4 & 5 & B \\
 \texttt{ChainMixed} & ChainInduct & 422 & 27 & 3 & B \\
+\texttt{ChainNode} & ChainLink & 489 & 41 & 14 & B \\
+\texttt{ChainPair} & ChainFam & 159 & 7 & 1 & B \\
 \texttt{Closed} & Rules & 152 & 17 & 1 & C \\
 \texttt{Completeness} & Net, Rules, WRules, Closed, ZXRules & 159 & 7 & 0 & C \\
 \texttt{Connective} & WRules & 255 & 10 & 0 & C \\
 \texttt{Contract} & Refute & 502 & 22 & 19 & C \\
+\texttt{CopyBridge} & CopyPin, Linked & 867 & 33 & 14 & B \\
+\texttt{CopyPin} & Ball, Mixed, FamK & 128 & 6 & 0 & B \\
 \texttt{Cyclo} & Bundle, 1 Mathlib & 451 & 47 & 11 & C \\
 \texttt{Diagram} & Net & 246 & 6 & 20 & C \\
 \texttt{DiagramBridge} & Diagram & 476 & 17 & 14 & B \\
@@ -208,7 +219,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{Expand} & Diagram & 159 & 0 & 20 & C \\
 \texttt{ExpandFacts} & Digits & 230 & 13 & 2 & C \\
 \texttt{FamBridge} & NetDigits & 268 & 11 & 3 & B \\
-\texttt{FamCheck} & FamBridge & 153 & 8 & 5 & B \\
+\texttt{FamCheck} & FamBridge & 153 & 8 & 10 & B \\
 \texttt{FamK} & OrderK & 243 & 12 & 2 & B \\
 \texttt{FuseB} & Unfuse & 284 & 14 & 1 & C \\
 \texttt{Gather} & PortBox & 246 & 22 & 1 & C \\
@@ -216,16 +227,22 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{Hopf} & Bialgebra & 245 & 10 & 0 & C \\
 \texttt{Induct} & NodeBox & 299 & 15 & 5 & B \\
 \texttt{Iso} & Net & 156 & 7 & 5 & C \\
-\texttt{Linked} & Relabel & 272 & 4 & 15 & S \\
-\texttt{LinkedForm} & LinkedSlide, LinkedRegroup & 170 & 12 & 7 & S \\
-\texttt{LinkedGhost} & LinkedForm & 603 & 43 & 10 & S \\
-\texttt{LinkedPeel} & Linked, PortBox & 895 & 49 & 8 & S \\
-\texttt{LinkedRegroup} & Linked & 134 & 6 & 5 & S \\
+\texttt{Light} & Net, Iso, Rules, Closed, ZXRules, Bialgebra, Hopf, WRules, WAssoc, WFuse, Connective, WZ, Bundle, Unfuse, FuseB, SymNet, SymChunk, SymHint, SymF2, SymF2Chain, SymF2Bridge, DiagramBridge, Port, Assume, Completeness, Weights, Diagram, Expand, Bridge, ChainBox, Elim, Digits, ExpandFacts, Relabel, PortBox, Gather, Split, NodeBox, Induct, BoxFree, Positional, Tower, NodeVal, NodeBridge, Pin, NetDigits, FamBridge, FamCheck, Order, OrderK, FamK, BoxedBridge, Linked, LinkedPeel, LinkedSlide, LinkedRegroup, LinkedSplit, LinkedForm, LinkedGhost, LinkedSplice, LinkedFirst, LinkedDropX, LinkedRead, Mixed, ChainInduct, ChainLink, ChainEvery, Periodic, PeriodicChain, ChainMixed, ChainLabel, ChainForm, ChainBridge, ChainFam, ChainPair, TreeInduct, PhaseMap, ChainNode, PairBox, PairNet, PairEval, PairFam, AdderFam, PairSum, Sym, SymCanon, SymNorm & 96 & 0 & 0 & B \\
+\texttt{Linked} & Relabel & 515 & 10 & 23 & S \\
+\texttt{LinkedDropX} & LinkedGhost & 302 & 14 & 4 & S \\
+\texttt{LinkedFirst} & LinkedSplice & 656 & 42 & 7 & S \\
+\texttt{LinkedForm} & LinkedSlide, LinkedRegroup & 170 & 12 & 8 & S \\
+\texttt{LinkedGhost} & LinkedForm & 958 & 58 & 15 & S \\
+\texttt{LinkedMerge} & LinkedPair & 294 & 26 & 6 & S \\
+\texttt{LinkedPair} & LinkedFirst & 455 & 17 & 11 & S \\
+\texttt{LinkedPeel} & Linked, PortBox & 1717 & 86 & 18 & S \\
+\texttt{LinkedRead} & LinkedDropX, LinkedSplice & 1165 & 55 & 19 & S \\
+\texttt{LinkedRegroup} & Linked & 134 & 6 & 6 & S \\
 \texttt{LinkedSlide} & BoxFree, LinkedPeel, Weights & 576 & 45 & 6 & S \\
-\texttt{LinkedSplice} & LinkedGhost, LinkedPeel & 681 & 37 & 20 & S \\
-\texttt{LinkedSplit} & LinkedPeel, Iso & 1038 & 46 & 9 & S \\
+\texttt{LinkedSplice} & LinkedGhost, LinkedPeel & 1267 & 58 & 24 & S \\
+\texttt{LinkedSplit} & LinkedPeel, Iso & 1812 & 86 & 15 & S \\
 \texttt{Mixed} & Closed & 210 & 16 & 3 & C \\
-\texttt{Net} & 43 Mathlib & 471 & 20 & 39 & C \\
+\texttt{Net} & 43 Mathlib & 480 & 20 & 40 & C \\
 \texttt{NetDigits} & Pin & 244 & 6 & 2 & C \\
 \texttt{NodeBox} & Split & 1440 & 85 & 7 & B \\
 \texttt{NodeBridge} & NodeVal & 339 & 15 & 1 & B \\
@@ -233,47 +250,64 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{NumField} & Weights, 4 Mathlib & 110 & 7 & 3 & C \\
 \texttt{Order} & FamCheck & 280 & 20 & 7 & C \\
 \texttt{OrderK} & Order & 246 & 13 & 8 & C \\
+\texttt{PairBox} & ChainLabel, Relabel & 229 & 0 & 31 & B \\
+\texttt{PairEval} & PairNet & 646 & 34 & 4 & B \\
+\texttt{PairFam} & PairEval & 93 & 3 & 0 & B \\
+\texttt{PairNet} & PairBox & 815 & 59 & 3 & B \\
+\texttt{PairSum} & PairFam & 116 & 9 & 1 & B \\
 \texttt{Paper} & Net, Rules, Closed, ZXRules, Cyclo & 172 & 12 & 9 & C \\
 \texttt{PathSum} & Sym, Cyclo & 183 & 17 & 2 & P \\
-\texttt{PathSumAmp} & PathSumRules & 1944 & 79 & 85 & P \\
-\texttt{PathSumChain} & PathSumSupport & 307 & 6 & 19 & P \\
-\texttt{PathSumDigits} & PathSumNet, Positional & 929 & 40 & 16 & P \\
-\texttt{PathSumNet} & PathSumRules & 545 & 33 & 14 & P \\
-\texttt{PathSumNetAmp} & PathSumNetW, PathSumAmp & 409 & 19 & 6 & P \\
+\texttt{PathSumAmp} & PathSumRules & 1964 & 81 & 85 & P \\
+\texttt{PathSumChain} & PathSumSupport, PathSumParity & 308 & 6 & 19 & P \\
+\texttt{PathSumDigits} & PathSumNet, Positional & 1059 & 47 & 21 & P \\
+\texttt{PathSumMixed} & PathSumQudit, PathSumAmp & 492 & 25 & 9 & P \\
+\texttt{PathSumMixedNet} & PathSumMixed, PathSumNetAmp, PathSumQuditNet, PathSumQuditDigits & 1087 & 56 & 21 & P \\
+\texttt{PathSumNet} & PathSumRules & 676 & 42 & 21 & P \\
+\texttt{PathSumNetAmp} & PathSumNetW, PathSumAmp & 409 & 19 & 7 & P \\
 \texttt{PathSumNetW} & PathSumW, PathSumChain & 91 & 7 & 3 & P \\
+\texttt{PathSumParity} & PathSumRules & 109 & 2 & 4 & P \\
 \texttt{PathSumQudit} & PathSum, 1 Mathlib & 1138 & 68 & 55 & P \\
 \texttt{PathSumQuditChain} & PathSumChain, PathSumQudit & 103 & 3 & 5 & P \\
 \texttt{PathSumQuditDigits} & PathSumQuditNet & 636 & 28 & 12 & P \\
-\texttt{PathSumQuditNet} & PathSumQudit, PathSumDigits, GaussSign, PathSumQuditChain & 462 & 29 & 13 & P \\
-\texttt{PathSumRules} & PathSumSem & 1661 & 72 & 42 & P \\
-\texttt{PathSumSem} & PathSum, Ball & 1761 & 115 & 76 & P \\
+\texttt{PathSumQuditNet} & PathSumQudit, PathSumDigits, GaussSign, PathSumQuditChain & 462 & 29 & 14 & P \\
+\texttt{PathSumRules} & PathSumSem & 2198 & 91 & 63 & P \\
+\texttt{PathSumSem} & PathSum, Ball & 2173 & 139 & 101 & P \\
 \texttt{PathSumSupport} & PathSumAmp & 58 & 2 & 1 & P \\
 \texttt{PathSumW} & PathSumDigits & 224 & 9 & 3 & P \\
 \texttt{Periodic} & ChainInduct & 42 & 1 & 0 & B \\
 \texttt{PeriodicChain} & Periodic & 301 & 22 & 6 & B \\
+\texttt{PhaseMap} & Bundle & 114 & 5 & 4 & B \\
 \texttt{Pin} & NodeBridge & 152 & 8 & 4 & C \\
-\texttt{Port} & Bundle & 1116 & 61 & 11 & B \\
+\texttt{Port} & Bundle & 1117 & 61 & 11 & B \\
 \texttt{PortBox} & Relabel, ExpandFacts & 934 & 63 & 7 & B \\
 \texttt{Positional} & BoxFree, Bundle & 141 & 12 & 3 & C \\
-\texttt{Refute} & Cyclo & 514 & 25 & 32 & C \\
+\texttt{Refute} & Cyclo & 547 & 26 & 33 & C \\
+\texttt{RefuteMod} & Contract & 1789 & 99 & 61 & C \\
+\texttt{RefuteSym} & RefuteMod, 1 Mathlib & 1897 & 92 & 63 & C \\
 \texttt{Relabel} & Digits & 135 & 4 & 4 & C \\
 \texttt{Rules} & Iso, 1 Mathlib & 324 & 19 & 0 & C \\
 \texttt{Split} & Gather & 195 & 6 & 2 & C \\
 \texttt{Sym} & Closed & 1032 & 78 & 72 & S \\
 \texttt{SymCanon} & SymNorm & 851 & 35 & 45 & S \\
-\texttt{SymF2} & SymNet & 1231 & 83 & 58 & S \\
+\texttt{SymCarry} & SymRange & 728 & 29 & 17 & S \\
+\texttt{SymChunk} & SymNet & 283 & 19 & 16 & S \\
+\texttt{SymF2} & SymNet & 1231 & 87 & 58 & S \\
 \texttt{SymF2Bridge} & SymF2, DiagramBridge & 160 & 3 & 2 & S \\
 \texttt{SymF2Chain} & SymF2 & 136 & 0 & 7 & S \\
-\texttt{SymNet} & SymCanon & 898 & 40 & 37 & S \\
-\texttt{SymNorm} & Sym, Bundle & 599 & 27 & 18 & S \\
+\texttt{SymFold} & SymCarry & 1112 & 34 & 25 & S \\
+\texttt{SymFourier} & SymHint, PathSumSem & 851 & 39 & 33 & S \\
+\texttt{SymHint} & SymChunk & 795 & 30 & 28 & S \\
+\texttt{SymNet} & SymCanon & 1581 & 72 & 54 & S \\
+\texttt{SymNorm} & Sym, Bundle & 926 & 39 & 24 & S \\
+\texttt{SymRange} & SymFourier & 1210 & 46 & 41 & S \\
 \texttt{Tower} & Positional & 161 & 11 & 1 & C \\
 \texttt{TreeInduct} & ChainInduct & 330 & 13 & 7 & B \\
 \texttt{Unfuse} & Bundle & 221 & 12 & 0 & C \\
 \texttt{WAssoc} & WRules & 120 & 6 & 2 & C \\
+\texttt{Weights} & Net, Rules, Closed, ZXRules, Completeness, WZ, Hopf, Connective & 9479 & 213 & 64 & C \\
 \texttt{WFuse} & WAssoc, FuseB, NodeBox, Weights & 225 & 10 & 0 & C \\
 \texttt{WRules} & Hopf & 289 & 17 & 1 & C \\
 \texttt{WZ} & Connective & 242 & 6 & 0 & C \\
-\texttt{Weights} & Net, Rules, Closed, ZXRules, Completeness, WZ, Hopf, Connective & 9479 & 213 & 64 & C \\
 \texttt{ZXRules} & Closed & 398 & 28 & 0 & C \\
 \end{xltabular}
 }
@@ -1842,6 +1876,131 @@ $\mathrm{eval}(E,N,\sigma)=\mathrm{sqK}(E.\mathrm{shape},N)\cdot\mathrm{fprod}(\
 \end{theorem}
 
 %======================================================================
+\subsection{\texttt{RefuteMod}: refutation by residues modulo a prime}\label{sec:lean-core-refutemod}
+
+\file{RefuteMod.lean} (imports \file{Contract}) evaluates a network's formal entry modulo a prime $p$ in which an element $w$ of order $M$ stands for $\zeta=\omega_M$, by a checked contraction of residue tables.
+
+\begin{definition}[Weighted formal entries]\label{def:lean-core-tensorW}
+For coefficient tables $C:\N\to\N\to\mathrm{Terms}$ (the coefficient of entry $k$ of phase row $p$ as a formal sum):
+\begin{itemize}
+\item \lean|tZWT C d vs| $=\mathrm{flatMap}_{k<d}\,[\,C(k)$ if every value of $vs$ is $k$, else $[\,]\,]$;
+\item \lean|tshift e t| adds $e$ to every exponent of $t$, and
+\[
+\mathrm{tXWT}(M,C,d,os,is)=\mathrm{flatMap}_{k<d}\ \mathrm{tshift}\bigl(\tfrac Md\,k\textstyle\sum os+\tfrac Md\,(d-1)\,k\sum is,\ C(k)\bigr);
+\]
+\item \lean|tensorW S M P C| is \lean|tZWT| for \lean|ZW| (over outputs then inputs), \lean|tXWT| for \lean|XW|, the \lean|tmul| fold over the $\mu(m)$ copies (legs by \lean|copyLegs|) for \lean|Bun m b|, and \lean|tensorT| for every other kind;
+\item \lean|sqcW| counts $(\sqrt d)^{-1}$ factors ($no+ni$ for \lean|XW|, $\mu(m)\cdot\mathrm{sqcW}(b)$ for \lean|Bun m b|, else \lean|sqc|); \lean|qcW| counts $(Q\,ph)^{-1}$ factors ($1$ for \lean|ZW| and \lean|XW|, $\mu(m)\cdot\mathrm{qcW}(b)$ for \lean|Bun m b|, else $0$); \lean|Kind.phased| holds for \lean|Z|, \lean|X|, \lean|ZB|, \lean|XB|, \lean|ZW|, \lean|XW|, and bundles of them.
+\end{itemize}
+\lean|valW|, \lean|sqNW|, \lean|qNW| are the node forms (binders and splitters by \lean|valBS|, with no factors). \lean|nodeOKW S M keys ckeys fs n| holds for a binder or splitter, or when $d_n\mid M$ and either the kind is not phased, or it has no \lean|ZW|/\lean|XW| and its phase row is in $fs$, or every entry $j<d_n$ is listed in $keys$ (without weights) or in $ckeys$ (with weights). \lean|CoefOK E M xs C Q keys| asserts $Q(e.1)\ne 0$ and $Q(e.1)\cdot E.\mathrm{coef}(e.1,e.2)=\mathrm{tv}(\omega_M,xs,C(e.1,e.2))$ for each listed key $e$. \lean|prodW| folds \lean|tmul| over the nodes, \lean|sumLT D ls f σ| sums formal sums over the labels by \lean|flatMap|, and \lean|KW S Q N| $=\prod_n(\sqrt{d_n})^{-\mathrm{sqNW}(n)}\,Q(n.ph)^{-\mathrm{qNW}(n)}$.
+\end{definition}
+
+\begin{theorem}[Weighted formal entries]\label{thm:lean-core-eval-W}
+\lean|tZw_cyc|, \lean|tXw_cyc|, \lean|tensorW_cyc|, \lean|val_cycW|, \lean|prodVal_W|, and
+\begin{lstlisting}[style=lean]
+theorem eval_W (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms)
+    (Q : ℕ → ℕ) (keys ckeys : List (ℕ × ℕ)) (fs : List ℕ) (N : Net) (σ : ℕ → ℕ) (hM : 0 < M)
+    (hok : N.nodes.all (nodeOKW E.shape M keys ckeys fs) = true) (hph : PhOK E M gs P keys)
+    (hco : CoefOK E M (gs.map ex) C Q ckeys)
+    (hf : ∀ i ∈ fs, ∀ k, ex (E.phase i k) = om M ^ (P i k).1 * mono (gs.map ex) (P i k).2) :
+    eval E N σ = KW E.shape Q N * tv (om M) (gs.map ex) (sumLT E.shape.dim N.int (prodW E.shape M P C N.nodes) σ)
+\end{lstlisting}
+\lean|ex_tab|: for $M=\mathit{den}\cdot q$, $\mathrm{ex}(n/\mathit{den})=\omega_M^{\,((nq)\bmod M)}$.
+\end{theorem}
+
+\begin{definition}[Residues]\label{def:lean-core-tmv}
+\lean|tmv p w t| $=\sum_{(c,e,k)\in t}c\,w^e\in\Z/p$ (atoms read as $1$); \lean|tpoly t| $=\sum c\,X^e\in\Z[X]$. \lean|pm p k b e| is $b^e\bmod p$ by $k$ rounds of square-and-multiply (\lean|pm_eq|: exact for $e<2^k$). \lean|tmN p w M t| folds $\bigl((c\bmod p)\cdot\mathrm{pm}(p,M,w,e\bmod M)+\mathit{acc}\bigr)\bmod p$ over the terms; \lean|tmN_cast| ($p\ne0$, $w^M=1$ in $\Z/p$, $0<M\le 2^{64}$) and \lean|tmN_castW| (any $M$) equate its cast with \lean|tmv|.
+\end{definition}
+
+\begin{theorem}[Residues of vanishing sums]\label{thm:lean-core-tmv-zero}
+\lean|tmv_eq_zero|: for $p$ prime, $0<M$, $w$ a primitive $M$-th root of unity in $\Z/p$, and $\mathrm{tv}(\omega_M,[\,],t)=0$, $\mathrm{tmv}(p,w,t)=0$. The proof passes through \lean|tpoly| (\lean|aeval_tpoly|, \lean|eval₂_tpoly|) and the cyclotomic polynomial $\Phi_M$, which divides every integer polynomial vanishing at $\omega_M$ and vanishes at $w$. \lean|prim_of| ($M<2^{64}$) and \lean|prim_ofB| ($M<2^b$) prove that $w$ has order $M$: with $M=\prod q_i^{a_i}$ for primes $q_i$, $\mathrm{pm}(p,64,w,M)=1$ and $\mathrm{pm}(p,64,w,M/q_i)\ne1$ for each $i$; \lean|prime_mem_of_dvd| and \lean|pow_eq_one_of| support them.
+\end{theorem}
+
+\begin{definition}[Residue tables and factors]\label{def:lean-core-RT}
+\lean|RT| is a table of residues: \lean|leaf v|, \lean|nil|, or \lean|cons h t| (a level listed head to tail; \lean|RT.node cs| folds \lean|cons| over \lean|cs|). \lean|RT.child T k| is the $k$-th subtable ($\mathrm{leaf}\ v$ is its own child, $\mathrm{nil}$ gives $\mathrm{leaf}\ 0$); \lean|RT.get σ ls T| descends one level per label of $ls$ at $\sigma(l)$ and reads a leaf ($0$ if none). An \lean|RFac| has a \lean|scope : List ℕ| and a \lean|table : RT|; \lean|F.at σ| $=\mathrm{get}(\sigma,F.\mathit{scope},F.\mathit{table})$. \lean|rprod p Fs σ| $=\prod_F F.\mathrm{at}(\sigma)\in\Z/p$ and \lean|rfold| the same product mod $p$ in $\N$ (\lean|rfold_cast|). \lean|RT.pack| collapses a level whose entries are all one leaf (\lean|RT.allLeaf|), \lean|RT.isZ| recognizes $\mathrm{leaf}\ 0$, \lean|RT.rest| drops a level's first entry, \lean|RT.beq| is structural equality (\lean|RT.eq_of_beq|), and \lean|RFac.trim| empties the scope of a one-leaf factor.
+\end{definition}
+
+\begin{definition}[Checked leaves and eliminations]\label{def:lean-core-leafR}
+With $\mathrm{pin}(U,\sigma,\tau)(x)=\sigma(x)$ for $x\in U$ and $\tau(x)$ otherwise:
+\begin{itemize}
+\item \lean|leafR S M P C p w U σ n F|: every leg of $n$ is in $F$'s scope or in $U$, and at every assignment $\tau$ of the scope (\lean|assigns|) $F.\mathrm{at}(\tau)=\mathrm{tmN}(p,w,M,\mathrm{valW}(\ldots,\mathrm{pin}(U,\sigma,\tau),n))$;
+\item \lean|leafXR … n F g|: $n$ is an X spider with $d\mid M$, $d>0$; every leg is in the scope or in $U$; the one-level table $g$ holds at each $s<d$ the residue of $n$'s formal entry with the single output $s$ (\lean|tXT M (P n.ph) d [s] []|); and $F.\mathrm{at}(\tau)=g\bigl((\sum\mathrm{outs}+(d-1)\sum\mathrm{ins})\bmod d\bigr)$ (\lean|tmN_tXT|: the X entry reads its legs only through that sum);
+\item \lean|leafXD … n F G b|: as \lean|leafXR| for an X spider whose legs are distinct, exactly the scope, and outside $U$, with the residues packed $b$ bits each in the natural number $G$ and the table equal to \lean|xdesc| (the table over the scope of $G$'s entry at the weighted leg sum mod $d$; \lean|xdesc_get|);
+\item \lean|LeafH| selects \lean|plain|, \lean|x g|, or \lean|xd G b|, and \lean|leafG| runs the matching check.
+\end{itemize}
+\lean|elimR p D l Fs new| checks summing out label $l$: with $\mathit{ins}$ the factors whose scope contains $l$, $l\notin\mathit{new.scope}$; every label of $\mathit{new}$ is in some factor of $\mathit{ins}$; every label of $\mathit{ins}$ other than $l$ is in $\mathit{new}$; and at every assignment $\tau$ of $\mathit{new}$'s scope $\mathit{new}.\mathrm{at}(\tau)=\bigl(\sum_{j<D(l)}\mathrm{rfold}(p,\mathit{ins},\tau[l\mapsto j])\bigr)\bmod p$. \lean|elimS| is its scope part and \lean|elimV| its entry part (\lean|elimR_split|); \lean|elimC| checks the entries in chunks over a prefix of the scope (\lean|setL|, \lean|combos|, \lean|elimR_chunks|); \lean|elimT| checks them by one descent through all tables at once (\lean|descR|, \lean|botS|, cursors \lean|adv1|, \lean|adv1R|, \lean|advAll|, \lean|rfoldL|) and implies \lean|elimR| (\lean|elimT_ok|). \lean|elimStepR l Fs new| keeps the factors without $l$ and appends $\mathit{new}$ trimmed. \lean|chainR p D Fs steps final| runs the eliminations in order and requires the result to be \lean|final|; \lean|scopesR U Fs steps| requires every label of every factor to lie in $U$ or be eliminated later.
+\end{definition}
+
+\begin{theorem}[Contraction of residue factors]\label{thm:lean-core-eval-res}
+\begin{lstlisting}[style=lean]
+theorem eval_res (S : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ → ℕ → Terms) (p w : ℕ)
+    (hp : p ≠ 0) (hw : (w : ZMod p) ^ M = 1) (hM0 : 0 < M) (hMb : M ≤ 2 ^ 64) (N : Net)
+    (σ : ℕ → ℕ) (leaves : List RFac) (hlen : leaves.length = N.nodes.length)
+    (hleaf : (N.nodes.zip leaves).all (fun q => leafR S M P C p w N.bnd σ q.1 q.2) = true)
+    (steps : List (ℕ × RFac)) (final : List RFac) (hperm : N.int.Perm (steps.map Prod.fst).reverse)
+    (hchain : chainR p S.dim leaves steps final = true) (hscope : scopesR N.bnd leaves steps = true)
+    (hdis : N.bnd.all (fun x => !(steps.map Prod.fst).contains x) = true)
+    (hσ : ∀ x ∈ N.bnd, σ x < S.dim x) :
+    tmv p w (sumLT S.dim N.int (prodW S M P C N.nodes) σ) = (rfold p final σ : ZMod p)
+\end{lstlisting}
+\lean|eval_resW| drops $M\le 2^{64}$; \lean|eval_resG| and \lean|eval_resGW| take one \lean|LeafH| per node and check it by \lean|leafG|. The proof: \lean|tmv_sumLT| and \lean|tmv_prodW| move the residue map inside the sums and products; \lean|prod_leavesR| (or \lean|prod_leavesG|) replaces each node's residue by its leaf; \lean|chainR_val| sums the labels out step by step by \lean|elimR_val| ($\sum_{j<D(l)}\mathrm{rprod}(Fs,\sigma[l\mapsto j])=\mathrm{rprod}(\mathrm{elimStepR}(l,Fs,\mathit{new}),\sigma)$), reordered by \lean|sumR_perm|.
+\end{theorem}
+
+\begin{theorem}[Refutation by residues]\label{thm:lean-core-refute-res}
+\begin{lstlisting}[style=lean]
+theorem refute_res {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (σ : ℕ → ℕ) (hin : InRange E N₁.bnd σ)
+    (M p w : ℕ) [Fact p.Prime] (hM : 0 < M) (hMb : M ≤ 2 ^ 64)
+    (hw : IsPrimitiveRoot (w : ZMod p) M) (K₁ K₂ : ℂ) (T₁ T₂ : Terms) (r₁ r₂ : ℕ)
+    (h₁ : eval E N₁ σ = K₁ * tv (om M) [] T₁ ∧ tmv p w T₁ = r₁)
+    (h₂ : eval E N₂ σ = K₂ * tv (om M) [] T₂ ∧ tmv p w T₂ = r₂)
+    (he : Equal E s₁ N₁ s₂ N₂) (L : ℂ) (f₁ f₂ : List ℤ)
+    (hf₁ : L * (s₁ * K₁) = cvz (om M) f₁) (hf₂ : L * (s₂ * K₂) = cvz (om M) f₂)
+    (hne : tmN p w M (vterms f₁) * r₁ % p ≠ tmN p w M (vterms f₂) * r₂ % p) : False
+\end{lstlisting}
+\end{theorem}
+\noindent Here $\mathrm{cvz}(z,[a_0,a_1,\ldots])=a_0+z\,(a_1+z(\ldots))$, \lean|vterms f| is the formal sum of the integer vector $f$ (\lean|tv_vterms|), and \lean|tneg| negates a formal sum (\lean|tv_tneg|, \lean|tmv_tneg|). The equation \lean|he| at $\sigma$, multiplied by $L$, gives $\mathrm{tv}(\omega_M,\mathrm{vterms}(f_1)\cdot T_1-\mathrm{vterms}(f_2)\cdot T_2)=0$; \cref{thm:lean-core-tmv-zero} sends it to $0$ in $\Z/p$, against \lean|hne|.
+
+\subsection{\texttt{RefuteSym}: residues by substitution and geometric sums}\label{sec:lean-core-refutesym}
+
+\file{RefuteSym.lean} (imports \file{RefuteMod} and Mathlib's \file{LucasPrimality}) sums labels out symbolically before the residue contraction of \cref{thm:lean-core-eval-res}.
+
+\begin{definition}[Label expressions]\label{def:lean-core-LX}
+\lean|LX| has the constructors \lean|v x| (label $x$), \lean|c k|, \lean|add a b|, \lean|mul k a|, \lean|div a k|, \lean|mod a k|, and \lean|neg a n|, with values at $\tau$: $\tau(x)$, $k$, $a+b$, $k\,a$, $\lfloor a/k\rfloor$, $a\bmod k$, and $\mathrm{negN}(n,a)=(n-a\bmod n)\bmod n$ (\lean|LX.eval|). \lean|LX.vars| lists the labels, \lean|LX.subst e l r| substitutes, and \lean|LX.ub D e| is an upper bound when each label $x$ is below $D(x)$ ($D(x)-1$ for a label; sums and products of bounds; $\lfloor\cdot/k\rfloor$; $k-1$ for $\bmod\ k$ with $k>0$; $n-1$ for \lean|neg|; \lean|LX.eval_le_ub|). The smart constructors fold constants: \lean|sadd| (also $0+b=b$, $a+0=a$), \lean|smul|, \lean|sneg|, \lean|smod0|, \lean|smod| (also $(x\bmod k)\bmod k=x\bmod k$ and $(kx+r)\bmod k=r\bmod k$), \lean|sdiv0|, and \lean|sdiv| (also $(x\bmod k)/k=0$ and $(kx+r)/k=x+r/k$ for $k>0$). \lean|LX.norm U σ e| replaces each label of $U$ by $\sigma$'s value and rebuilds bottom up with the smart constructors (\lean|LX.norm_eval|); \lean|LX.nz e| is \lean|e.norm [] (fun _ => 0)|.
+\end{definition}
+
+\begin{definition}[Substitution states]\label{def:lean-core-SSt}
+\lean|SSt| has bindings \lean|bs : List (ℕ × LX)|, nodes \lean|ns|, divisibility constraints \lean|cs : List (ℕ × LX)|, and a constant \lean|c : ℕ|. \lean|texpr bs x| is the expression bound to $x$ (first binding; else \lean|v x|), \lean|tval bs τ x| its value. A constraint $(N,e)$ has value $[N\mid e(\tau)]$ (\lean|cval|), and
+\[
+\mathrm{sval}(st,\tau)=c\cdot\prod_{n\in st.\mathit{ns}}\mathrm{tmv}\bigl(p,w,\mathrm{valW}(\ldots,\mathrm{tval}(st.\mathit{bs},\tau),n)\bigr)\cdot\prod_{q\in st.\mathit{cs}}\mathrm{cval}(q,\tau)\in\Z/p.
+\]
+\lean|sym_start|: $\mathrm{tmv}(\mathrm{sumLT}(N.\mathit{int},\mathrm{prodW}(N.\mathit{nodes}),\sigma))=\mathrm{sumR}(N.\mathit{int},\mathrm{sval}(\langle[\,],N.\mathit{nodes},[\,],1\rangle),\sigma)$.
+\end{definition}
+
+\begin{definition}[Delta steps]\label{def:lean-core-dstep}
+A source (\lean|Src|) is \lean|zz n x y| (two legs of a Z spider $n$), \lean|bs n pos| (leg \lean|pos| of a binder or splitter), or \lean|cn q| (a constraint). \lean|spair| gives the two expressions the source makes equal when its value is nonzero: the two legs' expressions for a Z spider (each $\bmod\ d^{\mu(m)}$ for a bundle \lean|Bun m Z|, \lean|spairB|); for a binder $B$ with output $k$ and inputs $a,b$ of radix $D=S.\mathrm{dimv}(n.ph)$: at position $0$, $k=Da+b$; at $1$, $a=\lfloor k/D\rfloor$; at $2$, $b=k\bmod D$; for a splitter $S$ with outputs $a,b$ and input $k$: at $2$, $k=Da+b$; at $0$, $a=\lfloor k/D\rfloor$; at $1$, $b=k\bmod D$. \lean|solveP D l| solves $(\mathit{lhs},t)$ for $l$ when $\mathit{lhs}$ is $l$, $\mathrm{neg}(l,D(l))$ (giving $\mathrm{neg}(t,D(l))$), or $l\bmod D(l)$; \lean|csolve| solves a constraint $N\mid l+b$ (giving $\mathrm{neg}(b,N)$) or $N\mid\mathrm{neg}(l,N)+b$ (giving $b\bmod N$) for $N=D(l)$; \lean|solve| dispatches. \lean|dOK S D U R st l src e| holds when $l$ is a summed label of $R$ not yet bound, the source is in the state (\lean|sin|), \lean|solve| gives $e$, $l\notin\mathrm{vars}(e)$, every label of $e$ is in $R$ or $U$, and $\mathrm{ub}(e)<D(l)$. \lean|dapply| binds $l$ to $e$, substitutes $e$ into every binding and constraint, and simplifies by \lean|nz|; \lean|dapplyU U σ| simplifies by \lean|norm U σ| instead.
+\end{definition}
+
+\begin{definition}[Geometric and X steps]\label{def:lean-core-gstep}
+\lean|fleg bs l n| is, for an $F$ node with one output and one input of which exactly one reads \lean|v l|, the other leg's expression (free of $l$). \lean|gOK S M D R st l n₁ n₂ ns' X Z| holds when $l\in R$ is unbound, $n_1,n_2$ are $F$ nodes with \lean|fleg| giving $X$ and $Z$, both of dimension $D(l)>0$ with $D(l)\mid M$, the state's nodes are a permutation of $n_1::n_2::ns'$, no node of $ns'$ mentions $l$ (\lean|nmen|), and no constraint does. \lean|gapply| removes $n_1,n_2$, adds the constraint $(D(l),X+Z)$, and multiplies the constant by $D(l)$ mod $p$ (by $\sum_{j<N}u^{ja}=N\,[N\mid a]$ for $u$ of order $N$, \lean|geom_root|). \lean|xOK S M P st n ns'| holds for an X spider $n$ of dimension $d>0$, $d\mid M$, all of whose phase exponents are $0$; \lean|xapply| replaces it by the constraint $(d,\ \mathrm{xexpr})$, with $\mathrm{xexpr}$ the sum of its output expressions and $(d-1)$ times its input expressions (the input expressions alone for $d=2$), and multiplies the constant by $d$. \lean|xbOK|, \lean|xbapply| do the same for \lean|Bun m X| with one output and no inputs, with modulus \lean|xbN| $=d^{\mu(m)}$. \lean|SStep| is \lean|d l src e|, \lean|x n|, or \lean|xb n|; \lean|stepS| applies one when its check holds (removing $l$ from $R$ for a delta step), and \lean|runS| a list.
+\end{definition}
+
+\begin{theorem}[Steps over sums]\label{thm:lean-core-sym-steps}
+\lean|sym_dstep| and \lean|sym_dstepU| (with $U$ disjoint from $R$ and in range): if $R$ is a permutation of $R'\mathbin{+\!\!+}[l]$ and \lean|dOK| holds, then $\mathrm{sumR}(R,\mathrm{sval}(st),\sigma)=\mathrm{sumR}(R',\mathrm{sval}(st'),\sigma)$ for $st'$ = \lean|dapply| (resp.\ \lean|dapplyU|). \lean|sym_gstep| (for $p$ prime and $w$ of order $M$): the same under \lean|gOK| and \lean|gapply|. \lean|sym_xstep| and \lean|sym_xbstep|: $\mathrm{sumR}(R,\mathrm{sval}(st))=\mathrm{sumR}(R,\mathrm{sval}(st'))$ under \lean|xOK|/\lean|xapply| and \lean|xbOK|/\lean|xbapply|. \lean|sym_run| composes them: \lean|runS … R st ss = some (R', st')| gives $\mathrm{sumR}(R,\mathrm{sval}(st),\sigma)=\mathrm{sumR}(R',\mathrm{sval}(st'),\sigma)$.
+\end{theorem}
+
+\begin{theorem}[Final contraction]\label{thm:lean-core-sym-final}
+\lean|leafS S M P C p w U σ bs g sc F| checks the residue factor of a group of nodes $g$ under bindings $bs$ at every assignment of the labels $sc$ (Z spiders evaluated by \lean|valQ|, which reads a Z spider off its first leg), \lean|leafQ p D U σ q sc F| that of a constraint, and \lean|kleaf p c| $=\langle[\,],\mathrm{leaf}(c\bmod p)\rangle$ is the constant. \lean|sym_final|: when the state's nodes are a permutation of the groups $gss$, each group's leaf and each constraint's leaf check, and \lean|chainR| eliminates the remaining summed labels $R$ from the leaves, constraint leaves, and \lean|kleaf| to \lean|final| with \lean|scopesR U| and $U$ disjoint from the eliminated labels, then $\mathrm{sumR}(R,\mathrm{sval}(st),\sigma)=\mathrm{rfold}(p,\mathit{final},\sigma)$. \lean|leafT| reads the bindings from a binary trie (\lean|BT|, keyed by the bits of the label least significant first; \lean|toBT|, \lean|BT.look|, \lean|leafS_ofT|), and \lean|leafW| checks the table in read order (\lean|walkJ|, \lean|walkT|, \lean|leafS_ofW|).
+\end{theorem}
+
+\begin{theorem}[Lucas's primality test]\label{thm:lean-core-prime-lucas}
+\begin{lstlisting}[style=lean]
+theorem prime_lucas (p g : ℕ) (hp : 1 < p) (hpb : p < 2 ^ 64) (ps : List (ℕ × ℕ))
+    (hfac : (ps.map fun x => x.1 ^ x.2).prod = p - 1) (hps : ∀ x ∈ ps, x.1.Prime)
+    (h1 : pm p 64 g (p - 1) = 1) (h2 : ps.all (fun x => pm p 64 g ((p - 1) / x.1) != 1) = true) :
+    p.Prime
+\end{lstlisting}
+\lean|prime_lucasB| is the same with $b$ rounds in place of $64$. The proof applies Mathlib's \lean|lucas_primality|~\cite{lucas1878theorie}.
+\end{theorem}
+
 \section{Diagrams and their meaning (\texttt{Diagram})}\label{sec:lean-core-diagram}
 
 \texttt{Diagram} represents the engine's diagram as data: nodes with the dimension index of every

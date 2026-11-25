@@ -63,9 +63,20 @@ modules import internal helpers of this module:
 \module{archytaszx.semantics.lean_sym} uses \py!_Export!, \py!_join!, \py!_paren!, \py!LNet!,
 \py!_tail!, \py!_split_net!, \py!_zero_net! and \py!_norm!;
 \module{archytaszx.semantics.lean_numeric} uses \py!_head!, \py!_join!, \py!_paren!;
-\module{archytaszx.semantics.lean_refute} uses \py!_port_dim! and other names; and
-\module{archytaszx.semantics.prove}, \module{archytaszx.semantics.decide} and
-\module{archytaszx.semantics.certify_decision} catch \py!NetUnsupported!.
+\module{archytaszx.semantics.lean_refute} uses \py!_port_dim! and other names;
+\module{archytaszx.semantics.lean_famlink} uses \py!LNet!, \py!LNode!, \py!_head!, \py!_join!,
+\py!_list!, \py!_pairs!, \py!_paren!, \py!_perm_to_bijection!, \py!_rename_net!,
+\py!_split_net!, \py!_tail!, \py!_zero_net! and \py!_zk!;
+\module{archytaszx.semantics.lean_subst} uses \py!LNet! and \py!_head!; and
+\module{archytaszx.semantics.prove}, \module{archytaszx.semantics.decide},
+\module{archytaszx.semantics.lean_copyphase}, \module{archytaszx.semantics.lean_chainfam},
+\module{archytaszx.semantics.lean_pairs} and
+\module{archytaszx.semantics.certify_decision} catch \py!NetUnsupported!. In turn, \py!export!
+calls \module{archytaszx.semantics.lean_chainnode} and
+\module{archytaszx.semantics.lean_famlink} when its own run fails
+(\cref{alg:lean-export-net-export}). The exporters of
+\cref{sec:lean-export-net-beside} prove family claims without a kernel theorem and are called by
+\module{archytaszx.semantics.certify_decision} and \module{archytaszx.semantics.kernel}.
 
 The module depends on \module{archytaszx.semantics.lean_scalar} for writing exact scalars in Lean
 and for proving identities between them (the class \py!Scalars!, the sympy functions \py!Rt!,
@@ -110,17 +121,28 @@ traced under the span name \code!lean.export!.
   \module{archytaszx.semantics.lean_qdigits} (the qudit path-sum export over digit variables,
   \cref{ch:lean-pathsum}) unless it raises \py!PathSumError! or \py!ScalarUnsupported!, in which
   case continue.
-\item Define \textsc{Run}(\textit{everything}): create a fresh \py!_Export! with the description
-  function; set its \py!alg_everything! to \textit{everything}, its \py!original! to
-  \py!original!, and its \py!box_syms! to \py!_box_syms(theorem)!. Compute
+\item Define \textsc{Run}(\textit{everything}, \textit{linked}): create a fresh \py!_Export! with
+  the description function; set its \py!alg_everything! to \textit{everything}, its
+  \py!original! to \py!original!, its \py!box_syms! to \py!_box_syms(theorem)!, and its
+  \py!linked! to the set \textit{linked} (empty by default). Compute
   \py!_deferred(theorem)!, the dimension equations the rule steps assumed; call
   \py!assume(a, b)! for each. If there are none, call \py!assume(a, b)! for every pair of
   \py!_wire_constraints(theorem)! and set \py!wire_alias! to \py!True! for each. Return
   \py!finish(theorem, name)! and the export object, converting a \py!ScalarUnsupported! into
   \py!NetUnsupported! with the same message.
-\item Run \textsc{Run}(\py!False!). If its export has a number-field certificate and at least one
-  unproved step, run \textsc{Run}(\py!True!); if that raises \py!NetUnsupported!, return the first
-  source; if it has strictly fewer unproved steps, return its source.
+\item Run \textsc{Run}(\py!False!). When it raises \py!NetUnsupported!:
+  \begin{enumerate}
+  \item if the theorem has variables, \py!original! is \py!None! and the theorem has no
+    assumptions, call \py!export_chain_node(theorem.lhs, theorem.rhs, name, kernel._var)!
+    (\cref{sec:lean-export-net-chainnode}); a source returned is the result;
+  \item with variables, compute \py!linked_indices(theorem)!
+    (\cref{sec:lean-export-net-linked}), else the empty set; when it is empty, re-raise the
+    original exception;
+  \item otherwise the first run is \textsc{Run}(\py!False!, linked); its exceptions propagate.
+  \end{enumerate}
+\item If the first run's export has a number-field certificate and at least one unproved step,
+  run \textsc{Run}(\py!True!, \textit{first}\py!.linked!); if that raises \py!NetUnsupported!,
+  return the first source; if it has strictly fewer unproved steps, return its source.
 \item Return the first source.
 \end{enumerate}
 \end{algorithm}
@@ -170,7 +192,20 @@ Name & Value and use \\
   \texttt{(by first \textbar{} omega \textbar{} norm\_\allowbreak{}num \textbar{} positivity \textbar{} (apply Nat.mul\_\allowbreak{}pos \textless{};\textgreater{} omega) \textbar{} exact Nat.pos\_\allowbreak{}pow\_\allowbreak{}of\_\allowbreak{}pos \_\allowbreak{} (by omega))},
   handed to \texttt{Scalars} as the proof that a natural expression is positive. \\
 \texttt{\_\allowbreak{}KINDS} & The engine generator names \texttt{Z X F T Ti W B S} mapped to the Lean kind names of
-  the same spelling; any other generator (in particular the discard G) has no Lean kind. \\
+  the same spelling; the pair-phase generator \texttt{Zp} takes the kind \texttt{ZP} through
+  \texttt{zp\_\allowbreak{}kind} (\cref{sec:lean-export-net-zp}); any other generator (in particular the
+  discard G) has no Lean kind. \\
+\texttt{PHASE\_\allowbreak{}TABLE\_\allowbreak{}MIN} & 64; a phase vector with more rational entries and no rule is
+  written as a packed table (\cref{alg:lean-export-net-phase-body}). \\
+\texttt{TABLE\_\allowbreak{}CHUNK} & 256; a packed table with more entries is a list of named chunk definitions of
+  this many entries (\py!table_get!). \\
+\texttt{LIST\_\allowbreak{}SPLIT} & 4096; a node, summed-label, boundary-label or \texttt{labs} list with more
+  entries is written as chunk definitions joined by \texttt{++} (\py!_split_list!). \\
+\texttt{LIST\_\allowbreak{}CHUNK} & 2048; the entries of one list chunk definition. \\
+\texttt{DOC\_\allowbreak{}MAX} & 65536; a doc comment is cut after this many characters and ends in a
+  space and an ellipsis (\py!_comment!). \\
+\texttt{\_\allowbreak{}PHASE\_\allowbreak{}TABLES\_\allowbreak{}MAX} & 4096; the most phase vectors the module-level cache
+  \texttt{\_\allowbreak{}PHASE\_\allowbreak{}TABLES} holds; a full cache is cleared before the next entry. \\
 \texttt{\_\allowbreak{}RESERVED} & The identifiers a parameter may not take: \texttt{E $\Phi$ $\Psi$ $\Delta$ labs k at by do fun in let if then else end from have show with match theorem def axiom open ex om fou Net Node Env Equal I $\pi$ pi exp sqrt F FC SpC ksOf bundL sS sG $\Delta$pos j}. \\
 \texttt{\_\allowbreak{}FAMILY\_\allowbreak{}UNFOLD} & \texttt{F, Fam.env, bundL, List.lookup, ksOf, List.getD}: the definitions a
   tactic unfolds to read the environment of a family. \\
@@ -195,8 +230,9 @@ The inductive type \lean!Kind! has the constructors \lean!Z!, \lean!X!, \lean!F!
 \lean!Ti!, \lean!W!, \lean!B!, \lean!S!, \lean!I! (the bare wire), \lean!ZW! (the weighted Z
 spider), \lean!ZB cs!, \lean!XB co ci!, \lean!WB cs! (a Z, X or W node whose last legs bundle
 along the chains \lean!cs!, \lean!co!, \lean!ci! of multiplicity indices, outermost first),
-\lean!Bun m b! (the copies of the generator \lean!b! along multiplicity \lean!m!) and \lean!XW!
-(the weighted X spider). A \lean!Node! is the record \lean!⟨kind, outs, ins, dim, ph⟩! of a kind,
+\lean!Bun m b! (the copies of the generator \lean!b! along multiplicity \lean!m!), \lean!XW!
+(the weighted X spider) and \lean!ZP dx dy c! (the pair phase over two legs of dimension indices
+\lean!dx!, \lean!dy!, with integer coefficient \lean!c!). A \lean!Node! is the record \lean!⟨kind, outs, ins, dim, ph⟩! of a kind,
 the output labels, the input labels, a dimension index and a phase index. A \lean!Net! is the
 record \lean!⟨nodes, int, bnd⟩! of a node list, the summed (internal) labels and the boundary
 labels.
@@ -218,8 +254,11 @@ $\mathrm{fou}(d,j,k) = \omega_d^{jk}/\sqrt d$, the node tensors are
   t_{T^{-1}}(o,i) = [o=i] - [o=0 \land i\ge 1 \land o \ne i],\\
   t_W(d)(o_1,\dots,o_n;i) &= \begin{cases}[\forall j,\ o_j=0] & i=0\\
      [i<d \land (o_j)_{o_j\ne0} = (i)] & i\ne0\end{cases},\\
-  t_B(s,t)(k;a,b) &= [a<s \land b<t \land k = a t + b], \qquad t_I(d)(a,b) = [a=b<d],
+  t_B(s,t)(k;a,b) &= [a<s \land b<t \land k = a t + b], \qquad t_I(d)(a,b) = [a=b<d],\\
+  t_{ZP}(M, c)(x, y) &= e(c\,x\,y/M),
 \end{align*}
+the legs of \lean!ZP! read in the order outputs then inputs and $M$ the value of the node's
+dimension index (\lean!tP!; a leg list of another length gives 0),
 the splitter \lean!S! having the binder's entry with outputs and inputs exchanged, and the
 weighted spiders \lean!ZW!, \lean!XW! replacing $e(\varphi_k)$ by \lean!coef ph k!. The value of
 a network $N$ at a boundary assignment $\sigma$ is
@@ -259,8 +298,8 @@ permutation $p$, node equivalence \lean!nodeEquivB!); \lean!Equal.toLocal!; \lea
 \subsection{Kinds on the Python side}\label{sec:lean-export-net-kinds}
 
 A kind is a string or a tuple. The strings are the plain kinds \code!"Z" "X" "F" "T" "Ti" "W" "B" "S" "I" "ZW" "XW"!.
-The tuples are \py!("ZB", cs)!, \py!("XB", co, ci)!, \py!("WB", cs)! and \py!("Bun", m, base)!,
-where \py!cs!, \py!co!, \py!ci! are tuples of \term{chains} and a chain (type alias
+The tuples are \py!("ZB", cs)!, \py!("XB", co, ci)!, \py!("WB", cs)!, \py!("Bun", m, base)! and
+\py!("ZP", dx, dy, c)! (\cref{sec:lean-export-net-zp}), where \py!cs!, \py!co!, \py!ci! are tuples of \term{chains} and a chain (type alias
 \py!Chain = tuple[int, ...]!) is a tuple of multiplicity indices, outermost first. The helper
 functions on kinds mirror Lean functions of the same meaning:
 
@@ -272,14 +311,14 @@ Function & Behavior \\
 \texttt{\_\allowbreak{}klean(kind)} & The Lean term: \texttt{.Z} for a string \texttt{Z};
   \texttt{.ZB [[m,...], ...]} and \texttt{.WB ...} with each chain written \texttt{[m$_1$, m$_2$]};
   \texttt{.XB co ci}; \texttt{.Bun m base} with \texttt{base} parenthesized unless it is a plain
-  string. \\
+  string; \texttt{.ZP dx dy (c)} for \texttt{("ZP", dx, dy, c)}. \\
 \texttt{\_\allowbreak{}canon(kind)} & The kind with the chains of \texttt{ZB}, \texttt{WB}, \texttt{XB} sorted
-  (recursively through \texttt{Bun}). \\
+  (recursively through \texttt{Bun}); a \texttt{ZP} kind unchanged. \\
 \texttt{\_\allowbreak{}outcs(kind, n)}, \texttt{\_\allowbreak{}incs(kind, n)} & Mirrors of \texttt{Kind.outCs}, \texttt{Kind.inCs}: the
   chains of a copied generator's $n$ outputs (inputs); empty chains padded in front of the
   bundled chains; \texttt{Bun m b} prefixes $m$ to every chain of \texttt{b}. \\
 \texttt{\_\allowbreak{}kms(kind)} & Mirror of \texttt{Kind.ms}: the set of multiplicity indices the kind reads. \\
-\texttt{\_\allowbreak{}copyable(kind)} & Mirror of \texttt{copyKind}: false for \texttt{B} and \texttt{S}, recursive
+\texttt{\_\allowbreak{}copyable(kind)} & Mirror of \texttt{copyKind}: false for \texttt{B}, \texttt{S} and \texttt{ZP}, recursive
   through \texttt{Bun}, true otherwise. \\
 \texttt{\_\allowbreak{}zk(cs)}, \texttt{\_\allowbreak{}xk(co, ci)}, \texttt{\_\allowbreak{}wk(cs)} & \texttt{("ZB", cs)} (\texttt{("XB", co, ci)},
   \texttt{("WB", cs)}) when some chain list is nonempty, else \texttt{"Z"} (\texttt{"X"},
@@ -412,6 +451,10 @@ Field & Initial & Meaning \\
 \texttt{phases} & \texttt{["fun \_\allowbreak{} => 0"]} & Lean text of each phase index; index 0 is the zero vector. \\
 \texttt{phase\_\allowbreak{}specs} & \texttt{[(\{\}, None)]} & Entries (index to turns) and rule of each phase index. \\
 \texttt{phase\_\allowbreak{}key} & \texttt{\{"": 0\}} & Phase body text (and weight text) to phase index. \\
+\texttt{phase\_\allowbreak{}tables} & \texttt{\{\}} & Phase index to the packed table (numerators, denominator) of an unweighted vector. \\
+\texttt{poly\_\allowbreak{}phases} & \texttt{False} & Whether phase tables are fitted by digit polynomials (set by the exact refuter). \\
+\texttt{phase\_\allowbreak{}polys}, \texttt{poly\_\allowbreak{}of} & \texttt{\{\}} & Phase index to its digit polynomial, and phase vector to its digit polynomial or \texttt{None}. \\
+\texttt{table\_\allowbreak{}names}, \texttt{table\_\allowbreak{}defs} & \texttt{\{\}}, \texttt{[]} & Numerator tuple to its chunked table name \texttt{PT}$j$, and the chunk declarations. \\
 \texttt{weight\_\allowbreak{}tab} & \texttt{\{\}} & Phase index to the Lean body of its coefficient vector. \\
 \texttt{coef\_\allowbreak{}models} & \texttt{\{\}} & Weight body to its models (index to sympy model). \\
 \texttt{labs} & \texttt{\{\}} & Label to dimension index. \\
@@ -447,6 +490,9 @@ Field & Initial & Meaning \\
 \texttt{alg\_\allowbreak{}cert}, \texttt{alg\_\allowbreak{}everything} & \texttt{None}, \texttt{False} & The number-field certificate and
   whether every closed algebraic atom goes into it. \\
 \texttt{box\_\allowbreak{}syms} & \texttt{set()} & Symbols of \bbox{} multiplicities in the theorem. \\
+\texttt{linked} & \texttt{set()} & Induction indices proved as linked inductions (\cref{sec:lean-export-net-linked}). \\
+\texttt{linked\_\allowbreak{}pending} & \texttt{[]} & (tag, induction theorem, start network, goal network) of each linked induction not yet written. \\
+\texttt{fpos\_\allowbreak{}lemmas} & \texttt{""} & The \texttt{Fpos} application of the linked lemmas, kept before the binders change. \\
 \texttt{in\_\allowbreak{}table} & \texttt{False} & Whether a node table is being written. \\
 \texttt{sc} & \texttt{Scalars(...)} & The scalar writer (\cref{sec:lean-export-net-scalars}). \\
 \texttt{env}, \texttt{binders}, \texttt{args}, \texttt{hyps}, \texttt{hyp\_\allowbreak{}args} & set by \texttt{finish} & The current
@@ -457,7 +503,7 @@ Field & Initial & Meaning \\
 \subsection{Parameter names}\label{sec:lean-export-net-sym}
 
 \py!_Sym! maps sympy symbols to Lean binder names. \py!params! maps a symbol's raw name to the
-pair (Lean name, Lean type) with type one of \code!ℕ!, \leanx!ℝ!, \code!ℂ!, \code!ℤ!.
+pair (Lean name, Lean type) with type one of \code!ℕ!, \leanx!ℝ!, \code!ℂ!, \leanx!ℤ!.
 
 \begin{algorithm}[\py!_Sym.name(sym, kind)!]\label{alg:lean-export-net-name}
 \begin{enumerate}
@@ -492,7 +538,7 @@ unless already registered:
 \item A sum or product: the parenthesized terms joined by \code! + ! or \code! * !.
 \item A power $b^e$: \code!(b ^ e)! for a nonnegative integer $e$; \code!(b ^ e')! for a
   symbolic $e$ that renders as a natural number; else rejected for \code!ℕ!;
-  \code!(b ^ |e|)⁻¹! for a negative integer; for $e = p/2$ the root
+  \leanx!(b ^ |e|)⁻¹! for a negative integer; for $e = p/2$ the root
   \code!(Real.sqrt b : ty)! (\code!Real.sqrt b! for \leanx!ℝ!) raised to $|p|$, inverted when
   $p<0$; any other power rejected.
 \item $\exp(x) \mapsto$ \code!Complex.exp x! (only for \code!ℂ!).
@@ -525,7 +571,8 @@ block.
 \subsection{Dimension table}\label{sec:lean-export-net-dims}
 
 Every dimension the export meets gets a \term{dimension index}: its position in \py!dims!.
-\py!dim(d)! takes the canonical expression \py!canon(d.to_sympy())!, returns its index from
+\py!dim(d)! is \py!dim_expr(d.to_sympy())!. \py!dim_expr(raw)! takes the canonical expression
+\py!canon(raw)!, returns its index from
 \py!dim_key! when present, and otherwise appends \py!sym.render(e, "ℕ", "ℕ")! to \py!dims! and
 \py!e! to \py!dim_exprs!, adds the free symbols of \py!e! to \py!sc.nats! and returns the new
 index. Indices are assigned in order of first use, so the first dimension met is index 0.
@@ -554,7 +601,13 @@ duration of the call and runs \py!_phase!.
 \py!phase_body(pv)! writes the phases of \py!pv! in turns as the body of a Lean
 \code!fun k!:
 \begin{enumerate}
-\item For each entry (index $i$, phase $\varphi$) of \py!pv.entries()! in ascending index order,
+\item If \py!phase_poly(pv)! gives a digit polynomial \textit{dp}, return
+  \code!(((!\textit{dp}\py!.lean()!\leanx! : ℤ) : ℝ) / !\textit{dp}\py!.den!\code!)!.
+\item If \py!_phase_table(pv)! gives a packed table (\textit{nums}, \textit{den}): with more than
+  \py!TABLE_CHUNK! numerators return
+  \code!(((!\py!table_get(nums)!\leanx! : ℤ) : ℝ) / !\textit{den}\code!)!, else
+  \code!(((([!$n_0$\code!, !$n_1$\leanx!, ...] : List ℤ).getD k 0 : ℤ) : ℝ) / !\textit{den}\code!)!.
+\item Otherwise, for each entry (index $i$, phase $\varphi$) of \py!pv.entries()! in ascending index order,
   render \leanx!table_expr(φ.to_sympy_turns())! as \leanx!ℝ!.
 \item Fold from the last entry: start with \code!0! and wrap
   \code!if k = !$i$\code! then !\textit{text}\code! else !\textit{body}.
@@ -564,11 +617,42 @@ duration of the call and runs \py!_phase!.
 \end{enumerate}
 \end{algorithm}
 
+\begin{definition}[Packed phase tables]\label{def:lean-export-net-packed}
+\py!_phase_table(pv)! returns \py!None! when \py!pv! has a rule. Otherwise it returns the cached
+value of \py!_PHASE_TABLES[pv]! (keyed by the phase vector's equality), or computes it: when
+\py!pv! has more than \py!PHASE_TABLE_MIN! entries and every entry in turns is rational $p_i/q_i$,
+the pair (\textit{nums}, \textit{den}) with $\textit{den} = \operatorname{lcm}_i q_i$ and
+\textit{nums} the list of length $1 + \max i$ with $p_i\cdot\textit{den}/q_i$ at index $i$ and 0
+at the indices without an entry; else \py!None!. The result (\py!None! included) is stored in
+the cache, which is cleared first when it holds \py!_PHASE_TABLES_MAX! entries. The table is the
+phase vector's entries as numerators over one denominator; the Lean body reads entry $k$ with
+default 0.
+
+\py!table_get(nums)! returns the Lean term of entry \code!k! of a long table. A new numerator
+tuple gets the name \code!PT!$j$ ($j$ the number of tables named so far) and appends to
+\py!table_defs! one declaration per chunk $c$ of \py!TABLE_CHUNK! entries,
+\code!/-- Chunk !$c$\code! of a phase table. -/ def PT!$j$\code!_!$c$\leanx! : List ℤ := [...]!,
+then \code!/-- A phase table in chunks of 256. -/ def PT!$j$\leanx! : List (List ℤ) := [PT!$j$\code!_0, ...]!.
+The term is \code!(PT!$j$\code!.getD (k / 256) []).getD (k % 256) 0!.
+
+\py!phase_poly(pv)! returns \py!None! unless \py!poly_phases! is set and \py!pv! has a concrete
+dimension; then it returns, cached in \py!poly_of!, \py!digit_poly(nums, den, dim)! of
+\module{archytaszx.semantics.digit_poly} for the packed table (\py!None! without one): a
+polynomial $F$ with integer coefficients in the mixed-radix digits of $k$ (most significant
+first, at most 4 digits, degree at most 3 per digit) with
+$\textit{nums}_k \equiv F(k) \pmod{\textit{den}}$ for every $k < \dim$. Its Lean text
+\py!dp.lean()! is \code!((!$\sum c\prod x_i^{e_i}$\code!) % !\textit{den}\code!)!, each digit
+written \code!((k / !$b$\code! % !$b_i$\leanx! : ℕ) : ℤ)! with $b$ the product of the lower bases
+(\code!k / b! for the first digit, \code!k % b_i! for the last).
+\end{definition}
+
 \py!_phase(pv)! computes the body and, for a weighted vector, its weight text
 \py!weights(pv)!; the key is the body, or \textit{body}\code!|!\textit{weights}. A new key gets
 the next index; the text \code!fun k => !\textit{body} goes to \py!phases!, the pair (entries in
 turns, rule in turns) to \py!phase_specs!, and the weight text to \py!weight_tab! under the new
-index.
+index. For an unweighted vector the new index also records its digit polynomial in
+\py!phase_polys! when it has one, else its packed table in \py!phase_tables! when it has one; the
+refutation exporters read both (\cref{ch:lean-export}).
 
 \begin{algorithm}[Weight vector]\label{alg:lean-export-net-weights}
 \py!weights(pv)! writes the coefficient vector of a weighted phase vector as the body of a Lean
@@ -700,10 +784,12 @@ outermost first, and the chain of their multiplicity indices.
   of the other (else \code!a wire between two node boxes!); the longer one's chain is the wire's
   chain and the shorter end, if its chain is shorter, gets as tail the rest of the chain. The
   label is \py!alloc(dim, chain)!; both ends carry it, and it joins the summed labels.
-\item For each node in ascending id order: the Lean kind from \py!_KINDS! (else
-  \code!generator !$g$\code! has no Lean kind!); its output labels then its input labels (a port
-  without a label raises \code!port !$r$\code! is neither wired nor on the boundary!); the
-  dimension and auxiliary index from \py!node_dims!; the kind and phase from \py!kind_ph!; the
+\item For each node in ascending id order: the Lean kind \py!zp_kind(node)! for a \code!Zp!
+  generator, else from \py!_KINDS! (else \code!generator !$g$\code! has no Lean kind!); its output
+  labels then its input labels (a port without a label raises
+  \code!port !$r$\code! is neither wired nor on the boundary!); for a \code!Zp! node the dimension
+  index is the modulus index of \py!zp_kind! and the phase index 0, for any other node the
+  dimension and auxiliary index from \py!node_dims! and the kind and phase from \py!kind_ph!; the
   node with its tailed legs moved last by \py!_bundle_node!; for a node in node boxes, the kind
   wrapped in \code!("Bun", m, ...)! for each multiplicity of its chain from innermost to
   outermost, after checking \py!_copyable! (else \code!a boxed !$k$\code! node!).
@@ -719,6 +805,25 @@ otherwise (\py!dim(resolve_dim(node))!, 0). When \py!resolve_dim! raises
 dimension indices must have one element; otherwise, unless the export sets \py!mixed_ok!, raise
 \code!node !$n$\code! has legs of different dimensions!; with \py!mixed_ok! the first leg's
 index is used and every other index is recorded in \py!mixed! paired with it.
+
+\subsubsection{Pair-phase nodes}\label{sec:lean-export-net-zp}
+
+A \code!Zp! node of the engine (a node with a pair phase, \cref{ch:algebra}) becomes a node of
+the Lean kind \lean!ZP!. \py!zp_kind(node)! returns the pair (\py!("ZP", dx, dy, c)!, $M$):
+\begin{enumerate}
+\item The legs are the outputs followed by the inputs. Fewer or more than two legs, or a phase
+  that is not a \py!PairPhase!, raise \code!a Zp node without two legs and a pair phase!.
+\item The coefficient is $c = \mathrm{cancel}(\varphi / (x\,y))$ with $\varphi$ the pair phase in
+  turns (\py!phase.pair.to_sympy_turns()!) and $x$, $y$ the two index symbols \py!INDEX!,
+  \py!INDEX2!. When $c$ still contains either symbol, or its numerator (after
+  \py!sympy.together!) is not a nonzero integer, raise
+  \code!a pair phase !$\varphi$\code! that is not c x y / M!.
+\item $dx$ and $dy$ are \py!dim! of the two legs' dimensions; the numerator is the integer $c$;
+  $M$ is \py!dim_expr! of the denominator.
+\end{enumerate}
+The node is written \code!⟨.ZP dx dy (c), outs, ins, M, 0⟩!; its tensor is $e(c\,x\,y/M)$ at the
+two leg values (\cref{def:lean-export-net-env}). A \lean!ZP! node is not copyable, so a
+\code!Zp! node inside a node box raises \code!a boxed !$k$\code! node! with $k$ the kind tuple.
 
 \begin{algorithm}[\py!_bundle_node(n, tails)!]\label{alg:lean-export-net-bundle-node}
 Given the tails (side and position to chain), move the bundled legs last in a fixed order:
@@ -750,15 +855,32 @@ Given the tails (side and position to chain), move the bundled legs last in a fi
 \item Name the network \code!N!$j$ with $j$ the number of cached networks; its source is $d$ when
   translated with default slots and without \bboxes{}. A boxed diagram translated with default
   slots is recorded in \py!boxed!.
-\item Emit \code!/-- !\textit{describe(d)}\code! -/! followed by
-  \code!def N!$j$\code! : Net := !\textit{net.lean()}.
+\item Emit the declarations of \py!_net_def(doc, N!$j$\py!, net)! with \textit{doc} the
+  \py!_comment! of \textit{describe(d)}.
 \end{enumerate}
 
+\py!_net_def(doc, name, net)! returns \code!/-- !\textit{doc}\code! -/! followed by
+\code!def !\textit{name}\code! : Net := !\textit{net.lean()} when none of the node, summed and
+boundary lists has more than \py!LIST_SPLIT! entries. Otherwise each list goes through
+\py!_split_list! under the names \textit{name}\code!n!, \textit{name}\code!s!,
+\textit{name}\code!b! (types \code!Node!, \code!ℕ!, \code!ℕ!), the chunk declarations come first
+(nodes, then summed, then boundary labels), and the network is
+\code!/-- !\textit{doc}\code! -/ def !\textit{name}\code! : Net := ⟨!\textit{nodes}\code!, !\textit{summed}\code!, !\textit{bnd}\code!⟩!,
+the node list written \code!([...] : List Node)! when it was not split.
+\py!_split_list(name, ty, items)! returns no declaration and the literal \code![...]! for at most
+\py!LIST_SPLIT! items; otherwise one declaration
+\code!/-- Chunk !$c$\code! of `!\textit{name}\code!`. -/ def !\textit{name}\code!_!$c$\code! : List !\textit{ty}\code! := [...]!
+per run of \py!LIST_CHUNK! items and the term
+\textit{name}\code!_0 ++ !\textit{name}\code!_1 ++ ...!.
+
 \py!structure_key(d)! is the tuple (nodes, wires, boxes, boundary inputs, boundary outputs) with
-nodes as (id, generator name, phase text, input dimension texts, output dimension texts) in id
-order, wires as their sorted sort keys, and boxes as (sorted node scope, sorted port-scope sort
-keys) in box id order. Diagrams of one structure share one network and name. Doc comments pass
-through \py!_comment!, which replaces \code!-/! by \code!- /! and \code!/-! by \code!/ -!.
+nodes as (id, generator name, phase, input dimension texts, output dimension texts) in id
+order, the phase compared as the engine's phase object (not its text), wires as their sorted
+sort keys, and boxes as (sorted node scope, sorted port-scope sort keys) in box id order.
+Diagrams of one structure share one network and name. Doc comments pass through
+\py!_comment!, which cuts a text longer than \py!DOC_MAX! characters to its first
+\py!DOC_MAX! characters followed by a space and the ellipsis character U+2026, then replaces \code!-/! by \code!- /! and
+\code!/-! by \code!/ -!.
 
 \section{Structure of the emitted file}\label{sec:lean-export-net-file}
 
@@ -813,7 +935,10 @@ scalar gap & \texttt{the diagrams\textquotesingle{} own scalars are not compared
 \code!macro "!\textit{name}\code!" : tactic => `(tactic| !\textit{body}\code!)!. The argument
 \textit{unfold} is \py!unfold! (\code!E! for a plain export, \py!_FAMILY_UNFOLD! for a family);
 \textit{pos\_first} is, for a family,
-\code!exact Fam.env_dimv_pos _ _ _ (Fpos !\textit{sp\_args sp\_hyp\_args}\code! _)!, else empty.
+\code!exact Fam.env_dimv_pos _ _ _ (!\textit{FPOS}\code! _)!, else empty, where \textit{FPOS} is
+\py!fpos_lemmas! when set and \py!fpos()! otherwise. \py!fpos()! is \code!Fpos! followed by
+\textit{sp\_args} and the words of \textit{sp\_hyp\_args} that begin with \code!h_! (the
+positivity hypotheses only; the number-field hypotheses are left out).
 With $U$ the unfold list:
 
 \begin{xltabular}{\linewidth}{@{}p{1.1cm}p{3.2cm}X@{}}
@@ -845,25 +970,33 @@ Let \textit{binders} be \code!(!$n$\code! : !$T$\code!)! for every registered pa
 \code!k_lean_index! and the multiplicity symbols, in registration order, and \textit{args} their
 names. The tables are:
 
+The list is built in this order and then extended:
 \begin{enumerate}
-\item When a number field exists, the four declarations of \py!field_tables()!
-  (\cref{sec:lean-export-net-field}), first.
+\item The chunk declarations \py!table_defs! of the long phase tables
+  (\cref{def:lean-export-net-packed}), in the order they were named.
 \item \leanx!/-- Dimension values. -/ def Δ binders : ℕ → ℕ! with one line
   \code!  | !$i$\code! => !\textit{dims[i]} per index and the default line \code!  | _ => 1!.
-\item For a family only, inserted after \leanx!Δ!: \leanx!/-- Every dimension value is positive. -/ theorem Δpos binders hyps : ∀ i, 0 < Δ args i!
-  proved by \leanx!intro i; unfold Δ; split <;> first | omega | positivity | (apply pow_pos; omega) | norm_num!,
-  where \textit{hyps} are \code!(h_!$n$\code! : 0 < !$n$\code!)! for the natural parameters not
-  named \code!table_*!.
 \item \leanx!/-- Phase vectors in turns. -/ noncomputable def Φ binders : ℕ → ℕ → ℝ! with one
   line per phase index and \code!  | _ => fun _ => 0!.
-\item When weights exist, inserted before \code!labs!: \leanx!/-- Weight vectors. -/ noncomputable def Ψ binders : ℕ → ℕ → ℂ!
-  with \code!  | !$i$\code! => fun k => !\textit{body} per weighted phase index (ascending) and
-  \code!  | _ => fun _ => 1!.
+\item The chunk declarations of \code!labs! (\py!_split_list!) when it
+  has more than \py!LIST_SPLIT! entries (name \code!labs!, type \code!(ℕ × ℕ)!).
 \item \code!/-- Each label's dimension index. -/ def labs : List (ℕ × ℕ) := [(l, i), ...]! sorted
-  by label.
+  by label (or the \code!++! of its chunks).
 \item \leanx!/-- The environment. -/ noncomputable def E binders : Env := { dimv := Δ args, phase := Φ args, labs := labs }!,
   with \leanx!, coef := Ψ args! before the closing brace when weights exist (double spaces
   collapsed to one).
+\item When weights exist, \leanx!/-- Weight vectors. -/ noncomputable def Ψ binders : ℕ → ℕ → ℂ!
+  with \code!  | !$i$\code! => fun k => !\textit{body} per weighted phase index (ascending) and
+  \code!  | _ => fun _ => 1! is inserted at position 2 of the list (after \leanx!Φ! when there
+  are no phase-table chunks).
+\item Let \textit{first} be the entry now at position 0 (\leanx!Δ! when there are no phase-table
+  chunks). When a number field exists, the four declarations of \py!field_tables()!
+  (\cref{sec:lean-export-net-field}) are put in front.
+\item For a family only, inserted directly after \textit{first}:
+  \leanx!/-- Every dimension value is positive. -/ theorem Δpos binders hyps : ∀ i, 0 < Δ args i!
+  proved by \leanx!intro i; unfold Δ; split <;> first | omega | positivity | (apply pow_pos; omega) | norm_num!,
+  where \textit{hyps} are \code!(h_!$n$\code! : 0 < !$n$\code!)! for the natural parameters not
+  named \code!table_*!.
 \item For a family: \code!/-- Each bundle dimension index with its base index and multiplicity. -/ def bundL : List (ℕ × ℕ × ℕ) := [(i, b, m), ...]!;
   \leanx!/-- The family, its multiplicities in order: ... -/ noncomputable def F binders : Fam := { dims := Δ args, bund := bundL, phase := Φ args, labs := labs }!
   (with the \lean!coef! field as above; the doc lists \textit{raw}\code! = !\textit{name} per
@@ -928,7 +1061,8 @@ def N1 : Net := ⟨([⟨.Z, [0, 1], [2], 0, 0⟩] : List Node), [], [0, 1, 2]⟩
 theorem step1 :
     Equal E 1 N0 1 N1 := by
   refine Equal.trans (isoB E 1 _ ⟨([⟨.Z, [0, 3], [2], 0, 0⟩, ⟨.Z, [1], [3], 0, 0⟩] : List Node), [3], [0, 1, 2]⟩ [] [0, 1] (by chk)) ?_
-  refine Equal.trans (rewrite E ([] : List Node) ([⟨.Z, [0, 3], [2], 0, 0⟩, ⟨.Z, [1], [3], 0, 0⟩] : List Node) ([⟨.Z, [0, 1], [2], 0, 0⟩] : List Node) [] [3] [] [0, 1, 2] [0, 2, 1] 1 1 1 (fusionZ E 0 0 0 0 3 [0, 3] [2] [1] [3] [0, 1] [2] [0, 2, 1] (by chk) (by chk) (by chk) (by chk) (by phs)) (by chk) (by chk) (by chk) (one_mul _).symm) ?_
+  have hR := rewrite E ([] : List Node) ([⟨.Z, [0, 3], [2], 0, 0⟩, ⟨.Z, [1], [3], 0, 0⟩] : List Node) ([⟨.Z, [0, 1], [2], 0, 0⟩] : List Node) [] [3] [] [0, 1, 2] [0, 2, 1] 1 1 1 (fusionZ E 0 0 0 0 3 [0, 3] [2] [1] [3] [0, 1] [2] [0, 2, 1] (by chk) (by chk) (by chk) (by chk) (by phs)) (by chk) (by chk) (by chk) (one_mul _).symm
+  refine Equal.trans hR ?_
   refine isoB E 1 _ N1 [] [0] ?_
   chk
 
@@ -1073,7 +1207,8 @@ Kind & Proof \\
 \texttt{iso} & \texttt{iso(lhs, rhs)} (\cref{sec:lean-export-net-iso}). \\
 \texttt{algebraic} & \texttt{algebraic(lhs, rhs)} (\cref{sec:lean-export-net-algebraic}). \\
 \texttt{rule} & \texttt{rule(t)} (\cref{sec:lean-export-net-rule}). \\
-\texttt{induction} & in a family export, \texttt{nested\_\allowbreak{}induction(t)}
+\texttt{induction} & in a family export, \texttt{linked\_\allowbreak{}induction(t)} when the index is in
+  \texttt{linked} (\cref{sec:lean-export-net-linked}), else \texttt{nested\_\allowbreak{}induction(t)}
   (\cref{sec:lean-export-net-nested}). \\
 \texttt{w\_\allowbreak{}fusion} & \texttt{w\_\allowbreak{}fuse(t)} (\cref{sec:lean-export-net-wfuse}). \\
 other & raise \texttt{a }\textit{kind}\texttt{ inference has no network proof}. \\
@@ -1237,17 +1372,21 @@ $k$:
 \begin{enumerate}
 \item \code!refine Equal.trans (isoB !\textit{env}\code! 1 _ ⟨C ++ L, iC ++ iL, bnd⟩ [] p (by chk)) ?_!:
   the start reordered so that the region comes last.
-\item \code!refine Equal.trans (rewrite !\textit{env}\code! C L R iC iL iR bnd iface 1 (K) (K) (LEMMA) (by chk) (by chk) (by chk) (one_mul _).symm) ?_!.
+\item \code!have hR := rewrite !\textit{env}\code! C L R iC iL iR bnd iface 1 (K) (K) (LEMMA) (by chk) (by chk) (by chk) (one_mul _).symm!
+  and \code!refine Equal.trans hR ?_! (\py!_stated!: the rewrite is stated by \lean!have!, its type
+  elaborated without the goal, then chained in front of the goal).
 \item While a node of the current network is a tower of copied bare wires (\py!_tower_ms! not
   \py!None!) with multiplicities $ms$, output $x$ and input $w$: reorder it last by
   \lean!isoB! at scalar $K$; then
-  \code!refine Equal.trans (rewrite !\textit{env}\code! REST [n] [⟨.I, [x], [w], bz, 0⟩] int [] [] bnd [x, w] (K) 1 (K) (bunI !\textit{env}\code! ms dim bz x w [x, w] (Fam.env_dimv_of _ _ _ _ _ rfl rfl ⟨rfl, rfl⟩) (by pos) (by chk) ×4) (by chk) ×3 (mul_one _).symm) ?_!
+  \code!have hR := rewrite !\textit{env}\code! REST [n] [⟨.I, [x], [w], bz, 0⟩] int [] [] bnd [x, w] (K) 1 (K) (bunI !\textit{env}\code! ms dim bz x w [x, w] (Fam.env_dimv_of _ _ _ _ _ rfl rfl ⟨rfl, rfl⟩) (by pos) (by chk) ×4) (by chk) ×3 (mul_one _).symm!
+  and \code!refine Equal.trans hR ?_!
   with \code!bz! the dimension index of $x$; the tower becomes one plain bare wire.
 \item While a node is a bare wire \code!I! with output $x$ and input $w$: if $w$ is not summed or
   $x = w$, raise \code!a bare wire joins two boundary slots!. Reorder by \lean!isoB! at scalar $K$
   into $\textit{pre} \mathbin{+\!\!+} [\text{wire}] \mathbin{+\!\!+} \textit{post}$ (the identity
   order), then
-  \code!refine Equal.trans (wire_elim !\textit{env}\code! (K) pre post int bnd x w dz (by chk) ×5) ?_!;
+  \code!have hR := wire_elim !\textit{env}\code! (K) pre post int bnd x w dz (by chk) ×5! and
+  \code!refine Equal.trans hR ?_!;
   rename $w$ to $x$ in the remaining nodes and erase $w$ from the summed labels.
 \item The final \lean!isoB! onto $b$: the renaming from \py!_match_labels(current, ids, b)!,
   which pairs the current nodes with $b$'s nodes by diagram id (a missing id, a changed arity, an
@@ -1320,7 +1459,8 @@ Converse rule & Forward rule \\
   variables; then compute the faithful networks of both sides (\cref{sec:lean-export-net-identified}).
 \item Collect every dimension, phase and scalar of the theorem (\py!collect!: both sides, the
   premises recursively, the diagrams \code!peeled!, \code!other_peeled!, \code!own_k!,
-  \code!other_k!, \code!replaced!, \code!exposed! of the inference data, and each step's scalar).
+  \code!other_k!, \code!replaced!, \code!exposed! of the inference data, and each step's scalar;
+  the premises of an induction whose index is in \py!linked! are not visited).
   Model the start's and goal's scalars ($s_S$, $s_G$), or record that one has no model.
 \item \py!set_params!: binders \code!(!$n$\code! : !$T$\code!)! of every parameter except
   \code!k_lean_index! and multiplicities; hypotheses \code!(h_!$n$\code! : 0 < !$n$\code!)! for
@@ -1330,7 +1470,8 @@ Converse rule & Forward rule \\
   names, add binders \code!(!$m$\code! : ℕ)! for the bare multiplicities, and set the environment
   to \py!env_text(ks_vals)!. When aliases exist in a family, set \py!wire_alias! and clear
   \textit{merged}. A merged export names the theorem \textit{name}\code!M!.
-\item Prove the theorem by \py!term!, obtaining the trees $l$, $r$.
+\item Prove the theorem by \py!term!, obtaining the trees $l$, $r$. When linked inductions are
+  pending, pass the proof through \py!link_tables! (\cref{sec:lean-export-net-linked}).
 \item With both scalars modeled, prove $s_S\cdot r = s_G\cdot l$ by \py!sc.prove! and emit
 \begin{lstlisting}[style=grammar]
 /-- The start and goal diagrams with their own scalars. -/
@@ -1402,7 +1543,7 @@ The Python mirror of \lean!DBridge.bridgeD!; it returns
 \item A port key is (node id, is output, position). Let \textit{bnd} be the boundary ports,
   \textit{wires} the wire port pairs in sort-key order, $n_b$, $n_w$ their counts, and the node
   ids those of \py!order! or ascending. Return \py!None! when $n_b > \textit{off}$, the ids are not
-  strictly increasing, the summed labels are not $\textit{off},\dots,\textit{off}+n_w-1$, the
+  distinct (any order is accepted), the summed labels are not $\textit{off},\dots,\textit{off}+n_w-1$, the
   boundary labels are not $0,\dots,n_b-1$, or the node counts differ.
 \item The ends are the boundary ports followed by both ends of every wire; they must be
   distinct.
@@ -1649,7 +1790,8 @@ theorem NAME BINDERS HYPS :
   | succ k ih => exact Equal.of_split_at FAM MI H k [.., k, ..] (by simp) Ns Ng
       (by decide : ...) (by decide : ...) BUNDPOS (PREscase ARGS HYP_ARGS k ih)
 \end{lstlisting}
-  with \code!BUNDPOS! $=$ \code!(fun _ _ _ => Fam.dimv_pos _ _ _ (Fpos !\textit{sp\_args sp\_hyp\_args}\code! _))!.
+  with \code!BUNDPOS! $=$ \code!(fun _ _ _ => Fam.dimv_pos _ _ _ (!\textit{FPOS}\code! _))!, \textit{FPOS}
+  $=$ \py!fpos()! (\cref{sec:lean-export-net-macros}).
   At top level (empty \textit{pre}), restate by \py!family_diagram_theorem! with the extra binder
   \code!(n : ℕ)!.
 \end{enumerate}
@@ -1664,6 +1806,134 @@ restores the state; and returns the proof
 \code!(ind!$c$\code! !\textit{sp\_args}\code! !\textit{other values}\code! !\textit{sp\_hyp\_args}\code! !\textit{current value}\code!)!
 whose scalars are the \py!_Named! leaves \code!(ind!$c$\code!_sS ...)! and \code!(ind!$c$\code!_sG ...)!
 with their models at the current values.
+
+\subsection{Linked inductions}\label{sec:lean-export-net-linked}
+
+The module \module{archytaszx.semantics.lean_famlink} proves an induction of a family export
+whose goal's node phases read the induction index $n$ (a phase vector with the free symbol $n$).
+The export writes such a phase through the phase parameter \code!table_!$n$
+(\cref{sec:lean-export-net-sym}); a linked induction proves the lemma
+\lean!theorem P : ∀ n : ℕ, Equal ((F n).env (ksOf [n])) s₀ X s₁ Y!
+with that parameter set to $n$ itself, by induction on $n$, inside a namespace of its own, over
+the export's tables and the normalizer's family lemmas (the section on symbolic-dimension
+exports of \cref{ch:lean-export}; \cref{ch:lean-sym}).
+
+\begin{signature}
+\py!linked_indices(theorem: object) -> set[str]!\\
+The index of every \code!induction! inference in \py!theorem! and its premises (depth first)
+whose left or right side has a node phase with a free symbol of that name.
+\end{signature}
+
+\paragraph{Use in the export.} \py!export! reruns with \py!linked! $=$
+\py!linked_indices(theorem)! when its first run fails (\cref{alg:lean-export-net-export}). In
+that run \py!collect! does not visit the premises of a linked induction, and \py!term! sends it
+to \py!linked_induction(t)!: with $mi$ the index's multiplicity index, it labels both sides at
+the current slots, takes the tag \code!Lnk!$c$ (\py!fresh!), appends (tag, $t$, start network,
+goal network) to \py!linked_pending!, and returns the proof
+\code!(Lnk!$c$\code!.P !$v$\code!)!, $v$ the current value \py!ks_vals[mi]!, whose scalars are
+the side scalars with the multiplicity expression replaced by its current symbol.
+\py!finish! then calls \py!link_tables(proof)!:
+\begin{enumerate}
+\item \py!linked_lemmas()! builds the block of each pending induction by
+  \py!Linked(self, start, goal, t.lhs, t.rhs, index, tag).build()!, appends it to the
+  declarations, and empties \py!linked_pending!.
+\item For each linked index $n$ (sorted) with a registered parameter \code!table_!$n$ and a
+  multiplicity index, map that parameter's Lean name to the multiplicity's Lean name.
+\item Keep \py!fpos()! as \py!fpos_lemmas!; drop the mapped parameters from \py!binders! and
+  \py!args! (the binder \code!(!$x$\code! : ℕ)! and every whole-word occurrence, then collapse
+  spaces); replace each whole-word occurrence by the multiplicity name in \py!sp_args!, \py!env!
+  and the proof term.
+\end{enumerate}
+The final theorem, \textit{name}\code!_diagrams! and every point claim of the family are then
+statements at $F\,n$ with the phase parameter equal to the index.
+
+\paragraph{The lemma.} \py!Linked! extends \py!lean_sym._SymExport! and reuses its tables,
+networks and family lemmas (\py!tables!, \py!texts!, \py!fam!, \py!scal_at!, \py!ratio!,
+\py!call!, \py!env_at!, \py!prelude!). Its constructor raises \py!NetUnsupported! with:
+\code!a linked induction beside other multiplicities! (the bare multiplicities of the export are
+not exactly the index); \code!the induction index reads no phase table! (no parameter
+\code!table_!$n$); \code!a linked induction whose start's phases read the index!;
+\code!the goal's phases do not read the index!; and
+\code!a linked induction with a common scalar or constraints! (the normalizer tables of the two
+side scalars give a common scalar or dimension constraints). For each goal node whose phase
+vector $\varphi$ reads $n$, with $p$ its phase index, it records the row maps
+$g_{\mathrm{step}}(p) = \mathrm{phase}(\varphi[n \mapsto n-1])$ and
+$g_{0}(p) = \mathrm{phase}(\varphi[n \mapsto 0])$.
+
+\begin{algorithm}[\py!Linked.build()!]\label{alg:lean-export-net-linked}
+Let $X$, $Y$ be the start and goal networks, $m$ the index's multiplicity index,
+$\textit{spc} = $ \code!(SpC !$m$\code!)! and $H = 2^{\max(16,\ \mathrm{bitlen}(\max \text{label}))}$.
+\begin{enumerate}
+\item A phase row read by $X$ whose entries mention $n$ raises
+  \code!the start reads a phase row of the index!. Every label of $X$ and $Y$ whose chain begins
+  with $m$ is declared at offset $H$ (\py!peel_reg!).
+\item $Y_0$ is $Y$ with the phase rows mapped by $g_0$ (\py!_map_ph!, mirror of
+  \lean!Net.mapPh (phMap g)!, binders and splitters untouched); the inverse map must be one to
+  one and carry $Y_0$ back to $Y$ (else
+  \code!the goal's phases at zero share a row with its other phases!), and likewise the zeroed
+  networks (\code!the zeroed goal does not read its rows back!). $Y_s$ is $Y$ mapped by
+  $g_{\mathrm{step}}$. Emit \code!def L!$i$\code!z! (the zero network of $Y_0$, its phases at the
+  index 0) and \code!def L!$i$\code!y! ($Y_s$, its phases at the index minus 1), $i$ the number
+  of family lemmas so far.
+\item The zero lemma: the normalizer's family lemma from \code!(Net.zero spc X)! to
+  \code!L!$i$\code!z! at the scalars at 0.
+\item The spider: exactly one \code!ZB! node $z$ of $X$ with an input label bundled along $m$
+  and summed (else \code!a linked node box meeting other than one Z spider!); no \code!Bun!
+  node along another multiplicity (\code!towers along two multiplicities!); $z$ has a boundary
+  output $o$ (\code!the spider meeting the node box has no boundary output!).
+\item Split $X$ and $Y$ at $H$. The split of $X$ must contain the nodes of $X$ other than $z$
+  (\code!the split network does not contain the network!) and exactly one \code!ZB! node $z_s$
+  with $z$'s outputs (\code!the split spider is not found!), whose inputs are $z$'s inputs
+  followed by extra legs and whose chains are $z$'s followed by empty chains (else
+  \code!the split spider's legs are not the unfused form!). With a fresh label $w$, $z_s$ unfuses
+  into $z_a$ ($z$ with output $o$ replaced by $w$) and $z_b$ $=$ \code!⟨.Z.., [o], [w, extra...], dim, 0⟩!.
+\item Emit \code!def L!$i$\code!s! (the split, its spider last), \code!def L!$i$\code!u! (the
+  spider unfused) and \code!def L!$i$\code!r! (the rest after the hypothesis); the renaming
+  $\pi$ maps $o \mapsto w$ and every summed label of $Y_s$ to a fresh label
+  (\py!_perm_to_bijection!).
+\item The step theorem
+\begin{lstlisting}[style=grammar]
+/-- The step at `n = k_ + 1`. -/
+theorem Q BINDERS (k_ : ℕ)
+    (ih : Equal ENVk SK0 X SK1 Y) :
+    Equal ENVk1 SK10 (Net.split SPC H X) SK11 (Net.split SPC H Y) :=
+  Equal.congr_s (Equal.mul_trans (Equal.mul_trans (Equal.mul_trans (Equal.mul_trans
+    (Equal.mul_trans ISO1 UNFUSE) ISO2) PLUG) ISO3) LT) (by ring) (by ring)
+\end{lstlisting}
+  where \code!ISO1! is \lean!isoB! from the split onto \code!L!$i$\code!s!, \code!UNFUSE! the
+  \code!plug! of the reversed \lean!fusionZG! instance, \code!ISO2! the reorder onto the plug form,
+  \code!PLUG! the \code!plug! of the hypothesis \code!ih! carried from $F\,k$ to $F\,(k+1)$ by
+  \lean!Equal.of_phRows! (the goal's rows read through $g_{\mathrm{step}}$, the dimension tables
+  equal by \lean!Fam.env_dimv_congr!) and renamed by $\pi$, \code!ISO3! the reorder onto
+  \code!L!$i$\code!r!, and \code!LT! the normalizer's family lemma from \code!L!$i$\code!r! to the
+  split goal at the phase parameter $k+1$, with the per-copy ratios of both scalars.
+\item The induction
+\begin{lstlisting}[style=grammar]
+/-- The induction, the family's phase parameter at the index. -/
+theorem P BINDERS : ∀ n : ℕ, Equal ENVn S0 X S1 Y := by
+  intro n
+  induction n with
+  | zero => exact Equal.of_zero_at FAM0 M H [..] (by simp) X Y OK0 OK1 (by decide +kernel) ZERO
+  | succ k_ ih => exact Equal.of_split_at FAM1 M H k_ [..] (by simp) X Y OK0 OK1
+      (fun _ _ _ => Fam.dimv_pos _ _ _ FPOS1) (Q k_ ih)
+\end{lstlisting}
+  with \code!ZERO! the zero lemma carried by \lean!Equal.of_phRows! through the inverse of $g_0$,
+  \code!OK0!, \code!OK1! the split checks of $X$ and $Y$, the binders without the phase
+  parameter, and \code!FPOS1! $=$ \code!(Fpos ARGS (by omega : 0 < d) ... _)! at $k+1$.
+\item Return \code!namespace Lnk!$c$, the normalizer prelude, its scalar tables, the network
+  declarations, the family lemmas (last made first), the two theorems and \code!end Lnk!$c$.
+\end{enumerate}
+\end{algorithm}
+
+\lean!Equal.of_phRows! (\file{ArchytasZX/PhaseMap.lean}, \cref{ch:lean-sym}) is written by
+\py!transfer(e0, e1, g, n, N, m, M, m1, hd)!:
+\code!Equal.of_phRows e0 e1 (phMap []) (phMap PAIRS) ROWS_N ROWS_M hd rfl rfl KEEP (fun _ _ => rfl) MOVED (fun _ _ => rfl) n m n m1 (by decide +kernel)×4!,
+\code!PAIRS! the sorted row map, \code!ROWS! the sorted phase rows of the networks' nodes other
+than binders and splitters (\py!_rows!), \code!KEEP! and \code!MOVED! the proofs that each row
+agrees (\py!_mem_cases!: \code!(by intro q hq; simp only [...] at hq; rcases hq with rfl | ... <;> T)!,
+\code!(fun q hq => by simp at hq)! for no row) with $T$ $=$ \code!rfl! for the kept rows and
+\py!_ROW_EQ! $=$ \leanx!first | rfl | (funext j; simp [Fam.env, F, Φ, phMap] <;> split_ifs <;> push_cast <;> ring)!
+for the moved rows.
 
 \subsection{Shifts and lifts}\label{sec:lean-export-net-shift}
 
@@ -1811,6 +2081,304 @@ fuel the box count), \lean!nodeBoxes!, \lean!portBoxes! (walk from the node's in
 near end's; for a boundary port, its port boxes' multiplicities), \lean!legChain!
 (node chain then tail), \lean!portDim!, \lean!bndData! (dimension and leg chain per boundary port)
 and \lean!keySig!. The key signature has one entry per boundary slot $i$ with port $q$: let $bs$ be the node boxes of $q$'s node, outermost first, $n_b = |bs|$ and $n_p$ the number of port boxes of $q$; for each box $b\in bs$ let $\mathit{mp}(b)$ be the least boundary slot on the same side as $i$ (both outputs or both inputs) whose port's node lies in $b$'s node scope, or 0 when none; let $\mathit{mps}$ be that list and $r$ the position of $i$ in it ($|\mathit{mps}|$ when absent). The entry is the pair $(\mathit{mps}[0{:}r],\ [r, r+1, \dots, n_b-1] \mathbin{+\!\!+} [n_b+n_p-1, \dots, n_b])$.
+
+\section{Family exports beside the network proof}\label{sec:lean-export-net-beside}
+
+Five modules write a family theorem for diagram pairs of fixed shapes without replaying a kernel
+proof step by step: \module{archytaszx.semantics.lean_chainnode},
+\module{archytaszx.semantics.lean_chainfam}, \module{archytaszx.semantics.lean_pairs} and
+\module{archytaszx.semantics.lean_copyphase} prove a pair of boxed diagrams equal at every copy
+count, and \module{archytaszx.semantics.lean_finite} joins the exports of finitely many instances.
+All but the first build on the normalizer's export \py!export_symbolic! (\cref{ch:lean-export},
+\cref{ch:lean-sym}) and read its emitted text back by regular expressions. Every one returns the
+complete Lean file as a string.
+
+\subsection{A chain box against a node box}\label{sec:lean-export-net-chainnode}
+
+\begin{signature}
+\py!export_chain_node(lhs: Diagram, rhs: Diagram, name: str = "main", var: Callable[[str], str] = lambda s: s) -> str | None!
+\end{signature}
+\noindent The pair must be exactly the following, else the result is \py!None!.
+\begin{itemize}
+\item \py!lhs! (\py!_is_start!): nodes $\{0, 1\}$, no wires, one box holding both nodes, no port
+  scope, no parent, the single link (output 0 of node 1, input 0 of node 1), boundary inputs
+  (node 1 in 0, node 0 in 0), boundary outputs (node 0 out 0, node 1 out 0), multiplicity a bare
+  symbol.
+\item \py!rhs! (\py!_is_goal!): nodes $\{0, 1\}$, no wires, one box holding node 1 only, no port
+  scope, parent or links, boundary inputs (node 0 in 0, node 1 in 0), boundary outputs (node 1
+  out 0, node 0 out 0), the same multiplicity symbol.
+\item Every node of both a phaseless Z($1\to1$) of one common leg dimension (\py!_plain_id!), a
+  symbol or a positive integer; both scalars 1.
+\end{itemize}
+The start is a chain box whose node 1 carries a wire from copy to copy; the goal is the node box
+over node 1 beside one identity on the carried wire. The file holds the fixed literals
+\code!D0! (the start with the carried wire's boundary ends behind the identities 2 and 3, kind
+\lean!.I!), \code!C0 : DChain! and \code!D1!, the theorems \code!D0_eq : D0 = ChainNode.DL!,
+\code!C0_eq : C0 = ChainNode.cL!, \code!D1_eq : D1 = ChainNode.DR! (each \code!by decide!), the
+environment \code!E! (every leg of dimension $d$, every phase zero; a parameter
+\code!(d : ℕ)! for a symbolic dimension) and
+\begin{lstlisting}[style=leannet]
+theorem main_diagrams :
+    ∀ (d : ℕ) (n : ℕ),
+      Equal (E d) 1 ((D0.expandChain C0 n).toNet (2 * n + 2)) 1 ((D1.expand (ksOf [n])).toNet (2 * n + 2)) := by
+  intro d n
+  rw [D0_eq, C0_eq, D1_eq]
+  exact ChainNode.cyclic_every (E d) (fun _ => rfl) (fun _ => rfl) n _ le_rfl
+\end{lstlisting}
+with the names from \py!var! (\py!kernel._var! in \py!export!). The theorem is named
+\textit{name}\code!_diagrams!; the header is the network header with the line
+\code!a chain box carrying one wire against a node box holding it once (ArchytasZX/ChainNode.lean, cyclic_every), for every !$n$.
+
+\subsection{Two closed chain boxes}\label{sec:lean-export-net-chainfam}
+
+\begin{signature}
+\py!export_chain_family(left: Diagram, right: Diagram, name: str = "main") -> str!
+\end{signature}
+\noindent proves two closed chain boxes equal at every copy count $k$ through \lean!chain_pair!
+(\file{ArchytasZX/ChainPair.lean}, \file{ChainBridge.lean}; \cref{ch:lean-boxes}). Every
+refusal raises \py!PathSumUnsupported!.
+
+\paragraph{Sides.} \py!_chain_side(d)! requires one box with links that is a plain linked node
+box (not cyclic, no port scope, index, parent, copy scalar, pair, tree, feed or alignment;
+\code!the chain box is not a plain linked node box!; \code!not one chain box!), every leg of one
+dimension (\code!the legs differ in dimension!) and only phaseless \code!Z!, \code!X!, \code!F!
+nodes (\code!generator !$g$, \code!a phased node!). It lists the nodes (id, kind, outputs,
+inputs) by id and the wires by sort key, puts a fresh phaseless Z($1\to1$) (ids from one above
+the largest) behind every boundary port that is a link end, and records the box's nodes, the
+links, the dimension, the multiplicity and the scalar.
+
+\paragraph{Labels.} \py!_ChainLabels(s, W)! mirrors Lean's \lean!chLab0!, \lean!chLabT! at the
+width $W$: with \textit{bnd} the outputs then inputs, the base wires (off every link) split into
+inside wires $w_{\mathrm{in}}$ (both ends in the box; a crossing wire raises
+\code!a wire crosses the chain box off its links!) and outside wires $w_{\mathrm{out}}$; each link
+port's partner is the other end of its wire (\code!a link port without a wire!); the head nodes
+are the partners of the links' first ports. A port's outside label is its boundary position, else
+$|\textit{bnd}| + i$ on outside wire $i$, else $W + t$ when it is the partner of either port of
+link $t$, else 0; its inside label is $W + |\text{links}| + i$ on inside wire $i$, $W + t$ for the
+second port of link $t$, $2W + t$ for its first port, else 0. \py!nets()! gives \lean!chTl!
+(nodes off the box and off the heads, summed labels the outside wires), \lean!chCp! (the box's
+nodes at inside labels, summed the inside wires) and \lean!chHdN! (the heads, their boundary
+labels below $|\textit{bnd}|$). \py!check()! mirrors \lean!ChainFamOK! and raises
+\code!the boundary meets the chain box!, \code!a link does not run from a head node to a tail node!,
+\code!a wire's ends read different labels! or \code!a leg off every wire, link and slot!.
+
+\begin{algorithm}[\py!export_chain_family!]\label{alg:lean-export-net-chainfam}
+\begin{enumerate}
+\item Both sides by \py!_chain_side!; equal multiplicities and link counts
+  (\code!the two chain boxes differ in count or links!), equal boundary sizes and dimensions
+  (\code!the two sides differ in boundary!).
+\item $W = 1 + \max$ of both sides' label counts (\py!sizes()!); check both sides; $m$ the
+  boundary size, $u = [W, \dots, W + |\text{links}| - 1]$.
+\item \py!_per_copy(s, k)!: solve the multiplicity $= k$ for its single symbol (else
+  \code!the box multiplicity has no single symbol!; several solutions:
+  \code!the box multiplicity is not linear!), read the scalar at $k$, and return its value at
+  $k = 0$ and the ratio $s(k+1)/s(k)$, which must not depend on $k$
+  (\code!the scalar does not grow by a fixed ratio per copy!).
+\item \py!_fam_pieces! builds Lean's \lean!blkNet W u cp hd 1! (one copy with its shifted head),
+  \lean!headNet u hd! and \lean!famNet W u tl cp hd (range m) 0! (the side at 0 copies) on the
+  Python side. The three normalizer pieces are \code!PA! (left block at its ratio against the left
+  head at 1), \code!PB! (the same on the right) and \code!P0! (both sides at 0 copies at their
+  scalars at 0). Each piece's networks become engine diagrams (\py!_net_diagram!: summed labels
+  as wires, boundary labels as boundary legs, outputs first; a label off two (one) legs raises
+  \code!a summed label not on two legs! (\code!a boundary label not on one leg!)) and go to
+  \py!export_symbolic!; a \py!NetUnsupported! becomes
+  \code!the normaliser does not prove !\textit{tag}\code!: !\textit{reason}.
+\item From each piece's source: the theorem \code!main! statement (else
+  \code!!\textit{tag}\code!: a normaliser theorem this reader does not parse!); the dimension
+  table must start \code!| 0 => d! (\code!!\textit{tag}\code!: the dimension table does not start at d!);
+  the label maps from its networks \code!N0! and \code!N1! (or \code!N0!) onto the Python nets,
+  node by node in order (\py!_piece_map!: equal kinds and arities, dimension and phase index 0, one
+  to one), written as relabel lists \code!π!\textit{tag}\code!0!, \code!π!\textit{tag}\code!1!.
+  All three must take the same hypotheses (\code!the normaliser pieces take different hypotheses!).
+\item Emit the header comment \code!# A closed chain family!, the namespace with options
+  \code!maxRecDepth 100000! and \code!maxHeartbeats 2000000!, each piece's source as namespace
+  \textit{tag} (\py!_piece_source!: import, header and diagram restatement dropped, macros kept for
+  the first piece only), the literals \code!DA!, \code!cA!, \code!DB!, \code!cB!,
+  \code!def W : ℕ!, the environment \code!Ec d! (dimension $d$, phases zero, no labels),
+  \code!hDc!, \code!okA!/\code!okB : ChainFamOK! (15 \code!decide +kernel! proofs),
+  \code!fA!/\code!fB : famOK ... = true!, the moved pieces \code!sA!, \code!sB!, \code!s0!
+  (each \code!(tag.main args).env0 (E' := Ec d)!, then \lean!Equal.mapL2! with the relabelings
+  and \lean!ren_injective!, then \lean!reorderL!/\lean!reorder! onto the Lean pieces), and
+\begin{lstlisting}[style=grammar]
+theorem family HYPS (k : ℕ) :
+    Equal (Ec d) (A0 * (RA) ^ k) ((DA.expandChain cA k).toNet M)
+      (B0 * (RB) ^ k) ((DB.expandChain cB k).toNet M) :=
+  chain_pair okA okB (by decide) (by decide) (Ec d) (hDc d) M (by decide) fA fB
+    (sA ARGS) (sB ARGS) (s0 ARGS) k
+theorem NAME HYPS (n : ℕ) : ...at the multiplicity... := family ARGS MULT
+\end{lstlisting}
+  with the multiplicity as a Lean natural in its symbol (\py!_mult_nat!).
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Pair boxes over their node boxes}\label{sec:lean-export-net-pairs}
+
+\begin{signature}
+\py!has_pairs(left: Diagram, right: Diagram) -> bool! --- either side has a pair box.\\
+\py!export_pair_family(left: Diagram, right: Diagram, name: str = "main") -> str!
+\end{signature}
+\noindent proves two sides equal at every count of their node boxes through \lean!pair_family!
+(\file{ArchytasZX/PairBox.lean}, \file{PairFam.lean}). Refusals raise \py!PathSumUnsupported!.
+\py!_pair_side(d)! requires exactly two boxes, one a pair box over the other
+(\code!not one node box with one pair box!, \code!the pair box is not over the node box!); a
+plain node box (no links, groups, cyclic, port scope, parent, tree, feed, alignment) and a pair
+box without port scope, links or tree
+(\code!the boxes are not a plain node box and its pair box!); the pair box one node between one
+left and one right port (\code!the pair box is not one node between two ports!), that node an
+\code!F! (\code!the pair node is not a Fourier box!) whose input is wired to the left port and
+output to the right port; no boundary inputs; one leg dimension; phaseless Z, X, F nodes; and the
+node box holding every other node (\code!the node box does not hold every node!). It keeps the
+node box's and the pair box's copy scalars (1 when absent).
+
+\py!_Template! mirrors \lean!D.label m!, \lean!tmpl! (each node without its pair legs, wire $i$ at
+$m+i$, the $m$ boundary slots) and \lean!PairOK! (\py!check!: the pair ports are the last legs of
+their sides, off every wire and slot; every other leg on exactly one wire or slot).
+\py!pin(q)! finds by breadth-first search over Z spiders sharing labels a chain from the node of
+pair port $q$ to a boundary slot, returning the certificate $[(i, x), \dots]$ and the slot
+(\code!a pair port off a Z spider!, \code!a pair port not tied to a slot by Z spiders!).
+
+\begin{algorithm}[\py!export_pair_family!]\label{alg:lean-export-net-pairs}
+\begin{enumerate}
+\item Equal multiplicities and boundary sizes, equal dimensions; both templates checked; the
+  pins of both pair ports must reach the same slots on both sides
+  (\code!the pair legs are pinned to different slots!).
+\item \py!_per_copy! as for chains, the ratio multiplied by the node box's copy scalar; both
+  scalars at 0 copies must be 1 (\code!a scalar other than 1 at 0 copies!); equal pair copy
+  scalars (\code!the pair copy scalars differ!).
+\item The two templates at their per-copy ratios go to \py!export_symbolic! (as
+  \code!PT!) and are moved onto \lean!tmpl! as above; the dimension must be one symbol $d$. The
+  pair copy scalar $q = d^{r}$ ($r$ an integer or half integer, else
+  \code!a pair copy scalar other than a power of the dimension!) is written
+  \code!(((d : ℕ) : ℂ) ^ p)!, \code!((rt d) ^ p)!, or with \leanx!⁻¹! for $p<0$ (\py!_pair_text!).
+\item Emit \code!PA!, \code!PB : PDiagram! with \code!pA!, \code!pB : DPair!
+  \code!⟨1, 0, left, right, ⟨fid, .F, 0, 0, [0], [0]⟩⟩!, \code!bA!, \code!bB : DBox!, \code!Ec!,
+  \code!okA!, \code!okB : PairOK!, \code!sT! (the templates on \code!Ec!), and
+  \code!family : ... Equal (Ec d) (1 * (A) ^ k * Q ^ (k * (k - 1) / 2)) ((PA.expandP k).toNet (k * m)) ...!
+  by \lean!Diagram.pair_family! with the four pin certificates checked by
+  \code!pinOK ... = true! (\code!decide +kernel!), then \textit{name} at the multiplicity.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Copy-index phases}\label{sec:lean-export-net-copyphase}
+
+\begin{signature}
+\py!gadget(d: Diagram) -> Gadget!\\
+\py!export_copy_phase(left: Diagram, right: Diagram, describe=None) -> str!
+\end{signature}
+\noindent \py!gadget! requires one box, indexed, with no parent, links, cyclic flag, pair, copy
+scalar, port scope, tree or alignment (\code!copy-index phases need one bang box!,
+\code!copy-index phases need a plain indexed node box!); no leg dimension reading the index
+(\code!a leg dimension reads the box index!); exactly one node $x$ whose phase reads it
+(\code!copy-index phases need exactly one node reading the index!), a Z or X spider in the box,
+whose phase is a rule without entries equal to $s\,j\,k/d$ ($j$ the box index, $k$ the phase
+index variable, $s = 1$ for Z and $-1$ for X) over legs of one dimension symbol $d$
+(\code!the index phase is not a rule!, \code!the index phase's legs are not of one dimension symbol!,
+\code!the index phase is not s j k / d!). The gadget diagram replaces $x$ by a phaseless copy
+with one more input: for Z it is wired from a new Fourier box in the box whose input becomes the
+new last boundary input $K$; for X the new input is $K$ itself. The box loses its index.
+\py!Gadget! holds (diagram, new node, kind, sign, Fourier box or \py!None!). All refusals raise
+\py!NetUnsupported!.
+
+\begin{algorithm}[\py!export_copy_phase!]\label{alg:lean-export-net-copyphase}
+\begin{enumerate}
+\item \begin{sloppypar}Both gadgets; \py!export_symbolic(ga, gb, "main", describe)! (with $K$ open). Its
+  \code!main_diagrams! theorem (the \lean!DEqual_expandK_of_checks! form of
+  \cref{alg:lean-export-net-family-diagrams}) and the binders of \leanx!Φ! are read back; else
+  \texttt{the gadget pair's export has no family theorem on its diagrams} or
+  \texttt{the gadget pair's family theorem does not read as written}. The dimension symbol must be a
+  parameter (\code!the index phase's dimension is not a family parameter!).\end{sloppypar}
+\item The boxed literals \code!D0!, \code!D1! are parsed and undone (\py!_undo!): the Fourier box
+  and its wire removed, $x$ without its last input and with phase index $P = 1 + $ the largest
+  phase index (left) or $P+1$ (right), the literal wrapped as an \lean!LDiagram! with
+  \code!cph := [(x, box, 0, 0)]!. The phaseless indices of the two sides must agree
+  (\code!the gadget pair's phaseless indices differ!); a misplaced $K$ raises
+  \code!the gadget's Fourier box is not read as written! or
+  \code!the gadget's boundary input is not read as written!.
+\item Appended to the normalizer file before its \code!end!: the table
+\begin{lstlisting}[style=leannet]
+noncomputable def Ψ PARAMS (p : ℕ) : ℕ → ℝ :=
+  if p < P then Φ ARGS p else fun k =>
+    (if (Nat.unpair p).1 = P then (s0 : ℝ) else (s1 : ℝ)) *
+      (((Nat.unpair p).2 : ℝ) * k / d)
+\end{lstlisting}
+  the theorem \code!dimx!, the linked diagrams \code!L0!, \code!L1!, the nodes \code!X0!,
+  \code!X1!, \code!G0!, \code!G1 : LDiagram.Gad ...!, \code!W0!, \code!W1 : WF ...!,
+  \code!CPh0/1! (rows below $P$ read as the family's), \code!CPx0/1! (row
+  \lean!Nat.pair X.ph u! at $k$ is $s\,u\,k/d$), \code!CPz!, \code!CPb!, \code!CPs!, and
+  \code!main_diagrams_original!: for every boundary assignment $\sigma$ in range on the copy
+  indices, $s_0\cdot$\lean!L0.evalL! $= s_1\cdot$\lean!L1.evalL! in the environment with phase
+  \leanx!Ψ!, by \lean!LDiagram.evalL_eq_of_gad!. Copy $t$ of $x$ reads row \lean!Nat.pair P t!;
+  the file holds no copy count.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Finite case splits}\label{sec:lean-export-net-finite}
+
+\begin{signature}
+\py!class FiniteUnsupported(ValueError)!\\
+\py!nest(source, tag) -> tuple[str, list[str], str, str, str]!\\
+\py!combine(instances, integral, text, var, shared) -> str!
+\end{signature}
+\noindent \py!kernel.finite_symbolic! (\cref{ch:kernel}) passes \py!combine! one export per value
+combination of a restriction's finite clauses. \py!nest(source, tag)! drops the imports, renames
+every top-level namespace $N$ other than \code!ArchytasZX! (and not nested in another) to
+$N$\code!.!\textit{tag} in all its qualified references, turns \code!namespace ArchytasZX! /
+\code!end ArchytasZX! into the tagged form, makes every \code!macro "! line \code!local!, and
+returns the body, the imports, the namespace and name of the last top-level theorem, and its
+proposition \code!∀ BINDERS, TYPE! (\py!_statement!: the text up to the first \code!:=! at bracket
+depth 0, split at the first depth-0 colon). No theorem raises
+\code!an instance export states no theorem!.
+
+\begin{algorithm}[\py!combine!]\label{alg:lean-export-net-finite}
+\begin{enumerate}
+\item No instance raises \code!no instance!. Nest instance $k$ (from 1) with tag \code!I!$k$; a
+  final theorem outside a namespace raises
+  \code!an instance's final theorem is outside a namespace!. Imports are merged in order.
+\item The case split applies when \py!shared! (every instance a family corollary), there is one
+  finite symbol, it is integral (natural values of a multiplicity or dimension clause), the
+  values are distinct, and the propositions agree once each instance's \code!(v : ℕ)! is written
+  as the symbol's Lean name \textit{v} (\py!_uniform!). Then
+\begin{lstlisting}[style=grammar]
+theorem main_finite : ∀ v : ℕ, lo ≤ v → v ≤ hi → PROP := by
+  intro v h_lo h_hi
+  have h : v = a ∨ v = b ∨ ... := by omega
+  rcases h with rfl | rfl | ...
+  · exact NS1.NAME1
+  ...
+\end{lstlisting}
+  for consecutive values (else the hypothesis is \code!v = a ∨ ... → ! and \code!intro v h!).
+\item Otherwise each instance's namespace gains \code!def finite_claim : Prop! (its proposition)
+  and \code!theorem finite_holds!, and \code!main_finite : NS1.finite_claim ∧ ...! is the
+  anonymous constructor of the \code!finite_holds!.
+\item \code!main_finite! is placed in the first instance's namespace with its \code!open! lines;
+  the file starts with the comment
+  \code!ArchytasZX proof export: restricted to !\textit{text}\code!, decided instance by instance; ...!
+  naming \code!the case split over its values! or \code!the conjunction of the instance claims!.
+\end{enumerate}
+\end{algorithm}
+
+\subsection{Callers in \texttt{certify\_decision}}\label{sec:lean-export-net-certify}
+
+\module{archytaszx.semantics.certify_decision} (\cref{ch:proofs}) reaches these exporters as
+follows.
+\begin{itemize}
+\item \py!decision_proof! sends a restricted decision with \py!instances! to
+  \py!finite_proof!, which calls \py!restricted_proof! per instance (a \py!RecursionError!
+  counts as a missing proof) and returns \py!kernel.FiniteProof(proofs, restriction, left, right)!,
+  or \py!None! with \code!instances without a proof: !$a$\code! = !$v$\code! (!\textit{why}\code!); ...!.
+\item \py!restricted_proof!, for a family decision without other evidence, tries in order:
+  \py!export_chain_family! when the decision has a doubled pair (failure noted
+  \code!chain family: ...; !), \py!export_pair_family! when \py!has_pairs! (\code!pair family: ...; !),
+  \py!export_copy_phase! without a doubled pair (\code!copy-index phases: ...; !), each wrapped as
+  \py!kernel.Symbolic!; then \py!pair_proof! with \py!concrete_kernel! true unless the pair is
+  doubled and not a family.
+\item \py!pair_proof(..., concrete_kernel=True)! tries the kernel's \py!from_decision! first for
+  any non-contraction verdict and, with \py!concrete_kernel!, for a symbolic-contraction verdict on
+  a concrete pair (\py!_concrete_pair!: no parameter and no free symbol in either diagram).
+\item \py!path_sum_proof! tries, in order, \py!export_net!, \py!export_qudit_net!,
+  \texttt{export\_\allowbreak{}qudit\_\allowbreak{}digits\_\allowbreak{}net} and \py!export_mixed_net! (\cref{ch:lean-export}), and joins the four
+  reasons when all fail.
+\end{itemize}
 
 \section{Rule translators}\label{sec:lean-export-net-rules}
 
@@ -2118,9 +2686,11 @@ bare wire from label 1 (the old boundary output) to label 3 (the wire). The step
 theorem step1 :
     Equal E 1 N0 1 N1 := by
   refine Equal.trans (isoB E 1 _ ⟨([⟨.Z, [0, 3], [2], 0, 0⟩, ⟨.Z, [1], [3], 0, 0⟩] : List Node), [3], [0, 1, 2]⟩ [] [0, 1] (by chk)) ?_
-  refine Equal.trans (rewrite E ([⟨.Z, [0, 3], [2], 0, 0⟩] : List Node) ([⟨.Z, [1], [3], 0, 0⟩] : List Node) ([⟨.I, [1], [3], 0, 0⟩] : List Node) [3] [] [] [0, 1, 2] [1, 3] 1 1 1 (identityZ E 0 0 1 3 3 1 [1, 3] (by chk) (by phz)) (by chk) (by chk) (by chk) (one_mul _).symm) ?_
+  have hR := rewrite E ([⟨.Z, [0, 3], [2], 0, 0⟩] : List Node) ([⟨.Z, [1], [3], 0, 0⟩] : List Node) ([⟨.I, [1], [3], 0, 0⟩] : List Node) [3] [] [] [0, 1, 2] [1, 3] 1 1 1 (identityZ E 0 0 1 3 3 1 [1, 3] (by chk) (by phz)) (by chk) (by chk) (by chk) (one_mul _).symm
+  refine Equal.trans hR ?_
   refine Equal.trans (isoB E 1 _ ⟨([⟨.Z, [0, 3], [2], 0, 0⟩, ⟨.I, [1], [3], 0, 0⟩] : List Node), [3], [0, 1, 2]⟩ [] [0, 1] (by chk)) ?_
-  refine Equal.trans (wire_elim E 1 ([⟨.Z, [0, 3], [2], 0, 0⟩] : List Node) ([] : List Node) [3] [0, 1, 2] 1 3 0 (by chk) (by chk) (by chk) (by chk) (by chk)) ?_
+  have hR := wire_elim E 1 ([⟨.Z, [0, 3], [2], 0, 0⟩] : List Node) ([] : List Node) [3] [0, 1, 2] 1 3 0 (by chk) (by chk) (by chk) (by chk) (by chk)
+  refine Equal.trans hR ?_
   refine isoB E 1 _ N1 [] [0] ?_
   chk
 \end{lstlisting}
@@ -2195,6 +2765,13 @@ controls on the size and cost of the Lean check are:
   \lean!isoB! permutation and every split network is known to pass;
 \item the label offsets $H\cdot2^t$ and $10^6$, which keep peeled and identified indices apart
   from ordinary ones.
+\item phase vectors of more than \py!PHASE_TABLE_MIN! rational entries written as one packed
+  numerator table over a common denominator, chunked into named definitions of
+  \py!TABLE_CHUNK! entries past that size (\cref{def:lean-export-net-packed});
+\item node, label and \code!labs! lists of more than \py!LIST_SPLIT! entries written as chunk
+  definitions of \py!LIST_CHUNK! entries joined by \code!++!, and doc comments cut at
+  \py!DOC_MAX! characters (\cref{sec:lean-export-net-labelled});
+\item each region rewrite stated by \lean!have! before it is chained (\py!_stated!).
 \end{itemize}
 
 \section{Failures}\label{sec:lean-export-net-failures}
@@ -2242,6 +2819,9 @@ messages of \texttt{ScalarUnsupported} & A scalar without a Lean form. \\
   \texttt{the diagrams\textquotesingle{} scalars are not compared} & \Cref{sec:lean-export-net-identified}. \\
 the messages of \cref{sec:lean-export-net-original} & The original-diagram restatement. \\
 \texttt{Lean (lake) is not installed} & \texttt{check} without \texttt{lake}. \\
+\texttt{a Zp node without two legs and a pair phase}, \texttt{a pair phase ... that is not c x y / M} &
+  \Cref{sec:lean-export-net-zp}. \\
+the messages of \cref{sec:lean-export-net-linked} & A linked induction (raised in the rerun). \\
 \bottomrule
 \end{xltabular}
 
