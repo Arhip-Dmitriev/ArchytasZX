@@ -109,11 +109,12 @@ def engR (n : ℕ) : Net where
   int := (range (2 * n + 2)).map (rb n + ·)
   bnd := range (2 * n)
 
+/-- The exponent of `d` in the dimension of the spec's label `rb n + k`. -/
+def edim (n k : ℕ) : ℕ :=
+  if k = 0 ∨ k = 3 then 0 else if k ≤ 2 then n else if k < n + 3 then k - 3 else k - n - 2
+
 /-- The spec's label dimensions. -/
-def engLabs (n : ℕ) : List (ℕ × ℕ) :=
-  [(rb n, n), (rb n + 1, n - 1), (rb n + 2, n - 1), (rb n + 3, n)] ++
-    (range (n - 1)).map (fun t => (rb n + 4 + t, t)) ++
-    (range (n - 1)).map (fun t => (rb n + n + 3 + t, t))
+def engLabs (n : ℕ) : List (ℕ × ℕ) := (range (2 * n + 2)).map fun k => (rb n + k, dI n (edim n k))
 
 /-- The engine's dimensions. -/
 def engD (d n i : ℕ) : ℕ := if i < n then d ^ (i + 1) else 1
@@ -126,6 +127,252 @@ noncomputable def engP (d n p k : ℕ) : ℝ :=
 
 /-- The engine's environment at `n`. -/
 noncomputable def engE (d n : ℕ) : Env := { dimv := engD d n, phase := engP d n, labs := engLabs n }
+
+/-! ## The spec in closed form -/
+
+theorem engD_dI (d : ℕ) {n t : ℕ} (h : t ≤ n) : engD d n (dI n t) = d ^ t := by
+  unfold engD dI
+  split_ifs with h0 h1 h1
+  · omega
+  · subst h0; rfl
+  · congr 1; omega
+  · omega
+
+theorem edim_le {n k : ℕ} (hk : k < 2 * n + 2) : edim n k ≤ n := by
+  unfold edim; split_ifs <;> omega
+
+theorem lookup_shift (g : ℕ → ℕ) (N k b : ℕ) (hk : k < N) :
+    ((range N).map fun j => (b + j, g j)).lookup (b + k) = some (g k) := by
+  refine Fca.lookup_of_mem _ ?_ (mem_map.2 ⟨k, mem_range.2 hk, rfl⟩)
+  rw [map_map]
+  exact (nodup_range).map fun x y h => by simpa using h
+
+theorem labDim_eng (d : ℕ) {n k : ℕ} (hk : k < 2 * n + 2) :
+    labDim (engE d n) (rb n + k) = d ^ edim n k := by
+  unfold labDim
+  rw [show (engE d n).labs = engLabs n from rfl, engLabs,
+    lookup_shift (fun k => dI n (edim n k)) _ _ _ hk]
+  exact engD_dI d (edim_le hk)
+
+/-- The value of the first `t` digits from label `c`, the first most significant. -/
+def etv (d : ℕ) (σ : ℕ → ℕ) (c : ℕ) : ℕ → ℕ
+  | 0 => 0
+  | t + 1 => etv d σ c t * d + σ (c + t)
+
+theorem etv_lt {d : ℕ} {σ : ℕ → ℕ} {c n : ℕ} (h : ∀ t < n, σ (c + t) < d) :
+    ∀ t ≤ n, etv d σ c t < d ^ t
+  | 0, _ => by simp [etv]
+  | t + 1, ht => by
+    have ih := etv_lt h t (by omega)
+    have hdig := h t (by omega)
+    simp only [etv, pow_succ]
+    nlinarith
+
+/-- The pinned value of the spec's label `rb n + k`. -/
+def pv (d : ℕ) (σ : ℕ → ℕ) (n k : ℕ) : ℕ :=
+  if k = 0 ∨ k = 3 then 0 else if k = 1 then etv d σ n n else if k = 2 then etv d σ 0 n
+  else if k < n + 3 then etv d σ n (k - 3) else etv d σ 0 (k - n - 2)
+
+/-- `σ` with the spec's summed labels at their pinned values. -/
+def tauE (d : ℕ) (σ : ℕ → ℕ) (n x : ℕ) : ℕ :=
+  if rb n ≤ x ∧ x < rb n + (2 * n + 2) then pv d σ n (x - rb n) else σ x
+
+theorem mem_engR_int {n x : ℕ} : x ∈ (engR n).int ↔ rb n ≤ x ∧ x < rb n + (2 * n + 2) := by
+  simp only [engR, mem_map, mem_range]
+  constructor
+  · rintro ⟨k, hk, rfl⟩; omega
+  · intro h; exact ⟨x - rb n, by omega, by omega⟩
+
+theorem engR_int_nodup (n : ℕ) : (engR n).int.Nodup :=
+  (nodup_range).map fun x y h => by simpa using h
+
+theorem tauE_rb (d : ℕ) (σ : ℕ → ℕ) (n : ℕ) : tauE d σ n (rb n) = 0 := by
+  simp [tauE, pv]
+
+theorem tauE_bin (d : ℕ) (σ : ℕ → ℕ) {n t : ℕ} (ht : t < n) :
+    tauE d σ n (bin n t) = etv d σ n t := by
+  unfold tauE bin pv
+  split_ifs <;> first | omega | (subst_vars; rfl) | (congr 1; omega)
+
+theorem tauE_bout (d : ℕ) (σ : ℕ → ℕ) {n t : ℕ} (ht : t < n) :
+    tauE d σ n (bout n t) = etv d σ n (t + 1) := by
+  unfold tauE bout pv
+  split_ifs <;> first | omega | (congr 1; omega)
+
+theorem tauE_sv (d : ℕ) (σ : ℕ → ℕ) {n t : ℕ} (hn : 0 < n) (ht : t ≤ n) :
+    tauE d σ n (sv n t) = etv d σ 0 t := by
+  unfold tauE sv pv
+  split_ifs <;> first | omega | (subst_vars; rfl) | (congr 1; omega)
+
+theorem pv_lt {d : ℕ} {σ : ℕ → ℕ} {n k : ℕ} (hk : k < 2 * n + 2)
+    (ha : ∀ t < n, σ (n + t) < d) (hb : ∀ t < n, σ (0 + t) < d) :
+    pv d σ n k < d ^ edim n k := by
+  unfold pv edim
+  split_ifs <;> first
+    | simp
+    | exact etv_lt ha _ (by omega)
+    | exact etv_lt hb _ (by omega)
+    | omega
+
+theorem mem_engR {n : ℕ} {x : Node} :
+    x ∈ (engR n).nodes ↔ x = hN n ∨ x ∈ bN n ∨ x = xN n ∨ x ∈ sN n ∨ x = eN n := by
+  unfold engR
+  split_ifs <;> simp only [mem_append, mem_cons, not_mem_nil, or_false] <;> tauto
+
+theorem prodVal_engR (E : Env) (n : ℕ) (τ : ℕ → ℕ) :
+    prodVal E (engR n).nodes τ = val E τ (hN n) * ((bN n).map (val E τ)).prod * val E τ (xN n) *
+      ((sN n).map (val E τ)).prod * val E τ (eN n) := by
+  unfold engR prodVal
+  split_ifs <;> simp only [map_append, prod_append, map_cons, map_nil, prod_cons, prod_nil] <;>
+    ring
+
+theorem engP_zero (d n : ℕ) : engP d n 0 = fun _ => 0 := by funext k; simp [engP]
+
+theorem engD_zero (d : ℕ) {n : ℕ} (hn : 0 < n) : engD d n 0 = d := by simp [engD, hn]
+
+theorem engR_support (d : ℕ) {n : ℕ} (hn : 0 < n) {τ : ℕ → ℕ}
+    (h : prodVal (engE d n) (engR n).nodes τ ≠ 0) :
+    τ (rb n) = 0 ∧ (∀ t < n, τ (bout n t) = etv d τ n (t + 1)) ∧
+      ∀ t ≤ n, τ (sv n t) = etv d τ 0 t := by
+  have hv := Fca.prodVal_ne h
+  have h0 : τ (rb n) = 0 := by
+    have h1 := hv _ (mem_engR.2 (Or.inl rfl))
+    simp only [hN, val, map_cons, map_nil, append_nil] at h1
+    rw [show (engE d n).dimv n = 1 by simp [engE, engD], show (engE d n).phase 0 = fun _ => 0
+      from engP_zero d n, Fca.tZ_one _ _ (fun _ => rfl)] at h1
+    simpa using h1
+  have hB : ∀ t < n, τ (bout n t) = τ (bin n t) * d + τ (n + t) := by
+    intro t ht
+    have h1 := hv _ (mem_engR.2 (Or.inr (Or.inl (mem_map.2 ⟨t, mem_range.2 ht, rfl⟩))))
+    simp only [val, map_cons, map_nil] at h1
+    have e := Fca.tB_eq h1
+    rwa [show (engE d n).dimv 0 = d from engD_zero d hn] at e
+  have hS : ∀ t < n, τ (sv n (t + 1)) = τ (sv n t) * d + τ t := by
+    intro t ht
+    have h1 := hv _ (mem_engR.2 (Or.inr (Or.inr (Or.inr (Or.inl
+      (mem_map.2 ⟨t, mem_range.2 ht, rfl⟩))))))
+    simp only [val, map_cons, map_nil] at h1
+    have e := Fca.tB_eq h1
+    rwa [show (engE d n).dimv 0 = d from engD_zero d hn] at e
+  have hE : τ (sv n 0) = 0 := by
+    have h1 := hv _ (mem_engR.2 (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))
+    simp only [eN, val, map_cons, map_nil, nil_append] at h1
+    rw [show (engE d n).dimv n = 1 by simp [engE, engD], show (engE d n).phase 0 = fun _ => 0
+      from engP_zero d n, Fca.tZ_one _ _ (fun _ => rfl)] at h1
+    simpa [sv] using h1
+  refine ⟨h0, fun t ht => ?_, fun t ht => ?_⟩
+  · induction t with
+    | zero => rw [hB 0 ht]; simp [etv, bin, h0]
+    | succ t ih =>
+      have e : bin n (t + 1) = bout n t := by
+        simp only [bin, bout]; rw [if_neg (by omega), if_neg (by omega)]; omega
+      rw [hB _ ht, e, ih (by omega)]
+      rfl
+  · induction t with
+    | zero => simpa [etv] using hE
+    | succ t ih => rw [hS t (by omega), ih (by omega)]; simp [etv]
+
+theorem engP_shift (d n : ℕ) :
+    engP d n (n + 1) = fun k : ℕ => -(2 * (k : ℝ)) / ((d ^ n : ℕ) : ℝ) := by
+  funext k; simp [engP]
+
+
+/-- The spec at `n ≥ 1` digits: the shift by `2` mod `d ^ n` of the input digits. -/
+theorem eval_engR (d : ℕ) (hd : 0 < d) {n : ℕ} (hn : 0 < n) (σ : ℕ → ℕ)
+    (ha : ∀ t < n, σ (n + t) < d) (hb : ∀ t < n, σ t < d) :
+    eval (engE d n) (engR n) σ =
+      if etv d σ 0 n % d ^ n = (etv d σ n n + 2) % d ^ n then 1 else 0 := by
+  have hb' : ∀ t < n, σ (0 + t) < d := fun t ht => by simpa using hb t ht
+  have hrb : 2 * n ≤ rb n := by unfold rb; nlinarith
+  have hoff : ∀ x, x < 2 * n → tauE d σ n x = σ x := fun x hx => by
+    unfold tauE; rw [if_neg (by omega)]
+  unfold eval
+  rw [Fca.sumOver_single (labDim (engE d n)) _ (engR_int_nodup n) _ σ (tauE d σ n) ?h0 ?hr ?hs]
+  case h0 =>
+    intro x hx
+    unfold tauE
+    rw [if_neg fun h => hx (mem_engR_int.2 h)]
+  case hr =>
+    intro l hl
+    obtain ⟨h1, h2⟩ := mem_engR_int.1 hl
+    obtain ⟨k, rfl⟩ : ∃ k, l = rb n + k := ⟨l - rb n, by omega⟩
+    rw [labDim_eng d (by omega)]
+    unfold tauE
+    rw [if_pos (by omega), show rb n + k - rb n = k by omega]
+    exact pv_lt (by omega) ha hb'
+  case hs =>
+    intro τ hτ _ hne l hl
+    obtain ⟨s0, s1, s2⟩ := engR_support d hn hne
+    have dig : ∀ t, t < 2 * n → τ t = σ t := fun t ht =>
+      hτ t fun h => by have := (mem_engR_int.1 h).1; omega
+    have eA : ∀ t ≤ n, etv d τ n t = etv d σ n t := by
+      intro t ht
+      induction t with
+      | zero => rfl
+      | succ t ih => simp only [etv, ih (by omega), dig (n + t) (by omega)]
+    have eB : ∀ t ≤ n, etv d τ 0 t = etv d σ 0 t := by
+      intro t ht
+      induction t with
+      | zero => rfl
+      | succ t ih => simp only [etv, ih (by omega), dig (0 + t) (by omega)]
+    obtain ⟨h1, h2⟩ := mem_engR_int.1 hl
+    obtain ⟨k, rfl⟩ : ∃ k, l = rb n + k := ⟨l - rb n, by omega⟩
+    rcases (show k = 0 ∨ k = 1 ∨ k = 2 ∨ k = 3 ∨ (4 ≤ k ∧ k < n + 3) ∨ n + 3 ≤ k by omega) with
+      rfl | rfl | rfl | rfl | hk | hk
+    · rw [Nat.add_zero, s0, tauE_rb]
+    · have e : rb n + 1 = bout n (n - 1) := by unfold bout; rw [if_pos (by omega)]
+      rw [e, s1 _ (by omega), tauE_bout d σ (by omega), eA _ (by omega)]
+    · have e : rb n + 2 = sv n n := by unfold sv; split_ifs <;> omega
+      rw [e, s2 _ le_rfl, tauE_sv d σ hn le_rfl, eB _ le_rfl]
+    · have e : rb n + 3 = sv n 0 := by unfold sv; split_ifs <;> omega
+      rw [e, s2 _ (Nat.zero_le _), tauE_sv d σ hn (Nat.zero_le _), eB _ (Nat.zero_le _)]
+    · have e : rb n + k = bout n (k - 4) := by unfold bout; split_ifs <;> omega
+      rw [e, s1 _ (by omega), tauE_bout d σ (by omega), eA _ (by omega)]
+    · have e : rb n + k = sv n (k - n - 2) := by unfold sv; split_ifs <;> omega
+      rw [e, s2 _ (by omega), tauE_sv d σ hn (by omega), eB _ (by omega)]
+  have eD1 : (engE d n).dimv n = 1 := by simp [engE, engD]
+  have eP0 : (engE d n).phase 0 = fun _ => 0 := engP_zero d n
+  have eD0 : (engE d n).dimv 0 = d := engD_zero d hn
+  have hH : val (engE d n) (tauE d σ n) (hN n) = 1 := by
+    simp only [hN, val, map_cons, map_nil, append_nil]
+    rw [eD1, eP0, Fca.tZ_one _ _ (fun _ => rfl), tauE_rb]; simp
+  have hE : val (engE d n) (tauE d σ n) (eN n) = 1 := by
+    simp only [eN, val, map_cons, map_nil, nil_append]
+    rw [eD1, eP0, Fca.tZ_one _ _ (fun _ => rfl)]
+    have e : rb n + 3 = sv n 0 := by unfold sv; split_ifs <;> omega
+    rw [e, tauE_sv d σ hn (Nat.zero_le _)]; simp [etv]
+  have hX : val (engE d n) (tauE d σ n) (xN n) =
+      if etv d σ 0 n % d ^ n = (etv d σ n n + 2) % d ^ n then 1 else 0 := by
+    simp only [xN, val, map_cons, map_nil]
+    have e1 : rb n + 1 = bout n (n - 1) := by unfold bout; rw [if_pos (by omega)]
+    have e2 : rb n + 2 = sv n n := by unfold sv; split_ifs <;> omega
+    have eX : (engE d n).dimv (n - 1) = d ^ n := by
+      have := engD_dI d (le_refl n); rwa [dI, if_neg hn.ne'] at this
+    rw [e1, e2, tauE_bout d σ (by omega), tauE_sv d σ hn le_rfl, eX,
+      show (engE d n).phase (n + 1) = _ from engP_shift d n, Fca.tX_shift _ (pow_pos hd n),
+      show n - 1 + 1 = n by omega]
+  have hBs : ((bN n).map (val (engE d n) (tauE d σ n))).prod = 1 := by
+    refine List.prod_eq_one fun x hx => ?_
+    obtain ⟨y, hy, rfl⟩ := mem_map.1 hx
+    obtain ⟨t, ht, rfl⟩ := mem_map.1 hy
+    have ht := mem_range.1 ht
+    simp only [val, map_cons, map_nil]
+    rw [show (engE d n).dimv (dI n t) = d ^ t from engD_dI d ht.le, eD0, tauE_bout d σ ht,
+      tauE_bin d σ ht, hoff (n + t) (by omega)]
+    unfold tB
+    rw [if_pos ⟨etv_lt ha t ht.le, ha t ht, rfl⟩]
+  have hSs : ((sN n).map (val (engE d n) (tauE d σ n))).prod = 1 := by
+    refine List.prod_eq_one fun x hx => ?_
+    obtain ⟨y, hy, rfl⟩ := mem_map.1 hx
+    obtain ⟨t, ht, rfl⟩ := mem_map.1 hy
+    have ht := mem_range.1 ht
+    simp only [val, map_cons, map_nil]
+    rw [show (engE d n).dimv (dI n t) = d ^ t from engD_dI d ht.le, eD0, tauE_sv d σ hn ht.le,
+      tauE_sv d σ hn (by omega), hoff t (by omega)]
+    unfold tB
+    rw [if_pos ⟨etv_lt hb' t ht.le, hb t ht, by simp [etv]⟩]
+  rw [prodVal_engR, hH, hBs, hX, hSs, hE]
+  ring
 
 /-! ## The engine's literal exports -/
 
@@ -178,6 +425,21 @@ theorem engR_lit4 : engR 4 = litR4 := by decide +kernel
 theorem engL_lit5 : engL 5 = litL5 := by decide +kernel
 
 theorem engR_lit5 : engR 5 = litR5 := by decide +kernel
+
+theorem engLabs_lit1 : (engLabs 1).filter (fun p => p.2 ≠ 0) = [(10, 1), (13, 1)] := by
+  decide +kernel
+
+theorem engLabs_lit2 : (engLabs 2).filter (fun p => p.2 ≠ 0) = [(24, 2), (25, 1), (26, 1), (27, 2)] := by
+  decide +kernel
+
+theorem engLabs_lit3 : (engLabs 3).filter (fun p => p.2 ≠ 0) = [(42, 3), (43, 2), (44, 2), (45, 3), (47, 1), (49, 1)] := by
+  decide +kernel
+
+theorem engLabs_lit4 : (engLabs 4).filter (fun p => p.2 ≠ 0) = [(64, 4), (65, 3), (66, 3), (67, 4), (69, 1), (70, 2), (72, 1), (73, 2)] := by
+  decide +kernel
+
+theorem engLabs_lit5 : (engLabs 5).filter (fun p => p.2 ≠ 0) = [(90, 5), (91, 4), (92, 4), (93, 5), (95, 1), (96, 2), (97, 3), (99, 1), (100, 2), (101, 3)] := by
+  decide +kernel
 
 end FcaEng
 
