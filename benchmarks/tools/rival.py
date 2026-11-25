@@ -564,6 +564,9 @@ def run_driver(
     finally:
         os.unlink(path)
     peak = round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1)
+    step = step_usage(cap)
+    if step is not None:
+        peak = round(step["maxrss_kb"] / 1024, 1)
     if proc.returncode != 0 or capped:
         status = (
             "oom"
@@ -590,6 +593,16 @@ def run_driver(
         return out
     res = json.loads(proc.stdout.strip().splitlines()[-1])
     return {"status": "ok", "peak_mb": peak, **tag, **res}
+
+
+def step_usage(cap: memcap.Cap | None) -> dict[str, float] | None:
+    """The srun wrapper's stats of ``cap`` (memcap.Cap.usage), its file removed; None
+    otherwise."""
+    if cap is None:
+        return None
+    row = cap.usage()
+    cap.discard()
+    return row if row and "cpu" in row and "maxrss_kb" in row else None
 
 
 def binary(env: str, name: str) -> Path:
@@ -627,6 +640,10 @@ def run_binary(
         return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0, **tag}
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu = (after.ru_utime + after.ru_stime) - (before.ru_utime + before.ru_stime)
+    peak = round(after.ru_maxrss / 1024, 1)
+    step = step_usage(cap)
+    if step is not None:
+        cpu, peak = step["cpu"], round(step["maxrss_kb"] / 1024, 1)
     out: dict[str, Any] = {
         "status": "ok",
         "returncode": proc.returncode,
@@ -634,7 +651,7 @@ def run_binary(
         "stderr": proc.stderr,
         "cpu": cpu,
         "wall": time.perf_counter() - w0,
-        "peak_mb": round(after.ru_maxrss / 1024, 1),
+        "peak_mb": peak,
         **tag,
     }
     text = (proc.stderr or "") + (proc.stdout or "")

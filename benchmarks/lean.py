@@ -13,7 +13,8 @@
 
 """Lean runner: ``lake env lean FILE`` in archytaszx/lean, at most :func:`slots` at a time across
 every worker of a job, each check killed when its anonymous memory passes :func:`budget_mb` (and
-in a systemd scope of its own capped at OLEAN_MB plus that budget where systemd is available).
+under a memcap.Cap of OLEAN_MB plus that budget: a systemd scope, a cgroup, or a Slurm step
+whose wrapper's stats replace the rusage CPU and peak memory).
 
 The file is checked as a probe copy with ``set_option profiler true``, a ``#print`` marker
 before every declaration and ``#print axioms`` of the final theorem appended. The runner
@@ -493,10 +494,7 @@ def _attempt(
         killed = threading.Event()
 
         def killpg() -> None:
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except OSError:
-                pass
+            cap.kill_group(pgid)
 
         def kill() -> None:
             killed.set()
@@ -517,20 +515,27 @@ def _attempt(
         wall = time.perf_counter() - w0
         code = os.waitstatus_to_exitcode(status)
         cgroup_oom = cap.oom(code, text)
+        step = cap.usage()
     finally:
         cap.close()
+        cap.discard()
         done.set()
         if proc is not None:
             _ACTIVE.discard(proc.pid)
         slot.close()
         probe.unlink(missing_ok=True)
     rusage_cpu = usage.ru_utime + usage.ru_stime
+    maxrss_kb: float = usage.ru_maxrss
+    if step is not None:
+        rusage_cpu, maxrss_kb = step["cpu"], step["maxrss_kb"]
+        for k in ("peak_anon_mb", "cpu_tree"):
+            stats[k] = max(stats.get(k, 0.0), step.get(k, 0.0))
     out |= {
         "lean_cpu": max(rusage_cpu, stats.get("cpu_tree", 0.0)),
         "lean_cpu_rusage": rusage_cpu,
         "lean_cpu_tree": round(stats.get("cpu_tree", 0.0), 2),
         "lean_wall": wall,
-        "lean_peak_mb": round(usage.ru_maxrss / 1024, 1),
+        "lean_peak_mb": round(maxrss_kb / 1024, 1),
         "lean_peak_anon_mb": round(stats.get("peak_anon_mb", 0.0), 1),
         "decl_ms": declaration_times(messages),
     }

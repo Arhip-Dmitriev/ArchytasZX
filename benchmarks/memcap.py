@@ -13,19 +13,24 @@
 
 """Per-child memory caps, the mechanism chosen at run time: ``systemd`` (a ``systemd-run --user
 --scope`` with MemoryMax), ``cgroup_v2`` (a child cgroup made in a delegated cgroup v2 subtree,
-memory.max written, the child moved in before exec), ``srun`` (a Slurm step with --mem, only
-when BENCH_MEMCAP=srun) or ``watchdog`` (the child's process-tree RssAnon polled and the tree
-killed past the cap). BENCH_MEMCAP names one; otherwise the first usable of AUTO."""
+memory.max written, the child moved in before exec), ``srun`` (a Slurm step with --mem running
+the child under the memcap_step wrapper, whose stats file gives the child's CPU and peak memory)
+or ``watchdog`` (the child's process-tree RssAnon polled and the tree killed past the cap).
+BENCH_MEMCAP names one; otherwise srun inside a Slurm job where systemd and cgroup_v2 are not
+usable, else the first usable of AUTO."""
 
 from __future__ import annotations
 
 import functools
 import itertools
+import json
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -33,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+STEP = Path(__file__).resolve().with_name("memcap_step.py")
 ALL = ("systemd", "cgroup_v2", "srun", "watchdog")
 AUTO = ("systemd", "cgroup_v2", "watchdog")
 _SRUN_OOM = re.compile(
@@ -176,10 +182,13 @@ def usable(mech: str) -> bool:
 
 
 def mechanism() -> str:
-    """BENCH_MEMCAP when usable, else the first usable mechanism of AUTO."""
+    """BENCH_MEMCAP when usable; else srun inside a Slurm job where systemd and cgroup_v2 are
+    not usable; else the first usable mechanism of AUTO."""
     forced = os.environ.get("BENCH_MEMCAP", "")
     if forced in ALL and usable(forced):
         return forced
+    if srun_ok() and not usable("systemd") and not usable("cgroup_v2"):
+        return "srun"
     return next(m for m in AUTO if usable(m))
 
 
@@ -201,6 +210,7 @@ class Cap:
         self.mech = mech or mechanism()
         self.no_swap = no_swap
         self.path: Path | None = None
+        self.stats: Path | None = None
         self.fired = threading.Event()
         self.done = threading.Event()
         if self.mech == "cgroup_v2":
@@ -209,16 +219,22 @@ class Cap:
             self.path = make_cgroup(parent, name, limit_mb, no_swap) if parent else None
             if self.path is None:
                 self.mech = "watchdog"
+        if self.mech == "srun":
+            fd, name = tempfile.mkstemp(prefix=f"azx-{tag}-", suffix=".json")
+            os.close(fd)
+            self.stats = Path(name)
 
     def command(self, cmd: list[str]) -> list[str]:
-        """``cmd`` wrapped for systemd or srun, else ``cmd``."""
+        """``cmd`` wrapped for systemd, or for srun under the memcap_step wrapper, else
+        ``cmd``."""
         mb = int(self.limit_mb)
         if self.mech == "systemd":
             swap = ["-p", "MemorySwapMax=0"] if self.no_swap else []
             head = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
             return [*head, "-p", f"MemoryMax={mb}M", *swap, *cmd]
         if self.mech == "srun":
-            return ["srun", "--overlap", "--quiet", "-n1", "-N1", f"--mem={mb}M", *cmd]
+            head = ["srun", "--overlap", "--quiet", "-n1", "-N1", f"--mem={mb}M"]
+            return [*head, sys.executable, "-I", str(STEP), str(self.stats), *cmd]
         return cmd
 
     def preexec(self) -> Callable[[], None] | None:
@@ -249,11 +265,43 @@ class Cap:
             return True
         return self.mech == "srun" and code not in (0, None) and bool(_SRUN_OOM.search(text))
 
+    def kill_group(self, pgid: int) -> None:
+        """SIGKILL to the process group ``pgid``; under srun SIGTERM first (srun passes it to
+        the step) and SIGKILL 3 s later."""
+
+        def sig(n: int) -> None:
+            try:
+                os.killpg(pgid, n)
+            except OSError:
+                pass
+
+        if self.mech != "srun":
+            sig(signal.SIGKILL)
+            return
+        sig(signal.SIGTERM)
+        threading.Timer(3.0, sig, args=(signal.SIGKILL,)).start()
+
+    def usage(self) -> dict[str, float] | None:
+        """Under srun, the wrapper's stats (code, cpu, maxrss_kb, peak_anon_mb, cpu_tree);
+        None when absent."""
+        if self.stats is None:
+            return None
+        try:
+            row = json.loads(self.stats.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return row if isinstance(row, dict) else None
+
     def close(self) -> None:
         """Stops the watchdog and removes the cgroup."""
         self.done.set()
         if self.path is not None:
             remove_cgroup(self.path)
+
+    def discard(self) -> None:
+        """Removes the srun stats file."""
+        if self.stats is not None:
+            self.stats.unlink(missing_ok=True)
 
 
 def worker_mechanism() -> str:
@@ -290,6 +338,9 @@ def run(
     )
 
     def kill() -> None:
+        if cap is not None:
+            cap.kill_group(proc.pid)
+            return
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except OSError:
@@ -303,6 +354,8 @@ def run(
         except subprocess.TimeoutExpired:
             kill()
             proc.communicate()
+            if cap is not None:
+                cap.discard()
             raise
         done = subprocess.CompletedProcess(full, proc.returncode, out, err)
         return done, cap is not None and cap.oom(proc.returncode, (err or "") + (out or ""))
