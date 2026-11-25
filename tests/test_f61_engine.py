@@ -25,6 +25,7 @@ from archytaszx.diagram.scalable import ScalableGrammarError, strip, to_scalable
 from archytaszx.diagram.validate import validate
 from archytaszx.rewrite import rules_axioms as R
 from archytaszx.rewrite.match import find_cap_matches, find_triangle_matches
+from archytaszx.rewrite.match_template import TemplateAxiom
 from archytaszx.rewrite.match_zxw import find_w_identity_matches
 from archytaszx.semantics.check import compare
 from archytaszx.semantics.contract_symbolic import (
@@ -243,6 +244,13 @@ def test_chain_period_sees_an_index_in_a_copy_scalar() -> None:
     except PeriodicError:
         return
     raise AssertionError("an index read by a copy scalar passed as unread")
+
+
+def test_converse_of_a_converse_keeps_the_free_defaults() -> None:
+    axiom = next(a for a in vars(R).values() if isinstance(a, TemplateAxiom) and a.free)
+    there = axiom.converse("there")
+    assert set(there.converse_free) == set(axiom.free)
+    assert set(there.converse("back").free) == set(axiom.free)
 
 
 if __name__ == "__main__":

@@ -839,7 +839,8 @@ class TemplateAxiom:
             self.concrete_only,
             f"{self.description} Read right to left.",
             self.quantifiers,
-            self.converse_free,
+            free=self.converse_free,
+            converse_free=self.free,
         )
 
     @property
