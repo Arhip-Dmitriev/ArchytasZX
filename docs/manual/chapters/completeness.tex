@@ -1847,9 +1847,11 @@ The command \azx!prove exhaustive [algebraic] [against] TARGET! calls \py!prove_
   its arities; the mixed rules draw dimensions from the host's port dimensions, \cmplr{zxw_ww_converse}
   bounds $n$ by the host's node count, and the copy converses bound $n$ by the host's phaseless
   states. An instance outside these bounds is not reached in one step.
-\item \emph{Converses.} \cmplr{qf_s1}, \cmplr{connective_inverse_bind_first}, and
-  \cmplr{port_box_unfusion} have no converse; a derivation that needs them from right to left on the
-  start side is found only from the goal side.
+\item \begin{sloppypar}\emph{Converses.} \cmplr{z_fusion_prime_d}, \cmplr{identity_removal},
+  \cmplr{bialgebra}, \cmplr{w_fusion}, \cmplr{connective_inverse_bind_first},
+  \cmplr{port_box_unfusion}, and \cmplr{qf_s1}, and \cmplr{spider_fusion} for Z spiders, have no
+  converse in the rule set; a derivation that needs them from right to left on the start side is
+  found only from the goal side.\end{sloppypar}
 \item \emph{Cost.} Every layer applies every rule at every match; the number of reached diagrams
   grows with the depth without bound. The search has no time or memory limit.
 \end{itemize}

@@ -228,7 +228,7 @@ Shifts tried for a primitive element & $1$, $2$, $-1$, $3$, $-2$, $5$, $7$, $-3$
 
 \section{Caches}
 
-Every cache below is a table that is emptied when it reaches its size, before the next entry is stored. A cache changes running time only, never a result.
+Every cache below is a table that is emptied when it reaches its size, before the next entry is stored, except the least-recently-used \py!_norm_cached!, which evicts its oldest entry. A cache changes running time only, never a result.
 
 \begin{xltabular}{\linewidth}{@{}X>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}@{}}
 \caption{Cache sizes.}\label{tab:params-caches}\\

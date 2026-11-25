@@ -16,11 +16,11 @@ Path & Contents \\
 \file{archytaszx/} & The Python package (\cref{ch:overview}) and, in \file{archytaszx/lean/}, the Lean project (\cref{ch:lean-core}). \\
 \file{benchmarks/} & The benchmark suite (\cref{ch:bench-pipeline,ch:bench-tools}). \\
 \file{tests/} & The test suite (\cref{sec:dev-tests}). \\
-\file{examples/} & Engine scripts (\file{.azx}), their Lean outputs (\file{.lean}), the Python tutorial \file{tutorial.py}, and the directories \file{completeness/}, \file{mixed/}, and \file{restricted/} of further examples. \\
+\file{examples/} & Engine scripts (\file{.azx}), Python scripts, the Python tutorial \file{tutorial.py}, and the directories \file{completeness/}, \file{mixed/}, and \file{restricted/} of further examples. \\
 \file{docs/manual/} & The sources of this manual (\cref{sec:dev-manual}). \\
 \file{pyproject.toml} & Package metadata, dependencies, and the configuration of pytest, ruff, and mypy. \\
 \file{CITATION.cff} & Citation metadata, kept in step with the keywords of \file{pyproject.toml}. \\
-\file{.github/workflows/ci.yml} & The continuous-integration workflow (\cref{sec:dev-ci}). \\
+\file{.github/workflows/ci.yml}, \file{.github/workflows/lean.yml} & The continuous-integration workflows (\cref{sec:dev-ci}). \\
 \file{LICENSE} & The Apache License, Version~2.0. \\
 \bottomrule
 \end{tabularx}
@@ -121,7 +121,7 @@ The workflow \file{.github/workflows/ci.yml} runs on every push to the branches 
 \item \texttt{test}: on each of Python~3.12, 3.13, and 3.14 (without stopping the others when one fails), installs the package with the \texttt{dev} and \texttt{viz} extras and runs \texttt{pytest -m "" -n auto}, both tiers across all cores;
 \item \texttt{docs}: builds this manual with \texttt{latexmk} in a full \TeX{} Live installation (\cref{sec:dev-manual}) and fails on any \LaTeX{} error.
 \end{enumerate}
-Continuous integration does not build the Lean library.
+The workflow \file{.github/workflows/lean.yml} builds the Lean library. It runs on every push to \texttt{main} and \texttt{dev} and on every pull request that changes a file under \file{archytaszx/lean/} or the workflow file itself; a newer run on the same Git reference cancels a running one. Its one job, \texttt{build}, on \texttt{ubuntu-latest} with a limit of 300 minutes, installs \tool{elan}{https://github.com/leanprover/elan} without a default toolchain, restores the directory \file{archytaszx/lean/.lake} from a cache keyed by the hashes of \file{lean-toolchain}, \file{lake-manifest.json} and \file{lakefile.toml} and of the library sources (any key with the same first part is accepted), runs \texttt{lake exe cache get} and \texttt{lake build ArchytasZX} in \file{archytaszx/lean} (printing the build wall time), and saves the cache in every case.
 
 \section{Tracing}\label{sec:dev-trace}
 
