@@ -94,6 +94,37 @@ def test_the_worker_mechanism() -> None:
     assert runner.worker_memcap(ctx) == "cgroup_v2"
     ctx.memcap = "watchdog"
     assert runner.worker_memcap(ctx) == "rlimit_as"
+    from benchmarks import memcap
+
+    saved = memcap.srun_ok
+    memcap.srun_ok = lambda: True
+    try:
+        assert _with_env({"BENCH_WORKER_STEP": "srun"}, lambda: runner.worker_memcap(ctx)) == "srun"
+        assert (
+            _with_env({"BENCH_WORKER_STEP": ""}, lambda: runner.worker_memcap(ctx)) == "rlimit_as"
+        )
+        cmd = memcap.Cap(512, "srun", tag="worker").command(["w"])
+        assert cmd[:6] == ["srun", "--overlap", "--quiet", "-n1", "-N1", "--mem=512M"], cmd
+    finally:
+        memcap.srun_ok = saved
+
+
+def test_the_batch_memory_probe() -> None:
+    """batchmem_probe: memory.stat fields parsed in plain and total_ forms; a snapshot holds
+    meminfo and the /tmp filesystem; dropcache counts the files under a directory."""
+    import tempfile
+
+    from benchmarks.tools import batchmem_probe as bp
+
+    st = bp.parse_stat("cache 10\nrss 5\nshmem 7\ntotal_shmem 9\npgfault 3\n")
+    assert st == {"cache": 10, "rss": 5, "shmem": 7, "total_shmem": 9}, st
+    snap = bp.snapshot("t")
+    assert snap["label"] == "t" and "MemTotal" in snap["meminfo"], snap
+    assert snap["fs"]["/tmp"] is None or snap["fs"]["/tmp"]["size"] > 0, snap["fs"]
+    with tempfile.TemporaryDirectory() as d:
+        for i in range(3):
+            Path(d, f"f{i}").write_text("x")
+        assert bp.dropcache([d]) == 3
 
 
 LEAN_FIELDS = (

@@ -190,9 +190,12 @@ def environment(cfg: dict[str, Any]) -> dict[str, Any]:
 def worker_memcap(ctx: Context) -> str:
     """The mechanism capping a worker: systemd when ctx.cgroup, cgroup_v2 when
     memcap.mechanism() is cgroup_v2 (ctx.memcap overrides), else rlimit_as (the worker's soft
-    RLIMIT_AS)."""
+    RLIMIT_AS); srun (a Slurm step of its own) when BENCH_WORKER_STEP is srun inside a Slurm
+    job."""
     if ctx.cgroup:
         return "systemd"
+    if os.environ.get("BENCH_WORKER_STEP") == "srun" and memcap.srun_ok():
+        return "srun"
     mech = ctx.memcap or memcap.mechanism()
     return mech if mech == "cgroup_v2" else "rlimit_as"
 
@@ -263,7 +266,10 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     cmd = [sys.executable, "-m", "benchmarks.worker", job_path]
     mech = worker_memcap(ctx)
     cap = memcap.Cap(ctx.mem_mb, "cgroup_v2", tag="worker") if mech == "cgroup_v2" else None
-    if cap is not None and cap.path is None:
+    if mech == "srun":
+        cap = memcap.Cap(ctx.mem_mb, "srun", tag="worker")
+        cmd = cap.command(cmd)
+    elif cap is not None and cap.path is None:
         cap, mech = None, "rlimit_as"
     if ctx.cgroup:
         cmd = [
@@ -330,9 +336,10 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     err = proc.stderr.read() if proc.stderr is not None else ""
     code = proc.wait()
     timer.cancel()
-    cgroup_oom = cap is not None and cap.oom(code)
+    cgroup_oom = cap is not None and cap.oom(code, err)
     if cap is not None:
         cap.close()
+        cap.discard()
     with _children_lock:
         _children.discard(proc)
     os.unlink(job_path)
