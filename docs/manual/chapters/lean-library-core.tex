@@ -1599,7 +1599,7 @@ The exporters prove scalar identities and refutations by exact computation in cy
 by enclosures of real numbers, and by one real root of an integer polynomial. Four modules supply
 these tools.
 
-\subsection{\texttt{Cyclo}: coefficient vectors in $\Q(\zeta)$}\label{sec:lean-core-cyclo}
+\subsection{\texttt{Cyclo}: coefficient vectors in \texorpdfstring{$\Q(\zeta)$}{Q(ζ)}}\label{sec:lean-core-cyclo}
 
 An integer list $l=(l_0,\dots,l_{n-1})$ stands for $\sum_il_i z^i$:
 $\mathrm{cvz}(z,[\,])=0$, $\mathrm{cvz}(z,a{::}l)=a+z\,\mathrm{cvz}(z,l)$ (Horner's rule). The
@@ -1680,7 +1680,7 @@ are all zeros (reductions by $1+x+\dots+x^{p-1}$, written \lean|List.replicate p
 \lean|decide|), then $\sum_{k<p}\left(\frac kp\right)\omega_p^k=i^h(-1)^{\mathrm{gneg}(p)}\sqrt p$.
 \end{theorem}
 
-\subsection{\texttt{Ball}: ball arithmetic in $\C$}
+\subsection{\texttt{Ball}: ball arithmetic in \texorpdfstring{$\C$}{C}}
 
 Enclosures in the style of ball arithmetic~\cite{vanderhoeven2009ball}, with the $\ell^1$ distance
 of real and imaginary parts.

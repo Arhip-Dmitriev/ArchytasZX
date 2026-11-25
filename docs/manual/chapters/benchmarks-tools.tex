@@ -79,7 +79,7 @@ Attribute & Meaning \\
 
 \Cref{tab:bench-tools-attrs} lists the values each adapter defines.
 
-\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.15\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.07\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}@{}}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.17\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}p{0.11\linewidth}>{\raggedright\arraybackslash}p{0.21\linewidth}>{\raggedright\arraybackslash}p{0.07\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}@{}}
 \caption{Adapter attributes by tool. A dash marks an attribute the adapter does not define.}\label{tab:bench-tools-attrs}\\
 \toprule
 Tool & \texttt{ENV} & \texttt{PACKAGE} & \texttt{PROBE} & \texttt{DIM.} & other \\
@@ -101,7 +101,7 @@ qiskit & qiskit & qiskit & qiskit.qasm2, qiskit.quantum\_info, numpy & (2,) & \t
 cirq & cirq & cirq-core & cirq, numpy & -- & \texttt{rederive} \\
 autoq\_para & autoq & -- & -- & (2,) & \texttt{installed} \\
 tket & tket & pytket & pytket.passes, pytket.qasm & (2,) & -- \\
-quantomatic & quantomatic & -- & -- & (2,) & \texttt{installed} \\
+quantomatic & quan\-to\-matic & -- & -- & (2,) & \texttt{installed} \\
 published\_\allowbreak proofs & -- & -- & -- & (2,) & \texttt{installed}, \texttt{rederive}, \texttt{CHECK\_\allowbreak ONCE}, \texttt{stated}, \texttt{symbolic\_\allowbreak covered} \\
 \end{longtable}
 
@@ -163,7 +163,7 @@ The rival tools give only \code!equal!, \code!unequal!, \code!unknown!, or \py!N
 
 \py!outcomes.unsupported_code(message)! strips a leading \code!<dotted name>Unsupported: ! prefix, then returns the key of \py!outcomes.UNSUPPORTED! whose message fragment is a substring of the text, choosing the longest fragment when several match, and \code!other! when none does. \Cref{tab:bench-tools-unsupported} lists the codes the tool layer produces, with the message fragment each matches.
 
-\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.45\linewidth}>{\raggedright\arraybackslash}p{0.2\linewidth}@{}}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.42\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
 \caption{Unsupported codes raised by the tool layer.}\label{tab:bench-tools-unsupported}\\
 \toprule
 Code & Message fragment & Raised by \\

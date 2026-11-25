@@ -1364,12 +1364,12 @@ Under \lbx!ClosedChain D c!, for every $k$:
 \lbx!chFam D c W k = famNet W (chU c W) (chTl) (chCp) (chHdN) [0, ..., m - 1] k!. The labelling of the expansion at $k$ copies is
 \[
 \mathrm{chLabK}_k(p)=\begin{cases}
-\mathrm{sh}_W\bigl(\lfloor (p.\mathit{node}-F)/b\rfloor,\ \mathrm{chLabT}(\langle s_{(p.\mathit{node}-F)\bmod b},p.\mathit{out},p.\mathit{pos}\rangle)\bigr) & F\le p.\mathit{node},\\
+\mathrm{sh}_W\bigl(\lfloor q/b\rfloor,\ \mathrm{chLabT}(\langle s_{q\bmod b},p.\mathit{out},p.\mathit{pos}\rangle)\bigr) & F\le p.\mathit{node},\\
 \mathrm{sh}_W(k,\mathrm{chLab0}(p)) & \mathrm{chHd}(p.\mathit{node}),\\
 \mathrm{chLab0}(p) & \text{otherwise},
 \end{cases}
 \]
-with $F=$ \lbx!D.fresh! ($1+\max$ of the node ids), $b$ the number of box nodes, and $s$ the box node ids sorted ascending (default $0$ past the end). Copy ids are \lbx!cpId D b j x = D.fresh + j * b + idx!, where $\mathit{idx}$ is the position of $x$ among the sorted box node ids; so copy $j$ reads its template labels raised $j$ levels, and the head its labels raised $k$ levels.
+with $F=$ \lbx!D.fresh! ($1+\max$ of the node ids), $q=p.\mathit{node}-F$, $b$ the number of box nodes, and $s$ the box node ids sorted ascending (default $0$ past the end). Copy ids are \lbx!cpId D b j x = D.fresh + j * b + idx!, where $\mathit{idx}$ is the position of $x$ among the sorted box node ids; so copy $j$ reads its template labels raised $j$ levels, and the head its labels raised $k$ levels.
 \end{definition}
 
 \begin{definition}[Chain-family conditions]\label{def:boxes-chainFamOK}
@@ -1542,9 +1542,10 @@ Copy ids are $\mathrm{pcp}(j,x)=2\,\mathrm{pair}(j,x)$ and pair-node ids $\mathr
 \mathrm{shJ}(K,m,L,j,x)=\begin{cases} jm+x & x<m,\\ Km+jL+(x-m) & x\ge m,\end{cases}
 \]
 and the pair legs have the labels $\mathrm{gL}(j,k)=G+2\,\mathrm{pair}(j,k)$ and $\mathrm{gR}(j,k)=G+2\,\mathrm{pair}(j,k)+1$ with $G=\mathrm{pG}(K,m,L)=Km+KL$. \lbx!plab K q! labels the expansion: a copy port (even node id) by \lbx!clab! (the left side's grown ports $\mathrm{gL}(j,j+1+t)$ for $t<K-1-j$, then $\mathrm{gR}(i,j)$; the right side's $\mathrm{gR}(i,j)$; else $\mathrm{shJ}$ of the template label), a pair node's output by $\mathrm{gR}$ and its input by $\mathrm{gL}$. \lbx!exL K j x out! lists the pair labels a copy side gains. \lbx!pairNet K! is
-\[
-\Bigl\langle \mathrm{flatMap}_{j<K}\bigl[\mathrm{pNode}(K,j,n)\bigr]_{n}\mathbin{+\!\!+}\mathrm{flatMap}_{j<K}\bigl[\mathrm{pFNode}(K,j,k)\bigr]_{k\in\mathrm{later}(K,j)},\ \ \mathrm{flatMap}_{j<K}\mathrm{pInt}(K,j),\ \ [0,\ldots,Km-1]\Bigr\rangle,
-\]
+\begin{multline*}
+\Bigl\langle \mathrm{flatMap}_{j<K}\bigl[\mathrm{pNode}(K,j,n)\bigr]_{n}\mathbin{+\!\!+}\mathrm{flatMap}_{j<K}\bigl[\mathrm{pFNode}(K,j,k)\bigr]_{k\in\mathrm{later}(K,j)},\\
+\mathrm{flatMap}_{j<K}\mathrm{pInt}(K,j),\ \ [0,\ldots,Km-1]\Bigr\rangle,
+\end{multline*}
 where $\mathrm{pNode}$ is the template node with its labels moved by $\mathrm{shJ}$ and its \lbx!exL! labels appended, $\mathrm{pFNode}(K,j,k)$ the pair node with output $\mathrm{gR}(j,k)$ and input $\mathrm{gL}(j,k)$, and $\mathrm{pInt}(K,j)$ copy $j$'s wire labels $Km+jL+i$, its left pair labels, and its right pair labels.
 \end{definition}
 
@@ -1633,9 +1634,10 @@ close : ∀ n, rel (n + 1) (glue n (rhs n)) (rhs (n + 1))
 
 \begin{definition}[Gluing a copy]\label{def:boxes-glueNet}
 For a level width $W$ and the cut labels $\mathit{cut}$ (the labels a copy shares with the earlier ones),
-\[
-\mathrm{glueNet}(W,\mathit{cut},\mathit{copy},k,N)=\bigl\langle C.\mathit{nodes}\mathbin{+\!\!+}N.\mathit{nodes},\ C.\mathit{int}\mathbin{+\!\!+}\mathit{cs}\mathbin{+\!\!+}N.\mathit{int},\ \mathrm{filter}_{\notin\mathit{cs}}(N.\mathit{bnd})\mathbin{+\!\!+}\mathrm{filter}_{\notin\mathit{cs}}(C.\mathit{bnd})\bigr\rangle,
-\]
+\begin{multline*}
+\mathrm{glueNet}(W,\mathit{cut},\mathit{copy},k,N)=\bigl\langle C.\mathit{nodes}\mathbin{+\!\!+}N.\mathit{nodes},\ C.\mathit{int}\mathbin{+\!\!+}\mathit{cs}\mathbin{+\!\!+}N.\mathit{int},\\
+\mathrm{filter}_{\notin\mathit{cs}}(N.\mathit{bnd})\mathbin{+\!\!+}\mathrm{filter}_{\notin\mathit{cs}}(C.\mathit{bnd})\bigr\rangle,
+\end{multline*}
 with $C$ the copy relabelled by $x\mapsto x+kW$ and $\mathit{cs}=\mathit{cut}+kW$: the cut labels become summed. \lbx!Fits W cut k N! holds when every label of $N$ is below $kW+W$ and no summed label of $N$ is a shifted cut label. \lbx!glue_fits! and \lbx!glue_equal! (under \lbx!copyOK W cut cp!) keep \lbx!Fits! and \lbx!Equal! through a glue. \lbx!netIface E W cut copy lhs rhs ...! is the \lbx!AdderIface! on pairs (scalar, network) with \lbx!rel n a b := Fits W cut n a.2 ∧ Fits W cut n b.2 ∧ Equal E a.1 a.2 b.1 b.2!, \lbx!glue n a := (a.1, glueNet W cut (copy n) n a.2)!, and its \lbx!base!, \lbx!peel!, \lbx!close! hypotheses taken as arguments; \lbx!netIface_fam! is its family theorem.
 \end{definition}
 
@@ -1649,7 +1651,7 @@ With $\mathrm{digVal}(d,x,0)=0$, $\mathrm{digVal}(d,x,n+1)=d\,\mathrm{digVal}(d,
 &\omega_{d^{m+1}}^{\,d}=\omega_{d^m};\quad \omega_{d^{k+1}}^{\,y\,d c}=\omega_{d^k}^{\,yc} &&\text{(\lbx!om_tower!, \lbx!om_tower_mul!; } d>0)\\
 &\textstyle\prod_{k<n}\omega_{d^{k+1}}^{\,y x_k}\cdot\omega_{d^n}^{\,y e_n}=\omega_{1}^{\,y e_0}\cdot\prod_{k<n}\omega_{d^{k+1}}^{\,y x'_k} &&\text{(\lbx!telescope!)}\\
 &\mathrm{digVal}(d,x,n)+e_n=e_0\,d^n+\mathrm{digVal}(d,x',n) &&\text{(\lbx!chain_value!)}\\
-&\textstyle\sum_{y<d}\overline{\mathrm{fou}(d,o,y)}\;\omega_d^{\,ys}\;\mathrm{fou}(d,y,i)=[(s+i)\bmod d=o\bmod d] &&\text{(\lbx!fourier_shift!)}\\
+&\textstyle\sum_{y<d}\overline{\mathrm{fou}(d,o,y)}\;\omega_d^{\,ys}\;\mathrm{fou}(d,y,i)=[s+i\equiv o\pmod d] &&\text{(\lbx!fourier_shift!)}\\
 &\textstyle\sum_{a,b<d}\mathrm{fou}(d,o,a)\,\mathrm{fou}(d,a,b)\,\mathrm{fou}(d,b,i)=\overline{\mathrm{fou}(d,o,i)} &&\text{(\lbx!fou_three!)}
 \end{align*}
 \lbx!digit_carry!, \lbx!carry_lt_two! ($(x+c)/d<2$ for $x<d$, $c\le d$), and \lbx!chain_digit! give the digit-carry identity of one copy; \lbx!telescope_off! is \lbx!telescope! with root orders $d^{k+r+1}$. With $\mathrm{cell}(d,x,e_{\mathrm{in}},x',e_{\mathrm{out}})=[x+e_{\mathrm{in}}=x'+d\,e_{\mathrm{out}}]$, $\mathrm{carrySum}(d,C,x,x',0,e_{\mathrm{in}},e_{\mathrm{out}})=[e_{\mathrm{in}}=e_{\mathrm{out}}]$, and $\mathrm{carrySum}(\ldots,n+1,e_{\mathrm{in}},e_{\mathrm{out}})=\sum_{c<C}\mathrm{cell}(d,x_n,e_{\mathrm{in}},x'_n,c)\cdot\mathrm{carrySum}(\ldots,n,c,e_{\mathrm{out}})$:
@@ -1676,8 +1678,10 @@ Level $n$ owns the labels $[B(n),B(n+1))$ with $B(n)=4n^2+18n+2$ ($B(n+1)=B(n)+8
 \begin{definition}[Copy $n$]\label{def:boxes-fca-cp}
 The pending legs of copy $i$ before copy $n$ are $\mathrm{pend}(n,i)=\mathrm{sl}(n-1,14+8i)$ and $\mathrm{pendO}(n,i)=\mathrm{sl}(n-1,15+8i)$, and $\mathrm{cut}(n)$ lists both for every $i<n$. With $\mathrm{zN}(os,is,ph)$ a Z spider of dimension index $0$ and $\mathrm{fN}(D,o,i)$ an $F$ node of dimension index $D$, phase index $0$, the pair gadget of copies $(n,i)$ is
 \begin{align*}
-\mathrm{pairN}(n,i)=[\,&\mathrm{fN}(n-i+2,\ \mathrm{sl}_n(18+8i),\ \mathrm{sl}_n(16+8i)),\ \mathrm{zN}([\mathrm{sl}_n(16+8i),\mathrm{sl}_n(14+8i)],[\mathrm{pend}(n,i)]),\\
-&\mathrm{fN}(n-i+2,\ \mathrm{sl}_n(19+8i),\ \mathrm{sl}_n(20+8i)),\ \langle X,[\mathrm{sl}_n(20+8i),\mathrm{sl}_n(17+8i)],[\,],n-i+2,0\rangle,\\
+\mathrm{pairN}(n,i)=[\,&\mathrm{fN}(n-i+2,\ \mathrm{sl}_n(18+8i),\ \mathrm{sl}_n(16+8i)),\\
+&\mathrm{zN}([\mathrm{sl}_n(16+8i),\mathrm{sl}_n(14+8i)],[\mathrm{pend}(n,i)]),\\
+&\mathrm{fN}(n-i+2,\ \mathrm{sl}_n(19+8i),\ \mathrm{sl}_n(20+8i)),\\
+&\langle X,[\mathrm{sl}_n(20+8i),\mathrm{sl}_n(17+8i)],[\,],n-i+2,0\rangle,\\
 &\mathrm{zN}([\mathrm{sl}_n(17+8i),\mathrm{sl}_n(15+8i)],[\mathrm{pendO}(n,i)])\,],
 \end{align*}
 and copy $n$ (\lbx!cp n!) has the nodes

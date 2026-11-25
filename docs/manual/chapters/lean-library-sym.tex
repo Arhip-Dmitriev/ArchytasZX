@@ -511,7 +511,8 @@ so $\mathrm{labG}_{[]}=\mathrm{dlab}$ (\lean!labG_nil!), a head ghost reads its 
 \begin{definition}[Digit sum with ghosts]
 \begin{align*}
 \mathrm{pinsG}_{gs}(E,\kappa,\nu)\iff{}&\forall (a,b)\in\mathrm{dpairs}_\kappa,\ \nu(\mathrm{labG}_{gs}\,a)=\nu(\mathrm{labG}_{gs}\,b)\\
-\land{}&\forall (q,i)\in\mathrm{bnd.zipIdx},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,q),\ \nu(\mathrm{labG}_{gs}(q,t))=\nu(\mathrm{slab}(i,t))\\
+\land{}&\forall (q,i)\in\mathrm{bnd.zipIdx},\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,q),\\
+&\qquad\nu(\mathrm{labG}_{gs}(q,t))=\nu(\mathrm{slab}(i,t))\\
 \land{}&\forall (g,i,k)\in gs,\ \forall t\in\mathrm{cidx}_\kappa(\mathrm{legChain}\,g),\ \nu(\mathrm{slab}(i,t))<E.\mathrm{dimv}(k),
 \end{align*}
 $\mathrm{integG}=[\mathrm{pinsG}]\,\mathrm{prodL}$, and $\mathrm{evalG}(L,gs,E,\kappa,\sigma)$ is $\mathrm{evalL}$ with $\mathrm{integG}$ in place of the integrand. \lean!pinsGX!, \lean!integGX!, \lean!evalGX! are the same over \lean!dpairsX! and the \lean!dimAt! dimensions of \cref{sec:lean-sym-linked-ext}.
@@ -790,9 +791,10 @@ where $\mu_j$ is the multiplicity index of $j\,h$: the box $\mathit{owners}_{k-1
 \begin{definition}[Aligned digit pairs and their sum]\label{def:lean-sym-evalX}
 \lean|alignPairs ks w| pairs digit $(w.a,t)$ with $(w.b,\mathrm{pick}(t,w.\mathit{perm}))$ for every copy tuple $t$ of $w.a$'s chain; \lean|dpairsX ks| is \lean|dpairs ks| followed by the aligned pairs of every entry of \lean|aligned|. \lean|pinsX ks ν| is \lean|pinsL| with \lean|dpairsX| in place of \lean|dpairs|. With $(p,i,a,b)$ the \lean|cdim| entry of port $p$, \lean|dimAt ks p t| $=\mathrm{Nat.pair}\bigl(\mathrm{portDim}(p),\ t_{\mathrm{depth}(i,p.\mathit{node})}+a\cdot k_b\bigr)$, and \lean|portDim p| for a port without entry. Then
 \begin{align*}
-\mathrm{evalW}(L,E,ks,F,\sigma)&=\sum_{\nu}\bigl[\nu\text{ satisfies }\mathrm{pinsX}\bigr]\,F(\nu)\quad\text{(each digit $l$ over $E.\mathrm{dimv}(\mathrm{dimAt}(\mathrm{dport}\,l,\mathrm{dtup}\,l))$, slots from $\sigma$)},\\
-\mathrm{evalX}(L,E,ks,\sigma)&=\mathrm{evalW}(L,E,ks,\mathrm{prodL}(L,E,ks),\sigma).
+\mathrm{evalW}(L,E,ks,F,\sigma)&=\sum_{\nu}\bigl[\nu\text{ satisfies }\mathrm{pinsX}\bigr]\,F(\nu),\\
+\mathrm{evalX}(L,E,ks,\sigma)&=\mathrm{evalW}(L,E,ks,\mathrm{prodL}(L,E,ks),\sigma),
 \end{align*}
+each digit $l$ ranging over $E.\mathrm{dimv}(\mathrm{dimAt}(\mathrm{dport}\,l,\mathrm{dtup}\,l))$ and the slots read from $\sigma$.
 \lean|evalX_eq_evalL|: with no \lean|cdim| and no \lean|aligned| entries, \lean|evalX| is \lean|evalL|. \lean|evalW_relabel|, \lean|evalW_relabelφ|, \lean|evalX_relabel|, and \lean|evalX_relabelφ| are the relabelling theorems of \cref{sec:lean-sym-linked} for \lean|evalW| and \lean|evalX|: the label map $\rho$ (or the digit map $\varphi$ with \lean|pmap|, \lean|pswap|, and \lean|bndMap|) must be a bijection of the digits that keeps \lean|dimAt| dimensions and sends \lean|dpairsX| into \lean|dpairsX| (in either orientation) and onto it.
 \end{definition}
 
@@ -858,8 +860,9 @@ and \lean|evalX_peel_first| at the flat boundary under \lean|PeelFirst L R B cp 
 
 \file{LinkedRead.lean} (imports \file{LinkedDropX}, \file{LinkedSplice}). With $(x,i,a,b)$ the \lean|cnd| entry of node $x$, \lean|rdVal ks x k t (some (i, a, b))| $=\mathrm{Nat.pair}(k,\ t_{\mathrm{depth}(i,x)}+a\cdot k_b)$ and $k$ without entry; \lean|ndimAt ks n t| is that value at $k=n.\mathit{dim}$, \lean|dnodeN| is \lean|dnodeL| with that dimension, \lean|prodN| the node product over \lean|dnodeN|, and
 \[
-\mathrm{evalN}(L,E,ks,\sigma)=\mathrm{evalW}(L,E,ks,\mathrm{prodN}(L,E,ks),\sigma)\quad(\text{\lean|evalN_evalW|; \lean|evalN_plain|: }\mathrm{evalN}=\mathrm{evalX}\text{ without \lean|cnd|}).
+\mathrm{evalN}(L,E,ks,\sigma)=\mathrm{evalW}(L,E,ks,\mathrm{prodN}(L,E,ks),\sigma)
 \]
+(\lean|evalN_evalW|); \lean|evalN_plain|: $\mathrm{evalN}=\mathrm{evalX}$ without \lean|cnd|.
 \lean|evalGXR L gs gr| is the ghost sum (\cref{sec:lean-sym-ghost}) over \lean|dimAt| dimensions with \lean|prodN|, \lean|dpairsX|, and each ghost slot bounded by the dimension \lean|gbd| that the ghost reading list \lean|gr : List (Port × ℕ × ℕ × ℕ)| gives; $\mathrm{evalN}=\mathrm{evalGXR}([\,],[\,])$. The peel, ghost, and drop theorems carry over: \lean|evalN_peel| and \lean|evalN_peel_flat| under \lean|PeelN| (\lean|PeelX| with \lean|cnd| entries and depths kept at every node and the copies' entries related by \lean|rdC|), \lean|evalGXR_ghostAt| under \lean|GhostN| (\lean|ghostDropN|, \lean|ghostAtN|, with \lean|grAdd| recording the dropped node's dimension reading on the ghost), and \lean|evalN_dropAt| under \lean|DropN| (\lean|dropIdN|, \lean|dropAtN|), each requiring a zero phase row at the dropped node.
 
 \section{Symbolic Sums}\label{sec:lean-sym-sym}

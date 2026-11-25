@@ -215,7 +215,7 @@ Discharge & Function & Method \\
 \midrule
 \texttt{UNIFORM\_REWRITE} & \texttt{discharge\_uniform\_rewrite} & rewrite the hypothesis diagrams into each other, the multiplicity never instantiated (\cref{sec:kernel-tier-uniform}) \\
 \texttt{INDUCTION\_REWRITE} & \texttt{discharge\_induction\_rewrite} & peel one copy off each successor; residuals are the hypothesis diagrams; compare the copies (\cref{sec:kernel-tier-peel}) \\
-\texttt{SYMBOLIC\_CONTRACTION} & \texttt{discharge\_symbolic\_contraction} & contract both successors symbolically (\cref{sec:kernel-tier-symbolic}) \\
+\texttt{SYMBOLIC\_CONTRACTION} & \texttt{discharge\_symbolic\_\allowbreak contraction} & contract both successors symbolically (\cref{sec:kernel-tier-symbolic}) \\
 \texttt{CHAIN\_WINDOW} & \texttt{discharge\_chain\_window} & peel the last chain copy; replace the residual through cut wires (\cref{sec:kernel-chain}) \\
 \texttt{TREE\_WINDOW} & \texttt{discharge\_tree\_window} & peel the leaf level of a tree !-box; graft it on the other side (\cref{sec:kernel-tree}) \\
 \texttt{ORACLE\_WINDOW} & \texttt{discharge\_oracle\_window} & compare numerically at $b,\ldots,b+w-1$ (\cref{sec:kernel-tier-oracle}) \\

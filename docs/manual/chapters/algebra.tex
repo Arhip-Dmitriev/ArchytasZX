@@ -756,7 +756,7 @@ For each atom the module computes (memoized, capacity 1024) either a rational or
 \end{itemize}
 \py!algebraic(atom)! is true when this data exists.
 
-\subsection{Arithmetic in $\Q(\theta)(i)$}
+\subsection{Arithmetic in \texorpdfstring{$\Q(\theta)(i)$}{Q(θ)(i)}}
 
 An element is a pair $(r,s)$ of rational polynomials in $\theta$ reduced modulo $p$, read as $r(\theta)+i\,s(\theta)$; because $\theta$ is real, the pair of reduced polynomials is unique for each element. Addition is componentwise; multiplication is $(r,s)(r',s')=(rr'-ss',\,rs'+sr')$ reduced; the inverse is $(r\nu,\,-s\nu)$ with $\nu$ the inverse of $r^2+s^2$ modulo $p$ (\py!sympy.invert!), and a zero norm raises \py!NumberFieldError("division by zero in the number field")!; integer powers use square-and-multiply, negative ones the inverse.
 
@@ -1151,7 +1151,7 @@ When two canonical forms are not \py!same!, the comparison of \cref{ch:proofs} e
 
 For an odd prime $p$ the variables range over $\Zd p$, the phase is a polynomial over $\mathbb{F}_p$ read in units of $1/p$ turns, and spider tables enter as atoms~\cite{poor2023qupit}.
 
-\subsection{Polynomials over $\mathbb{F}_p$}
+\subsection{Polynomials over \texorpdfstring{$\mathbb{F}_p$}{F\_p}}
 
 \begin{definition}[Reduced $\mathbb{F}_p$ polynomial]\label{def:algebra-modpoly}
 A \py!QMono! is a sorted tuple of (variable, exponent) pairs with every exponent in $1,\ldots,p-1$; \py!ONE_Q! $=()$ is $1$. A \py!ModPoly! (dataclass) has the prime \py!p! and \py!terms: dict[QMono, int]! with nonzero coefficients modulo $p$. Products reduce exponents by $x^p=x$ (\py!_qmono_mul!: $e\mapsto(e-1)\bmod(p-1)+1$), which is valid as functions on $\mathbb{F}_p$.
@@ -1251,7 +1251,7 @@ Name (module) & Value & Meaning \\
 root-isolation precisions (algebraic) & $15,\ldots,480$ & digits, doubling \\
 \code!_approx_roots! cache (algebraic) & $4096$ & memoized root approximations \\
 \code!_DIGITS! (numfield) & $60$ & digits of atom values; \py!polyroots! runs at $80$ \\
-\code!_SHIFTS! (numfield) & $(1,2,-1,3,-2,$ $5,7,-3,11,13)$ & shifts of generators and primitive elements \\
+\code!_SHIFTS! (numfield) & $(1,2,-1,$ $3,-2,5,$ $7,-3,11,13)$ & shifts of generators and primitive elements \\
 \code!_info! cache (numfield) & $1024$ & memoized atom data \\
 isolation exponents (numfield) & $2,\ldots,179$ & dyadic interval widths $3\cdot2^{-k}$ \\
 certificate rounds (numfield) & $60\times6$ & check rounds, bisections per round \\
