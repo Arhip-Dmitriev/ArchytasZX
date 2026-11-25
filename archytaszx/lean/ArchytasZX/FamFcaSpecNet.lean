@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.FamFcaSpec
 import ArchytasZX.AdderFamFcaEng
+import ArchytasZX.ChainFam
 
 /-!
 # The Fourier constant adder spec's expansion as `engR`
@@ -220,6 +221,81 @@ theorem hwR {n : ℕ} (hn : 0 < n) : ∀ w ∈ (D1.famExpand n).wires, lab1 n w.
     · rw [lab1_s (by omega), lab1_s (by omega)]; simp [labY]
     · rw [lab1_s (by omega), lab1_2]; simp [labY, sv, hn', show n - 1 + 1 = n by omega]
     · simp at hf
+
+/-! ## Every leg on the boundary or a wire -/
+
+theorem bndR (n : ℕ) : (D1.famExpand n).bnd =
+    (range n).map (fun j => (⟨n + 5 + j, true, 1⟩ : Port)) ++ (range n).map fun j => ⟨5 + j, false, 1⟩ := by
+  have hm : D1.mv n = id := funext (mv1 n)
+  simp only [Diagram.bnd, FamDiagram.famExpand, X1, hm, List.map_id]
+  rfl
+
+theorem okW {n : ℕ} (hn : 0 < n) {w : Port × Port} (hw : w ∈ W1 n ∨ w ∈ W2 n) :
+    (D1.famExpand n).okPort w.1 = true ∧ (D1.famExpand n).okPort w.2 = true := by
+  have hm : w ∈ (D1.famExpand n).wires := by
+    rw [wires1 hn, List.mem_append]; exact hw
+  exact ⟨Diagram.okPort_of_mem _ _ (Or.inr ⟨w, hm, Or.inl rfl⟩),
+    Diagram.okPort_of_mem _ _ (Or.inr ⟨w, hm, Or.inr rfl⟩)⟩
+
+theorem okBR {n : ℕ} {p : Port} (hp : p ∈ (D1.famExpand n).bnd) : (D1.famExpand n).okPort p = true :=
+  Diagram.okPort_of_mem _ _ (Or.inl hp)
+
+theorem w1h (n : ℕ) : ((⟨0, true, 0⟩ : Port), (⟨5 + 0, false, 0⟩ : Port)) ∈ W1 n := by simp [W1]
+
+theorem w1m {n j : ℕ} (hj : j + 1 < n) :
+    ((⟨5 + j, true, 0⟩ : Port), (⟨5 + (j + 1), false, 0⟩ : Port)) ∈ W1 n := by
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_map.2 ⟨j, List.mem_range.2 (by omega), rfl⟩))
+
+theorem w1l (n : ℕ) : ((⟨5 + (n - 1), true, 0⟩ : Port), (⟨2, false, 0⟩ : Port)) ∈ W1 n := by simp [W1]
+
+theorem w2h (n : ℕ) : ((⟨4, false, 0⟩ : Port), (⟨n + 5 + 0, true, 0⟩ : Port)) ∈ W2 n := by simp [W2]
+
+theorem w2m {n j : ℕ} (hj : j + 1 < n) :
+    ((⟨n + 5 + j, false, 0⟩ : Port), (⟨n + 5 + (j + 1), true, 0⟩ : Port)) ∈ W2 n := by
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_map.2 ⟨j, List.mem_range.2 (by omega), rfl⟩))
+
+theorem w2l (n : ℕ) : ((⟨n + 5 + (n - 1), false, 0⟩ : Port), (⟨2, true, 0⟩ : Port)) ∈ W2 n := by
+  simp [W2]
+
+theorem portsR {n : ℕ} (hn : 0 < n) : (D1.famExpand n).portsOK := by
+  intro y hy
+  rw [nodes1_fam] at hy
+  obtain ⟨e, he, rfl⟩ := List.mem_map.1 hy
+  simp only [FamDiagram.node, side1]
+  rcases mem_Z1 he with rfl | ⟨j, hj, rfl⟩ | rfl | ⟨j, hj, rfl⟩ | rfl
+  · refine ⟨fun k hk => ?_, fun k hk => ?_⟩ <;> simp [n0] at hk
+    subst hk; exact (okW hn (Or.inl (w1h n))).1
+  · refine ⟨fun k hk => ?_, fun k hk => ?_⟩ <;> simp [n1] at hk
+    · subst hk
+      by_cases h : j + 1 < n
+      · exact (okW hn (Or.inl (w1m h))).1
+      · obtain rfl : j = n - 1 := by omega
+        exact (okW hn (Or.inl (w1l n))).1
+    · rcases k with _ | k
+      · rcases j with _ | i
+        · exact (okW hn (Or.inl (w1h n))).2
+        · exact (okW hn (Or.inl (w1m (j := i) (by omega)))).2
+      · obtain rfl : k = 0 := by omega
+        exact okBR (by rw [bndR]; simp only [List.mem_append, List.mem_map, List.mem_range]
+                       exact Or.inr ⟨j, hj, rfl⟩)
+  · refine ⟨fun k hk => ?_, fun k hk => ?_⟩ <;> simp [n2] at hk <;> subst hk
+    · exact (okW hn (Or.inr (w2l n))).2
+    · exact (okW hn (Or.inl (w1l n))).2
+  · refine ⟨fun k hk => ?_, fun k hk => ?_⟩ <;> simp [n3] at hk
+    · rcases k with _ | k
+      · rcases j with _ | i
+        · exact (okW hn (Or.inr (w2h n))).2
+        · exact (okW hn (Or.inr (w2m (j := i) (by omega)))).2
+      · obtain rfl : k = 0 := by omega
+        exact okBR (by rw [bndR]; simp only [List.mem_append, List.mem_map, List.mem_range]
+                       exact Or.inl ⟨j, hj, rfl⟩)
+    · subst hk
+      by_cases h : j + 1 < n
+      · exact (okW hn (Or.inr (w2m h))).1
+      · obtain rfl : j = n - 1 := by omega
+        exact (okW hn (Or.inr (w2l n))).1
+  · refine ⟨fun k hk => ?_, fun k hk => ?_⟩ <;> simp [n4] at hk
+    subst hk; exact (okW hn (Or.inr (w2h n))).1
 
 end FamFca
 
