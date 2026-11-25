@@ -4415,6 +4415,24 @@ instance's, proved from the base scalar at $k \bmod p$ times $A^{\lfloor k/p\rfl
 $(Ac)^{\lfloor k/p\rfloor}$) and \lexlean!inst!.
 
 % ---------------------------------------------------------------------------
+\section{Adder Families}\label{sec:lean-export-adder}
+
+\module{archytaszx.semantics.lean_adder} proves a theorem in one multiplicity $n$ for every $n$ when both sides are the flat networks of the Fourier constant adder or the Draper adder of \cref{sec:boxes-fca-eng,sec:boxes-draper-eng}.
+
+\begin{signature}
+\py!export_family(lhs: Diagram, rhs: Diagram, symbols: tuple[str, ...], name: str = "main") -> str | None!
+\end{signature}
+
+\py!FAMILIES! lists, in order, the families \code!FcaEng! (tag \code!Fca!, scalars $1$) and \code!DraperEng! (tag \code!Draper!, scalars equal by \py!sympy.simplify!), each with Python mirrors of \lean!engL!, \lean!engR!, \lean!engLabs!, and the phase table (\py!eng_l!, \py!eng_r!, \py!eng_labs!, \py!eng_phases!; \py!drp_l!, \py!drp_r!, \py!drp_labs!, \py!drp_phases!).
+
+\begin{algorithm}[\texttt{export\_family}]\label{alg:lean-export-adder}
+\begin{enumerate}
+\item With other than exactly one symbol, return \py!None!.
+\item For each family in order (\py!_matches!): instantiate both sides at $k=1,2,\ldots,\texttt{CHECKED},0$ (\py!CHECKED = 5!); require the scalar condition, the network texts of the network exporter's labelling equal to the mirrors at $k$, the dimension table equal to \py!eng_dims(k, d)! and the phase table to the mirror's ($d$ the first dimension at $k=1$; at $k=0$ the dimension table \code![1]!), and the listed labels of nonzero index equal to the mirror's. The first match gives $d$; an exporter exception counts as no match; none matching returns \py!None!.
+\item Write the namespace \lean!ArchytasZX.Export.<tag>! with, for $k=0,\ldots,5$, \lean!litL<k>! and \lean!litR<k>! (the exports) and \lean!engL_lit<k>!, \lean!engR_lit<k>! by \lean!decide +kernel!, and the theorem \lean!name!: for \code!FcaEng!, \lean!∀ n, Equal (FcaEng.engE d n) 1 (FcaEng.engL n) 1 (FcaEng.engR n)! by \lean!FcaEng.engFam!; for \code!DraperEng!, the same with a common scalar \lean!s : ℂ! by \lean!DraperEng.engFamS!. A symbolic $d$ adds \lean!∀ (d : ℕ), 0 < d →!; a numeric $d$ is discharged by \lean!norm_num!.
+\end{enumerate}
+\end{algorithm}
+
 \section{Restricted Corollaries}\label{sec:lean-export-restrict}
 
 The module \module{archytaszx.semantics.lean_restrict} restates the final theorem of any
