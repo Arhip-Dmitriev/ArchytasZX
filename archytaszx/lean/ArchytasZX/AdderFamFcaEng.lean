@@ -282,6 +282,180 @@ theorem int_perm (n : ℕ) : (engL n).int.Perm (frees n ++ (chainP n ++ pairP n)
     · exact ⟨8 * n + k, by omega, by omega⟩
 
 
+/-! ## The boxed side's pinned labels -/
+
+theorem a0_lt {n j m : ℕ} (hm : m < j) (hj : j < n) : tri j + m < tri n :=
+  lt_of_lt_of_le (tri_lt hm) (tri_mono hj)
+
+theorem i2_lt {n m j : ℕ} (hm : m < j) (hj : j < n) : i2 n m j < tri n := by
+  have := off_mono n (show m + 1 ≤ n by omega); have := off_tri n n le_rfl
+  simp only [i2, off, Nat.sub_self, tri, add_zero] at *; omega
+
+theorem blk {T g s : ℕ} (hs : s < T) : (T * g + s) / T = g ∧ (T * g + s) % T = s := by
+  have hT : 0 < T := by omega
+  rw [Nat.mul_add_div hT, Nat.mul_add_mod, Nat.div_eq_of_lt hs, Nat.mod_eq_of_lt hs, add_zero]
+  exact ⟨rfl, rfl⟩
+
+/-- The pinned value of each pinned label of the boxed side, the free and boundary labels from
+`τ`. -/
+def tz (n : ℕ) (τ : ℕ → ℕ) (x : ℕ) : ℕ :=
+  if 2 * n ≤ x ∧ x < 10 * n then
+    if (x - 2 * n) % 8 = 0 then τ (n + (x - 2 * n) / 8)
+    else if (x - 2 * n) % 8 = 7 then τ ((x - 2 * n) / 8)
+    else if (x - 2 * n) % 8 = 2 ∨ (x - 2 * n) % 8 = 3 ∨ (x - 2 * n) % 8 = 4 then
+      τ (2 * n + 8 * ((x - 2 * n) / 8) + 1)
+    else τ x
+  else if 10 * n ≤ x ∧ x < 10 * n + 4 * tri n then
+    if (x - 10 * n) / tri n = 0 then τ (n + jOf ((x - 10 * n) % tri n))
+    else if (x - 10 * n) / tri n = 3 then τ (jOf ((x - 10 * n) % tri n))
+    else τ (2 * n + 8 * mOf n ((x - 10 * n) % tri n) + 1)
+  else τ x
+
+theorem tz_chain (n : ℕ) (τ : ℕ → ℕ) {m r : ℕ} (hm : m < n) (hr : r < 8) :
+    tz n τ (2 * n + 8 * m + r) = if r = 0 then τ (n + m) else if r = 7 then τ m
+      else if r = 2 ∨ r = 3 ∨ r = 4 then τ (2 * n + 8 * m + 1) else τ (2 * n + 8 * m + r) := by
+  have e1 : (2 * n + 8 * m + r - 2 * n) % 8 = r := by omega
+  have e2 : (2 * n + 8 * m + r - 2 * n) / 8 = m := by omega
+  unfold tz
+  rw [if_pos (by omega), e1, e2]
+
+theorem tz_pair (n : ℕ) (τ : ℕ → ℕ) {g s : ℕ} (hg : g < 4) (hs : s < tri n) :
+    tz n τ (10 * n + (tri n * g + s)) = if g = 0 then τ (n + jOf s) else if g = 3 then τ (jOf s)
+      else τ (2 * n + 8 * mOf n s + 1) := by
+  have hT : tri n * g + s < 4 * tri n := by nlinarith
+  obtain ⟨e1, e2⟩ := blk (g := g) hs
+  unfold tz
+  rw [if_neg (by omega), if_pos ⟨by omega, by omega⟩, show 10 * n + (tri n * g + s) - 10 * n =
+    tri n * g + s by omega, e1, e2]
+
+theorem mem_g0 {n j : ℕ} (hj : j < n) :
+    nd .Z [cb n j] ((n + j) :: (range j).map (a0 n j)) ∈ (engL n).nodes := by
+  simp only [engL, mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inl (Or.inr (mem_map.2 ⟨j, mem_range.2 hj, rfl⟩))))))
+
+theorem mem_g2 {n j : ℕ} (hj : j < n) :
+    nd .Z ((cb n j + 2) :: (later n j).map (a2 n j)) [cb n j + 1] ∈ (engL n).nodes := by
+  simp only [engL, mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inr (mem_map.2 ⟨j, mem_range.2 hj, rfl⟩)))))
+
+theorem mem_g5 {n j : ℕ} (hj : j < n) :
+    nd .Z ((cb n j + 4) :: (later n j).map (a5 n j)) [cb n j + 3] ∈ (engL n).nodes := by
+  simp only [engL, mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inr (mem_map.2 ⟨j, mem_range.2 hj, rfl⟩))))
+
+theorem mem_g9 {n j : ℕ} (hj : j < n) :
+    nd .Z [j] ((cb n j + 7) :: (range j).map (a9 n j)) ∈ (engL n).nodes := by
+  simp only [engL, mem_append]
+  exact Or.inl (Or.inl (Or.inr (mem_map.2 ⟨j, mem_range.2 hj, rfl⟩)))
+
+theorem mem_chain {n j : ℕ} (hj : j < n) {x : Node} (hx : x ∈ chainN n j) : x ∈ (engL n).nodes := by
+  simp only [engL, mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inl (Or.inl (mem_flatMap.2 ⟨j, mem_range.2 hj, hx⟩))))))
+
+theorem mem_later {n m j : ℕ} : j ∈ later n m ↔ m < j ∧ j < n := by
+  simp only [later, mem_map, mem_range]
+  constructor
+  · rintro ⟨t, ht, rfl⟩; omega
+  · intro h; exact ⟨j - m - 1, by omega, by omega⟩
+
+theorem free_notin {n m r : ℕ} (hm : m < n) (hr : r = 1 ∨ r = 5 ∨ r = 6) :
+    2 * n + 8 * m + r ∉ chainP n ++ pairP n := by
+  simp only [chainP, pairP, mem_append, mem_flatMap, mem_range, mem_map, mem_cons, not_mem_nil,
+    or_false, not_or, not_exists, not_and]
+  refine ⟨fun k _ s hs => ?_, fun k _ => by omega⟩
+  rcases hs with rfl | rfl | rfl | rfl | rfl <;> omega
+
+/-- The boxed side's nodes are nonzero only at the pinned values. -/
+theorem engL_support (d : ℕ) {n : ℕ} {τ τ' : ℕ → ℕ}
+    (h : prodVal (engE d n) (engL n).nodes τ' ≠ 0) (hτ : ∀ x ∉ chainP n ++ pairP n, τ' x = τ x) :
+    ∀ l ∈ chainP n ++ pairP n, τ' l = tz n τ l := by
+  have hv := Fca.prodVal_ne h
+  have zq : ∀ {os is : List ℕ}, nd .Z os is ∈ (engL n).nodes → ∀ {a b : ℕ}, a ∈ os ++ is →
+      b ∈ os ++ is → τ' a = τ' b := fun {os is} hn {a b} ha hb =>
+    Z_eq _ _ _ rfl (hv _ hn) (a := a) (b := b) ha hb
+  have bnd : ∀ x, x < 2 * n → τ' x = τ x := fun x hx => hτ x fun h => by
+    simp only [chainP, pairP, mem_append, mem_flatMap, mem_range, mem_map, mem_cons,
+      not_mem_nil, or_false] at h
+    rcases h with ⟨k, _, s, hs, rfl⟩ | ⟨k, _, rfl⟩
+    · rcases hs with rfl | rfl | rfl | rfl | rfl <;> omega
+    · omega
+  have c1 : ∀ m < n, τ' (cb n m + 1) = τ (2 * n + 8 * m + 1) := fun m hm =>
+    hτ _ (free_notin hm (Or.inl rfl))
+  have c2 : ∀ m < n, τ' (cb n m + 2) = τ (2 * n + 8 * m + 1) := fun m hm => by
+    rw [zq (mem_g2 hm) (a := cb n m + 2) (b := cb n m + 1) (mem_append_left _ mem_cons_self)
+      (mem_append_right _ (mem_singleton_self _)), c1 m hm]
+  have c3 : ∀ m < n, τ' (cb n m + 3) = τ (2 * n + 8 * m + 1) := fun m hm => by
+    have hz : (⟨.Z, [cb n m + 3], [cb n m + 2], 0, m + 1⟩ : Node) ∈ (engL n).nodes :=
+      mem_chain hm (by simp [chainN])
+    rw [Z_eq _ _ _ rfl (hv _ hz) (a := cb n m + 3) (b := cb n m + 2) (by simp [Node.labels])
+      (by simp [Node.labels]), c2 m hm]
+  have c4 : ∀ m < n, τ' (cb n m + 4) = τ (2 * n + 8 * m + 1) := fun m hm => by
+    rw [zq (mem_g5 hm) (a := cb n m + 4) (b := cb n m + 3) (mem_append_left _ mem_cons_self)
+      (mem_append_right _ (mem_singleton_self _)), c3 m hm]
+  intro l hl
+  rcases mem_append.1 hl with hc | hp
+  · simp only [chainP, mem_flatMap, mem_range, mem_map, mem_cons, not_mem_nil, or_false] at hc
+    obtain ⟨m, hm, r, hr, rfl⟩ := hc
+    rw [tz_chain n τ hm (by rcases hr with rfl | rfl | rfl | rfl | rfl <;> omega)]
+    rcases hr with rfl | rfl | rfl | rfl | rfl
+    · simp only [if_true]
+      rw [zq (mem_g0 hm) (a := 2 * n + 8 * m + 0) (b := n + m) (by simp [cb]) (by simp),
+        bnd _ (by omega)]
+    · simpa [cb] using c2 m hm
+    · simpa [cb] using c3 m hm
+    · simpa [cb] using c4 m hm
+    · simp only [show (7 : ℕ) ≠ 0 by omega, if_false, if_true]
+      rw [zq (mem_g9 hm) (a := 2 * n + 8 * m + 7) (b := m) (by simp [cb]) (by simp),
+        bnd _ (by omega)]
+  · simp only [pairP, mem_map, mem_range] at hp
+    obtain ⟨k, hk, rfl⟩ := hp
+    have hT : 0 < tri n := by
+      rcases Nat.eq_zero_or_pos (tri n) with h0 | h0
+      · rw [h0] at hk; omega
+      · exact h0
+    set s := k % tri n with hs
+    have hs' : s < tri n := Nat.mod_lt _ hT
+    have hg : k / tri n < 4 := by
+      rw [Nat.div_lt_iff_lt_mul hT]; linarith
+    have ek : k = tri n * (k / tri n) + s := (Nat.div_add_mod k (tri n)).symm
+    rw [ek, tz_pair n τ hg hs']
+    obtain ⟨hj1, hj2⟩ := jOf_spec s
+    have hjn := jOf_lt hs'
+    obtain ⟨hm1, hm2, hm3⟩ := mOf_spec hs'
+    have hm3' : s < off n (mOf n s) + (n - 1 - mOf n s) := hm3
+    set j := jOf s
+    set m := mOf n s
+    have e0 : s = tri j + (s - tri j) := by omega
+    have e2 : s = i2 n m (m + 1 + (s - off n m)) := by simp only [i2]; omega
+    have hjl : m + 1 + (s - off n m) ∈ later n m := mem_later.2 ⟨by omega, by omega⟩
+    have hlt : s - tri j < j := by simp only [tri] at hj2; omega
+    interval_cases hgv : k / tri n
+    · simp only [if_true]
+      have hl : 10 * n + (tri n * 0 + s) = a0 n j (s - tri j) := by
+        simp only [a0]; omega
+      rw [hl, zq (mem_g0 hjn) (a := a0 n j (s - tri j)) (b := n + j)
+        (mem_append_right _ (mem_cons_of_mem _ (mem_map.2 ⟨_, mem_range.2 hlt, rfl⟩)))
+        (mem_append_right _ mem_cons_self), bnd _ (by omega)]
+    · simp only [show (1 : ℕ) ≠ 0 by omega, show (1 : ℕ) ≠ 3 by omega, if_false]
+      have hl : 10 * n + (tri n * 1 + s) = a2 n m (m + 1 + (s - off n m)) := by
+        simp only [a2]; omega
+      rw [hl, zq (mem_g2 hm1) (a := a2 n m (m + 1 + (s - off n m))) (b := cb n m + 1)
+        (mem_append_left _ (mem_cons_of_mem _ (mem_map.2 ⟨_, hjl, rfl⟩)))
+        (mem_append_right _ (mem_singleton_self _)), c1 m hm1]
+    · simp only [show (2 : ℕ) ≠ 0 by omega, show (2 : ℕ) ≠ 3 by omega, if_false]
+      have hl : 10 * n + (tri n * 2 + s) = a5 n m (m + 1 + (s - off n m)) := by
+        simp only [a5]; omega
+      rw [hl, zq (mem_g5 hm1) (a := a5 n m (m + 1 + (s - off n m))) (b := cb n m + 3)
+        (mem_append_left _ (mem_cons_of_mem _ (mem_map.2 ⟨_, hjl, rfl⟩)))
+        (mem_append_right _ (mem_singleton_self _)), c3 m hm1]
+    · simp only [show (3 : ℕ) ≠ 0 by omega, if_false, if_true]
+      have hl : 10 * n + (tri n * 3 + s) = a9 n j (s - tri j) := by
+        simp only [a9]; omega
+      rw [hl, zq (mem_g9 hjn) (a := a9 n j (s - tri j)) (b := j)
+        (mem_append_right _ (mem_cons_of_mem _ (mem_map.2 ⟨_, mem_range.2 hlt, rfl⟩)))
+        (mem_append_left _ (mem_singleton_self _)), bnd _ (by omega)]
+
+
 /-! ## The spec in closed form -/
 
 theorem engD_dI (d : ℕ) {n t : ℕ} (h : t ≤ n) : engD d n (dI n t) = d ^ t := by
