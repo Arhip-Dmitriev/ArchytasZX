@@ -283,6 +283,13 @@ decision = decide_equal(left, right)
 print(decision.verdict.value, decision.method.value)
 print(render_dirac(right, instance=True))
 \end{lstlisting}
+It prints
+\begin{lstlisting}[style=grammar]
+unequal interface
+Z_{1->n} = sum_{k=0}^{d-1} |k>^{n}<k|
+at n = 3: sum_{k=0}^{d-1} |k>^{3}<k|
+\end{lstlisting}
+because the reader abstracts the numeral 3 to a multiplicity symbol $n$ bound to 3 (\cref{ch:language}): the right side is the family over $n$, the left side has three outputs, and the interfaces differ.
 
 \section{Worked Examples}\label{sec:python-api-examples}
 
@@ -290,6 +297,8 @@ print(render_dirac(right, instance=True))
 
 The script \file{examples/ghz_proof.py} proves that a Fourier transform on a control qudit followed by $n$ CNOTs prepares the GHZ state $d^{-1/2}\sum_k\ket{k}\ket{k}^{\otimes n}$~\cite{ghz1989beyond}, for every $n$ and every qudit dimension $d$:
 \begin{lstlisting}[style=python]
+from pathlib import Path
+
 from archytaszx import azx
 
 n, d = azx.count("n"), azx.d
@@ -302,7 +311,7 @@ diagram = (azx.id @ t**n) | azx.Z(1, 2) | azx.F | azx.X(0, 1)
 diagram *= d ** "-1/2"
 
 print(azx.decide(diagram, ghz).verdict)
-print(azx.lean("ghz.lean"))
+print(azx.lean(str(Path(__file__).with_name("ghz.lean"))))
 \end{lstlisting}
 The target \py!ghz! is a Z state with two outputs, the second feeding a Z spider whose output is fanned $n$ times (a port-scoped \bbox{}). The CNOT target \py!t! is an X spider fed by a fresh X state; \py!t**n! repeats it in a node-scoped \bbox{}, and its free input is fed by output~1 of the copy spider, which is outside the box: by \cref{alg:python-api-apply} a spider outside a box feeds every copy. \py!diagram.dsl()! is
 \begin{lstlisting}[style=azx]
@@ -334,11 +343,11 @@ The decision prints \code!equal!: its text is
 decide: equal by normal_form: normal forms agree; no oracle mismatch in 16 sample(s)
 proof: re-checkable; certificate kernel / certificate lean
 \end{lstlisting}
-and \py!azx.lean(...)! writes the Lean~4 proof~\cite{demoura2021lean4} of the equality to the file and returns the shell's report (\cref{ch:language}).
+and \py!azx.lean(...)! writes the Lean~4 proof~\cite{demoura2021lean4} of the equality to \file{ghz.lean} beside the script and returns the shell's report (\cref{ch:language}).
 
 \subsection{Mixed diagrams}
 
-The script \file{examples/mixed/mixed_api.py} decides mixed equalities~\cite{carette2019mixed,selinger2007cpm}: partial traces of the Bell and GHZ states, idempotence of dephasing, Fourier-basis measurement of $\ket{0}$, and causality of the qudit CX.
+The script \file{examples/mixed/mixed_api.py} decides mixed equalities~\cite{carette2019mixed,selinger2007cpm} and prints each verdict: the partial traces of the Bell state and of the four-output GHZ state, idempotence of dephasing, Fourier-basis measurement of $\ket{0}$, causality of the qudit CX, a Born probability $1/d$, and a teleportation channel. An excerpt:
 \begin{lstlisting}[style=python]
 from archytaszx import azx
 d = azx.d
@@ -354,4 +363,4 @@ print(azx.decide(grounds | cx, grounds).verdict)                    # causality
 
 \subsection{The terminal course}
 
-\file{examples/tutorial.py} is an interactive course in twelve chapters (welcome, qudits and notation, wires and boxes, the Z spider, the Fourier box and the X spider, rewriting, checking and deciding, the W node and the triangle, qufinite wires of different dimensions, and three chapters on \bboxes{}: families, deciding families, induction). Each chapter runs in a fresh \py!Program!, shows Python with \py!show(piece)! (the Dirac form and the Unicode drawing) and engine commands with \py!P(command)!, and between steps accepts engine commands or \code!py CODE! from the reader. Its options are \texttt{--chapter N}, \texttt{--menu}, and \texttt{--no-pause}.
+\file{examples/tutorial.py} is an interactive course in twelve chapters: welcome; qudits, kets and notation; wires and boxes; the Z spider; the Fourier box and the X spider; rewriting, checking and deciding; the W node and the triangle; qufinite mixed dimensions; three chapters on \bboxes{} (one picture for every $n$, deciding whole families, proof by induction); and where to go from here. Each chapter runs in a fresh \py!Program! \py!P! with the symbols \py!n!, \py!m!, and \py!d!, shows Python with \py!show(piece)! (the Dirac form and the Unicode drawing) and engine commands with \py!P(command)!, and between steps accepts engine commands or \code!py CODE! from the reader. Its options are \texttt{--chapter N}, \texttt{--menu}, and \texttt{--no-pause}.
