@@ -1377,6 +1377,85 @@ theorem base (d : ℕ) (hd : 0 < d) :
 theorem peel (d n : ℕ) : Equal (envAt (E0 d) L (n + 1)) (lhs (n + 1)).1 (lhs (n + 1)).2 (lhs n).1
     (glueAt (cut n) (cp n) (lhs n).2) := Equal.refl _ _ _
 
+theorem pinsCp_tauG (n : ℕ) (σ : ℕ → ℕ) : pinsCp n (tauG n σ) = pinsN (n + 1) σ := by
+  have o : ∀ t, t < 2 → tauG n σ (sl n t) = σ (sl n t) := fun t ht =>
+    tauG_off (dig_notin_cut ht)
+  have oP : ∀ t, 14 ≤ t → t < 8 * n + 22 → tauG n σ (sl n t) = σ (sl n t) := fun t h1 h2 =>
+    tauG_off fun h => by
+      obtain ⟨j, hj, e | e⟩ := mem_cut.1 h <;>
+      · have := (sl_inj (by omega) (by omega) e).1; omega
+  simp only [pinsCp, pinsN, range_succ, map_append, prod_append, map_cons, map_nil, prod_cons,
+    prod_nil, mul_one]
+  rw [o 0 (by omega), o 1 (by omega), oP _ (by omega) (by omega), oP _ (by omega) (by omega)]
+  have hl : ∀ i ∈ range n,
+      (if tauG n σ (sl n (14 + 8 * i)) = tauG n σ (pend n i) then (1 : ℂ) else 0) *
+        (if tauG n σ (sl n (15 + 8 * i)) = tauG n σ (pendO n i) then 1 else 0) =
+      (if σ (pend (n + 1) i) = σ (sl i 0) then (1 : ℂ) else 0) *
+        (if σ (pendO (n + 1) i) = σ (sl i 1) then 1 else 0) := by
+    intro i hi
+    have hi := mem_range.1 hi
+    rw [tauG_pend hi, tauG_pendO hi, oP _ (by omega) (by omega), oP _ (by omega) (by omega)]
+    have q1 : (if σ (pend (n + 1) i) = σ (sl i 0) then (1 : ℂ) else 0) =
+      if σ (sl n (14 + 8 * i)) = σ (sl i 0) then 1 else 0 := by
+      by_cases h : σ (sl n (14 + 8 * i)) = σ (sl i 0)
+      · rw [if_pos h, if_pos (by simpa [pend] using h)]
+      · rw [if_neg h, if_neg (by simpa [pend] using h)]
+    have q2 : (if σ (pendO (n + 1) i) = σ (sl i 1) then (1 : ℂ) else 0) =
+      if σ (sl n (15 + 8 * i)) = σ (sl i 1) then 1 else 0 := by
+      by_cases h : σ (sl n (15 + 8 * i)) = σ (sl i 1)
+      · rw [if_pos h, if_pos (by simpa [pendO] using h)]
+      · rw [if_neg h, if_neg (by simpa [pendO] using h)]
+    rw [q1, q2]
+  have q3 : (if σ (pend (n + 1) n) = σ (sl n 0) then (1 : ℂ) else 0) =
+      if σ (sl n (14 + 8 * n)) = σ (sl n 0) then 1 else 0 := by
+    by_cases h : σ (sl n (14 + 8 * n)) = σ (sl n 0)
+    · rw [if_pos h, if_pos (by simpa [pend] using h)]
+    · rw [if_neg h, if_neg (by simpa [pend] using h)]
+  have q4 : (if σ (pendO (n + 1) n) = σ (sl n 1) then (1 : ℂ) else 0) =
+      if σ (sl n (15 + 8 * n)) = σ (sl n 1) then 1 else 0 := by
+    by_cases h : σ (sl n (15 + 8 * n)) = σ (sl n 1)
+    · rw [if_pos h, if_pos (by simpa [pendO] using h)]
+    · rw [if_neg h, if_neg (by simpa [pendO] using h)]
+  rw [List.map_congr_left hl, q3, q4]
+  ring
+
+theorem dig_mem_bndL : ∀ m, ∀ i < m, sl i 0 ∈ bndL m ∧ sl i 1 ∈ bndL m
+  | 0, _, h => absurd h (Nat.not_lt_zero _)
+  | m + 1, i, hi => by
+    simp only [bndL, mem_append, mem_filter, decide_eq_true_eq]
+    rcases Nat.lt_succ_iff_lt_or_eq.1 hi with hi | rfl
+    · obtain ⟨h0, h1⟩ := dig_mem_bndL m i hi
+      exact ⟨Or.inl ⟨h0, dig_notin_cut (by omega)⟩, Or.inl ⟨h1, dig_notin_cut (by omega)⟩⟩
+    · exact ⟨Or.inr ⟨by simp [cp], dig_notin_cut (by omega)⟩,
+        Or.inr ⟨by simp [cp], dig_notin_cut (by omega)⟩⟩
+
+/-- The close step from the arithmetic of copy `n`'s Fourier sum. -/
+theorem close_of (d : ℕ) (hd : 0 < d)
+    (harith : ∀ n (σ : ℕ → ℕ), (∀ i < n + 1, σ (sl i 0) < d) → (∀ i < n + 1, σ (sl i 1) < d) →
+      IndS d σ n * SumC d n (tauG n σ) = cs d n * IndS d σ (n + 1)) (n : ℕ) :
+    Equal (envAt (E0 d) L (n + 1)) (rhs d n).1 (glueAt (cut n) (cp n) (rhs d n).2)
+      (rhs d (n + 1)).1 (rhs d (n + 1)).2 := by
+  refine ⟨List.Perm.refl _, fun σ hσ => ?_⟩
+  have ha : ∀ i < n + 1, σ (sl i 0) < d := fun i hi => by
+    have := hσ _ (dig_mem_bndL (n + 1) i hi).1
+    rwa [labDim_plain d hi (by omega) (by omega) (by omega) fun _ _ _ _ => by omega] at this
+  have hb : ∀ i < n + 1, σ (sl i 1) < d := fun i hi => by
+    have := hσ _ (dig_mem_bndL (n + 1) i hi).2
+    rwa [labDim_plain d hi (by omega) (by omega) (by omega) fun _ _ _ _ => by omega] at this
+  show rs d n * eval _ (glueAt (cut n) (cp n) (rhsN n)) σ = rs d n * cs d n * eval _ (rhsN (n + 1)) σ
+  rw [eval_glue d hd n σ ha hb, eval_rhsN d hd le_rfl σ ha hb, pinsCp_tauG]
+  have h := harith n σ ha hb
+  simp only [IndS, pinsN] at h ⊢
+  calc rs d n * ((if topv d σ n 1 n % d ^ n = (topv d σ n 0 n + 2) % d ^ n then 1 else 0) *
+        (((range (n + 1)).map fun i => (if σ (pend (n + 1) i) = σ (sl i 0) then (1 : ℂ) else 0) *
+          (if σ (pendO (n + 1) i) = σ (sl i 1) then 1 else 0)).prod * SumC d n (tauG n σ)))
+      = rs d n * (((range (n + 1)).map fun i =>
+          (if σ (pend (n + 1) i) = σ (sl i 0) then (1 : ℂ) else 0) *
+          (if σ (pendO (n + 1) i) = σ (sl i 1) then 1 else 0)).prod *
+          ((if topv d σ n 1 n % d ^ n = (topv d σ n 0 n + 2) % d ^ n then 1 else 0) *
+            SumC d n (tauG n σ))) := by ring
+    _ = _ := by rw [h]; ring
+
 /-- The family theorem from the close step. -/
 theorem fam_of_close (d : ℕ) (hd : 0 < d)
     (close : ∀ n, Equal (envAt (E0 d) L (n + 1)) (rhs d n).1
@@ -1384,6 +1463,24 @@ theorem fam_of_close (d : ℕ) (hd : 0 < d)
     Equal (envAt (E0 d) L n) (lhs n).1 (lhs n).2 (rhs d n).1 (rhs d n).2 :=
   netIfaceAtE_fam (E0 d) L B cut cp lhs (rhs d) (labsMono d) copyAt (fun n => fitsL n)
     (fun n => fitsR n) (base d hd) (peel d) close n
+
+/-- The arithmetic of copy `n`'s Fourier sum against the spec's shift factor. -/
+def Arith (d : ℕ) : Prop :=
+  ∀ n (σ : ℕ → ℕ), (∀ i < n + 1, σ (sl i 0) < d) → (∀ i < n + 1, σ (sl i 1) < d) →
+    IndS d σ n * SumC d n (tauG n σ) = cs d n * IndS d σ (n + 1)
+
+/-- The family theorem from `Arith`: the boxed adder equals the spec at every `n`. -/
+theorem fam_of_arith (d : ℕ) (hd : 0 < d) (h : Arith d) (n : ℕ) :
+    Equal (envAt (E0 d) L n) (lhs n).1 (lhs n).2 (rhs d n).1 (rhs d n).2 :=
+  fam_of_close d hd (close_of d hd h) n
+
+theorem fam_of_arith_8 (d : ℕ) (hd : 0 < d) (h : Arith d) :
+    Equal (envAt (E0 d) L 8) (lhs 8).1 (lhs 8).2 (rhs d 8).1 (rhs d 8).2 :=
+  fam_of_arith d hd h 8
+
+theorem fam_of_arith_24 (d : ℕ) (hd : 0 < d) (h : Arith d) :
+    Equal (envAt (E0 d) L 24) (lhs 24).1 (lhs 24).2 (rhs d 24).1 (rhs d 24).2 :=
+  fam_of_arith d hd h 24
 
 end Fca
 
