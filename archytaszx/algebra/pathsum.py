@@ -121,6 +121,22 @@ def _prime_coordinates(
     return out
 
 
+@lru_cache(maxsize=4096)
+def _mu_over_phi(o: int) -> Fraction:
+    """mu(o) / phi(o)."""
+    mu, phi, m, p = 1, 1, o, 2
+    while p * p <= m:
+        if m % p == 0:
+            m //= p
+            if m % p == 0:
+                return Fraction(0)
+            mu, phi = -mu, phi * (p - 1)
+        p += 1
+    if m > 1:
+        mu, phi = -mu, phi * (m - 1)
+    return Fraction(mu, phi)
+
+
 class Cyclo:
     """An element of Q(zeta_n) as rational coefficients over zeta_n^0 .. zeta_n^(n-1)."""
 
@@ -253,7 +269,11 @@ class Cyclo:
         return a.sparse_reduced() == b.sparse_reduced()
 
     def __hash__(self) -> int:
-        return hash(self.n)
+        """Hash of the normalised trace sum_e c_e mu(o_e) / phi(o_e), o_e the order of zeta_n^e."""
+        total = Fraction(0)
+        for e, v in self.c.items():
+            total += v * _mu_over_phi(self.n // math.gcd(self.n, e))
+        return hash(total)
 
     def to_complex(self) -> complex:
         """The value as a complex float."""
