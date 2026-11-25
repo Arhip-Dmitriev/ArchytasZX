@@ -2444,10 +2444,11 @@ def peels_first(box: BangBox) -> bool:
     )
 
 
-def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
+def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> dict[NodeId, NodeId]:
     """:func:`_peel_extended` on an open chain whose links run through its child box: the
     peeled copy's child box is then merged with the boxes the chain's end it now meets was
-    wired to (the tail's, or the head's when the chain :func:`peels_first`)."""
+    wired to (the tail's, or the head's when the chain :func:`peels_first`). Returns the
+    copy's node map."""
     child = zip_child(diagram, box)
     assert child is not None
     if box.cyclic:
@@ -2460,6 +2461,7 @@ def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     image = frozenset(id_map[n] for n in child.node_scope)
     copy = next(b for b, other in diagram.bang_boxes.items() if other.node_scope == image)
     _merge_zipped(diagram, [*holders, copy] if first else [copy, *holders])
+    return id_map
 
 
 def _peel_extended(
@@ -2824,10 +2826,11 @@ def _symbol_in(
     return None
 
 
-def _peel_tree(diagram: Diagram, box: BangBox, last: Mult) -> None:
+def _peel_tree(diagram: Diagram, box: BangBox, last: Mult) -> dict[NodeId, NodeId]:
     """Peel the leaf level off a tree box of depth ``last + 1``: one copy of the scope in a new
     box of multiplicity b^last fed by the tree's b^last leaves, its child ports in the leaf
-    run's place, the level read as ``last + 1`` and the position as the new box's index."""
+    run's place, the level read as ``last + 1`` and the position as the new box's index.
+    Returns the copy's node map."""
     assert box.tree_parent is not None
     if box.parent is not None or _children_of(diagram, box.id):
         raise BangBoxGrammarError(f"tree box {box.id!r} with a parent or child box has no peel")
@@ -2900,6 +2903,7 @@ def _peel_tree(diagram: Diagram, box: BangBox, last: Mult) -> None:
         feed=box.id,
         feed_port=_moved(box.tree_parent, id_map),
     )
+    return id_map
 
 
 @dataclass(frozen=True, slots=True)
@@ -2950,11 +2954,11 @@ def peel_one(
     if box.is_fed:
         raise BangBoxGrammarError(f"fed box {box_id!r} has no peel_one")
     if box.is_tree:
-        _peel_tree(working, box, predecessor)
+        made = frozenset(_peel_tree(working, box, predecessor).values())
     elif zipped:
-        _peel_zipped(working, box, predecessor.to_sympy())
+        made = frozenset(_peel_zipped(working, box, predecessor.to_sympy()).values())
     elif box.is_extended:
-        _peel_extended(working, box, predecessor.to_sympy(), last, first)
+        made = frozenset(_peel_extended(working, box, predecessor.to_sympy(), last, first).values())
     elif box.is_node_scope:
         made = frozenset(_peel_node_scope(working, box).values())
     else:

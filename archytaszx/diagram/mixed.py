@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.dimension import Dim, _exponent_symbol
 from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
 from archytaszx.algebra.scalar import ModDelta, Scalar
 from archytaszx.diagram.bangbox import BangBox
@@ -651,7 +651,7 @@ def outcome(k: int | str, d: Dim | int | str) -> Diagram:
     """The pure effect ``<k|``: ``d^(-1/2)`` times the X effect with phase ``j k / d`` at index
     ``j``. Closed against a state through :func:`double`, the Born probability of ``k``."""
     dim = _as_dim(d)
-    index = sp.Integer(k) if isinstance(k, int) else sp.Symbol(k, integer=True)
+    index = sp.Integer(k) if isinstance(k, int) else _exponent_symbol(k)
     out = Diagram()
     phase = PhaseVector(dim, rule=Phase(INDEX * index / dim.to_sympy()), expand=True)
     x = out.add_node(X_SPIDER, [dim], [], phase)
