@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0.
 import ArchytasZX.FamFcaSpec
 import ArchytasZX.AdderFamFcaEng
 import ArchytasZX.ChainFam
+import ArchytasZX.FamFcaEq
 
 /-!
 # The Fourier constant adder spec's expansion as `engR`
@@ -390,6 +391,60 @@ theorem dimW {n : ℕ} (hn : 0 < n) (d : ℕ) : ∀ w ∈ (D1.famExpand n).wires
       simp only [legs1_3, edim, dI]
       split_ifs <;> first | omega | contradiction
     · simp at hf
+
+/-! ## The entry -/
+
+theorem legs1_31 (n j d : ℕ) : FamDiagram.ixAt n D1.legs ⟨3, true, 1⟩ j d = d := rfl
+theorem legs1_11 (n j d : ℕ) : FamDiagram.ixAt n D1.legs ⟨1, false, 1⟩ j d = d := rfl
+
+theorem bnd_lenR (n : ℕ) : (D1.famExpand n).bnd.length = 2 * n := by
+  rw [bndR]; simp; ring
+
+/-- The expanded spec's entry is `engR n`'s, `n > 0`. -/
+theorem evalR0 (d : ℕ) {n : ℕ} (hn : 0 < n) (σ : ℕ → ℕ) (hσ : (D1.famExpand n).InRange (engE d n) σ) :
+    (D1.famExpand n).eval (engE d n) σ = ArchytasZX.eval (engE d n) (engR n) σ := by
+  have hbnd : ∀ i (hi : i < (D1.famExpand n).bnd.length), lab1 n (D1.famExpand n).bnd[i] = i := by
+    intro i hi
+    have hl := bnd_lenR n
+    rw [List.getElem_of_eq (bndR n)]
+    by_cases h : i < n
+    · rw [List.getElem_append_left (by simpa using h)]
+      simp only [List.getElem_map, List.getElem_range]
+      rw [lab1_s h]; rfl
+    · rw [List.getElem_append_right (by simpa using h)]
+      simp only [List.getElem_map, List.getElem_range, List.length_map, List.length_range]
+      rw [lab1_b (by omega)]
+      simp only [labY]; omega
+  have hnd : ((D1.famExpand n).wires.map fun w => lab1 n w.1).Nodup :=
+    (intR hn).nodup_iff.2 (engR_int_nodup n)
+  have hmem : ∀ w ∈ (D1.famExpand n).wires, rb n ≤ lab1 n w.1 ∧ lab1 n w.1 < rb n + (2 * n + 2) :=
+    fun w hw => by
+      have h := (intR hn).subset (List.mem_map_of_mem (f := fun w : Port × Port => lab1 n w.1) hw)
+      exact mem_engR_int.1 h
+  have hdim : ∀ j (hj : j < (D1.famExpand n).wires.length),
+      labDim (engE d n) (lab1 n (D1.famExpand n).wires[j].1) =
+        (engE d n).dimv ((D1.famExpand n).wireDim j) := by
+    intro j hj
+    rw [dimW hn d _ (List.getElem_mem hj)]
+    simp only [Diagram.wireDim, List.getElem?_eq_getElem hj, Option.map_some, Option.getD_some]
+  have hbd : ∀ i < (D1.famExpand n).bnd.length,
+      labDim (engE d n) i = (engE d n).dimv ((D1.famExpand n).bdims.getD i 0) := by
+    intro i hi
+    rw [bnd_lenR] at hi
+    have hb : (D1.famExpand n).bdims.getD i 0 = 0 := by
+      simp only [Diagram.bdims]
+      refine getD_zero (fun v hv => ?_) i
+      obtain ⟨p, hp, rfl⟩ := List.mem_map.1 hv
+      rw [bndR, List.mem_append] at hp
+      rcases hp with hp | hp <;> obtain ⟨j, hj, rfl⟩ := List.mem_map.1 hp <;>
+        have hj := List.mem_range.1 hj
+      · exact (portDim1 (mem_Z1_3 hj) true 1 (by simp [n3])).trans (legs1_31 _ _ _)
+      · exact (portDim1 (mem_Z1_1 hj) false 1 (by simp [n1])).trans (legs1_11 _ _ _)
+    rw [hb, labDim_low d hn (by unfold rb; nlinarith)]
+    exact (engD_zero d hn).symm
+  rw [Diagram.eval_netBy _ _ (lab1 n) hbnd (hwR hn) (portsR hn) hnd
+    (fun w hw => by rw [bnd_lenR]; have := hmem w hw; unfold rb at this; nlinarith) hdim hbd σ hσ]
+  exact eval_perm_net _ _ _ (nodesR hn) (intR hn) σ
 
 end FamFca
 
