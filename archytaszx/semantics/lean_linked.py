@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.phase import PhaseVector
-from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, PortRef
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 
 _KINDS = {"Z": "Z", "X": "X", "F": "F", "T": "T", "Ti": "Ti", "W": "W", "B": "B", "S": "S"}
 
@@ -714,11 +714,13 @@ def _read_copies(
     bid: int,
     cp: dict[int, int],
     reading: tuple[int, int],
+    phases: Callable[[int, int, sp.Expr], bool] | None = None,
 ) -> LDiag | None:
     """``R`` with each copy ``cp[x]`` of a node ``x`` of ``L`` reading the index ``sym`` of the
     peeled box ``bid`` written with ``x``'s dimension and phase indices there and the readings
     ``(_, bid, *reading)``, each literal of the copy checked equal to ``x``'s with ``sym`` at
-    ``value``; None when one differs."""
+    ``value`` (a phase of a node other than a binder or splitter by ``phases``); None when one
+    differs."""
     keys = {v: k for k, v in tables.dims.items()}
 
     def same(template: int, copy: int) -> bool:
@@ -740,7 +742,11 @@ def _read_copies(
             side[q[2]] = own[q[2]]
             cdim.append(((m.id, q[1], q[2]), bid, *reading))
         if any(x == n.id and y == bid for x, y, _, _ in L.cph):
-            if n.kind not in ("B", "S") or not same(n.ph, m.ph):
+            if not (
+                same(n.ph, m.ph)
+                if n.kind in ("B", "S")
+                else phases is not None and phases(n.id, m.id, value)
+            ):
                 return None
             ph = n.ph
             cph.append((m.id, bid, *reading))
@@ -751,12 +757,19 @@ def _read_copies(
 
 
 def _shift_kept(
-    L: LDiag, R: LDiag, tables: _Tables, sym: str, bid: int, B: Sequence[int], m1: int
+    L: LDiag,
+    R: LDiag,
+    tables: _Tables,
+    sym: str,
+    bid: int,
+    B: Sequence[int],
+    m1: int,
+    phases: Callable[[int, int, sp.Expr], bool] | None = None,
 ) -> LDiag | None:
     """``R`` with each node ``x`` of ``B`` reading the index ``sym`` of the box ``bid`` written
     with ``x``'s dimension and phase indices in ``L`` and the readings ``(_, bid, 1, m1)``, each
-    literal of ``R`` checked equal to ``x``'s with ``sym`` at ``sym + 1``; None when one
-    differs."""
+    literal of ``R`` checked equal to ``x``'s with ``sym`` at ``sym + 1`` (a phase of a node other
+    than a binder or splitter by ``phases``); None when one differs."""
     keys = {v: k for k, v in tables.dims.items()}
     s = sp.Symbol(sym)
 
@@ -782,7 +795,11 @@ def _shift_kept(
             side[q[2]] = own[q[2]]
             cdim.append((q, bid, 1, m1))
         if any(x == n.id and y == bid for x, y, _, _ in L.cph):
-            if n.kind not in ("B", "S") or not same(n.ph, m.ph):
+            if not (
+                same(n.ph, m.ph)
+                if n.kind in ("B", "S")
+                else phases is not None and phases(n.id, m.id, s + 1)
+            ):
                 return None
             ph = n.ph
             cph.append((n.id, bid, 1, m1))
@@ -1013,6 +1030,8 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     ``after`` peeling the last copy of one outermost node box of ``before`` (``PeelOK``), or its
     first copy (``PeelOK`` between the two sides with the box's links flipped); None outside
     that form."""
+    if any(b.pair_of is not None for b in before.bang_boxes.values()):
+        return _export_pair_peel(before, after, False) or _export_pair_peel(before, after, True)
     return (
         _export_peel(before, after, False)
         or _export_peel(before, after, True)
@@ -1020,11 +1039,102 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     )
 
 
-def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = False) -> str | None:
+PairSpec = tuple[int, Port, Port, str, bool]
+"""A pair box: its id, left and right legs, pair phase key, and whether its first leg (outputs
+first) meets the right leg."""
+
+
+def _strip_pairs(d: Diagram) -> tuple[Diagram, BangBoxId, list[PairSpec]] | None:
+    """``d`` without its pair boxes and their nodes, its one outermost box and the pair boxes
+    over it; None unless each pair box (multiplicity 1, no parent, no copy scalar) holds one Zp
+    node wired once to its left port and once to its right port, both legs of Z nodes of the
+    outermost box off the boundary and wired only there."""
+    owners = [b for b, x in sorted(d.bang_boxes.items()) if x.pair_of is None]
+    pairs = [(b, x) for b, x in sorted(d.bang_boxes.items()) if x.pair_of is not None]
+    if len(owners) != 1 or not pairs:
+        return None
+    owner = owners[0]
+    scope = d.bang_boxes[owner].node_scope
+    bnd = {*d.boundary_inputs, *d.boundary_outputs}
+    out = d.copy()
+    specs: list[PairSpec] = []
+    for bid, b in pairs:
+        if (
+            b.pair_of != owner
+            or b.parent is not None
+            or b.copy_scalar is not None
+            or len(b.node_scope) != 1
+            or len(b.left_ports) != 1
+            or len(b.right_ports) != 1
+            or str(b.multiplicity.to_sympy()) != "1"
+        ):
+            return None
+        (z,) = b.node_scope
+        node = d.nodes[z]
+        (lp,) = b.left_ports
+        (rp,) = b.right_ports
+        if node.generator_type.name != "Zp" or len(node.outputs) + len(node.inputs) != 2:
+            return None
+        legs = [PortRef(z, Direction.OUTPUT, i) for i in range(len(node.outputs))]
+        legs += [PortRef(z, Direction.INPUT, i) for i in range(len(node.inputs))]
+        ends = []
+        for leg in legs:
+            ws = [w for w in d.wires if leg in w.endpoints()]
+            if len(ws) != 1:
+                return None
+            ends.append(ws[0].b if ws[0].a == leg else ws[0].a)
+        if lp == rp or {*ends} != {lp, rp}:
+            return None
+        for ref in (lp, rp):
+            if (
+                ref.node_id not in scope
+                or d.nodes[ref.node_id].generator_type.name != "Z"
+                or ref in bnd
+                or len([w for w in d.wires if ref in w.endpoints()]) != 1
+            ):
+                return None
+        specs.append((int(bid), _port(lp), _port(rp), _phase_key(node.phase), ends[0] == rp))
+        out.remove_bang_box(bid)
+        out.remove_node(z)
+    return out, owner, specs
+
+
+def _export_pair_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
+    """:func:`export_peel` of a box with pair boxes (``LinkedPair.lean``): ``after`` must be the
+    engine's peel of ``before`` (``first`` its first copy); the digit sums are ``evalP`` of the
+    peel of ``before`` without its pair boxes (:func:`_strip_pairs`), each pair box a pair of
+    ``LPair`` (``PairFirst``, ``PairLast``)."""
+    from archytaszx.diagram.bangbox import BangBoxError, peel_one
+    from archytaszx.semantics.kernel import _same
+
+    got = _strip_pairs(before)
+    if got is None:
+        return None
+    s0, owner, specs = got
+    try:
+        want = peel_one(before, owner, first=first).diagram
+        r0 = peel_one(s0, owner, first=first).diagram
+    except BangBoxError:
+        return None
+    if not _same(want, after):
+        return None
+    return _export_peel(s0, r0, first, pairs=specs)
+
+
+def _export_peel(
+    before: Diagram,
+    after: Diagram,
+    first: bool,
+    reads: bool = False,
+    pairs: Sequence[PairSpec] | None = None,
+) -> str | None:
     """:func:`export_peel` of the last copy, or with ``first`` of the first copy; over ``evalX``
     (``PeelX``, ``GhostOKX``; with ``first`` ``FirstOK`` and ``FirstX``) when a box has an
     index; with ``reads`` over ``evalN`` (``PeelN``, ``DropN``, ``GhostN``), each end identity
-    wired to a read leg read as that leg (:func:`_read_ends`)."""
+    wired to a read leg read as that leg (:func:`_read_ends`); with ``pairs`` over ``evalP``
+    with those pair boxes, no boundary link ports."""
+    if pairs is not None and reads:
+        return None
     tables = _Tables()
     xm = bool(_index_names(before) | _index_names(after))
     if xm:
@@ -1048,18 +1158,34 @@ def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = Fal
         order[cp[x]] for x in (n.id for n in L.nodes) if x in cp
     ]
     sym = before.bang_boxes[BangBoxId(pe.box)].index
-    value = _sym(str(after.bang_boxes[BangBoxId(pe.box)].multiplicity.to_sympy()))
+    after_mult = after.bang_boxes[BangBoxId(pe.box)].multiplicity.to_sympy()
+    value = _sym(str(after_mult))
     m1 = _Tables.index(tables.mults, "1") if xm and first else 0
     reading = (0, 0) if first else (1, c)
+
+    def phases(x: int, y: int, at: sp.Expr) -> bool:
+        a = before.nodes[NodeId(x)].phase
+        b = after.nodes[NodeId(y)].phase
+        if a is None or b is None or sym is None:
+            return False
+        own = {s.name: s for s in after_mult.free_symbols}
+        at = at.subs(
+            {
+                s: own.get(s.name, sp.Symbol(s.name, integer=True, nonnegative=True))
+                for s in at.free_symbols
+            }
+        )
+        moved = a.substitute({sym: at})
+        return moved == b or repr(moved) == repr(b)
 
     def read(D: LDiag) -> LDiag | None:
         if not (xm and sym is not None):
             return D
         out = _read_copies(
-            L, D, tables, sym, sp.Integer(0) if first else value, box.id, cp, reading
+            L, D, tables, sym, sp.Integer(0) if first else value, box.id, cp, reading, phases
         )
         if out is not None and first:
-            out = _shift_kept(L, out, tables, sym, box.id, B, m1)
+            out = _shift_kept(L, out, tables, sym, box.id, B, m1, phases)
         return out
 
     got = read(R)
@@ -1097,6 +1223,8 @@ def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = Fal
     Dl, gl, sl, rl = _reduce(L, ids_l, set(), G, xm, reads)
     Dr, gr, sr, rr = _reduce(R, ids_r, ids_r, G, xm, reads)
     if gl is None or gr is None:
+        return None
+    if pairs is not None and (not xm or gl or gr or sl or sr):
         return None
     try:
         Tl = linked(before, tables, ghost=G, held=held, readings=xm)
@@ -1171,7 +1299,34 @@ def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = Fal
     kind = "PeelFirst" if first else "PeelFlat"
     ev = "evalGX" if xm else "evalG"
     evb, evk = f"{ev} gsL", f"{ev} gsL'"
-    if reads:
+    pair_text = ""
+    if pairs is not None:
+        ph = {key: _Tables.index(tables.phases, key) for _, _, _, key, _ in pairs}
+        items = ", ".join(
+            f"{{ box := {box.id}, left := {_lport(lp)}, right := {_lport(rp)}, "
+            f"ph := {ph[key]}, swap := {'true' if sw else 'false'} }}"
+            for _, lp, rp, key, sw in pairs
+        )
+        if first:
+            moved = f"[p.resid {m1}, p.fixLeft (cpP cp p.left) {m1}]"
+            form = f"PairFirst Lb Lk ps ps' {box.id} {box.mult} {c} {m1} {_lnat(B)} cp"
+            step = "(evalP_peel_first_flat fo okx pf flat E ks hk hm y)"
+        else:
+            moved = f"[p, p.fixRight (cpP cp p.right) {c}]"
+            form = f"PairLast Lb Lk ps ps' {box.id} {box.mult} {c} {_lnat(B)} cp"
+            step = "(evalP_peel_flat ok pf flat E ks hk y)"
+        pair_text = (
+            "/-- The pair boxes before the peel. -/\n"
+            f"def ps : List LPair := [{items}]\n\n"
+            "/-- The pair boxes after the peel. -/\n"
+            f"def ps' : List LPair := ps.flatMap fun p => {moved}\n\n"
+            f"theorem pf : {form} :=\n"
+            "  ⟨by decide +kernel, by decide +kernel, by decide +kernel, rfl⟩\n\n"
+        )
+        evb, evk = "evalP ps", "evalP ps'"
+    if pairs is not None:
+        chb = chk = ""
+    elif reads:
         step = "(evalN_peel_flat ok flat E ks hk y)"
         chb, evb = _chain_n("b", "Lb", "L", "gsL", "grL", sl, gl, rl, L)
         chk, evk = _chain_n("k", "Lk", "L'", "gsL'", "grL'", sr, gr, rr, R)
@@ -1210,6 +1365,7 @@ def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = Fal
         f"theorem flat : {kind} Lb Lk {_lnat(B)} cp {box.mult} {c} (Lb.slotData G)\n"
         f"    (Lk.slotData G') :=\n  ⟨{flat}⟩\n\n"
         + hcp
+        + pair_text
         + "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
         "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
         f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 →{one} ∀ y : ℕ → ℕ,\n"
@@ -1217,9 +1373,13 @@ def _export_peel(before: Diagram, after: Diagram, first: bool, reads: bool = Fal
         f"        L.{evb} E ks (flatAt (L.slotData G) ks y) := by\n"
         f"  intro E hE ks hk{hm} y\n"
         "  rw [← sdb, ← sdk]\n"
-        "  exact (chain_k E hE ks _).symm.trans\n"
-        f"    ({step}.trans (chain_b E hE ks _))\n\n"
-        "end ArchytasZX.Export\n"
+        + (
+            f"  exact {step}\n\n"
+            if pairs is not None
+            else "  exact (chain_k E hE ks _).symm.trans\n"
+            f"    ({step}.trans (chain_b E hE ks _))\n\n"
+        )
+        + "end ArchytasZX.Export\n"
     )
 
 

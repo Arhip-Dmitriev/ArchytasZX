@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
 from archytaszx.diagram.bangbox import Mult, instantiate_symbol, peel_one
 from archytaszx.diagram.graph import BangBoxId, Diagram
 from archytaszx.repl.parser import parse_dsl
-from archytaszx.semantics import kernel
+from archytaszx.semantics import kernel, lean_linked
 from archytaszx.semantics.contract_numeric import contract
 from archytaszx.semantics.induction import rename_multiplicity
+from archytaszx.semantics.lean_net import check, lean_project
 from archytaszx.semantics.prove import _with_scalar_index, induction_renamed, induction_successor
 
 _PAIRS = """dim d
@@ -127,10 +130,51 @@ def test_tampered_repeel_is_refused() -> None:
         kernel.repeel(chain, "k", frozenset({box}), frozenset(), frozenset({box}))
 
 
+def _pair_repeel(text: str) -> kernel.Theorem:
+    """The repeel of ``text`` at ``k + 1`` copies between its first-copy and last-copy peels."""
+    source = induction_renamed(parse_dsl(text), "n", "k")
+    owner = next(b for b, x in sorted(source.bang_boxes.items()) if x.pair_of is None)
+    return kernel.repeel(source, "k", frozenset(), frozenset(), frozenset({owner}))
+
+
+def test_pair_repeels_export_through_two_peel_proofs() -> None:
+    for text in (_PAIRS, _FCA):
+        source = kernel.lean(_pair_repeel(text), "main", semantic=True)
+        assert "\naxiom repeel" not in source and "\naxiom peel" not in source
+        assert "evalP_peel_first_flat" in source and "evalP_peel_flat" in source
+
+
+def test_a_pair_peel_of_another_diagram_is_refused() -> None:
+    t = _pair_repeel(_FCA)
+    source = induction_renamed(parse_dsl(_FCA), "n", "k")
+    assert lean_linked.export_peel(source, t.lhs) is not None
+    assert lean_linked.export_peel(source, t.rhs) is not None
+    tampered = t.lhs.copy()
+    node = next(n for n, x in sorted(tampered.nodes.items()) if x.generator_type.name == "Zp")
+    tampered.set_phase(node, None)
+    assert lean_linked.export_peel(source, tampered) is None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_the_fca_repeel_and_refuses_a_tamper(tmp_path: object) -> None:
+    source = kernel.lean(_pair_repeel(_FCA), "main", semantic=True)
+    ok, output = check(source, f"{tmp_path}/repeel.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    bad = source.replace("ps.flatMap fun p => [p.resid", "ps.flatMap fun p => [p, p.resid", 1)
+    assert bad != source
+    ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
+
+
 if __name__ == "__main__":
     test_first_peel_of_pair_boxes_commutes_with_instantiation()
     test_first_peel_of_fca_box_commutes_with_instantiation()
     test_first_peel_of_out_to_in_chain_commutes_with_instantiation()
     test_repeel_relates_first_and_last_copy_peels()
     test_tampered_repeel_is_refused()
+    test_pair_repeels_export_through_two_peel_proofs()
+    test_a_pair_peel_of_another_diagram_is_refused()
     print("ok")
