@@ -25,13 +25,20 @@ namespace FcaEng
 open List
 
 /-- `j (j - 1) / 2`. -/
-def tri (j : ℕ) : ℕ := j * (j - 1) / 2
+def tri : ℕ → ℕ
+  | 0 => 0
+  | j + 1 => tri j + j
+
+/-- The number of pairs `(m', j)` with `m' < m`, `m' < j < n`. -/
+def off (n : ℕ) : ℕ → ℕ
+  | 0 => 0
+  | m + 1 => off n m + (n - 1 - m)
 
 /-- Copy `j`'s chain base. -/
 def cb (n j : ℕ) : ℕ := 2 * n + 8 * j
 
 /-- Position of the pair `(m, j)`, `m < j`, ordered by `m` then `j`. -/
-def i2 (n m j : ℕ) : ℕ := m * (n - 1) - tri m + (j - m - 1)
+def i2 (n m j : ℕ) : ℕ := off n m + (j - m - 1)
 
 /-- The `g0` leg of copy `j` to copy `m < j`. -/
 def a0 (n j m : ℕ) : ℕ := 10 * n + tri j + m
@@ -127,6 +134,153 @@ noncomputable def engP (d n p k : ℕ) : ℝ :=
 
 /-- The engine's environment at `n`. -/
 noncomputable def engE (d n : ℕ) : Env := { dimv := engD d n, phase := engP d n, labs := engLabs n }
+
+/-! ## The boxed side's labels -/
+
+theorem tri_mono {a b : ℕ} (h : a ≤ b) : tri a ≤ tri b := by
+  induction b with
+  | zero => rw [Nat.le_zero.1 h]
+  | succ b ih =>
+    rcases Nat.lt_or_eq_of_le h with h | rfl
+    · have := ih (by omega); simp only [tri]; omega
+    · rfl
+
+theorem tri_lt {j m : ℕ} (hm : m < j) : tri j + m < tri (j + 1) := by simp only [tri]; omega
+
+/-- The copy `j` of the pair position `s`, ordered by `j` then `m`. -/
+def jOf (s : ℕ) : ℕ := Nat.find (p := fun j => s < tri (j + 1)) ⟨s + 1, by
+  have := tri_mono (Nat.le_succ (s + 1)); simp only [tri] at this ⊢; omega⟩
+
+theorem jOf_spec (s : ℕ) : tri (jOf s) ≤ s ∧ s < tri (jOf s + 1) := by
+  refine ⟨?_, Nat.find_spec (p := fun j => s < tri (j + 1)) _⟩
+  rcases Nat.eq_zero_or_pos (jOf s) with h | h
+  · rw [h]; exact Nat.zero_le _
+  · have := Nat.find_min (p := fun j => s < tri (j + 1)) _ (show jOf s - 1 < jOf s by omega)
+    rw [show jOf s - 1 + 1 = jOf s by omega] at this; omega
+
+theorem jOf_tri {j m : ℕ} (hm : m < j) : jOf (tri j + m) = j := by
+  have ⟨h1, h2⟩ := jOf_spec (tri j + m)
+  rcases lt_trichotomy (jOf (tri j + m)) j with h | h | h
+  · have := tri_mono (show jOf (tri j + m) + 1 ≤ j by omega); omega
+  · exact h
+  · have := tri_mono (show j + 1 ≤ jOf (tri j + m) by omega); have := tri_lt hm; omega
+
+theorem jOf_lt {n s : ℕ} (hs : s < tri n) : jOf s < n := by
+  by_contra h
+  have := tri_mono (show n ≤ jOf s by omega); have := (jOf_spec s).1; omega
+
+theorem off_mono (n : ℕ) {a b : ℕ} (h : a ≤ b) : off n a ≤ off n b := by
+  induction b with
+  | zero => rw [Nat.le_zero.1 h]
+  | succ b ih =>
+    rcases Nat.lt_or_eq_of_le h with h | rfl
+    · have := ih (by omega); simp only [off]; omega
+    · rfl
+
+theorem off_tri (n : ℕ) : ∀ m ≤ n, off n m + tri (n - m) = tri n
+  | 0, _ => by simp [off]
+  | m + 1, h => by
+    have := off_tri n m (by omega)
+    rw [show n - m = n - (m + 1) + 1 by omega] at this
+    simp only [off, tri] at this ⊢; omega
+
+/-- The copy `m` of the pair position `s`, ordered by `m` then `j`. -/
+def mOf (n s : ℕ) : ℕ := Nat.find (p := fun m => s < off n (m + 1) ∨ m = n) ⟨n, Or.inr rfl⟩
+
+theorem mOf_spec {n s : ℕ} (hs : s < tri n) :
+    mOf n s < n ∧ off n (mOf n s) ≤ s ∧ s < off n (mOf n s + 1) := by
+  have hP := Nat.find_spec (p := fun m => s < off n (m + 1) ∨ m = n) ⟨n, Or.inr rfl⟩
+  have hn : 0 < n := Nat.pos_of_ne_zero (by rintro rfl; simp [tri] at hs)
+  have hlt : mOf n s < n := by
+    by_contra h
+    have := Nat.find_min (p := fun m => s < off n (m + 1) ∨ m = n) ⟨n, Or.inr rfl⟩
+      (show n - 1 < mOf n s by omega)
+    have e := off_tri n n le_rfl
+    rw [Nat.sub_self, show tri 0 = 0 from rfl, add_zero] at e
+    rw [show n - 1 + 1 = n by omega, e] at this
+    exact this (Or.inl hs)
+  refine ⟨hlt, ?_, hP.resolve_right (by change ¬mOf n s = n; omega)⟩
+  rcases Nat.eq_zero_or_pos (mOf n s) with h | h
+  · rw [h]; exact Nat.zero_le _
+  · have := Nat.find_min (p := fun m => s < off n (m + 1) ∨ m = n) ⟨n, Or.inr rfl⟩
+      (show mOf n s - 1 < mOf n s by omega)
+    change ¬(s < off n (mOf n s - 1 + 1) ∨ mOf n s - 1 = n) at this
+    rw [show mOf n s - 1 + 1 = mOf n s by omega] at this; omega
+
+theorem mOf_off {n m j : ℕ} (hm : m < j) (hj : j < n) : mOf n (i2 n m j) = m := by
+  have hs : i2 n m j < tri n := by
+    have := off_mono n (show m + 1 ≤ n by omega); have := off_tri n n le_rfl
+    simp only [i2, off, Nat.sub_self, tri, add_zero] at *; omega
+  obtain ⟨_, h1, h2⟩ := mOf_spec hs
+  have hb : i2 n m j < off n (m + 1) := by simp only [i2, off]; omega
+  rcases lt_trichotomy (mOf n (i2 n m j)) m with h | h | h
+  · have := off_mono n (show mOf n (i2 n m j) + 1 ≤ m by omega); simp only [i2] at *; omega
+  · exact h
+  · have := off_mono n (show m + 1 ≤ mOf n (i2 n m j) by omega); omega
+
+/-- The free labels of the boxed side: each copy's Fourier value and `F³` legs. -/
+def frees (n : ℕ) : List ℕ := (range n).flatMap fun m => [1, 5, 6].map fun r => 2 * n + 8 * m + r
+
+/-- The pinned chain labels of the boxed side. -/
+def chainP (n : ℕ) : List ℕ := (range n).flatMap fun m =>
+  [0, 2, 3, 4, 7].map fun r => 2 * n + 8 * m + r
+
+/-- The pair labels of the boxed side. -/
+def pairP (n : ℕ) : List ℕ := (range (4 * tri n)).map (10 * n + ·)
+
+theorem frees_nodup (n : ℕ) : (frees n).Nodup := by
+  have := Fca.nodup_blocks n (2 * n) [] [1, 5, 6] (by simp) (by decide) (by simp) (by simp)
+  simpa [frees] using this
+
+theorem pins_nodup (n : ℕ) : (chainP n ++ pairP n).Nodup := by
+  have h1 := Fca.nodup_blocks n (2 * n) [] [0, 2, 3, 4, 7] (by simp) (by decide) (by simp)
+    (by simp)
+  have h2 : (pairP n).Nodup := (nodup_range).map fun a b h => by simpa using h
+  rw [nodup_append]
+  refine ⟨by simpa [chainP] using h1, h2, ?_⟩
+  intro a ha b hb e
+  simp only [chainP, pairP, mem_flatMap, mem_range, mem_map, mem_cons, not_mem_nil,
+    or_false] at ha hb
+  obtain ⟨m, hm, r, hr, rfl⟩ := ha
+  obtain ⟨k, _, rfl⟩ := hb
+  rcases hr with rfl | rfl | rfl | rfl | rfl <;> omega
+
+theorem int_perm (n : ℕ) : (engL n).int.Perm (frees n ++ (chainP n ++ pairP n)) := by
+  have hnd : (frees n ++ (chainP n ++ pairP n)).Nodup := by
+    rw [nodup_append]
+    refine ⟨frees_nodup n, pins_nodup n, ?_⟩
+    intro a ha b hb e
+    simp only [frees, chainP, pairP, mem_append, mem_flatMap, mem_range, mem_map, mem_cons,
+      not_mem_nil, or_false] at ha hb
+    obtain ⟨m, hm, r, hr, rfl⟩ := ha
+    rcases hb with ⟨k, hk, s, hs, rfl⟩ | ⟨k, _, rfl⟩
+    · rcases hr with rfl | rfl | rfl <;> rcases hs with rfl | rfl | rfl | rfl | rfl <;> omega
+    · rcases hr with rfl | rfl | rfl <;> omega
+  refine (List.perm_ext_iff_of_nodup ((nodup_range).map fun a b h => by simpa using h) hnd).2
+    fun x => ?_
+  simp only [frees, chainP, pairP, mem_append, mem_flatMap, mem_range, mem_map, mem_cons,
+    not_mem_nil, or_false]
+  constructor
+  · rintro ⟨k, hk, rfl⟩
+    by_cases h : k < 8 * n
+    · have h8 : k % 8 < 8 := Nat.mod_lt _ (by norm_num)
+      have e : 2 * n + k = 2 * n + 8 * (k / 8) + k % 8 := by omega
+      have hm : k / 8 < n := by omega
+      interval_cases hr : k % 8
+      · exact Or.inr (Or.inl ⟨k / 8, hm, 0, Or.inl rfl, e.symm⟩)
+      · exact Or.inl ⟨k / 8, hm, 1, Or.inl rfl, e.symm⟩
+      · exact Or.inr (Or.inl ⟨k / 8, hm, 2, Or.inr (Or.inl rfl), e.symm⟩)
+      · exact Or.inr (Or.inl ⟨k / 8, hm, 3, Or.inr (Or.inr (Or.inl rfl)), e.symm⟩)
+      · exact Or.inr (Or.inl ⟨k / 8, hm, 4, Or.inr (Or.inr (Or.inr (Or.inl rfl))), e.symm⟩)
+      · exact Or.inl ⟨k / 8, hm, 5, Or.inr (Or.inl rfl), e.symm⟩
+      · exact Or.inl ⟨k / 8, hm, 6, Or.inr (Or.inr rfl), e.symm⟩
+      · exact Or.inr (Or.inl ⟨k / 8, hm, 7, Or.inr (Or.inr (Or.inr (Or.inr rfl))), e.symm⟩)
+    · exact Or.inr (Or.inr ⟨k - 8 * n, by omega, by omega⟩)
+  · rintro (⟨m, hm, r, hr, rfl⟩ | ⟨m, hm, r, hr, rfl⟩ | ⟨k, hk, rfl⟩)
+    · exact ⟨8 * m + r, by rcases hr with rfl | rfl | rfl <;> omega, by omega⟩
+    · exact ⟨8 * m + r, by rcases hr with rfl | rfl | rfl | rfl | rfl <;> omega, by omega⟩
+    · exact ⟨8 * n + k, by omega, by omega⟩
+
 
 /-! ## The spec in closed form -/
 
