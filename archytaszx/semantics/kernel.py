@@ -92,7 +92,7 @@ from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import assumed
-from archytaszx.semantics import lean_net, lean_refute, lean_sym
+from archytaszx.semantics import lean_adder, lean_net, lean_refute, lean_sym
 from archytaszx.semantics.certificate import (
     Certificate,
     DerivationKind,
@@ -2556,6 +2556,9 @@ def lean(
             return lean_sym.export_symbolic(theorem.lhs, theorem.rhs, name, describe)
         except lean_net.NetUnsupported:
             pass
+        family = lean_adder.export_family(theorem.lhs, theorem.rhs, theorem.variables, name)
+        if family is not None:
+            return family
         if source is not None:
             return source
     out = _Lean(describe or _summary, semantic)

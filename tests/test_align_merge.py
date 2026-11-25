@@ -126,7 +126,8 @@ def test_fca_boxed_equals_its_spec_by_the_radix_window() -> None:
     assert decision.verdict.name == "EQUAL"
     theorem = kernel.from_decision(decision, left, right)
     assert theorem.inference.kind == "induction" or theorem.inference.premises
-    source = kernel.lean(theorem, "main", semantic=True)
+    assert "FcaEng.engFam" in kernel.lean(theorem, "main", semantic=True)
+    source = kernel.lean(theorem, "main", semantic=True, guards={"n": 0})
     assert "\naxiom align_merge" not in source and "evalP_merge_flat ok ss" in source
 
 

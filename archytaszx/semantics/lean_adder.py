@@ -1,0 +1,241 @@
+# Copyright 2026 Arkhip A. Dmitriev
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Lean output for the Fourier constant adder family. export_family instantiates both sides of
+a theorem in its one multiplicity at ``0 … CHECKED`` and compares each flat export (networks,
+dimension and phase tables, listed labels, scalars) with the networks ``FcaEng.engL k`` and
+``FcaEng.engR k`` of ArchytasZX/AdderFamFcaEng.lean over ``FcaEng.engE d k``; on a match it writes
+those exports as literals, ``decide`` checks of ``engL k`` and ``engR k`` against them, and the
+theorem by ``FcaEng.engFam``, and None otherwise.
+"""
+
+from __future__ import annotations
+
+from archytaszx.diagram.graph import Diagram
+
+CHECKED = 5
+"""The largest multiplicity at which export_family compares the exports."""
+
+
+def _tri(j: int) -> int:
+    return j * (j - 1) // 2
+
+
+def _off(n: int, m: int) -> int:
+    return sum(n - 1 - k for k in range(m))
+
+
+def _node(kind: str, outs: list[int], ins: list[int], dim: int = 0, ph: int = 0) -> str:
+    return f"⟨.{kind}, [{', '.join(map(str, outs))}], [{', '.join(map(str, ins))}], {dim}, {ph}⟩"
+
+
+def _net(nodes: list[str], summed: range, bnd: range) -> str:
+    return (
+        f"⟨([{', '.join(nodes)}] : List Node), [{', '.join(map(str, summed))}], "
+        f"[{', '.join(map(str, bnd))}]⟩"
+    )
+
+
+def eng_l(n: int) -> str:
+    """``FcaEng.engL n`` as the exporter prints a network."""
+    p = _tri(n)
+
+    def cb(j: int) -> int:
+        return 2 * n + 8 * j
+
+    def a0(j: int, m: int) -> int:
+        return 10 * n + _tri(j) + m
+
+    def a2(m: int, j: int) -> int:
+        return 10 * n + p + _off(n, m) + j - m - 1
+
+    def a5(m: int, j: int) -> int:
+        return 10 * n + 2 * p + _off(n, m) + j - m - 1
+
+    def a9(j: int, m: int) -> int:
+        return 10 * n + 3 * p + _tri(j) + m
+
+    nodes: list[str] = []
+    for j in range(n):
+        b = cb(j)
+        nodes += [
+            _node("F", [b + 1], [b]),
+            _node("Z", [b + 3], [b + 2], 0, j + 1),
+            _node("F", [b + 5], [b + 4]),
+            _node("F", [b + 6], [b + 5]),
+            _node("F", [b + 7], [b + 6]),
+        ]
+    later = [list(range(m + 1, n)) for m in range(n)]
+    nodes += [_node("Z", [cb(j)], [n + j] + [a0(j, m) for m in range(j)]) for j in range(n)]
+    nodes += [_node("Z", [cb(j) + 2] + [a2(j, t) for t in later[j]], [cb(j) + 1]) for j in range(n)]
+    nodes += [_node("Z", [cb(j) + 4] + [a5(j, t) for t in later[j]], [cb(j) + 3]) for j in range(n)]
+    nodes += [_node("Z", [j], [cb(j) + 7] + [a9(j, m) for m in range(j)]) for j in range(n)]
+    nodes += [
+        _node("ZP 0 0 (1)", [a0(j, m)], [a2(m, j)], j - m) for m in range(n) for j in later[m]
+    ]
+    nodes += [
+        _node("ZP 0 0 (-1)", [a9(j, m)], [a5(m, j)], j - m) for m in range(n) for j in later[m]
+    ]
+    return _net(nodes, range(2 * n, 10 * n + 4 * p), range(2 * n))
+
+
+def eng_r(n: int) -> str:
+    """``FcaEng.engR n`` as the exporter prints a network."""
+    if n == 0:
+        nodes = [_node("Z", [0], []), _node("X", [1], [0]), _node("Z", [], [1])]
+        return _net(nodes, range(2), range(0))
+    b = 2 * n * n + 8 * n
+
+    def d_i(t: int) -> int:
+        return n if t == 0 else t - 1
+
+    def bout(t: int) -> int:
+        return b + 1 if t + 1 == n else b + 4 + t
+
+    def bin_(t: int) -> int:
+        return b if t == 0 else b + 3 + t
+
+    def sv(t: int) -> int:
+        return b + 3 if t == 0 else (b + 2 if t == n else b + n + 2 + t)
+
+    h, x, e = (
+        _node("Z", [b], [], n),
+        _node("X", [b + 2], [b + 1], n - 1, n + 1),
+        _node("Z", [], [b + 3], n),
+    )
+    bs = [_node("B", [bout(t)], [bin_(t), n + t], d_i(t)) for t in range(n)]
+    ss = [_node("S", [sv(t), t], [sv(t + 1)], d_i(t)) for t in range(n)]
+    nodes = [h, *bs, x, *ss, e] if n == 1 else [h, x, e, *bs, *ss]
+    return _net(nodes, range(b, b + 2 * n + 2), range(2 * n))
+
+
+def eng_labs(n: int) -> list[tuple[int, int]]:
+    """The labels of ``FcaEng.engLabs n`` with a dimension index other than ``0``."""
+    if n == 0:
+        return []
+    b = 2 * n * n + 8 * n
+    labs = [(b, n), (b + 1, n - 1), (b + 2, n - 1), (b + 3, n)]
+    labs += [(b + 4 + t, t) for t in range(n - 1)] + [(b + n + 3 + t, t) for t in range(n - 1)]
+    return sorted(p for p in labs if p[1])
+
+
+def eng_dims(n: int, d: str) -> list[str]:
+    """The dimension table of ``FcaEng.engE d n`` as the exporter prints it."""
+    return [d, *(f"({d} ^ {i + 1})" for i in range(1, n)), "1"]
+
+
+def eng_phases(n: int, d: str) -> list[str]:
+    """The phase table of ``FcaEng.engE d n`` as the exporter prints it."""
+
+    def turn(c: int, e: int) -> str:
+        return f"fun k => (0) + (if k = 0 then 0 else (({c} : ℝ) * (k : ℝ) * (({d} : ℝ) ^ {e})⁻¹))"
+
+    if n == 0:
+        return ["fun _ => 0"]
+    return ["fun _ => 0", *(turn(2, n - p + 1) for p in range(1, n + 1)), turn(-2, n)]
+
+
+def _matches(lhs: Diagram, rhs: Diagram, symbol: str) -> str | None:
+    """The dimension symbol when both sides' exports at ``0 … CHECKED`` are the FcaEng
+    networks, None otherwise."""
+    from archytaszx.diagram.bangbox import instantiate_symbol
+    from archytaszx.semantics import lean_net
+
+    d: str | None = None
+    for k in (1, *range(2, CHECKED + 1), 0):
+        left, right = instantiate_symbol(lhs, symbol, k), instantiate_symbol(rhs, symbol, k)
+        if left.scalar.to_sympy() != 1 or right.scalar.to_sympy() != 1:
+            return None
+        ex = lean_net._Export(lambda _: "")
+        a, b = ex.labelled(left), ex.labelled(right)
+        if a.net.lean() != eng_l(k) or b.net.lean() != eng_r(k):
+            return None
+        if k > 0:
+            d = d or ex.dims[0]
+            if ex.dims != eng_dims(k, d) or ex.phases != eng_phases(k, d):
+                return None
+        elif ex.dims != ["1"] or ex.phases != eng_phases(0, ""):
+            return None
+        if sorted((x, i) for x, i in ex.labs.items() if i) != eng_labs(k):
+            return None
+    return d
+
+
+def export_family(
+    lhs: Diagram,
+    rhs: Diagram,
+    symbols: tuple[str, ...],
+    name: str = "main",
+) -> str | None:
+    """Lean source proving ``lhs = rhs`` at every value of the one multiplicity in ``symbols``
+    by ``FcaEng.engFam``, with the exports at ``0 … CHECKED`` checked against ``FcaEng.engL``
+    and ``FcaEng.engR``; None unless the exports match."""
+    from archytaszx.diagram.bangbox import instantiate_symbol
+    from archytaszx.semantics import lean_net
+
+    if len(symbols) != 1:
+        return None
+    try:
+        d = _matches(lhs, rhs, symbols[0])
+    except (lean_net.NetUnsupported, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if d is None:
+        return None
+    hd = f"(by norm_num : 0 < {d})" if d.isdigit() else "hd"
+    lits: list[str] = []
+    for k in range(CHECKED + 1):
+        ex = lean_net._Export(lambda _: "")
+        left = ex.labelled(instantiate_symbol(lhs, symbols[0], k)).net.lean()
+        right = ex.labelled(instantiate_symbol(rhs, symbols[0], k)).net.lean()
+        lits += [
+            f"/-- The left side's export at multiplicity {k}. -/",
+            f"def litL{k} : Net := {left}",
+            "",
+            f"/-- The right side's export at multiplicity {k}. -/",
+            f"def litR{k} : Net := {right}",
+            "",
+            f"theorem engL_lit{k} : FcaEng.engL {k} = litL{k} := by decide +kernel",
+            "",
+            f"theorem engR_lit{k} : FcaEng.engR {k} = litR{k} := by decide +kernel",
+            "",
+        ]
+    if d.isdigit():
+        stmt = f"∀ (n : ℕ), Equal (FcaEng.engE {d} n) 1 (FcaEng.engL n) 1 (FcaEng.engR n)"
+        proof = f"FcaEng.engFam {d} {hd}"
+    else:
+        stmt = (
+            f"∀ ({d} : ℕ), 0 < {d} → ∀ (n : ℕ), Equal (FcaEng.engE {d} n) 1 (FcaEng.engL n) 1 "
+            "(FcaEng.engR n)"
+        )
+        proof = f"fun {d} hd => FcaEng.engFam {d} hd"
+    lines = [
+        "/-",
+        "  ArchytasZX proof export. Both sides at multiplicity n are the networks",
+        "  FcaEng.engL n and FcaEng.engR n over FcaEng.engE d n (their exports at",
+        f"  n = 0 … {CHECKED} below, checked by decide); FcaEng.engFam proves them equal.",
+        "-/",
+        "",
+        "import ArchytasZX",
+        "",
+        "namespace ArchytasZX.Export.Fca",
+        "",
+        "open ArchytasZX",
+        "",
+        *lits,
+        f"theorem {name} : {stmt} :=",
+        f"  {proof}",
+        "",
+        "end ArchytasZX.Export.Fca",
+        "",
+    ]
+    return "\n".join(lines)
