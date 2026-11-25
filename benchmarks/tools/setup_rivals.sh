@@ -190,14 +190,20 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
     local dl=()
     [ "$FETCH" = 1 ] && dl=(--download-only)
     newswitch() {
-        [ -d "$OPAMROOT/$1" ] || { need_net "switch $1" && opam switch create --no-switch "$1" ocaml-base-compiler.4.14.2; }
+        [ -d "$OPAMROOT/$1" ] || opam switch create --no-switch "$1" ocaml-base-compiler.4.14.2  # offline: from the download cache
     }
     coqclone() {  # coqclone URL DIR COMMIT, under the ASCII source directory
         [ -d "$C/src/$2/.git" ] || { need_net "$C/src/$2" && git clone -q "$1" "$C/src/$2"; }
         [ "$OFFLINE" = 1 ] || git -C "$C/src/$2" fetch -q --depth 200 origin || true
         git -C "$C/src/$2" checkout -q "$3"
     }
-    repoadd() { [ "$OFFLINE" = 1 ] || opam repo add "$@" || true; }
+    repoadd() {  # repoadd NAME URL; offline, selects the root's cached NAME for the switch
+        if [ "$OFFLINE" = 1 ]; then
+            opam repo set-repos "$1" $(opam repo list --short 2>/dev/null | grep -vx "$1") || true
+        else
+            opam repo add "$@" || true
+        fi
+    }
     have() { opam list -i --short "$1" 2>/dev/null | grep -qx "$1"; }
     oinst() { opam install ${dl[@]+"${dl[@]}"} "$@"; }
     build() { [ "$FETCH" = 1 ] || "$@"; }
@@ -206,6 +212,7 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
     coqclone https://github.com/inQWIRE/VyZX VyZX 10f8c16741952dbaa2bb7a73e13767945e696b8f
     coqclone https://github.com/coq-quantum/CoqQ CoqQ b169ea462b13d20b05e03615ad1d56cc8d8f5784
     coqclone https://github.com/Qbricks/qbricks.github.io qbricks e00fc97f14fb9fcbc44bbfbc5e5ec3e483f87367
+    coqclone https://github.com/inQWIRE/QuantumLib QuantumLib 0b72c0fa552986c8a6b82f4cb56384c99b9de963
     (   # bench: SQIR 134fb94 and VyZX on QuantumLib 1.8.0; why3 and alt-ergo for QBricks
         newswitch bench
         export OPAMSWITCH=bench
@@ -213,7 +220,7 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
         repoadd coq-released https://coq.inria.fr/opam/released
         oinst dune coq.8.20.1
         oinst coq-mathcomp-ssreflect coq-interval || true
-        have coq-quantumlib || opam pin add -n coq-quantumlib https://github.com/inQWIRE/QuantumLib.git#0b72c0fa552986c8a6b82f4cb56384c99b9de963 || true
+        have coq-quantumlib || opam pin add -n coq-quantumlib "$C/src/QuantumLib" || true
         oinst coq-quantumlib || true
         have coq-sqir || build opam pin add -y coq-sqir "$C/src/SQIR" || true
         have coq-voqc || build opam pin add -y coq-voqc "$C/src/SQIR" || true
