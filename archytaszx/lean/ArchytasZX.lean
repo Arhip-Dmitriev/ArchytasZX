@@ -114,5 +114,6 @@ import ArchytasZX.PairNet
 import ArchytasZX.PairEval
 import ArchytasZX.PairFam
 import ArchytasZX.AdderFam
+import ArchytasZX.AdderFamEnv
 import ArchytasZX.PairSum
 import ArchytasZX.LinkedMerge
