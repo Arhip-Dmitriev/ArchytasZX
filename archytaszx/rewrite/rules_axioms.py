@@ -35,7 +35,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
-from archytaszx.algebra.scalar import Scalar
+from archytaszx.algebra.scalar import ModDelta, Scalar
 from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
@@ -63,6 +63,7 @@ from archytaszx.rewrite.match_template import (
     TNode,
     TPort,
     Var,
+    _congruent,
     check_template_budget,
     k_vector,
 )
@@ -115,7 +116,7 @@ def unit_vector(index: sp.Expr | int, dim: Dim) -> PhaseVector:
         if i:
             weights[i] = Scalar.one()
         return PhaseVector.from_weights(dim, weights)
-    rule = sp.KroneckerDelta(INDEX, sp.Integer(0) + index)
+    rule = ModDelta(INDEX - index, dim.to_sympy())
     return PhaseVector.from_weights(dim, rule=Scalar(rule))
 
 
@@ -2015,6 +2016,12 @@ class MixedVar(Param):
     def binds(self) -> frozenset[str]:
         return frozenset({self.name})
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, MixedVar) and (other.name, other.low) == (self.name, self.low)
+
+    def __hash__(self) -> int:
+        return hash(("MixedVar", self.name, self.low))
+
 
 def _spread(a: PhaseVector | None, low: int, dim: Dim) -> PhaseVector:
     """``(a_1, ..., a_{low-1}, 0, ..., 0)`` over ``dim``."""
@@ -3555,8 +3562,10 @@ class UnitIndex(Param):
         zeros = [k for k in range(1, r) if values[k].is_zero]
         if len(zeros) + len(ones) != r - 1 or len(ones) > 1:
             return None
-        index = ones[0] if ones else 0
-        return {**bindings, self.name: sp.Integer((self.sign * index) % r)}
+        index = sp.Integer((self.sign * (ones[0] if ones else 0)) % r)
+        if self.name in bindings:
+            return bindings if _congruent(index, _int_expr(bindings[self.name]), dim) else None
+        return {**bindings, self.name: index}
 
     def build(self, dim: Dim, bindings: Bindings) -> PhaseVector | None:
         return unit_vector(self.sign * _int_expr(bindings[self.name]), dim)
@@ -3566,6 +3575,12 @@ class UnitIndex(Param):
 
     def binds(self) -> frozenset[str]:
         return frozenset({self.name})
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, UnitIndex) and (other.name, other.sign) == (self.name, self.sign)
+
+    def __hash__(self) -> int:
+        return hash(("UnitIndex", self.name, self.sign))
 
 
 def _bsj_converse_left() -> Template:
