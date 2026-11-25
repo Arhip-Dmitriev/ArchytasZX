@@ -195,6 +195,157 @@ theorem stage2 (n : ℕ) : (E1n n).copyNodes c1 n = E2n n := by
     simp only [hn, hf, ite_true, List.flatMap_map, flatMap_single]
   · simp [E1n, c1]
 
+/-! ## The boundary in key order -/
+
+theorem keySig1 : D1.base.keySig = [([], [0]), ([], [0])] := by decide
+
+theorem legChain1 : D1.base.bnd.map D1.base.legChain = [[0], [0]] := by decide
+
+theorem SDom1 (n : ℕ) : D1.base.SDom (fun _ => n) =
+    (range 2).flatMap fun i => (range n).map fun t => (i, [t]) := by
+  unfold Diagram.SDom
+  rw [show D1.base.bnd.length = 2 from rfl]
+  refine List.flatMap_congr fun i hi => ?_
+  have hc : D1.base.legChain (D1.base.bnd.getD i Port.dflt) = [0] := by
+    simp only [List.mem_range] at hi
+    interval_cases i <;> decide
+  rw [hc, cidx0, List.map_map]
+  rfl
+
+theorem key1 (i t : ℕ) (hi : i < 2) :
+    Diagram.keyOf (D1.base.keySig.getD i ([], [])) i [t] = [i, t] := by
+  rw [keySig1]
+  interval_cases i <;> rfl
+
+theorem SL1 (n : ℕ) : D1.base.SL (fun _ => n) =
+    (range 2).flatMap fun i => (range n).map fun t => (i, [t]) := by
+  unfold Diagram.SL
+  rw [SDom1]
+  refine List.Pairwise.insertionSort_eq ?_
+  rw [List.pairwise_flatMap]
+  refine ⟨fun i hi => ?_, ?_⟩
+  · rw [List.pairwise_map]
+    refine (List.pairwise_lt_range (n := n)).imp_of_mem fun {a b} _ _ hab => ?_
+    simp only [List.mem_range] at hi
+    rw [key1 i a hi, key1 i b hi]
+    simp [Diagram.lexLe, hab]
+  · refine (List.pairwise_lt_range (n := 2)).imp_of_mem fun {i i'} hi hi' hii => ?_
+    simp only [List.mem_range] at hi hi'
+    intro x hx y hy
+    obtain ⟨a, -, rfl⟩ := List.mem_map.1 hx
+    obtain ⟨b, -, rfl⟩ := List.mem_map.1 hy
+    rw [key1 i a hi, key1 i' b hi']
+    simp [Diagram.lexLe, hii]
+
+theorem bndE1 (n : ℕ) : (E1n n).bnd = ⟨3, true, 1⟩ :: (range n).map fun j => ⟨5 + j, false, 1⟩ := rfl
+
+theorem bndE2 (n : ℕ) : (E2n n).bnd =
+    (range n).map (fun j => (⟨n + 5 + j, true, 1⟩ : Port)) ++ (range n).map fun j => ⟨5 + j, false, 1⟩ := rfl
+
+theorem idx_shift5 {n t : ℕ} (ht : t < n) :
+    ((range n).map fun j => (⟨5 + j, false, 1⟩ : Port)).idxOf ⟨5 + t, false, 1⟩ = t :=
+  idxOf_map_range (f := fun j => (⟨5 + j, false, 1⟩ : Port))
+    (fun a b e => by simp only [Port.mk.injEq] at e; omega) ht
+
+theorem bidx1 (n i t : ℕ) (hi : i < 2) (ht : t < n) :
+    D1.base.bidx (fun _ => n) (i, [t]) = (i * n + t, []) := by
+  unfold Diagram.bidx
+  have hB1 := stage1 n
+  have hB2 := stage2 n
+  have hp1 : D1.base.pick = some b1 := by decide
+  have hp2 : (E1n n).pick = some c1 := rfl
+  have hp3 : (E2n n).pick = none := pick_nil _ rfl
+  have hc1 : D1.base.crossP b1 = fun _ => false := funext (crossP_nil _ rfl b1)
+  have hc2 : (E1n n).crossP c1 = fun _ => false := funext (crossP_nil _ rfl c1)
+  simp only [show D1.base.boxes.length = 2 from rfl, Diagram.bidxFuel, hp1, Diagram.step,
+    show b1.ports = [] from rfl, ite_true, Diagram.expandNode_none _ b1 rfl, hB1, hp2,
+    show c1.ports = [] from rfl, Diagram.expandNode_none _ c1 rfl, hB2, hp3]
+  simp only [Diagram.stepIx, Diagram.gather_none _ b1 rfl, Diagram.gather_none _ c1 rfl, ite_self,
+    show b1.ports = [] from rfl, show c1.ports = [] from rfl, ite_true, hB1, hB2]
+  interval_cases i
+  · simp only [Diagram.ixMap]
+    have e0 : D1.base.bnd.getD 0 Port.dflt = ⟨3, true, 1⟩ := rfl
+    have g0 : D1.base.gN b1 ⟨3, true, 1⟩ = false := by simp [Diagram.gN, hc1]; decide
+    have m0 : D1.base.nimg b1 n ⟨3, true, 1⟩ = [⟨3, true, 1⟩] := by
+      simp only [Diagram.nimg, hc1, growImg_false, show Diagram.inS b1 ⟨3, true, 1⟩ = false by decide,
+        Bool.false_eq_true, ite_false]
+    have g1 : (E1n n).gN c1 ⟨3, true, 1⟩ = true := by
+      simp [Diagram.gN, show Diagram.inS c1 ⟨3, true, 1⟩ = true by decide]
+    have m1 : (E1n n).nimg c1 n ⟨3, true, 1⟩ = (range n).map fun j => ⟨n + 5 + j, true, 1⟩ := by
+      simp only [Diagram.nimg, show Diagram.inS c1 ⟨3, true, 1⟩ = true by decide, ite_true, cpId_c1]
+      rfl
+    simp only [e0, show D1.base.bnd.idxOf ⟨3, true, 1⟩ = 0 from rfl, φS, g0, m0,
+      Bool.false_eq_true, ite_false, List.headD_cons, bndE1, List.idxOf_cons_self, List.getD_cons_zero,
+      g1, ite_true, m1, show [t].getLastD 0 = t from rfl, List.dropLast_singleton]
+    rw [List.getD_eq_getElem _ _ (by simpa using ht)]
+    simp only [List.getElem_map, List.getElem_range, bndE2]
+    have hm : (⟨n + 5 + t, true, 1⟩ : Port) ∈ (range n).map (fun j => (⟨n + 5 + j, true, 1⟩ : Port)) :=
+      List.mem_map.2 ⟨t, List.mem_range.2 ht, rfl⟩
+    rw [List.idxOf_append_of_mem hm, idxOf_map_range (f := fun j => (⟨n + 5 + j, true, 1⟩ : Port))
+      (fun a b e => by simp only [Port.mk.injEq] at e; omega) ht]
+    simp
+  · have e1 : D1.base.bnd.getD 1 Port.dflt = ⟨1, false, 1⟩ := rfl
+    have g0 : D1.base.gN b1 ⟨1, false, 1⟩ = true := by
+      simp [Diagram.gN, show Diagram.inS b1 ⟨1, false, 1⟩ = true by decide]
+    have m0 : D1.base.nimg b1 n ⟨1, false, 1⟩ = (range n).map fun j => ⟨5 + j, false, 1⟩ := by
+      simp only [Diagram.nimg, show Diagram.inS b1 ⟨1, false, 1⟩ = true by decide, ite_true, cpId_b1]
+      rfl
+    have hI : (E1n n).bnd.idxOf ⟨5 + t, false, 1⟩ = 1 + t := by
+      rw [bndE1, List.idxOf_cons_ne _ (by simp), idx_shift5 ht]; omega
+    have hG : (E1n n).bnd.getD (1 + t) Port.dflt = ⟨5 + t, false, 1⟩ := by
+      rw [bndE1, Nat.add_comm, List.getD_cons_succ, List.getD_eq_getElem _ _ (by simpa using ht)]
+      simp
+    have s5 : Diagram.inS c1 ⟨5 + t, false, 1⟩ = false := by
+      simp only [Diagram.inS, c1, List.mem_singleton, decide_eq_false_iff_not]; omega
+    have g1 : (E1n n).gN c1 ⟨5 + t, false, 1⟩ = false := by
+      simp only [Diagram.gN, hc2, s5, Bool.or_false]
+    have m1 : (E1n n).nimg c1 n ⟨5 + t, false, 1⟩ = [⟨5 + t, false, 1⟩] := by
+      simp only [Diagram.nimg, hc2, growImg_false, s5, Bool.false_eq_true, ite_false]
+    have hS1 : ArchytasZX.Diagram.ixMap D1.base (E1n n) (φS (D1.base.nimg b1 n) (D1.base.gN b1))
+        (ArchytasZX.Diagram.ixMap D1.base D1.base (fun p t => (p, t)) (1, [t])) = (1 + t, []) := by
+      simp only [Diagram.ixMap, e1, show D1.base.bnd.idxOf ⟨1, false, 1⟩ = 1 from rfl, φS, g0, m0,
+        ite_true, show [t].getLastD 0 = t from rfl, List.dropLast_singleton]
+      rw [List.getD_eq_getElem _ _ (by simpa using ht)]
+      simp only [List.getElem_map, List.getElem_range, hI]
+    have hS2 : ArchytasZX.Diagram.ixMap (E1n n) (E2n n) (φS ((E1n n).nimg c1 n) ((E1n n).gN c1))
+        (ArchytasZX.Diagram.ixMap (E1n n) (E1n n) (fun p t => (p, t)) (1 + t, [])) = (n + t, []) := by
+      simp only [Diagram.ixMap, hG, hI, φS, g1, m1, Bool.false_eq_true, ite_false, List.headD_cons,
+        bndE2]
+      rw [List.idxOf_append_of_notMem (fun hm => by
+          obtain ⟨a, -, e⟩ := List.mem_map.1 hm
+          simp at e), idx_shift5 ht]
+      simp
+    rw [hS1, hS2]
+    simp
+
+/-- The expansion in key order is `E2n n`. -/
+theorem expandK1 (n : ℕ) : D1.base.expandK (fun _ => n) = E2n n := by
+  unfold Diagram.expandK
+  rw [expand1, stage1, stage2, SL1]
+  set E := E2n n
+  have hO : E.outs = (range n).map (fun j => (⟨n + 5 + j, true, 1⟩ : Port)) := rfl
+  have hI : E.ins = (range n).map (fun j => (⟨5 + j, false, 1⟩ : Port)) := rfl
+  have hL : ((range 2).flatMap fun i => (range n).map fun t => (i, [t])).map
+      (fun x => E.bnd.getD (D1.base.bidx (fun _ => n) x).1 Port.dflt) = E.outs ++ E.ins := by
+    rw [show range 2 = [0, 1] from rfl]
+    simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, List.map_append, List.map_map]
+    congr 1
+    · rw [hO]
+      refine List.map_congr_left fun t ht => ?_
+      have ht' := List.mem_range.1 ht
+      simp only [Function.comp, bidx1 n 0 t (by omega) ht', Diagram.bnd, hO, zero_mul, zero_add]
+      rw [List.getD_eq_getElem _ _ (by simp; omega), List.getElem_append_left (by simpa using ht')]
+      simp
+    · rw [hI]
+      refine List.map_congr_left fun t ht => ?_
+      have ht' := List.mem_range.1 ht
+      simp only [Function.comp, bidx1 n 1 t (by omega) ht', Diagram.bnd, hO, hI, one_mul]
+      rw [List.getD_eq_getElem _ _ (by simp; omega), List.getElem_append_right (by simp)]
+      simp
+  dsimp only
+  rw [hL]
+  simp [E, E2n]
+
 end FamFca
 
 end ArchytasZX
