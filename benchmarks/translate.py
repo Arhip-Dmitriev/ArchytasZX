@@ -390,6 +390,37 @@ def _inside(x: tuple[int, ...], ds: list[int]) -> bool:
     return len(x) == len(ds) and all(0 <= v < dv for v, dv in zip(x, ds))
 
 
+def _pair_rule(qs: tuple[str, ...], f: Callable[[tuple[Any, ...]], Any]) -> sp.Expr | None:
+    """``f(x, y)`` when it is ``c x y`` with ``c`` a nonzero expression in ``d`` alone, holding
+    ``d``; else None."""
+    if len(qs) != 2:
+        return None
+    x, y, d = sp.Symbol("x"), sp.Symbol("y"), sp.Symbol("d")
+    try:
+        e = sp.expand(sp.sympify(f((x, y))))
+    except (TypeError, ValueError, ZeroDivisionError, sp.SympifyError):
+        return None
+    c = sp.simplify(e / (x * y))
+    if c == 0 or not c.free_symbols or c.free_symbols - {d}:
+        return None
+    return sp.simplify(c * x * y)
+
+
+def _pair_phase(b: _Builder, qs: tuple[str, ...], rule: sp.Expr) -> None:
+    """``Zp phase{x, y: rule}`` from a copy of ``qs[0]`` (x) into a merge on ``qs[1]`` (y)."""
+    q, t = qs
+    zc = b.node(f"Z(1 -> 2, {b.dim(q)})", None)
+    b.take(q, f"{zc}.in0")
+    b.gives(q, f"{zc}.out0")
+    tn = b.node(f"Z(2 -> 1, {b.dim(t)})", None)
+    b.take(t, f"{tn}.in0")
+    b.gives(t, f"{tn}.out0")
+    legs = f"1 -> 1, {b.dim(q)}" if b.dim(q) == b.dim(t) else f"in: [{b.dim(q)}], out: [{b.dim(t)}]"
+    zp = b.node(f"Zp({legs}) phase{{x, y: {_expr(b.ctx.value(rule))}}}", None)
+    b.wires.append(f"{zc}.out1 -- {zp}.in0")
+    b.wires.append(f"{zp}.out0 -- {tn}.in1")
+
+
 def _phase_fn(
     b: _Builder,
     qs: tuple[str, ...],
@@ -399,6 +430,11 @@ def _phase_fn(
     """The binder, phase-table, splitter group of :class:`ir.PhaseFn`, in the box of its wires;
     with ``support`` only those inputs are evaluated."""
     box = b.box_of(qs)
+    if box is None and any(b.ctx.concrete(b.c.dim(q)) is None for q in qs):
+        rule = _pair_rule(qs, f)
+        if rule is not None:
+            _pair_phase(b, qs, rule)
+            return
     fanned: dict[str, str] = {}
     if box is not None:
         for q in qs:

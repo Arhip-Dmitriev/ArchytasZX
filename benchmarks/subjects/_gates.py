@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 from fractions import Fraction
+from typing import Any
 
 import sympy as sp
 
@@ -134,6 +135,13 @@ def inverse(gates: Sequence[ir.Gate]) -> list[ir.Gate]:
     return [inverse_gate(g) for g in reversed(gates)]
 
 
+def _qft_phase(x: Sequence[Any], d: Any, m: int) -> Any:
+    """``x0 x1 / d^m`` turns: a Fraction at integer ``d``, a sympy expression otherwise."""
+    if isinstance(d, int):
+        return Fraction(x[0] * x[1], d**m)
+    return x[0] * x[1] / sp.sympify(d) ** m
+
+
 def qft(qs: Sequence[str], d: int) -> list[ir.Gate]:
     """The textbook qudit QFT on ``qs`` (first most significant), the swaps included."""
     n = len(qs)
@@ -142,7 +150,7 @@ def qft(qs: Sequence[str], d: int) -> list[ir.Gate]:
         out.append(F(qs[j]))
         for k in range(j + 1, n):
             m = k - j + 1
-            out.append(PhaseFn((qs[k], qs[j]), lambda x, m=m: Fraction(x[0] * x[1], d**m)))
+            out.append(PhaseFn((qs[k], qs[j]), lambda x, m=m: _qft_phase(x, d, m)))
     for j in range(n // 2):
         out.append(Swap(qs[j], qs[n - 1 - j]))
     return out

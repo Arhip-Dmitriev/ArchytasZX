@@ -49,5 +49,5 @@ SUBJECT = Subject(
     size_parameter=None,
     dimension="general",
     domain=Domain(d_min=2),
-    equations=(Equation("main", _circuit, _spec, form="fixed", literal=True),),
+    equations=(Equation("main", _circuit, _spec, form="fixed"),),
 )
