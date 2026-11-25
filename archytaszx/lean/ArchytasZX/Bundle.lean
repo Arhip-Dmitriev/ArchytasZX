@@ -297,7 +297,7 @@ def Kind.ms : Kind → List ℕ
 
 /-- The generators a `Bun` node may copy. -/
 def copyKind : Kind → Bool
-  | .B | .S => false
+  | .B | .S | .ZP _ _ _ => false
   | .Bun _ b => copyKind b
   | _ => true
 

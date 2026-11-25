@@ -564,3 +564,36 @@ def test_lean_checks_the_equality(name: str, tmp_path: Path) -> None:
     passed, message = L.check(source, str(tmp_path / f"{name}.lean"))
     assert passed, message
     assert "[propext, Classical.choice, Quot.sound]" in message
+
+
+_ZP_LEFT = """
+dim d
+pq = Zp(1 -> 1, d) phase{x, y: C*x*y/d}
+inputs pq.in0
+outputs pq.out0
+"""
+
+_ZP_RIGHT = """
+dim d
+f = F(d)
+scalar sqrt(d)
+inputs f.in0
+outputs f.out0
+"""
+
+
+def test_a_pair_phase_exports_as_one_zp_node() -> None:
+    from archytaszx.repl.parser import parse_dsl
+
+    src = S.export_symbolic(
+        parse_dsl(_ZP_LEFT.replace("C", "1")), parse_dsl(_ZP_RIGHT), "zp_fourier"
+    )
+    assert ".ZP 0 0 (1)" in src
+    with pytest.raises(L.NetUnsupported):
+        S.export_symbolic(parse_dsl(_ZP_LEFT.replace("C", "2")), parse_dsl(_ZP_RIGHT), "zp_bad")
+
+
+def test_a_symbolic_binder_is_a_character_sum() -> None:
+    terms = S.bs_term((1, (1,)), (1, (0, 1)), 2, 0, 1, 9)
+    assert terms is not None and len(terms) == 1
+    assert terms[0][1] == ((9, (1, (1, 1))),)

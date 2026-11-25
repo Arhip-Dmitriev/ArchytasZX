@@ -841,6 +841,7 @@ theorem port_node (S : Spec) (H k : ℕ) (D : SplitData S H) (hk : 1 ≤ k) (P :
   | I => exact plain (labs_plain hp) rfl rfl
   | ZW => exact plain (labs_plain hp) rfl rfl
   | XW => exact plain (labs_plain hp) rfl rfl
+  | ZP _ _ _ => exact plain (labs_plain hp) rfl rfl
 
 /-! ## Networks -/
 

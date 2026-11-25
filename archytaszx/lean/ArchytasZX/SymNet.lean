@@ -202,11 +202,14 @@ def wS (D : DMon) (i : ℕ) : List Fac → List ℕ → List STm
 
 /-- The binder's or splitter's entry `[k = a t + b]` as a delta over `s t`, the dimension `t`
 a constant `Dt.c`. -/
-def bsTerm (Ds Dt : DMon) (k a b : ℕ) : Option (List STm) :=
+def bsTerm (Ds Dt : DMon) (k a b s : ℕ) : Option (List STm) :=
   if Dt.e = [] then
     some [⟨CMon.ofQ 1, [], [(DMon.mul Ds Dt,
       ipSub (ipSub (ipV k) (ipMul (ipC (Dt.c : ℤ)) (ipV a))) (ipV b))], []⟩]
-  else none
+  else
+    some [⟨CMon.rtD (DMon.mul Ds Dt) (-2), [(s, DMon.mul Ds Dt)], [],
+      [(DMon.mul Ds Dt, ipMul (ipV s) (ipSub (ipV k) (ipV b))),
+        (Ds, ipMul (ipC (-1)) (ipMul (ipV s) (ipV a)))]⟩]
 
 /-! ## Compact phase tables -/
 
@@ -618,6 +621,11 @@ theorem spiderC_den (ρ : Val) (hρ : ρ.OK) (k : CMon) (D : DMon) (s : ℕ) (pt
     · exact spider_den_rule ρ hρ k D s pt ds ps r ν hsupp φ hφ
   · exact spider_den_rule ρ hρ k D s pt ds ps r ν hsupp φ hφ
 
+/-- The pair phase `ω_D^{c x y}` on the legs `[x, y]`. -/
+def zpTerm (D : DMon) (c : ℤ) : List ℕ → Option (List STm)
+  | [x, y] => some [⟨CMon.ofQ 1, [], [], [(D, ipMul (ipC c) (ipMul (ipV x) (ipV y)))]⟩]
+  | _ => none
+
 /-- A generator's entry over its legs, `s` its bound variable. -/
 def trNode (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) : Option (List STm) :=
   let D := dt n.dim
@@ -635,8 +643,9 @@ def trNode (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → D
   | .W, os, [i] => some (wS D i [] os ++
       [⟨CMon.ofQ (1 - os.length), [], (D, ipV i) :: wZeros D os, []⟩])
   | .I, [a], [b] => some [⟨CMon.ofQ 1, [], [(D, ipSub (ipV a) (ipV b))], []⟩]
-  | .B, [k], [a, b] => bsTerm D (dt n.ph) k a b
-  | .S, [a, b], [k] => bsTerm D (dt n.ph) k a b
+  | .B, [k], [a, b] => bsTerm D (dt n.ph) k a b s
+  | .S, [a, b], [k] => bsTerm D (dt n.ph) k a b s
+  | .ZP _ _ c, os, is => zpTerm D c (os ++ is)
   | _, _, _ => none
 
 /-- A node's dimension and phases agree with the tables. -/
@@ -730,6 +739,53 @@ def bsKind : Kind → Bool
   | .B => true
   | .S => true
   | _ => false
+
+/-- Each leg's dimension monomial, the legs `outs ++ ins` in order. -/
+def legDMs (dt : ℕ → DMon) (n : Node) : List DMon :=
+  match n.kind, n.outs, n.ins with
+  | .B, [_], [_, _] => [DMon.mul (dt n.dim) (dt n.ph), dt n.dim, dt n.ph]
+  | .S, [_, _], [_] => [dt n.dim, dt n.ph, DMon.mul (dt n.dim) (dt n.ph)]
+  | .ZP dx dy _, _, _ => [dt dx, dt dy]
+  | _, os, is => (os ++ is).map fun _ => dt n.dim
+
+theorem om_zpow_exR (M : ℕ) (k : ℤ) : om M ^ k = ex ((k : ℝ) / M) := by
+  unfold om ex
+  rw [← Complex.exp_int_mul]
+  congr 1
+  push_cast
+  ring
+
+/-- A pair phase. -/
+def zpKind : Kind → Bool
+  | .ZP _ _ _ => true
+  | _ => false
+
+theorem val_trP (E : Env) (ρ : Val) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
+    (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n)
+    (hk : zpKind n.kind = true) (σ : ℕ → ℕ) (ν : ℕ → ℤ)
+    (hl : ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), ν p.1 = σ p.1)
+    (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
+  obtain ⟨kind, os, is, dim, ph⟩ := n
+  have hdim := hn.dim
+  simp only at hdim hl ⊢
+  cases kind <;> simp [zpKind] at hk
+  rename_i dx dy c
+  simp only [trNode] at h
+  have hv : val E σ ⟨.ZP dx dy c, os, is, dim, ph⟩ = tP (E.dimv dim) c ((os ++ is).map σ) := by
+    simp only [val, List.map_append]
+  rw [hv]
+  simp only [legDMs] at hl
+  generalize hL : os ++ is = L at h hl
+  rcases L with _ | ⟨x, _ | ⟨y, _ | _⟩⟩ <;> simp only [zpTerm, reduceCtorEq] at h
+  simp only [Option.some.injEq] at h
+  subst h
+  simp only [exDen, STm.den, sumsV, body, List.map_cons, List.map_nil, List.sum_cons,
+    List.sum_nil, List.prod_cons, List.prod_nil, add_zero, mul_one, one_mul, ofQ_den, phV,
+    ipDen_mul, ipDen_C, ipDen_V, hl (x, dt dx) (by simp), hl (y, dt dy) (by simp), tP, hdim,
+    om_zpow_exR]
+  congr 1
+  push_cast
+  ring
 
 theorem val_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon)) (rl : ℕ → DMon × List ℤ)
     (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n) (hk : bsKind n.kind = false)
@@ -841,14 +897,10 @@ theorem val_tr (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ 
     by_cases h2 : σ o = σ i <;> simp [h2, ho.1, hi.1]
   | B => simp [bsKind] at hk
   | S => simp [bsKind] at hk
+  | ZP dx dy c =>
+    exact val_trP E ρ dt pt rl s ⟨.ZP dx dy c, os, is, dim, ph⟩ e ⟨hdim, hpos, hph, hsupp⟩
+      rfl σ ν (fun p hp => (hl p.1 (List.of_mem_zip hp).1).2) h
   | _ => simp [trNode] at h
-
-/-- Each leg's dimension monomial, the legs `outs ++ ins` in order. -/
-def legDMs (dt : ℕ → DMon) (n : Node) : List DMon :=
-  match n.kind, n.outs, n.ins with
-  | .B, [_], [_, _] => [DMon.mul (dt n.dim) (dt n.ph), dt n.dim, dt n.ph]
-  | .S, [_, _], [_] => [dt n.dim, dt n.ph, DMon.mul (dt n.dim) (dt n.ph)]
-  | _, os, is => (os ++ is).map fun _ => dt n.dim
 
 theorem mem_zip_map {α β : Type} (f : α → β) : ∀ (ls : List α) (x : α), x ∈ ls →
     (x, f x) ∈ ls.zip (ls.map f)
@@ -870,21 +922,78 @@ theorem bs_delta (s t k a b : ℕ) (hk : k < s * t) (ha : a < s) (hb : b < t) :
     exact_mod_cast this
   · intro h; subst h; push_cast; simp [mul_comm]
 
+theorem om_eq_pow (S T : ℕ) (hT : 0 < T) : om S = om (S * T) ^ T := by
+  unfold om
+  rw [← Complex.exp_nat_mul]
+  congr 1
+  have : (T : ℂ) ≠ 0 := by exact_mod_cast hT.ne'
+  push_cast
+  field_simp
+
+/-- The binder over a symbolic second dimension as a character sum. -/
+theorem bsSym_den (ρ : Val) (Ds Dt : DMon) (k a b s : ℕ) (ν : ℕ → ℤ) (K A B : ℕ)
+    (hK : K < (DMon.mul Ds Dt).den ρ.dv) (hA : A < Ds.den ρ.dv) (hB : B < Dt.den ρ.dv)
+    (hk : ν k = K) (ha : ν a = A) (hb : ν b = B) (hsk : k ≠ s) (hsa : a ≠ s) (hsb : b ≠ s) :
+    exDen ρ ν [⟨CMon.rtD (DMon.mul Ds Dt) (-2), [(s, DMon.mul Ds Dt)], [],
+      [(DMon.mul Ds Dt, ipMul (ipV s) (ipSub (ipV k) (ipV b))),
+        (Ds, ipMul (ipC (-1)) (ipMul (ipV s) (ipV a)))]⟩] =
+      tB (Ds.den ρ.dv) (Dt.den ρ.dv) K A B := by
+  have hN : (DMon.mul Ds Dt).den ρ.dv = Ds.den ρ.dv * Dt.den ρ.dv := DMon.den_mul _ _ _
+  set S := Ds.den ρ.dv
+  set T := Dt.den ρ.dv
+  have hS : 0 < S := by omega
+  have hT : 0 < T := by omega
+  have hST : 0 < S * T := Nat.mul_pos hS hT
+  have hc : 0 < (DMon.mul Ds Dt).c := by
+    rcases Nat.eq_zero_or_pos (DMon.mul Ds Dt).c with h0 | h0
+    · have : (DMon.mul Ds Dt).den ρ.dv = 0 := by simp [DMon.den, h0]
+      omega
+    · exact h0
+  rw [exDen_cons, exDen_nil, add_zero]
+  unfold STm.den
+  simp only [sumsV, body, List.map_nil, List.prod_nil, one_mul, List.map_cons, List.prod_cons,
+    mul_one, phV, ipDen_mul, ipDen_sub, ipDen_V, ipDen_C, Function.update_apply, hsk, hsa, hsb,
+    if_false, if_true, hk, ha, hb, rtD_den ρ _ hc, hN]
+  have hz : om (S * T) ≠ 0 := om_ne_zero _ hST
+  have hconv : ∀ j ∈ range (S * T), om (S * T) ^ ((j : ℤ) * ((K : ℤ) - B)) *
+      om S ^ (-1 * ((j : ℤ) * A)) =
+      om (S * T) ^ ((j : ℤ) * ((K : ℤ) - T * A - B) + 0) := by
+    intro j _
+    rw [om_eq_pow S T hT, ← zpow_natCast, ← zpow_mul, ← zpow_add₀ hz]
+    congr 1
+    ring
+  rw [Finset.sum_congr rfl hconv, sum_om_lin _ hST, zpow_zero, one_mul]
+  have hr : rt (S * T) ^ (-2 : ℤ) * ((S * T : ℕ) : ℂ) = 1 := by
+    rw [zpow_neg, ← rt_sq' (S * T), zpow_ofNat]
+    exact inv_mul_cancel₀ (pow_ne_zero _ (rt_ne _ hST))
+  have hd := bs_delta S T K A B (by omega) hA hB
+  unfold tB
+  split_ifs with h1 h2 h2
+  · rw [hr]
+  · exact absurd ⟨hA, hB, hd.1 h1⟩ h2
+  · exact absurd (hd.2 h2.2.2) h1
+  · simp
+
 theorem val_trB (E : Env) (ρ : Val) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
     (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n)
     (hk : bsKind n.kind = true) (hph : E.dimv n.ph = (dt n.ph).den ρ.dv) (σ : ℕ → ℕ) (ν : ℕ → ℤ)
     (hl : ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), σ p.1 < p.2.den ρ.dv ∧ ν p.1 = σ p.1)
-    (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
+    (hs : s ∉ n.outs ++ n.ins) (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
   obtain ⟨kind, os, is, dim, ph⟩ := n
   obtain ⟨hdim, -, -, -⟩ := hn
-  simp only at hdim hph hl hk ⊢
-  have key : ∀ k a b : ℕ, bsTerm (dt dim) (dt ph) k a b = some e →
+  simp only at hdim hph hl hk hs ⊢
+  have key : ∀ k a b : ℕ, bsTerm (dt dim) (dt ph) k a b s = some e →
       σ k < (DMon.mul (dt dim) (dt ph)).den ρ.dv ∧ ν k = σ k →
       σ a < (dt dim).den ρ.dv ∧ ν a = σ a → σ b < (dt ph).den ρ.dv ∧ ν b = σ b →
+      k ≠ s → a ≠ s → b ≠ s →
       tB (E.dimv dim) (E.dimv ph) (σ k) (σ a) (σ b) = exDen ρ ν e := by
-    intro k a b hb hk' ha' hb'
+    intro k a b hb hk' ha' hb' hks has hbs
     unfold bsTerm at hb
     split_ifs at hb with he
+    swap
+    · simp only [Option.some.injEq] at hb
+      subst hb
+      rw [bsSym_den ρ _ _ k a b s ν _ _ _ hk'.1 ha'.1 hb'.1 hk'.2 ha'.2 hb'.2 hks has hbs, hdim, hph]
     simp only [Option.some.injEq] at hb
     subst hb
     have hc : (dt ph).den ρ.dv = (dt ph).c := by simp [DMon.den, he, npow]
@@ -904,11 +1013,13 @@ theorem val_trB (E : Env) (ρ : Val) (dt : ℕ → DMon) (pt : ℕ → List (ℕ
     simp only [val, List.map_cons, List.map_nil]
     exact key k a b h (hl (k, DMon.mul (dt dim) (dt ph)) (by simp [legDMs]))
       (hl (a, dt dim) (by simp [legDMs])) (hl (b, dt ph) (by simp [legDMs]))
+      (fun e => hs (by simp [e])) (fun e => hs (by simp [e])) (fun e => hs (by simp [e]))
   · rcases os with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;> rcases is with _ | ⟨k, _ | _⟩ <;>
       simp only [trNode, reduceCtorEq] at h
     simp only [val, List.map_cons, List.map_nil]
     exact key k a b h (hl (k, DMon.mul (dt dim) (dt ph)) (by simp [legDMs]))
       (hl (a, dt dim) (by simp [legDMs])) (hl (b, dt ph) (by simp [legDMs]))
+      (fun e => hs (by simp [e])) (fun e => hs (by simp [e])) (fun e => hs (by simp [e]))
 
 theorem val_trG (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ → List (ℕ × CMon))
     (rl : ℕ → DMon × List ℤ) (s : ℕ) (n : Node) (e : List STm) (hn : NodeOK E ρ dt pt rl n)
@@ -917,14 +1028,16 @@ theorem val_trG (E : Env) (ρ : Val) (hρ : ρ.OK) (dt : ℕ → DMon) (pt : ℕ
     (hl : ∀ p ∈ (n.outs ++ n.ins).zip (legDMs dt n), σ p.1 < p.2.den ρ.dv ∧ ν p.1 = σ p.1)
     (h : trNode dt pt rl s n = some e) : val E σ n = exDen ρ ν e := by
   cases hk : bsKind n.kind
-  · refine val_tr E ρ hρ dt pt rl s n e hn hk σ ν hs (fun l hl' => ?_) h
-    have hd : legDMs dt n = (n.outs ++ n.ins).map fun _ => dt n.dim := by
-      obtain ⟨kind, os, is, dim, ph⟩ := n
-      cases kind <;> simp [bsKind] at hk <;> simp [legDMs]
-    have := hl _ (hd ▸ mem_zip_map (fun _ => dt n.dim) _ l hl')
-    rw [hn.dim]
-    exact this
-  · exact val_trB E ρ dt pt rl s n e hn hk (hph hk) σ ν hl h
+  · cases hz : zpKind n.kind
+    · refine val_tr E ρ hρ dt pt rl s n e hn hk σ ν hs (fun l hl' => ?_) h
+      have hd : legDMs dt n = (n.outs ++ n.ins).map fun _ => dt n.dim := by
+        obtain ⟨kind, os, is, dim, ph⟩ := n
+        cases kind <;> simp [bsKind, zpKind] at hk hz <;> simp [legDMs]
+      have := hl _ (hd ▸ mem_zip_map (fun _ => dt n.dim) _ l hl')
+      rw [hn.dim]
+      exact this
+    · exact val_trP E ρ dt pt rl s n e hn hz σ ν (fun p hp => (hl p hp).2) h
+  · exact val_trB E ρ dt pt rl s n e hn hk (hph hk) σ ν hl hs h
 
 /-! ## Networks -/
 

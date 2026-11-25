@@ -53,6 +53,7 @@ def tensorW (E : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) (C : ℕ
   | .ZB cs, d, ph, os, is => tensorT E M P (.ZB cs) d ph os is
   | .XB co ci, d, ph, os, is => tensorT E M P (.XB co ci) d ph os is
   | .WB cs, d, ph, os, is => tensorT E M P (.WB cs) d ph os is
+  | .ZP dx dy c, d, ph, os, is => tensorT E M P (.ZP dx dy c) d ph os is
 
 /-- The number of `(√d)⁻¹` factors of a generator with `no` outputs and `ni` inputs. -/
 def sqcW (E : Shape) : Kind → ℕ → ℕ → ℕ → ℕ
@@ -83,7 +84,7 @@ theorem Kind.phased_of_noZW : ∀ k : Kind, k.noZW = false → k.phased = true
   | .XW, _ => rfl
   | .Bun _ b, h => Kind.phased_of_noZW b h
   | .Z, h | .X, h | .F, h | .T, h | .Ti, h | .W, h | .B, h | .S, h | .I, h | .ZB _, h
-  | .XB _ _, h | .WB _, h => by simp [Kind.noZW] at h
+  | .XB _ _, h | .WB _, h | .ZP _ _ _, h => by simp [Kind.noZW] at h
 
 theorem tv_tshift (z : ℂ) (xs : List ℂ) (e : ℕ) (t : Terms) :
     tv z xs (tshift e t) = z ^ e * tv z xs t := by
@@ -226,6 +227,13 @@ theorem tensorW_cyc (E : Env) (M : ℕ) (xs : List ℂ) (hx : ∀ x ∈ xs, x �
     rcases os with _ | ⟨o, _ | ⟨_, _⟩⟩ <;> rcases is with _ | ⟨i, _ | ⟨_, _⟩⟩ <;>
       simp only [tensor, tensorT, sqc, tv, List.map_nil, List.sum_nil, mul_zero]
     simp [tc, tI, mono_nil]
+  | ZP dx dy c =>
+    rw [show qcW E.shape (.ZP dx dy c) = 0 from rfl, pow_zero, mul_one]
+    show tensor E (.ZP dx dy c) d ph os is =
+      (rt d)⁻¹ ^ sqc E.shape (.ZP dx dy c) d os.length is.length *
+      tv (om M) xs (tensorT E.shape M P (.ZP dx dy c) d ph os is)
+    simp only [tensor, tensorT, sqc, pow_zero, one_mul]
+    exact tP_cyc M d c xs hM hdM (os ++ is)
   | ZB cs =>
     have h := tensor_cyc E M xs hx P hM (.ZB cs) rfl d ph hdM (hφ rfl rfl) os is
     rw [show qcW E.shape (.ZB cs) = 0 from rfl, pow_zero, mul_one]

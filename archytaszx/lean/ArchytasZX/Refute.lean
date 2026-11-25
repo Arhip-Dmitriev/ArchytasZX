@@ -253,6 +253,35 @@ def Env.shape (E : Env) : Shape := ⟨E.dimv, E.labs, E.mult⟩
 /-- A label's dimension in a shape. -/
 def Shape.dim (S : Shape) (l : ℕ) : ℕ := S.dimv ((S.labs.lookup l).getD 0)
 
+/-- The pair phase's entry as a formal sum. -/
+def tPT (M d : ℕ) (c : ℤ) : List ℕ → Terms
+  | [x, y] => [(1, M / d * (c * x * y % d).toNat, [])]
+  | _ => []
+
+theorem tP_cyc (M d : ℕ) (c : ℤ) (xs : List ℂ) (hM : 0 < M) (hdM : d ∣ M) (vs : List ℕ) :
+    tP d c vs = tv (om M) xs (tPT M d c vs) := by
+  have hd : 0 < d := Nat.pos_of_dvd_of_pos hdM hM
+  obtain ⟨q, hq⟩ := hdM
+  have hMd : M / d = q := by rw [hq, Nat.mul_div_cancel_left _ hd]
+  rcases vs with _ | ⟨x, _ | ⟨y, _ | _⟩⟩ <;> simp only [tP, tPT, tv, List.map_nil, List.sum_nil]
+  simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero, Int.cast_one,
+    one_mul, mono_nil, mul_one, hMd]
+  set k : ℤ := c * x * y
+  have hex : ex ((c : ℝ) * x * y / d) = om d ^ k := by
+    unfold ex om
+    rw [← Complex.exp_int_mul]
+    congr 1
+    simp only [k]
+    push_cast
+    ring
+  have hz : om d ≠ 0 := om_ne_zero d hd
+  have h1 : om d ^ (d : ℤ) = 1 := by rw [zpow_natCast]; exact om_pow_self d hd
+  have hk : om d ^ k = om d ^ ((k % d).toNat) := by
+    rw [← zpow_natCast, Int.toNat_of_nonneg (Int.emod_nonneg _ (by exact_mod_cast hd.ne'))]
+    conv_lhs => rw [← Int.emod_add_mul_ediv k d]
+    rw [zpow_add₀ hz, zpow_mul, h1, one_zpow, mul_one]
+  rw [hex, hk, om_sub M d q hM hq, ← pow_mul]
+
 /-- A generator's entry without its `(√d)⁻¹` factors as a formal sum. -/
 def tensorT (E : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) :
     Kind → ℕ → ℕ → List ℕ → List ℕ → Terms
@@ -267,6 +296,7 @@ def tensorT (E : Shape) (M : ℕ) (P : ℕ → ℕ → ℕ × List ℤ) :
   | .XB co ci, d, ph, os, is =>
       tXT M (P ph) d (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, d, _, os, [w] => tc (tWZ d (bundled E.mult d os cs) w)
+  | .ZP _ _ c, d, _, os, is => tPT M d c (os ++ is)
   | .Bun m b, d, ph, os, is => ((List.range (E.mult m)).map fun i =>
       tensorT E M P b d ph (copyLegs E.mult d i (b.outCs os.length) os)
         (copyLegs E.mult d i (b.inCs is.length) is)).foldr tmul (tc 1)
@@ -335,6 +365,9 @@ theorem tensor_cyc (E : Env) (M : ℕ) (xs : List ℂ) (hx : ∀ x ∈ xs, x ≠
   | S => simp [tensor, tensorT, tv]
   | ZW => simp [Kind.noZW] at hk
   | XW => simp [Kind.noZW] at hk
+  | ZP _ _ c =>
+    simp only [tensor, tensorT, sqc, pow_zero, one_mul]
+    exact tP_cyc M d c xs hM hdM (os ++ is)
   | Bun m b ih =>
     simp only [tensor, tensorT, sqc, tv_foldr_tmul _ _ hx, List.map_map, copyOuts, copyIns,
       Env.shape]

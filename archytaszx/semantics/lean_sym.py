@@ -2151,13 +2151,15 @@ def tr_node(
     dt: Callable[[int], DMon],
     pt: Callable[[int], Sequence[tuple[int, CMon]]],
     s: int,
-    kind: str,
+    kind: Any,
     os: Sequence[int],
     is_: Sequence[int],
     dim: int,
     ph: int,
 ) -> list[STm] | None:
     d = dt(dim)
+    if not isinstance(kind, str):
+        return zp_term(d, kind[3], (*os, *is_)) if kind[0] == "ZP" else None
     rule = getattr(pt(ph), "rule", None)
     if kind == "Z":
         return spider_c(of_q(1), d, s, pt(ph), rule, z_legs(d, s, (*os, *is_)), ())
@@ -2186,24 +2188,44 @@ def tr_node(
     if kind == "I" and len(os) == 1 and len(is_) == 1:
         return [(of_q(1), (), ((d, ip_sub(ip_v(os[0]), ip_v(is_[0]))),), ())]
     if (BS_NODES or _BS_ON) and kind == "B" and len(os) == 1 and len(is_) == 2:
-        return bs_term(d, dt(ph), os[0], is_[0], is_[1])
+        return bs_term(d, dt(ph), os[0], is_[0], is_[1], s)
     if (BS_NODES or _BS_ON) and kind == "S" and len(os) == 2 and len(is_) == 1:
-        return bs_term(d, dt(ph), is_[0], os[0], os[1])
+        return bs_term(d, dt(ph), is_[0], os[0], os[1], s)
     return None
 
 
-def bs_term(ds: DMon, dt_: DMon, k: int, a: int, b: int) -> list[STm] | None:
+def zp_term(d: DMon, c: int, legs: Sequence[int]) -> list[STm] | None:
+    """``zpTerm``."""
+    if len(legs) != 2:
+        return None
+    return [(of_q(1), (), (), ((d, ip_mul(ip_c(c), ip_mul(ip_v(legs[0]), ip_v(legs[1])))),))]
+
+
+def bs_term(ds: DMon, dt_: DMon, k: int, a: int, b: int, s: int) -> list[STm] | None:
     """``bsTerm``."""
     if dt_[1]:
-        return None
+        st = dm_mul(ds, dt_)
+        return [
+            (
+                rt_d(st, -2),
+                ((s, st),),
+                (),
+                (
+                    (st, ip_mul(ip_v(s), ip_sub(ip_v(k), ip_v(b)))),
+                    (ds, ip_mul(ip_c(-1), ip_mul(ip_v(s), ip_v(a)))),
+                ),
+            )
+        ]
     poly = ip_sub(ip_sub(ip_v(k), ip_mul(ip_c(dt_[0]), ip_v(a))), ip_v(b))
     return [(of_q(1), (), ((dm_mul(ds, dt_), poly),), ())]
 
 
 def leg_dms(
-    dt: Callable[[int], DMon], kind: str, os: Sequence[int], is_: Sequence[int], dim: int, ph: int
+    dt: Callable[[int], DMon], kind: Any, os: Sequence[int], is_: Sequence[int], dim: int, ph: int
 ) -> list[DMon]:
     """``legDMs``."""
+    if not isinstance(kind, str) and kind[0] == "ZP":
+        return [dt(kind[1]), dt(kind[2])]
     if kind == "B" and len(os) == 1 and len(is_) == 2:
         return [dm_mul(dt(dim), dt(ph)), dt(dim), dt(ph)]
     if kind == "S" and len(os) == 2 and len(is_) == 1:
@@ -3267,7 +3289,7 @@ class _SymExport:
     ]:
         nodes = []
         for n in lnet.nodes:
-            if not isinstance(n.kind, str):
+            if not isinstance(n.kind, str) and n.kind[0] != "ZP":
                 raise NetUnsupported(f"the kind {n.kind}")
             nodes.append((n.kind, n.outs, n.ins, n.dim, n.ph))
         return nodes, lnet.summed, lnet.bnd

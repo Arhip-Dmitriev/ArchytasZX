@@ -61,12 +61,14 @@ open Complex Finset
 /-- Generator kinds: spiders, Fourier box, triangle and inverse, W node, dimension binder
 and splitter, the bare wire, a weighted Z spider, a Z, X or W whose last legs bundle along the
 chains of multiplicities `cs` (outermost first), copies of a generator along multiplicity `m`,
-and a weighted X spider. -/
+a weighted X spider, and a pair phase `e^{2πi c x y / M}` over legs of dimension indices `dx`,
+`dy`, `M` the node's dimension. -/
 inductive Kind
   | Z | X | F | T | Ti | W | B | S | I | ZW
   | ZB (cs : List (List ℕ)) | XB (co ci : List (List ℕ)) | WB (cs : List (List ℕ))
   | Bun (m : ℕ) (base : Kind)
   | XW
+  | ZP (dx dy : ℕ) (c : ℤ)
   deriving DecidableEq, Repr
 
 /-- One generator instance: output and input leg labels, dimension index, phase index. -/
@@ -136,6 +138,11 @@ def tW (d : ℕ) (os : List ℕ) (i : ℕ) : ℂ :=
 /-- The binder entry `[k = a t + b]` over `a < s`, `b < t`. -/
 def tB (s t k a b : ℕ) : ℂ := if a < s ∧ b < t ∧ k = a * t + b then 1 else 0
 
+/-- The pair phase `e^{2πi c x y / M}` on the leg values `[x, y]`. -/
+noncomputable def tP (M : ℕ) (c : ℤ) : List ℕ → ℂ
+  | [x, y] => ex ((c : ℝ) * x * y / M)
+  | _ => 0
+
 /-- The bare wire on dimension `d`. -/
 def tI (d a b : ℕ) : ℂ := if a = b ∧ a < d then 1 else 0
 
@@ -198,6 +205,7 @@ noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List 
   | .ZB cs, d, ph, os, is => tZ d (E.phase ph) (os ++ bundled E.mult d is cs)
   | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
+  | .ZP _ _ c, d, _, os, is => tP d c (os ++ is)
   | .Bun m b, d, ph, os, is => ((List.range (E.mult m)).map fun i =>
       tensor E b d ph (copyOuts E b d i os) (copyIns E b d i is)).prod
   | _, _, _, _, _ => 0
@@ -223,6 +231,7 @@ noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
   | .XB co ci, os, is => tX d (E.phase n.ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, os, [w] => tW d (bundled E.mult d os cs) w
   | .Bun m b, os, is => tensor E (.Bun m b) d n.ph os is
+  | .ZP _ _ c, os, is => tP d c (os ++ is)
   | _, _, _ => 0
 
 /-- A label's dimension. -/

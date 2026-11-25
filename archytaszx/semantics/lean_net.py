@@ -51,11 +51,11 @@ from archytaszx import trace as _trace
 from archytaszx.algebra import numfield
 from archytaszx.algebra.algebraic import NotAlgebraicError
 from archytaszx.algebra.dimension import Dim
-from archytaszx.algebra.phase import INDEX, PhaseVector
+from archytaszx.algebra.phase import INDEX, INDEX2, PairPhase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import _mult_symbol
 from archytaszx.diagram.compare import isomorphism
-from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.semantics.denote import DenoteDomainError, resolve_dim
 from archytaszx.semantics.digit_poly import DigitPoly, digit_poly
@@ -502,7 +502,11 @@ class _Export:
             self.alias[str(hi)] = lo
 
     def dim(self, d: Dim) -> int:
-        e = self.canon(d.to_sympy())
+        return self.dim_expr(d.to_sympy())
+
+    def dim_expr(self, raw: sp.Expr) -> int:
+        """The dimension index of the expression ``raw``."""
+        e = self.canon(raw)
         key = str(e)
         if key not in self.dim_key:
             self.dim_key[key] = len(self.dims)
@@ -646,6 +650,22 @@ class _Export:
         if pv.entries() or pv.rule is not None:
             return f"(if k = 0 then 1 else {body}) * ex ({self.phase_body(pv)})"
         return f"if k = 0 then 1 else {body}"
+
+    def zp_kind(self, node: Node) -> tuple[Any, int]:
+        """A pair-phase node's kind ``("ZP", dx, dy, c)`` and modulus index, its phase
+        ``c x y / M``; :class:`NetUnsupported` for any other pair phase."""
+        legs = (*node.outputs, *node.inputs)
+        phase = node.phase
+        if len(legs) != 2 or not isinstance(phase, PairPhase):
+            raise NetUnsupported("a Zp node without two legs and a pair phase")
+        coef = sp.cancel(sp.sympify(phase.pair.to_sympy_turns()) / (INDEX * INDEX2))
+        if coef.has(INDEX) or coef.has(INDEX2):
+            raise NetUnsupported(f"a pair phase {phase} that is not c x y / M")
+        num, den = sp.fraction(sp.together(coef))
+        if not num.is_Integer or num == 0:
+            raise NetUnsupported(f"a pair phase {phase} that is not c x y / M")
+        dx, dy = self.dim(legs[0].dim), self.dim(legs[1].dim)
+        return ("ZP", dx, dy, int(num)), self.dim_expr(den)
 
     def kind_ph(self, kind: str, pv: PhaseVector | None, aux: int) -> tuple[str, int]:
         """A node's Lean kind and phase index: a weighted Z or X spider is ``ZW`` or ``XW``."""
@@ -935,7 +955,8 @@ class _Export:
         nodes = []
         for nid in node_order:
             node = d.nodes[nid]
-            kind = _KINDS.get(node.generator_type.name)
+            zp = self.zp_kind(node) if node.generator_type.name == "Zp" else None
+            kind = zp[0] if zp is not None else _KINDS.get(node.generator_type.name)
             if kind is None:
                 raise NetUnsupported(f"generator {node.generator_type.name} has no Lean kind")
             legs = []
@@ -950,8 +971,11 @@ class _Export:
                     if ref in tails:
                         pos[(side, i)] = tails[ref]
                 legs.append(tuple(row))
-            dim, aux = self.node_dims(d, nid)
-            kind, ph = self.kind_ph(kind, node.phase, aux)
+            if zp is not None:
+                dim, ph = zp[1], 0
+            else:
+                dim, aux = self.node_dims(d, nid)
+                kind, ph = self.kind_ph(kind, node.phase, aux)
             o, i_ = legs
             bnode = _bundle_node(LNode(kind, o, i_, dim, ph), pos)
             k = bnode.kind
@@ -3833,6 +3857,8 @@ def _klean(kind: Any) -> str:
         return "[" + ", ".join(_list(c) for c in x) + "]"
 
     h = kind[0]
+    if h == "ZP":
+        return f".ZP {kind[1]} {kind[2]} ({kind[3]})"
     if h in ("ZB", "WB"):
         return f".{h} {cs(kind[1])}"
     if h == "XB":
@@ -3846,6 +3872,8 @@ def _canon(kind: Any) -> Any:
     if isinstance(kind, str):
         return kind
     h = kind[0]
+    if h == "ZP":
+        return kind
     if h in ("ZB", "WB"):
         return (h, tuple(sorted(kind[1])))
     if h == "XB":
@@ -3892,7 +3920,7 @@ def _kms(kind: Any) -> set[int]:
 def _copyable(kind: Any) -> bool:
     """Python mirror of ``copyKind``."""
     h = _head(kind)
-    if h in ("B", "S"):
+    if h in ("B", "S", "ZP"):
         return False
     return _copyable(kind[2]) if h == "Bun" else True
 
