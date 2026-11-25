@@ -297,6 +297,100 @@ theorem portsR {n : ℕ} (hn : 0 < n) : (D1.famExpand n).portsOK := by
   · refine ⟨fun k hk => ?_, fun k hk => ?_⟩ <;> simp [n4] at hk
     subst hk; exact (okW hn (Or.inr (w2h n))).1
 
+/-! ## Leg dimensions -/
+
+theorem Z1_id_inj {n : ℕ} {a e : DNode × ℕ × ℕ} (ha : a ∈ Z1 n) (he : e ∈ Z1 n)
+    (h : a.1.id = e.1.id) : a = e := by
+  rcases mem_Z1 ha with rfl | ⟨j, hj, rfl⟩ | rfl | ⟨j, hj, rfl⟩ | rfl <;>
+  rcases mem_Z1 he with rfl | ⟨k, hk, rfl⟩ | rfl | ⟨k, hk, rfl⟩ | rfl <;>
+  simp only [n0, n1, n2, n3, n4] at h ⊢ <;> first | omega |
+    (have : j = k := by omega
+     subst this; rfl)
+
+theorem find1 {n : ℕ} {e : DNode × ℕ × ℕ} (he : e ∈ Z1 n) :
+    (D1.famExpand n).nodes.find? (fun y => y.id = e.1.id) = some (D1.node n e.1) := by
+  rw [nodes1_fam]
+  refine find?_unique (List.mem_map.2 ⟨e, he, rfl⟩) (by simp [FamDiagram.node]) fun y hy hp => ?_
+  obtain ⟨a, ha, rfl⟩ := List.mem_map.1 hy
+  simp only [FamDiagram.node] at hp
+  rw [Z1_id_inj ha he (of_decide_eq_true hp)]
+
+theorem portDim1 {n : ℕ} {e : DNode × ℕ × ℕ} (he : e ∈ Z1 n) (out : Bool) (k : ℕ)
+    (hk : k < (if out then e.1.outs else e.1.ins).length) :
+    (D1.famExpand n).portDim ⟨e.1.id, out, k⟩ = FamDiagram.ixAt n D1.legs ⟨e.2.1, out, k⟩ e.2.2 0 := by
+  have h0 : ∀ v ∈ e.1.outs ++ e.1.ins, v = 0 := by
+    rcases mem_Z1 he with rfl | ⟨j, hj, rfl⟩ | rfl | ⟨j, hj, rfl⟩ | rfl <;> simp [n0, n1, n2, n3, n4]
+  unfold Diagram.portDim
+  rw [find1 he]
+  simp only [FamDiagram.node, orgOf1_eq he rfl, FamDiagram.side,
+    FamDiagram.cnt_plain n (show D1.pairs = [] from rfl), FamDiagram.growC_one]
+  cases out
+  · simp only [Bool.false_eq_true, ite_false] at hk ⊢
+    rw [List.getD_eq_getElem _ _ (by simpa using hk)]
+    simp only [List.getElem_map, List.getElem_range]
+    rw [List.getD_eq_getElem _ _ hk, h0 _ (List.mem_append_right _ (List.getElem_mem hk))]
+  · simp only [ite_true] at hk ⊢
+    rw [List.getD_eq_getElem _ _ (by simpa using hk)]
+    simp only [List.getElem_map, List.getElem_range]
+    rw [List.getD_eq_getElem _ _ hk, h0 _ (List.mem_append_left _ (List.getElem_mem hk))]
+
+theorem legs1_0 (n j d : ℕ) : FamDiagram.ixAt n D1.legs ⟨0, true, 0⟩ j d = n := rfl
+theorem legs1_1 (n j d : ℕ) :
+    FamDiagram.ixAt n D1.legs ⟨1, true, 0⟩ j d = if j + 1 = 0 then n else j + 1 - 1 := rfl
+theorem legs1_3 (n j d : ℕ) :
+    FamDiagram.ixAt n D1.legs ⟨3, false, 0⟩ j d = if j + 1 = 0 then n else j + 1 - 1 := rfl
+theorem legs1_4 (n j d : ℕ) : FamDiagram.ixAt n D1.legs ⟨4, false, 0⟩ j d = n := rfl
+
+theorem dimW {n : ℕ} (hn : 0 < n) (d : ℕ) : ∀ w ∈ (D1.famExpand n).wires,
+    labDim (engE d n) (lab1 n w.1) = (engE d n).dimv ((D1.famExpand n).portDim w.1) := by
+  have hn' : n ≠ 0 := by omega
+  have key : ∀ k, k < 2 * n + 2 → ∀ p : Port, lab1 n p = rb n + k →
+      (D1.famExpand n).portDim p = dI n (edim n k) →
+      labDim (engE d n) (lab1 n p) = (engE d n).dimv ((D1.famExpand n).portDim p) := by
+    intro k hk p hl hp
+    rw [hl, hp, labDim_eng d hk]
+    exact (engD_dI d (edim_le hk)).symm
+  intro w hw
+  rw [wires1 hn, List.mem_append] at hw
+  rcases hw with hw | hw
+  · simp only [W1, List.mem_cons, List.mem_append, List.mem_map, List.mem_range] at hw
+    rcases hw with (rfl | ⟨j, hj, rfl⟩) | rfl | hf
+    · refine key 0 (by omega) _ (by rw [lab1_0]; simp [labY]) ?_
+      refine (portDim1 (e := (n0, (0, 0))) (by simp [Z1]) true 0 (by simp [n0])).trans ?_
+      simp [legs1_0, edim, dI]
+    · refine key (4 + j) (by omega) _ (by
+        rw [lab1_b (by omega)]; simp only [labY, bout, show j + 1 ≠ n by omega, ite_false]; ring) ?_
+      rw [portDim1 (mem_Z1_1 (j := j) (by omega)) true 0 (by simp [n1])]
+      dsimp only
+      simp only [legs1_1, edim, dI]
+      split_ifs <;> first | omega | contradiction
+    · refine key 1 (by omega) _ (by
+        rw [lab1_b (by omega)]; simp [labY, bout, show n - 1 + 1 = n by omega]) ?_
+      rw [portDim1 (mem_Z1_1 (j := n - 1) (by omega)) true 0 (by simp [n1])]
+      dsimp only
+      simp only [legs1_1, edim, dI]
+      split_ifs <;> first | omega | contradiction
+    · simp at hf
+  · simp only [W2, List.mem_cons, List.mem_append, List.mem_map, List.mem_range] at hw
+    rcases hw with (rfl | ⟨j, hj, rfl⟩) | rfl | hf
+    · refine key 3 (by omega) _ (by rw [lab1_4]; simp [labY, hn']) ?_
+      refine (portDim1 (e := (n4, (4, 0))) (by simp [Z1]) false 0 (by simp [n4])).trans ?_
+      simp [legs1_4, edim, dI]
+    · refine key (n + 3 + j) (by omega) _ (by
+        rw [lab1_s (by omega)]
+        simp only [labY, sv, show j + 1 ≠ 0 by omega, show j + 1 ≠ n by omega, ite_false]; ring) ?_
+      rw [portDim1 (mem_Z1_3 (j := j) (by omega)) false 0 (by simp [n3])]
+      dsimp only
+      simp only [legs1_3, edim, dI]
+      split_ifs <;> first | omega | contradiction
+    · refine key 2 (by omega) _ (by
+        rw [lab1_s (by omega)]; simp [labY, sv, hn', show n - 1 + 1 = n by omega]) ?_
+      rw [portDim1 (mem_Z1_3 (j := n - 1) (by omega)) false 0 (by simp [n3])]
+      dsimp only
+      simp only [legs1_3, edim, dI]
+      split_ifs <;> first | omega | contradiction
+    · simp at hf
+
 end FamFca
 
 end ArchytasZX
