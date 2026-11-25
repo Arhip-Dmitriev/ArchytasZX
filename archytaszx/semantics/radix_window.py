@@ -30,7 +30,14 @@ from collections.abc import Iterator
 from typing import cast
 
 from archytaszx.algebra.dimension import Dim
-from archytaszx.diagram.graph import Diagram, Direction, GraphGrammarError, NodeId, PortRef
+from archytaszx.diagram.graph import (
+    BangBoxId,
+    Diagram,
+    Direction,
+    GraphGrammarError,
+    NodeId,
+    PortRef,
+)
 from archytaszx.rewrite.engine import apply
 from archytaszx.rewrite.rules_library import IDENTITY_REMOVAL
 from archytaszx.semantics import kernel
@@ -218,7 +225,14 @@ def _fuse_into(d: Diagram, leaf: NodeId, hub: NodeId) -> Diagram:
     out.set_boundary_outputs([new.get(r, r) for r in d.boundary_outputs])
     for box_id, box in sorted(d.bang_boxes.items()):
         if hub in box.node_scope:
+            home = next((g for g in box.groups if hub in g), None)
+            home = home or next((g for g in box.groups if leaf in g), None)
+            groups = tuple(
+                g2 for g in box.groups if (g2 := (g - {leaf, hub}) | ({v} if g == home else set()))
+            )
+            out.set_bang_box_extension(box_id, groups=())
             out.set_bang_box_node_scope(box_id, (box.node_scope - {leaf, hub}) | {v})
+            out.set_bang_box_extension(box_id, groups=groups)
         if box.pair_of is not None:
             out.set_bang_box_extension(
                 box_id,
@@ -321,16 +335,33 @@ def _tidy(t: kernel.Theorem) -> kernel.Theorem:
         t = nxt
 
 
+def _slot_groups(t: kernel.Theorem) -> kernel.Theorem:
+    """``t`` continued by :func:`~archytaszx.semantics.kernel.regroup` to each box group cut
+    down to its boundary-slot nodes, empty groups dropped, in the order of their first slots."""
+    d = t.rhs
+    order = [r.node_id for r in (*d.boundary_inputs, *d.boundary_outputs)]
+    slots = set(order)
+    new = d.copy()
+    changed = False
+    for box_id, box in d.bang_boxes.items():
+        kept_groups = [kept for g in box.groups if (kept := g & slots)]
+        groups = tuple(sorted(kept_groups, key=lambda g: min(order.index(n) for n in g)))
+        if groups != box.groups:
+            new.set_bang_box_extension(box_id, groups=groups)
+            changed = True
+    return kernel.regroup(t, t.lhs, new) if changed else t
+
+
 def close(
     replaced: Diagram, other_source: Diagram, other_peeled: Diagram | None, k: str
 ) -> kernel.Theorem:
     """``replaced = other_peeled``: ``replaced`` merged, box-fused and tidied, isomorphic to the
     tidied first-copy peel of ``other_source``, then its re-peel."""
-    t = _tidy(_box_fusions(_align_merges(kernel.refl(replaced))))
+    t = _slot_groups(_tidy(_box_fusions(_slot_groups(_align_merges(kernel.refl(replaced))))))
     moved = _first_peels(other_source, k)
     if other_peeled is not None and not kernel._same(moved.rhs, other_peeled):
         raise RadixWindowError("the other re-peel does not end at the other peeled successor")
-    u = _tidy(kernel.refl(moved.lhs))
+    u = _slot_groups(_tidy(kernel.refl(moved.lhs)))
     meet = kernel.iso(t.rhs, u.rhs)
     return kernel.trans(kernel.trans(t, kernel.trans(meet, kernel.symm(u))), moved)
 
@@ -352,3 +383,110 @@ def step(
         return exposing, cut, close(replaced, other_source, other_peeled, k)
     except (kernel.KernelError, InductionDomainError) as exc:
         raise RadixWindowError(str(exc)) from exc
+
+
+def _slot_grouped(d: Diagram) -> Diagram:
+    """``d`` with each ungrouped top-level box holding two or more boundary-slot nodes grouped
+    one slot node per group, in the order of their first slots."""
+    order = [r.node_id for r in (*d.boundary_inputs, *d.boundary_outputs)]
+    out = d.copy()
+    for box_id, box in d.bang_boxes.items():
+        if box.parent is not None or box.groups or box.pair_of is not None:
+            continue
+        held = sorted({n for n in order if n in box.node_scope}, key=order.index)
+        if len(held) >= 2:
+            out.set_bang_box_extension(box_id, groups=tuple(frozenset({n}) for n in held))
+    return out
+
+
+def _chain_parts(d: Diagram, box_id: BangBoxId) -> list[frozenset[NodeId]]:
+    """The connected parts of a chain box's scope, joined by wires inside it and by links, in
+    the order of the box's groups."""
+    box = d.bang_boxes[box_id]
+    scope = box.node_scope
+    root = {n: n for n in scope}
+
+    def find(n: NodeId) -> NodeId:
+        while root[n] != n:
+            n = root[n]
+        return n
+
+    pairs = [(w.a.node_id, w.b.node_id) for w in d.wires]
+    pairs += [(p.node_id, q.node_id) for p, q in box.links]
+    for a, b in pairs:
+        if a in scope and b in scope:
+            root[find(a)] = find(b)
+    parts: dict[NodeId, set[NodeId]] = {}
+    for n in scope:
+        parts.setdefault(find(n), set()).add(n)
+    rank = {n: i for i, g in enumerate(box.groups) for n in g}
+    found = [frozenset(p) for p in parts.values()]
+    return sorted(found, key=lambda p: min((rank.get(n, len(rank)), n) for n in p))
+
+
+def _chain_splits(d: Diagram) -> kernel.Theorem:
+    """``d = d'``: every chain box over two or more connected parts split into aligned chain
+    boxes (:func:`~archytaszx.semantics.kernel.chain_split`) while one splits."""
+    from archytaszx.diagram.bangbox import BangBoxError, chain_splitted
+
+    t = kernel.refl(d)
+    while True:
+        cur = t.rhs
+        for box_id, box in sorted(cur.bang_boxes.items()):
+            if not box.links or box.parent is not None:
+                continue
+            parts = _chain_parts(cur, box_id)
+            if len(parts) < 2:
+                continue
+            try:
+                split = chain_splitted(cur, box_id, parts)
+                t = kernel.trans(t, kernel.chain_split(cur, split))
+            except (BangBoxError, kernel.KernelError):
+                continue
+            break
+        else:
+            return t
+
+
+def regrouped_induction(left: Diagram, right: Diagram, index: str, k: str) -> kernel.Theorem:
+    """``left = right`` by :func:`~archytaszx.semantics.kernel.regroup` of the kernel's
+    induction over ``index`` between one side with its slot nodes grouped
+    (:func:`_slot_grouped`) and its chain boxes split (:func:`_chain_splits`), the exposed side
+    of :func:`step`, and the other side grouped; the base by
+    :func:`~archytaszx.semantics.kernel.contraction`."""
+    from archytaszx.semantics.prove import (
+        InductionSide,
+        induction_base,
+        induction_hypothesis,
+        induction_renamed,
+        induction_successor,
+    )
+
+    grouped = (_slot_grouped(left), _slot_grouped(right))
+    reasons: list[str] = []
+    for own_at in (0, 1):
+        try:
+            splits = _chain_splits(grouped[own_at])
+            own, other = splits.rhs, grouped[1 - own_at]
+            if kernel._same(own, grouped[own_at]):
+                raise RadixWindowError("no chain box splits")
+            exposing, cut, st = step(
+                induction_renamed(own, index, k),
+                induction_successor(own, index, k),
+                induction_hypothesis(own, index, k),
+                induction_renamed(other, index, k),
+                induction_successor(other, index, k),
+                induction_hypothesis(other, index, k),
+                k,
+            )
+            base = kernel.contraction(induction_base(own, index), induction_base(other, index))
+            proved = kernel.induction(
+                own, other, index, k, base, InductionSide.START, exposing, cut.region, st, cut=cut
+            )
+            t = kernel.trans(splits, proved)
+            if own_at == 1:
+                t = kernel.symm(t)
+            return kernel.regroup(t, left, right)
+        except (RadixWindowError, kernel.KernelError, InductionDomainError) as exc:
+            reasons.append(f"side {own_at}: {exc}")
+    raise RadixWindowError("; ".join(reasons))

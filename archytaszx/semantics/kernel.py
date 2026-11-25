@@ -677,7 +677,7 @@ def box_split(d: Diagram, split: Diagram, copy: frozenset[NodeId]) -> Theorem:
 
 def _align_group(d: Diagram, root: BangBoxId) -> list[BangBoxId]:
     """The alignment group of ``root`` when it may merge into one box: two or more top-level
-    node-scope boxes without links, chains, trees, feeds, groups or children, of one
+    node-scope boxes without links, chains, trees, feeds, children or groups off the root, of one
     multiplicity, index and sheets flag, at most one copy scalar, pairwise disjoint scopes
     that meet no other box, and no box aligned to a member other than ``root``."""
     from archytaszx.diagram.bangbox import aligned_members
@@ -697,7 +697,7 @@ def _align_group(d: Diagram, root: BangBoxId) -> list[BangBoxId]:
             or box.tree
             or box.feed is not None
             or box.pair_of is not None
-            or box.groups
+            or (box.groups and box is not head)
             or box.sheets != head.sheets
             or box.index != head.index
             or sp.expand(box.multiplicity.to_sympy() - head.multiplicity.to_sympy()) != 0

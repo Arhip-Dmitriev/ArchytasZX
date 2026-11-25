@@ -1449,9 +1449,12 @@ def align_merged(diagram: Diagram, root: BangBoxId) -> Diagram:
         held = [m for m, b in zip(members, boxes) if any(r.node_id in b.node_scope for r in refs)]
         split = split or len(held) > 1
         holders += [m for m in held if m not in holders]
-    groups = (
+    groups: tuple[frozenset[NodeId], ...] = (
         tuple(diagram.bang_boxes[m].node_scope for m in members if m in holders) if split else ()
     )
+    if boxes[0].groups:
+        rest = tuple(diagram.bang_boxes[m].node_scope for m in members[1:] if m in holders)
+        groups = (*boxes[0].groups, *rest)
     out = diagram.copy()
     out.set_bang_box_extension(
         root,

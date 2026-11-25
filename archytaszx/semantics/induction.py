@@ -1075,13 +1075,14 @@ def _end_dim(diagram: Diagram, ref: PortRef) -> Dim:
 
 def boundary_layout(diagram: Diagram) -> tuple[tuple[object, ...], ...] | None:
     """Per boundary list, each slot's replicating multiplicities and, per enclosing box, whether
-    the slot opens a new run of that box; None when some box's slots in one list are not
-    contiguous."""
+    the slot opens a new run of that box (a new box, or a new group of a grouped box); None when
+    some box's slots in one list are not contiguous."""
     out: list[tuple[object, ...]] = []
     for refs in (diagram.boundary_inputs, diagram.boundary_outputs):
         rows: list[object] = []
         closed: set[BangBoxId] = set()
         previous: tuple[BangBoxId, ...] = ()
+        last: dict[BangBoxId, int] = {}
         for ref in refs:
             owners = _slot_owners(diagram, ref)
             for box_id in previous:
@@ -1090,9 +1091,16 @@ def boundary_layout(diagram: Diagram) -> tuple[tuple[object, ...], ...] | None:
             if any(box_id in closed for box_id in owners):
                 return None
             mults = tuple(diagram.bang_boxes[b].multiplicity for b in owners)
-            opens = tuple(b not in previous for b in owners)
+            blocks = {
+                b: next(
+                    (j for j, g in enumerate(diagram.bang_boxes[b].groups) if ref.node_id in g),
+                    -1,
+                )
+                for b in owners
+            }
+            opens = tuple(b not in previous or blocks[b] != last[b] for b in owners)
             rows.append((mults, opens, _end_dim(diagram, ref)))
-            previous = owners
+            previous, last = owners, blocks
         out.append(tuple(rows))
     return tuple(out)
 
@@ -1211,6 +1219,7 @@ def replace_cut_region(
                 raise InductionDomainError(f"bang box {box_id!r} straddles the replaced region")
             outside[box_id] = box
     partners = _outside_partners(working, frozenset(inside))
+    replaced = [_replaced_shape(working, members, frozenset(inside)) for members, _ in partners]
     for members, _root in partners:
         for box_id in members:
             working.set_bang_box_extension(box_id, align=None)
@@ -1237,8 +1246,8 @@ def replace_cut_region(
             _merge_grouped(working, box, cut, slot_of, grafted)
         else:
             _merge_straddle(working, box, cut, slot_of, grafted)
-    for members, root in partners:
-        _realign(working, members, root, cut, slot_of, grafted)
+    for (members, root), shape in zip(partners, replaced, strict=True):
+        _realign(working, members, root, cut, slot_of, grafted, shape)
     working.set_boundary_inputs(inputs)
     working.set_boundary_outputs(outputs)
     working.multiply_scalar(replacement.scalar * hypothesis.scalar**-1)
@@ -1259,6 +1268,18 @@ def _outside_partners(
     return list(out.values())
 
 
+def _replaced_shape(
+    diagram: Diagram, members: Sequence[BangBoxId], inside: frozenset[BangBoxId]
+) -> tuple[object, str | None, bool] | None:
+    """Multiplicity, index and chain flag of the one box of ``members``' alignment group in
+    ``inside``; None unless there is exactly one."""
+    held = [b for b in aligned_members(diagram, members[0]) if b in inside]
+    if len(held) != 1:
+        return None
+    box = diagram.bang_boxes[held[0]]
+    return box.multiplicity, box.index, bool(box.links)
+
+
 def _ancestors(diagram: Diagram, box_id: BangBoxId) -> frozenset[BangBoxId]:
     """The boxes enclosing ``box_id``."""
     out: set[BangBoxId] = set()
@@ -1276,10 +1297,12 @@ def _realign(
     cut: CutRegion,
     slot_of: Mapping[PortRef, PortRef],
     grafted: Sequence[BangBoxId],
+    replaced: tuple[object, str | None, bool] | None = None,
 ) -> None:
     """Align ``members`` (boxes off ``cut``'s region, ``root`` their old root when off it) with
     the one grafted box their cut wires reach, and with its alignment group; with no such wire,
-    with each other only."""
+    with the one plain top-level grafted box of ``replaced``'s multiplicity, index and chain
+    flag; else with each other only."""
     scopes = {n for m in members for n in working.bang_boxes[m].node_scope}
     targets: set[BangBoxId] = set()
     for inside_end, far in cut.cuts.items():
@@ -1292,6 +1315,18 @@ def _realign(
         targets.add(owners[0])
     if len(targets) > 1:
         raise InductionDomainError(f"aligned boxes {list(members)!r} meet several boxes")
+    if not targets and replaced is not None:
+        alike = [
+            b
+            for b in grafted
+            if (box := working.bang_boxes[b]).parent is None
+            and box.is_node_scope
+            and not (box.is_pair or box.is_tree or box.is_fed or box.groups or box.align)
+            and box.copy_scalar is None
+            and (box.multiplicity, box.index, bool(box.links)) == replaced
+        ]
+        if len(alike) == 1:
+            targets.add(alike[0])
     group = list(members)
     new_root = root if root is not None else min(members)
     if targets:
@@ -2000,9 +2035,16 @@ def _split_boxed_spider(
     swap = {connector_end: leaf_of[slot]}
     working.set_boundary_inputs([swap.get(r, r) for r in working.boundary_inputs])
     working.set_boundary_outputs([swap.get(r, r) for r in working.boundary_outputs])
+    holds = {r.node_id for r in (*working.boundary_inputs, *working.boundary_outputs)}
     for box_id in into:
-        scope = working.bang_boxes[box_id].node_scope
-        working.set_bang_box_node_scope(box_id, scope | {leaf})
+        box = working.bang_boxes[box_id]
+        groups = tuple(
+            (g - ({hub} if hub not in holds else set())) | {leaf} if hub in g else g
+            for g in box.groups
+        )
+        working.set_bang_box_node_scope(box_id, box.node_scope | {leaf})
+        if groups != box.groups:
+            working.set_bang_box_extension(box_id, groups=groups)
     return working, leaf
 
 
