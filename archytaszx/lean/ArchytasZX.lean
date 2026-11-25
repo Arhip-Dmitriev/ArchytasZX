@@ -70,6 +70,7 @@ import ArchytasZX.LinkedForm
 import ArchytasZX.LinkedGhost
 import ArchytasZX.LinkedSplice
 import ArchytasZX.LinkedFirst
+import ArchytasZX.LinkedPair
 import ArchytasZX.LinkedDropX
 import ArchytasZX.LinkedRead
 import ArchytasZX.Mixed
