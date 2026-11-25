@@ -54,7 +54,7 @@ E & \module{archytaszx.repl} & The parser, printer, commands, interactive shell,
 \label{tab:overview-layers}
 \end{table}
 
-Two further parts of the repository are specified here. The Lean project in \file{archytaszx/lean} defines the tensor-network semantics of diagrams, the rules as Lean lemmas, and the verified normalizers that exported proofs call (\cref{ch:lean-core,ch:lean-boxes,ch:lean-pathsum,ch:lean-sym}). The benchmark suite in \file{benchmarks/} measures the engine and rival tools on a catalogue of quantum algorithms (\cref{ch:bench-pipeline,ch:bench-tools}). The module \module{archytaszx.trace} records timed sections of engine work (\cref{ch:development}).
+Further parts of the repository are specified here. The directory \file{archytaszx/papers} holds plain-text transcriptions of the axioms (\file{AXIOMS.txt}) and lemmas (\file{LEMMAS.txt}) of three source papers~\cite{poor2023zxw,wang2023qufinitezxw,carette2019mixed}, the last with axioms only; no code reads them. The Lean project in \file{archytaszx/lean} defines the tensor-network semantics of diagrams, the rules as Lean lemmas, and the verified normalizers that exported proofs call (\cref{ch:lean-core,ch:lean-boxes,ch:lean-pathsum,ch:lean-sym}). The benchmark suite in \file{benchmarks/} measures the engine and rival tools on a catalogue of quantum algorithms (\cref{ch:bench-pipeline,ch:bench-tools}). The module \module{archytaszx.trace} records timed sections of engine work (\cref{ch:development}).
 
 \Cref{fig:overview-flow} shows the path of a proof through the layers.
 
@@ -101,12 +101,14 @@ load
 prove against @copies
 certificate emit induction
 certificate kernel
+certificate lean copy_induction.lean
 \end{lstlisting}
 
-The first block names the right-hand side \azx!@copies!: $n$ copies of the phaseless X state, times a scalar. The \azx!load! block makes the left-hand side the current diagram: an X state wired into a Z spider whose output port is repeated $n$ times by a port-scoped \bbox{}. \azx!prove against @copies! searches for a derivation; the two \azx!certificate! commands print the derivation and the proof-kernel theorem. Running \code!archytaszx copy_induction.azx! prints (long lines shortened):
+The first block names the right-hand side \azx!@copies!: $n$ copies of the phaseless X state, times a scalar. The \azx!load! block makes the left-hand side the current diagram: an X state wired into a Z spider whose output port is repeated $n$ times by a port-scoped \bbox{}. \azx!prove against @copies! searches for a derivation; the next two \azx!certificate! commands print the derivation and the proof-kernel theorem, and the last writes the Lean~4 theorem to \file{copy_induction.lean} and checks it with the bundled library. (The file also opens with two comment lines.) Running \code!archytaszx copy_induction.azx! prints, up to the Lean check (long lines shortened):
 
 \begin{lstlisting}[style=grammar]
 named @copies
+(d^(1/2-n/2)) sum_{q0[i0],j0o0[i0]=0, i0=1..n}^{d-1} ...
 loaded dsl input
 sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k1)} |k1>^{n}
 prove: proved: proved by induction on n from 0 in 3 step(s) after search exhausted
@@ -128,7 +130,7 @@ kernel: theorem ... for all n
   16 inferences; rules: state_copy, port_box_unfusion
 \end{lstlisting}
 
-The proof is by induction on the multiplicity $n$: the base case $n=0$ follows by the rule \azx!state_copy!; the inductive step unfuses one copy out of the \bbox{} by \azx!port_box_unfusion!, copies the X state through it by \azx!state_copy!, and closes by the induction hypothesis. The added line \azx!certificate lean copy_induction.lean! writes the Lean~4 theorem to a file and checks it with the bundled library; \file{examples/copy_induction.lean} is that output.
+The proof is by induction on the multiplicity $n$: the base case $n=0$ follows by the rule \azx!state_copy!; the inductive step unfuses one copy out of the \bbox{} by \azx!port_box_unfusion!, copies the X state through it by \azx!state_copy!, and closes by the induction hypothesis.
 
 \section{How to Read This Manual}\label{sec:overview-reading}
 

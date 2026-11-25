@@ -53,7 +53,7 @@ The Lean project lives in \file{archytaszx/lean}. \Cref{tab:install-lean} lists 
 Item & Version \\
 \midrule
 Toolchain & \texttt{leanprover/lean4:v4.35.0} \\
-Package name & \texttt{archytaszx}; default target the library \texttt{ArchytasZX} \\
+Package name & \texttt{archytaszx}; default target the library \texttt{ArchytasZX}, with the roots \texttt{ArchytasZX} and \texttt{ArchytasZX.Light} \\
 \tool{Mathlib}{https://github.com/leanprover-community/mathlib4}~\cite{mathlib2020} & tag \texttt{v4.35.0}, revision \texttt{56a005855ea17e0b0958f73ec801ae140b0a1679} \\
 \midrule
 \multicolumn{2}{@{}l}{Transitive dependencies (revision prefixes as locked in the manifest)} \\
@@ -103,8 +103,8 @@ The shell reads display settings from a TOML file. Its path is \file{$XDG_CONFIG
 \toprule
 Key & Default & Accepted values \\
 \midrule
-\texttt{size} & \texttt{1.0} & A number in $(0, 10]$: the scale of text in images, where 1 is the terminal's character-cell height. \\
-\texttt{color} & \texttt{"auto"} & \texttt{auto} (the terminal's text color), \texttt{\#rgb}, \texttt{\#rrggbb}, or a color name that matplotlib accepts. \\
+\texttt{size} & \texttt{1.0} & A number $s$ in $(0, 10]$: the scale of text in images; the font pixel size is $0.75\,s$ times the terminal's character-cell height, or $14\,s$ when the cell size is unknown. \\
+\texttt{color} & \texttt{"auto"} & \texttt{auto} (\texttt{ARCHYTASZX\_IMAGE\_FG}, else the color the terminal reports, else the theme default), \texttt{\#rgb}, \texttt{\#rrggbb}, or a color name that matplotlib accepts. \\
 \texttt{format} & \texttt{"auto"} & \texttt{auto}, \texttt{png}, \texttt{pdf}, or \texttt{svg}: the format of saved ZX drawings; \texttt{auto} is PDF in publication mode and PNG otherwise. \\
 \texttt{publication} & \texttt{false} & A Boolean, or one of the strings \texttt{true}, \texttt{on}, \texttt{yes}, \texttt{1}, \texttt{false}, \texttt{off}, \texttt{no}, \texttt{0} (any case): whether ZX drawings use the paper's notation and fonts. \\
 \bottomrule

@@ -83,7 +83,7 @@ Status & Meaning \\
 0 & Scripts: every line succeeded. Interactive: end of input or \azx!quit!. \texttt{--help}. \\
 1 & Scripts: at least one line failed (an engine outcome with \texttt{ok} false, a shell error, or an internal error). Interactive: input could not be read or output could not be written. Either: standard output closed. \\
 2 & A usage error, or a file that cannot be read. \\
-130 & Interrupted by Ctrl-C outside a running command in script mode. \\
+130 & Interrupted by Ctrl-C in script mode (while a command runs or between commands). \\
 \bottomrule
 \end{tabularx}
 \caption{Exit statuses of \texttt{archytaszx}.}

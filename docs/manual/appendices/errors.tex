@@ -1,6 +1,6 @@
 \chapter{Exceptions}\label{app:errors}
 
-This appendix lists every exception class of the \texttt{archytaszx} package, grouped by the module that defines it. Most modules follow one pattern: a module base class derived from \py!Exception!, a \emph{grammar} subclass for malformed requests (a wrong type, an unknown name, a malformed structure), and a \emph{domain} subclass for well-formed requests outside the mathematical domain of the operation. Every class of \module{archytaszx.rewrite} derives from \py!RewriteError!. The conditions under which each exception is raised are specified with the operations in the chapters on each module; the benchmark suite's exceptions are specified in \cref{ch:bench-pipeline,ch:bench-tools}.
+This appendix lists every exception class of the \texttt{archytaszx} package, grouped by the module that defines it. Most modules follow one pattern: a module base class derived from \py!Exception!, a \emph{grammar} subclass for malformed requests (a wrong type, an unknown name, a malformed structure), and a \emph{domain} subclass for well-formed requests outside the mathematical domain of the operation. Every class of \module{archytaszx.rewrite} derives from \py!RewriteError! except \py!CacheError! and its two subclasses, \py!ExhaustedError!, and \py!TemplateTooLarge!, which derive from \py!Exception!. Each row gives the class's bases, its subclasses, and the functions and methods that raise it (``raised in''; at most six named). The conditions under which each exception is raised are specified with the operations in the chapters on each module; the benchmark suite's exceptions are specified in \cref{ch:bench-pipeline,ch:bench-tools}.
 
 \section{Public Exception Classes}\label{sec:errors-public}
 
@@ -18,192 +18,192 @@ Class (base classes) & Meaning \\
 \endfoot
 
 \multicolumn{2}{@{}l}{\module{archytaszx.algebra.algebraic}}\\*
-\texttt{NotAlgebraicError}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & A value with free symbols or no algebraic minimal polynomial. \\
+\texttt{NotAlgebraicError}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & Raised in \texttt{algebraic.\allowbreak{}\_\allowbreak{}root\_\allowbreak{}index}, \texttt{algebraic.\allowbreak{}canonical}, \texttt{algebraic.\allowbreak{}canonical\_\allowbreak{}vector}, \texttt{numfield.\allowbreak{}atoms}, \texttt{numfield.\allowbreak{}\_\allowbreak{}info}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.algebra.dimension}}\\*
-\texttt{DimensionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{DimensionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{DimensionError})} & A value is outside the mathematical domain of dimensions or exponents. \\
-\texttt{DimensionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DimensionError})} & An expression falls outside the dimension grammar. \\
+\texttt{DimensionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{DimensionDomainError}, \texttt{DimensionGrammarError}; not raised itself. \\
+\texttt{DimensionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{DimensionError})} & Raised in \texttt{dimension.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}exponent\_\allowbreak{}domain}, \texttt{dimension.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}dimension\_\allowbreak{}domain}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}to\_\allowbreak{}int}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}substitute}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}abstract}, and 1 more. \\
+\texttt{DimensionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DimensionError})} & Raised in \texttt{dimension.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}symbol\_\allowbreak{}name}, \texttt{dimension.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}exponent\_\allowbreak{}domain}, \texttt{dimension.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}dimension\_\allowbreak{}domain}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}\_\allowbreak{}key\_\allowbreak{}symbol\_\allowbreak{}name}, \texttt{dimension.\allowbreak{}Dim.\allowbreak{}\_\allowbreak{}coerce\_\allowbreak{}exponent}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.algebra.numfield}}\\*
-\texttt{NumberFieldError}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & A certificate that fails its check, or values with no certificate. \\
+\texttt{NumberFieldError}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & Raised in \texttt{numfield.\allowbreak{}\_\allowbreak{}info}, \texttt{numfield.\allowbreak{}\_\allowbreak{}Field.\allowbreak{}inv}, \texttt{numfield.\allowbreak{}element}, \texttt{numfield.\allowbreak{}check}, \texttt{numfield.\allowbreak{}\_\allowbreak{}choose}, \texttt{numfield.\allowbreak{}\_\allowbreak{}combo\_\allowbreak{}poly}, and 3 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.algebra.pathsum}}\\*
-\texttt{PathSumError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for every error raised by the path-sum modules. \\
-\texttt{PathSumUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{PathSumError})} & A diagram or a sum outside the class the path-sum calculus covers. \\
+\texttt{PathSumError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{PathSumUnsupported}; raised in \texttt{pathsum.\allowbreak{}cyclotomic}, \texttt{pathsum.\allowbreak{}Cyclo.\allowbreak{}inverse}, \texttt{pathsum.\allowbreak{}\_\allowbreak{}try\_\allowbreak{}dyadic}, \texttt{pathsum.\allowbreak{}quarter\_\allowbreak{}digits}, \texttt{pathsum.\allowbreak{}turn\_\allowbreak{}digits}, \texttt{pathsum.\allowbreak{}\_\allowbreak{}inverse\_\allowbreak{}or\_\allowbreak{}none}. \\
+\texttt{PathSumUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{PathSumError})} & Base of \texttt{\_\allowbreak{}LiftRaises}; raised in \texttt{pathsum.\allowbreak{}constant}, \texttt{pathsum.\allowbreak{}\_\allowbreak{}xor\_\allowbreak{}lift\_\allowbreak{}masks}, \texttt{pathsum.\allowbreak{}\_\allowbreak{}xor\_\allowbreak{}fold\_\allowbreak{}array}, \texttt{pathsum.\allowbreak{}entry\_\allowbreak{}at}, \texttt{pathsum.\allowbreak{}entry\_\allowbreak{}at\_\allowbreak{}qudit}, \texttt{lean\_\allowbreak{}amp.\allowbreak{}Coefs.\allowbreak{}model}, and 76 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.algebra.phase}}\\*
-\texttt{PhaseError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{PhaseDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{PhaseError})} & A value is outside the mathematical domain of phases or phase-vector indices. \\
-\texttt{PhaseGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{PhaseError})} & A value falls outside the grammar this module accepts. \\
+\texttt{PhaseError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{PhaseDomainError}, \texttt{PhaseGrammarError}; not raised itself. \\
+\texttt{PhaseDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{PhaseError})} & Raised in \texttt{phase.\allowbreak{}Phase.\allowbreak{}to\_\allowbreak{}complex}, \texttt{phase.\allowbreak{}PhaseVector.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{phase.\allowbreak{}PhaseVector.\allowbreak{}\_\allowbreak{}\_\allowbreak{}add\_\allowbreak{}\_\allowbreak{}}, \texttt{phase.\allowbreak{}PhaseVector.\allowbreak{}substitute}, \texttt{phase.\allowbreak{}PairPhase.\allowbreak{}\_\allowbreak{}\_\allowbreak{}add\_\allowbreak{}\_\allowbreak{}}, \texttt{phase.\allowbreak{}\_\allowbreak{}clean\_\allowbreak{}weights}. \\
+\texttt{PhaseGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{PhaseError})} & Raised in \texttt{phase.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}symbol\_\allowbreak{}name}, \texttt{phase.\allowbreak{}\_\allowbreak{}normalize\_\allowbreak{}turns}, \texttt{phase.\allowbreak{}Phase.\allowbreak{}turns}, \texttt{phase.\allowbreak{}Phase.\allowbreak{}root\_\allowbreak{}of\_\allowbreak{}unity}, \texttt{phase.\allowbreak{}Phase.\allowbreak{}scale}, \texttt{phase.\allowbreak{}Phase.\allowbreak{}substitute}, and 5 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.algebra.scalar}}\\*
-\texttt{ScalarError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{ScalarDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & A value is outside the mathematical domain required by an operation. \\
-\texttt{ScalarGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & A value falls outside the grammar this module accepts. \\
-\texttt{ScalarSumError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & An index sum is malformed, or a bound index is used where a free symbol is required. \\
-\texttt{ScalarBudgetError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & Simplification exceeded its step budget. \\
+\texttt{ScalarError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{ScalarBudgetError}, \texttt{ScalarDomainError}, \texttt{ScalarGrammarError}, \texttt{ScalarSumError}; not raised itself. \\
+\texttt{ScalarDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & Raised in \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}rational}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}dim\_\allowbreak{}power}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}\_\allowbreak{}\_\allowbreak{}pow\_\allowbreak{}\_\allowbreak{}}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}to\_\allowbreak{}complex}. \\
+\texttt{ScalarGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & Raised in \texttt{scalar.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}symbol\_\allowbreak{}name}, \texttt{scalar.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}scalar\_\allowbreak{}domain}, \texttt{scalar.\allowbreak{}\_\allowbreak{}normalize}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}rational}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}gaussian\_\allowbreak{}rational}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}omega}, and 4 more. \\
+\texttt{ScalarSumError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & Raised in \texttt{scalar.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}sum\_\allowbreak{}structure}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}index\_\allowbreak{}sum}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}substitute}. \\
+\texttt{ScalarBudgetError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalarError})} & Raised in \texttt{scalar.\allowbreak{}\_\allowbreak{}close\_\allowbreak{}all}, \texttt{scalar.\allowbreak{}\_\allowbreak{}simplify\_\allowbreak{}expr}, \texttt{scalar.\allowbreak{}Scalar.\allowbreak{}simplify}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.diagram.bangbox}}\\*
-\texttt{BangBoxError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{BangBoxDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{BangBoxError})} & A value is outside the mathematical domain this module accepts. \\
-\texttt{BangBoxGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{BangBoxError})} & A request is malformed: wrong type, an empty or mixed scope, an unknown box or symbol, boxes that are not siblings, or a crossing this phase does not support. \\
+\texttt{BangBoxError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{BangBoxDomainError}, \texttt{BangBoxGrammarError}; not raised itself. \\
+\texttt{BangBoxDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{BangBoxError})} & Raised in \texttt{bangbox.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}mult\_\allowbreak{}domain}, \texttt{bangbox.\allowbreak{}Mult.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{bangbox.\allowbreak{}Mult.\allowbreak{}to\_\allowbreak{}int}, \texttt{bangbox.\allowbreak{}Mult.\allowbreak{}substitute}, \texttt{bangbox.\allowbreak{}Mult.\allowbreak{}abstract}, \texttt{bangbox.\allowbreak{}instantiate\_\allowbreak{}symbol}, and 3 more. \\
+\texttt{BangBoxGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{BangBoxError})} & Raised in \texttt{bangbox.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}symbol\_\allowbreak{}name}, \texttt{bangbox.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}mult\_\allowbreak{}domain}, \texttt{bangbox.\allowbreak{}Mult.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{bangbox.\allowbreak{}Mult.\allowbreak{}bare\_\allowbreak{}symbol\_\allowbreak{}name}, \texttt{bangbox.\allowbreak{}BangBox.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{bangbox.\allowbreak{}\_\allowbreak{}grow\_\allowbreak{}port}, and 33 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.diagram.generators}}\\*
-\texttt{GeneratorError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{GeneratorDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{GeneratorError})} & A value is outside the mathematical domain a generator policy requires. \\
-\texttt{GeneratorGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{GeneratorError})} & A lookup or registration falls outside the grammar this module accepts. \\
+\texttt{GeneratorError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{GeneratorDomainError}, \texttt{GeneratorGrammarError}; not raised itself. \\
+\texttt{GeneratorDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{GeneratorError})} & Raised in \texttt{generators.\allowbreak{}LegPolicy.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}. \\
+\texttt{GeneratorGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{GeneratorError})} & Raised in \texttt{generators.\allowbreak{}LegPolicy.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{generators.\allowbreak{}GeneratorType.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{generators.\allowbreak{}GeneratorRegistry.\allowbreak{}register}, \texttt{generators.\allowbreak{}GeneratorRegistry.\allowbreak{}get}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.diagram.graph}}\\*
-\texttt{GraphError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{GraphDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{GraphError})} & A value or operation is outside the mathematical domain this module accepts. \\
-\texttt{GraphGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{GraphError})} & A request is malformed: wrong type, or a reference to something absent. \\
+\texttt{GraphError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{GraphDomainError}, \texttt{GraphGrammarError}; not raised itself. \\
+\texttt{GraphDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{GraphError})} & Raised in \texttt{graph.\allowbreak{}PortRef.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{graph.\allowbreak{}Wire.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}. \\
+\texttt{GraphGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{GraphError})} & Raised in \texttt{graph.\allowbreak{}PortRef.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{graph.\allowbreak{}Port.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{graph.\allowbreak{}Node.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{graph.\allowbreak{}Node.\allowbreak{}legs}, \texttt{graph.\allowbreak{}Diagram.\allowbreak{}advance\_\allowbreak{}ids}, \texttt{graph.\allowbreak{}Diagram.\allowbreak{}remove\_\allowbreak{}node}, and 14 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.diagram.mixed}}\\*
-\texttt{MixedError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{MixedDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{MixedError})} & A diagram is outside the domain an operation here requires. \\
+\texttt{MixedError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{MixedDomainError}; not raised itself. \\
+\texttt{MixedDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{MixedError})} & Raised in \texttt{mixed.\allowbreak{}\_\allowbreak{}copy\_\allowbreak{}boxes}, \texttt{mixed.\allowbreak{}double\_\allowbreak{}with\_\allowbreak{}origin}, \texttt{mixed.\allowbreak{}purify}, \texttt{mixed.\allowbreak{}channel}, \texttt{mixed.\allowbreak{}compose}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.diagram.scalable}}\\*
-\texttt{ScalableError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{ScalableGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalableError})} & A request or structure is malformed: wrong type, unknown id, or invalid nesting. \\
-\texttt{ScalableDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalableError})} & A value is outside the accepted domain, such as an unresolved multiplicity in strip. \\
+\texttt{ScalableError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{ScalableDomainError}, \texttt{ScalableGrammarError}; not raised itself. \\
+\texttt{ScalableGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalableError})} & Raised in \texttt{scalable.\allowbreak{}Scale.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{scalable.\allowbreak{}SheetPort.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{scalable.\allowbreak{}ScaledNode.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{scalable.\allowbreak{}Bundle.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{scalable.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}items}, \texttt{scalable.\allowbreak{}ScalableDiagram.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, and 14 more. \\
+\texttt{ScalableDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ScalableError})} & Raised in \texttt{scalable.\allowbreak{}\_\allowbreak{}to\_\allowbreak{}mult}, \texttt{scalable.\allowbreak{}\_\allowbreak{}Evaluator.\allowbreak{}value}, \texttt{scalable.\allowbreak{}strip}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.diagram.validate}}\\*
-\texttt{ValidateError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{ValidationFailedError}\newline\hspace*{1em}{\footnotesize(\texttt{ValidateError})} & Raised by validate\_or\_raise when a diagram's report contains an error-level issue. \\
+\texttt{ValidateError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{ValidationFailedError}; not raised itself. \\
+\texttt{ValidationFailedError}\newline\hspace*{1em}{\footnotesize(\texttt{ValidateError})} & Raised in \texttt{validate.\allowbreak{}validate\_\allowbreak{}or\_\allowbreak{}raise}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.repl.commands}}\\*
-\texttt{CommandError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{CommandGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CommandError})} & A malformed command line: unknown option, bad assignment, missing argument. \\
-\texttt{CommandDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CommandError})} & A well-formed command the session or the engine cannot carry out. \\
+\texttt{CommandError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{CommandDomainError}, \texttt{CommandGrammarError}; not raised itself. \\
+\texttt{CommandGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CommandError})} & Raised in \texttt{commands.\allowbreak{}Text.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{commands.\allowbreak{}Outcome.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{commands.\allowbreak{}ErrorDetail.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{commands.\allowbreak{}\_\allowbreak{}resolve}, \texttt{commands.\allowbreak{}\_\allowbreak{}value}, \texttt{commands.\allowbreak{}\_\allowbreak{}split\_\allowbreak{}against}, and 20 more. \\
+\texttt{CommandDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CommandError})} & Raised in \texttt{commands.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}current}, \texttt{commands.\allowbreak{}\_\allowbreak{}resolve}, \texttt{commands.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}supplied}, \texttt{commands.\allowbreak{}\_\allowbreak{}cmd\_\allowbreak{}show}, \texttt{commands.\allowbreak{}\_\allowbreak{}rule\_\allowbreak{}name}, \texttt{commands.\allowbreak{}\_\allowbreak{}cmd\_\allowbreak{}induct}, and 12 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.repl.embed}}\\*
-\texttt{AzxError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A piece that cannot be built or compiled. \\
+\texttt{AzxError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{embed.\allowbreak{}\_\allowbreak{}sym}, \texttt{embed.\allowbreak{}Piece.\allowbreak{}\_\allowbreak{}\_\allowbreak{}or\_\allowbreak{}\_\allowbreak{}}, \texttt{embed.\allowbreak{}Piece.\allowbreak{}\_\allowbreak{}\_\allowbreak{}pow\_\allowbreak{}\_\allowbreak{}}, \texttt{embed.\allowbreak{}Piece.\allowbreak{}\_\allowbreak{}\_\allowbreak{}xor\_\allowbreak{}\_\allowbreak{}}, \texttt{embed.\allowbreak{}\_\allowbreak{}where}, \texttt{embed.\allowbreak{}\_\allowbreak{}legs}, and 6 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.repl.parser}}\\*
-\texttt{ParseError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of every error this module raises. \\
-\texttt{ParseGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ParseError})} & The source does not match the grammar of the form it was read as. \\
-\texttt{ParseDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ParseError})} & The source parses, but names a value or a diagram outside the accepted domain. \\
+\texttt{ParseError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{ParseDomainError}, \texttt{ParseGrammarError}; not raised itself. \\
+\texttt{ParseGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ParseError})} & Raised in \texttt{parser.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}text}, \texttt{parser.\allowbreak{}\_\allowbreak{}split\_\allowbreak{}top}, \texttt{parser.\allowbreak{}\_\allowbreak{}int\_\allowbreak{}token}, \texttt{parser.\allowbreak{}\_\allowbreak{}ExprParser.\allowbreak{}\_\allowbreak{}enter}, \texttt{parser.\allowbreak{}\_\allowbreak{}parse\_\allowbreak{}expr}, \texttt{parser.\allowbreak{}\_\allowbreak{}sympy\_\allowbreak{}of}, and 57 more. \\
+\texttt{ParseDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ParseError})} & Raised in \texttt{parser.\allowbreak{}\_\allowbreak{}finish}, \texttt{parser.\allowbreak{}\_\allowbreak{}expr\_\allowbreak{}numeral}, \texttt{parser.\allowbreak{}\_\allowbreak{}ExprParser.\allowbreak{}expression}, \texttt{parser.\allowbreak{}\_\allowbreak{}bounded}, \texttt{parser.\allowbreak{}\_\allowbreak{}product}, \texttt{parser.\allowbreak{}\_\allowbreak{}power}, and 23 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.repl.printer}}\\*
-\texttt{PrinterError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{PrinterDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{PrinterError})} & A diagram whose Dirac form is undefined: a validate error or a fanned fixed-arity leg. \\
-\texttt{PrinterGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{PrinterError})} & An argument of the wrong type. \\
+\texttt{PrinterError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{PrinterDomainError}, \texttt{PrinterGrammarError}; not raised itself. \\
+\texttt{PrinterDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{PrinterError})} & Raised in \texttt{printer.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}valid}, \texttt{printer.\allowbreak{}\_\allowbreak{}Structure.\allowbreak{}\_\allowbreak{}walk}, \texttt{printer.\allowbreak{}\_\allowbreak{}TermBuilder.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{printer.\allowbreak{}\_\allowbreak{}TermBuilder.\allowbreak{}\_\allowbreak{}fixed}, \texttt{printer.\allowbreak{}dirac\_\allowbreak{}term}, \texttt{printer.\allowbreak{}render\_\allowbreak{}term}, and 2 more. \\
+\texttt{PrinterGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{PrinterError})} & Raised in \texttt{printer.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}diagram}, \texttt{printer.\allowbreak{}render\_\allowbreak{}term}, \texttt{printer.\allowbreak{}render\_\allowbreak{}graph}, \texttt{printer.\allowbreak{}render\_\allowbreak{}scalable\_\allowbreak{}graph}, \texttt{printer.\allowbreak{}\_\allowbreak{}mode\_\allowbreak{}check}, \texttt{printer.\allowbreak{}render}, and 4 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.cache}}\\*
-\texttt{CacheError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for every error raised in cache. \\
-\texttt{CacheGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CacheError})} & A cache argument of the wrong type or shape. \\
-\texttt{CacheDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CacheError})} & A well-formed cache argument naming something the diagram does not contain. \\
+\texttt{CacheError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{CacheDomainError}, \texttt{CacheGrammarError}; not raised itself. \\
+\texttt{CacheGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CacheError})} & Raised in \texttt{cache.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}diagram}, \texttt{cache.\allowbreak{}DiagramFingerprint.\allowbreak{}changed\_\allowbreak{}nodes}, \texttt{cache.\allowbreak{}DiagramFingerprint.\allowbreak{}global\_\allowbreak{}change}, \texttt{cache.\allowbreak{}DiagramFingerprint.\allowbreak{}match\_\allowbreak{}change}, \texttt{cache.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}max\_\allowbreak{}entries}, \texttt{cache.\allowbreak{}LruMemo.\allowbreak{}get\_\allowbreak{}or\_\allowbreak{}compute}, and 11 more. \\
+\texttt{CacheDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CacheError})} & Raised in \texttt{cache.\allowbreak{}node\_\allowbreak{}digest}, \texttt{cache.\allowbreak{}incidence\_\allowbreak{}digest}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.engine}}\\*
-\texttt{TerminationGuardTripped}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A strategy loop hit its TerminationGuard while running with \texttt{strict=True}. \\
+\texttt{TerminationGuardTripped}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Raised in \texttt{engine.\allowbreak{}apply\_\allowbreak{}until\_\allowbreak{}fixpoint}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.exhaustive}}\\*
-\texttt{ExhaustedError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Both sides reached every diagram they can without meeting. \\
+\texttt{ExhaustedError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{exhaustive.\allowbreak{}\_\allowbreak{}exhausted}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.match_template}}\\*
-\texttt{TemplateTooLarge}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A template under construction holds more nodes and wires than the host it is matched against. \\
+\texttt{TemplateTooLarge}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{match\_\allowbreak{}template.\allowbreak{}check\_\allowbreak{}template\_\allowbreak{}budget}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.rule}}\\*
-\texttt{RewriteError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised anywhere in rewrite. \\
-\texttt{RewriteDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A value or state is outside the mathematical domain a rewrite operation requires. \\
-\texttt{RewriteGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A rewrite request is malformed independent of mathematical domain. \\
+\texttt{RewriteError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{BudgetExhausted}, \texttt{RewriteDomainError}, \texttt{RewriteGrammarError}, \texttt{SheetError}, \texttt{TerminationGuardTripped}; not raised itself. \\
+\texttt{RewriteDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Base of \texttt{SheetDomainError}; raised in \texttt{engine.\allowbreak{}\_\allowbreak{}remap\_\allowbreak{}endpoint}, \texttt{engine.\allowbreak{}\_\allowbreak{}follow\_\allowbreak{}links}, \texttt{engine.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}far\_\allowbreak{}link\_\allowbreak{}ends}, \texttt{engine.\allowbreak{}apply}, \texttt{match\_\allowbreak{}template.\allowbreak{}k\_\allowbreak{}vector}, \texttt{match\_\allowbreak{}template.\allowbreak{}\_\allowbreak{}inverse}, and 22 more. \\
+\texttt{RewriteGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Base of \texttt{SheetGrammarError}; raised in \texttt{egraph.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}diagram}, \texttt{egraph.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}rules}, \texttt{egraph.\allowbreak{}SaturationLimits.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{egraph.\allowbreak{}FailedApplication.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{egraph.\allowbreak{}SaturationReport.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{egraph.\allowbreak{}EGraphEdge.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, and 73 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.sheet}}\\*
-\texttt{SheetError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Base class for all errors raised by this module. \\
-\texttt{SheetGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{SheetError, RewriteGrammarError})} & A request is malformed: wrong type, unknown id, wrong scale kind, or no correspondence. \\
-\texttt{SheetDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{SheetError, RewriteDomainError})} & A value is outside an operation's domain, such as a multiplicity that is not 1. \\
+\texttt{SheetError}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Base of \texttt{SheetDomainError}, \texttt{SheetGrammarError}; not raised itself. \\
+\texttt{SheetGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{SheetError}, \texttt{RewriteGrammarError})} & Raised in \texttt{sheet.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}valid}, \texttt{sheet.\allowbreak{}\_\allowbreak{}scale\_\allowbreak{}arg}, \texttt{sheet.\allowbreak{}\_\allowbreak{}mult\_\allowbreak{}arg}, \texttt{sheet.\allowbreak{}\_\allowbreak{}finish}, \texttt{sheet.\allowbreak{}split\_\allowbreak{}scale}, \texttt{sheet.\allowbreak{}\_\allowbreak{}Correspondence.\allowbreak{}bind}, and 8 more. \\
+\texttt{SheetDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{SheetError}, \texttt{RewriteDomainError})} & Raised in \texttt{sheet.\allowbreak{}\_\allowbreak{}mult\_\allowbreak{}arg}, \texttt{sheet.\allowbreak{}dissolve}, \texttt{sheet.\allowbreak{}\_\allowbreak{}mult\_\allowbreak{}from\_\allowbreak{}expr}, \texttt{sheet.\allowbreak{}split\_\allowbreak{}scale}, \texttt{sheet.\allowbreak{}enclose}, \texttt{sheet.\allowbreak{}kill\_\allowbreak{}scale}, and 1 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.rewrite.tactics}}\\*
-\texttt{BudgetExhausted}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & A TacticContext's application budget ran out. \\
+\texttt{BudgetExhausted}\newline\hspace*{1em}{\footnotesize(\texttt{RewriteError})} & Raised in \texttt{tactics.\allowbreak{}TacticContext.\allowbreak{}charge}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.certificate}}\\*
-\texttt{CertificateError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{CertificateDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CertificateError})} & Raised for a value outside the domain a certificate operation is defined on. \\
-\texttt{CertificateGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CertificateError})} & Raised for a malformed certificate request, independent of any diagram's concreteness. \\
+\texttt{CertificateError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{CertificateDomainError}, \texttt{CertificateGrammarError}; not raised itself. \\
+\texttt{CertificateDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CertificateError})} & Never raised. \\
+\texttt{CertificateGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CertificateError})} & Raised in \texttt{certificate.\allowbreak{}InductionClaim.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{certificate.\allowbreak{}compare\_\allowbreak{}structure}, \texttt{certificate.\allowbreak{}Derivation.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{certificate.\allowbreak{}Certificate.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{certificate.\allowbreak{}certify}, \texttt{certificate.\allowbreak{}certify\_\allowbreak{}induction}, and 2 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.check}}\\*
-\texttt{CheckError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{CheckDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CheckError})} & The domain half of this module's domain/grammar error split. Currently unraised. \\
-\texttt{CheckGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CheckError})} & A request is malformed: an unknown equality mode, or an incomplete symbol assignment. \\
+\texttt{CheckError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{CheckDomainError}, \texttt{CheckGrammarError}; not raised itself. \\
+\texttt{CheckDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{CheckError})} & Raised in \texttt{check.\allowbreak{}compare\_\allowbreak{}symbolic}. \\
+\texttt{CheckGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{CheckError})} & Raised in \texttt{check.\allowbreak{}instantiate}, \texttt{check.\allowbreak{}compare\_\allowbreak{}tensors}, \texttt{interop.\allowbreak{}\_\allowbreak{}expand}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.columns}}\\*
-\texttt{ColumnsError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & The column count or the row induction does not apply or does not check. \\
+\texttt{ColumnsError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{columns.\allowbreak{}\_\allowbreak{}decided}, \texttt{columns.\allowbreak{}\_\allowbreak{}core}, \texttt{columns.\allowbreak{}close\_\allowbreak{}rows}, \texttt{columns.\allowbreak{}\_\allowbreak{}peeled\_\allowbreak{}to}, \texttt{columns.\allowbreak{}induct\_\allowbreak{}rows}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.contract_numeric}}\\*
-\texttt{ContractError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{ContractDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractError})} & A value is outside the mathematical domain this module requires. \\
-\texttt{ContractGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractError})} & A request is malformed in a way independent of concreteness. \\
-\texttt{ContractValidationError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractDomainError})} & Raised when the diagram fails validate. \\
-\texttt{ContractSizeError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractDomainError})} & Raised when a tensor this module would allocate exceeds the configured size cap. \\
+\texttt{ContractError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{ContractDomainError}, \texttt{ContractGrammarError}; not raised itself. \\
+\texttt{ContractDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractError})} & Base of \texttt{ContractSizeError}, \texttt{ContractValidationError}; raised in \texttt{contract\_\allowbreak{}numeric.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}concrete}, \texttt{contract\_\allowbreak{}numeric.\allowbreak{}contract}. \\
+\texttt{ContractGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractError})} & Raised in \texttt{contract\_\allowbreak{}numeric.\allowbreak{}contract}. \\
+\texttt{ContractValidationError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractDomainError})} & Raised in \texttt{contract\_\allowbreak{}numeric.\allowbreak{}contract}. \\
+\texttt{ContractSizeError}\newline\hspace*{1em}{\footnotesize(\texttt{ContractDomainError})} & Raised in \texttt{contract\_\allowbreak{}numeric.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}size}, \texttt{contract\_\allowbreak{}numeric.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}axes}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.contract_symbolic}}\\*
-\texttt{SymbolicContractionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{SymbolicContractionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionError})} & A value is outside the domain an operation requires. \\
-\texttt{SymbolicContractionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionError})} & A diagram is malformed in a way validate() should already have refused. \\
-\texttt{SymbolicContractionValidationError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionDomainError})} & The diagram failed validation. Carries the report. \\
-\texttt{SymbolicContractionUnsupportedError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionDomainError})} & A diagram shape this module does not cover, such as a variable rank. \\
+\texttt{SymbolicContractionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{SymbolicContractionDomainError}, \texttt{SymbolicContractionGrammarError}; not raised itself. \\
+\texttt{SymbolicContractionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionError})} & Base of \texttt{SymbolicContractionUnsupportedError}, \texttt{SymbolicContractionValidationError}; raised in \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}SymbolicTensor.\allowbreak{}flatten}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}SymbolicTensor.\allowbreak{}\_\allowbreak{}require\_\allowbreak{}fixed\_\allowbreak{}rank}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}SymbolicTensor.\allowbreak{}value\_\allowbreak{}at}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}SymbolicTensor.\allowbreak{}to\_\allowbreak{}dense}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}connective\_\allowbreak{}product}. \\
+\texttt{SymbolicContractionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionError})} & Raised in \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}SymbolicTensor.\allowbreak{}value\_\allowbreak{}at}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}connective\_\allowbreak{}entry}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}node\_\allowbreak{}entry}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}ruled\_\allowbreak{}entry}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}contract\_\allowbreak{}symbolic}. \\
+\texttt{SymbolicContractionValidationError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionDomainError})} & Raised in \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}contract\_\allowbreak{}symbolic}. \\
+\texttt{SymbolicContractionUnsupportedError}\newline\hspace*{1em}{\footnotesize(\texttt{SymbolicContractionDomainError})} & Raised in \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}detach\_\allowbreak{}pairs}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}hidden\_\allowbreak{}pins}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}index\_\allowbreak{}power}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}resolve\_\allowbreak{}chains}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}chain\_\allowbreak{}period}, \texttt{contract\_\allowbreak{}symbolic.\allowbreak{}\_\allowbreak{}resolve\_\allowbreak{}trees}, and 5 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.decide}}\\*
-\texttt{DecideError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{DecideGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DecideError})} & A request is malformed: a wrong argument type or an out-of-range bound. \\
+\texttt{DecideError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{DecideGrammarError}; not raised itself. \\
+\texttt{DecideGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DecideError})} & Raised in \texttt{decide.\allowbreak{}Decision.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{decide.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}args}, \texttt{decide.\allowbreak{}interface\_\allowbreak{}reason}, \texttt{decide.\allowbreak{}decide\_\allowbreak{}equal}, \texttt{decide.\allowbreak{}decide\_\allowbreak{}restricted}, \texttt{restrict.\allowbreak{}\_\allowbreak{}literal}, and 6 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.denote}}\\*
-\texttt{DenoteError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{DenoteDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{DenoteError})} & A value is outside the mathematical domain this module requires. \\
-\texttt{DenoteGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DenoteError})} & A request is malformed: an unknown generator name, or a dimension-less node. \\
+\texttt{DenoteError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{DenoteDomainError}, \texttt{DenoteGrammarError}; not raised itself. \\
+\texttt{DenoteDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{DenoteError})} & Raised in \texttt{denote.\allowbreak{}\_\allowbreak{}leg\_\allowbreak{}dim}, \texttt{denote.\allowbreak{}resolve\_\allowbreak{}dim}, \texttt{denote.\allowbreak{}resolve\_\allowbreak{}dimension}, \texttt{denote.\allowbreak{}leg\_\allowbreak{}dimensions}, \texttt{denote.\allowbreak{}\_\allowbreak{}pair\_\allowbreak{}phase\_\allowbreak{}tensor}. \\
+\texttt{DenoteGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{DenoteError})} & Raised in \texttt{denote.\allowbreak{}resolve\_\allowbreak{}dim}, \texttt{denote.\allowbreak{}resolve\_\allowbreak{}dimension}, \texttt{denote.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}arity}, \texttt{denote.\allowbreak{}\_\allowbreak{}connective\_\allowbreak{}tensor}, \texttt{denote.\allowbreak{}\_\allowbreak{}pair\_\allowbreak{}phase\_\allowbreak{}tensor}, \texttt{denote.\allowbreak{}denote}, and 1 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.induction}}\\*
-\texttt{InductionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{InductionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{InductionError})} & A value is outside the mathematical domain this module accepts. \\
-\texttt{InductionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{InductionError})} & A request is malformed, independent of any diagram's concreteness. \\
+\texttt{InductionError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{InductionDomainError}, \texttt{InductionGrammarError}; raised in \texttt{prove.\allowbreak{}induction\_\allowbreak{}offset}. \\
+\texttt{InductionDomainError}\newline\hspace*{1em}{\footnotesize(\texttt{InductionError})} & Raised in \texttt{carry\_\allowbreak{}open.\allowbreak{}carry\_\allowbreak{}tail}, \texttt{carry\_\allowbreak{}open.\allowbreak{}\_\allowbreak{}paths}, \texttt{carry\_\allowbreak{}open.\allowbreak{}open\_\allowbreak{}carry}, \texttt{carry\_\allowbreak{}open.\allowbreak{}\_\allowbreak{}chain\_\allowbreak{}end\_\allowbreak{}wires}, \texttt{carry\_\allowbreak{}open.\allowbreak{}open\_\allowbreak{}chain\_\allowbreak{}ends}, \texttt{induction.\allowbreak{}rename\_\allowbreak{}multiplicity}, and 13 more. \\
+\texttt{InductionGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{InductionError})} & Raised in \texttt{induction.\allowbreak{}choose\_\allowbreak{}index}, \texttt{induction.\allowbreak{}build\_\allowbreak{}obligation}, \texttt{induction.\allowbreak{}discharge\_\allowbreak{}oracle\_\allowbreak{}window}, \texttt{induction.\allowbreak{}prove\_\allowbreak{}by\_\allowbreak{}induction}, \texttt{induction.\allowbreak{}\_\allowbreak{}restricted\_\allowbreak{}induction}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.induction_kernel}}\\*
-\texttt{NoInductionTheorem}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Why an induction verdict has no kernel theorem. \\
+\texttt{NoInductionTheorem}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{induction\_\allowbreak{}kernel.\allowbreak{}induction\_\allowbreak{}theorem}, \texttt{induction\_\allowbreak{}kernel.\allowbreak{}\_\allowbreak{}settling\_\allowbreak{}tier}, \texttt{induction\_\allowbreak{}kernel.\allowbreak{}\_\allowbreak{}uniform}, \texttt{induction\_\allowbreak{}kernel.\allowbreak{}\_\allowbreak{}base}, \texttt{induction\_\allowbreak{}kernel.\allowbreak{}\_\allowbreak{}peeled}, \texttt{induction\_\allowbreak{}kernel.\allowbreak{}\_\allowbreak{}contracted}, and 11 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.interop}}\\*
-\texttt{InteropError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{InteropGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{InteropError})} & A request is malformed: a wrong argument type, a bad limit, or an unknown operation. \\
+\texttt{InteropError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{InteropGrammarError}; not raised itself. \\
+\texttt{InteropGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{InteropError})} & Raised in \texttt{interop.\allowbreak{}\_\allowbreak{}as\_\allowbreak{}diagram}, \texttt{interop.\allowbreak{}default\_\allowbreak{}samples}, \texttt{interop.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}samples}, \texttt{interop.\allowbreak{}check\_\allowbreak{}round\_\allowbreak{}trip}, \texttt{interop.\allowbreak{}check\_\allowbreak{}sheet\_\allowbreak{}step}, \texttt{interop.\allowbreak{}via\_\allowbreak{}scalable}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.kernel}}\\*
-\texttt{KernelError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A proof piece the kernel does not accept. \\
+\texttt{KernelError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{kernel.\allowbreak{}Theorem.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{kernel.\allowbreak{}\_\allowbreak{}refuse\_\allowbreak{}on}, \texttt{kernel.\allowbreak{}\_\allowbreak{}mult\_\allowbreak{}floor}, \texttt{kernel.\allowbreak{}rule}, \texttt{kernel.\allowbreak{}iso}, \texttt{kernel.\allowbreak{}\_\allowbreak{}values}, and 42 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_finite}}\\*
-\texttt{FiniteUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & An instance export without a final theorem. \\
+\texttt{FiniteUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{ValueError})} & Raised in \texttt{lean\_\allowbreak{}finite.\allowbreak{}\_\allowbreak{}statement}, \texttt{lean\_\allowbreak{}finite.\allowbreak{}nest}, \texttt{lean\_\allowbreak{}finite.\allowbreak{}combine}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_linked}}\\*
-\texttt{LinkedUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & The diagram or step has no linked-diagram export. \\
+\texttt{LinkedUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{lean\_\allowbreak{}linked.\allowbreak{}\_\allowbreak{}readings}, \texttt{lean\_\allowbreak{}linked.\allowbreak{}\_\allowbreak{}end\_\allowbreak{}dim}, \texttt{lean\_\allowbreak{}linked.\allowbreak{}linked}, \texttt{lean\_\allowbreak{}linked.\allowbreak{}\_\allowbreak{}held}, \texttt{lean\_\allowbreak{}split.\allowbreak{}\_\allowbreak{}xlinked}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_net}}\\*
-\texttt{NetUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A theorem or diagram outside the tensor-network export. \\
+\texttt{NetUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{RecheckFailed}; raised in \texttt{decide.\allowbreak{}lean\_\allowbreak{}refutation}, \texttt{lean\_\allowbreak{}copyphase.\allowbreak{}gadget}, \texttt{lean\_\allowbreak{}copyphase.\allowbreak{}\_\allowbreak{}parse}, \texttt{lean\_\allowbreak{}copyphase.\allowbreak{}\_\allowbreak{}undo}, \texttt{lean\_\allowbreak{}copyphase.\allowbreak{}export\_\allowbreak{}copy\_\allowbreak{}phase}, \texttt{lean\_\allowbreak{}famlink.\allowbreak{}Linked.\allowbreak{}\_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, and 113 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_restrict}}\\*
-\texttt{RestrictUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & An export whose final theorem the corollary does not read. \\
+\texttt{RestrictUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{lean\_\allowbreak{}restrict.\allowbreak{}\_\allowbreak{}group}, \texttt{lean\_\allowbreak{}restrict.\allowbreak{}\_\allowbreak{}binders}, \texttt{lean\_\allowbreak{}restrict.\allowbreak{}\_\allowbreak{}split\_\allowbreak{}proof}, \texttt{lean\_\allowbreak{}restrict.\allowbreak{}\_\allowbreak{}final}, \texttt{lean\_\allowbreak{}restrict.\allowbreak{}shift\_\allowbreak{}corollary}, \texttt{lean\_\allowbreak{}restrict.\allowbreak{}\_\allowbreak{}step\_\allowbreak{}binders}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.lean_scalar}}\\*
-\texttt{ScalarUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A scalar or identity outside what this module writes or proves. \\
+\texttt{ScalarUnsupported}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{lean\_\allowbreak{}scalar.\allowbreak{}Scalars.\allowbreak{}\_\allowbreak{}model}, \texttt{lean\_\allowbreak{}scalar.\allowbreak{}Scalars.\allowbreak{}nat\_\allowbreak{}text}, \texttt{lean\_\allowbreak{}scalar.\allowbreak{}Scalars.\allowbreak{}text}, \texttt{lean\_\allowbreak{}scalar.\allowbreak{}Scalars.\allowbreak{}real\_\allowbreak{}text}, \texttt{lean\_\allowbreak{}scalar.\allowbreak{}Scalars.\allowbreak{}complex\_\allowbreak{}text}, \texttt{lean\_\allowbreak{}scalar.\allowbreak{}Scalars.\allowbreak{}prove}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.lemmas}}\\*
-\texttt{LemmaError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A lemma is unknown, unproved, or has no instance where one was asked for. \\
+\texttt{LemmaError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{lemmas.\allowbreak{}\_\allowbreak{}prove\_\allowbreak{}two\_\allowbreak{}shift}, \texttt{lemmas.\allowbreak{}lemma}, \texttt{lemmas.\allowbreak{}proved}, \texttt{lemmas.\allowbreak{}instance}, \texttt{lemmas.\allowbreak{}\_\allowbreak{}split\_\allowbreak{}off}, \texttt{lemmas.\allowbreak{}\_\allowbreak{}fusion}, and 5 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.periodic}}\\*
-\texttt{PeriodicError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & A side that does not scale by a constant over its index's period. \\
+\texttt{PeriodicError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{periodic.\allowbreak{}chain\_\allowbreak{}period}, \texttt{periodic.\allowbreak{}shift\_\allowbreak{}ratio}, \texttt{periodic.\allowbreak{}scaling}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.prove}}\\*
-\texttt{ProveError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base class for all errors raised by this module. \\
-\texttt{ProveGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ProveError})} & A request is malformed: a wrong argument type or an out-of-range bound. \\
+\texttt{ProveError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Base of \texttt{ProveGrammarError}; not raised itself. \\
+\texttt{ProveGrammarError}\newline\hspace*{1em}{\footnotesize(\texttt{ProveError})} & Raised in \texttt{prove.\allowbreak{}ProofCertificate.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{prove.\allowbreak{}certify\_\allowbreak{}proof}, \texttt{prove.\allowbreak{}\_\allowbreak{}check\_\allowbreak{}oracle\_\allowbreak{}args}, \texttt{prove.\allowbreak{}check\_\allowbreak{}proof}, \texttt{prove.\allowbreak{}MixedCertificate.\allowbreak{}\_\allowbreak{}\_\allowbreak{}post\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}}, \texttt{prove.\allowbreak{}check\_\allowbreak{}mixed}, and 6 more. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.radix_window}}\\*
-\texttt{RadixWindowError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & The radix window does not settle a step; the message names the reason. \\
+\texttt{RadixWindowError}\newline\hspace*{1em}{\footnotesize(\texttt{Exception})} & Raised in \texttt{radix\_\allowbreak{}window.\allowbreak{}expose}, \texttt{radix\_\allowbreak{}window.\allowbreak{}close}, \texttt{radix\_\allowbreak{}window.\allowbreak{}step}, \texttt{radix\_\allowbreak{}window.\allowbreak{}regrouped\_\allowbreak{}induction}. \\
 \midrule
 \multicolumn{2}{@{}l}{\module{archytaszx.semantics.refute_check}}\\*
-\texttt{RecheckFailed}\newline\hspace*{1em}{\footnotesize(\texttt{NetUnsupported})} & A refutation's evidence does not hold when rechecked. \\
+\texttt{RecheckFailed}\newline\hspace*{1em}{\footnotesize(\texttt{NetUnsupported})} & Raised in \texttt{refute\_\allowbreak{}check.\allowbreak{}checked\_\allowbreak{}residue}, \texttt{refute\_\allowbreak{}check.\allowbreak{}checked\_\allowbreak{}numeric}. \\
 \end{xltabular}
 }
 
 \section{Internal Control-Flow Signals}\label{sec:errors-internal}
 
-The following classes never leave their module; each carries a search or saturation result to an enclosing handler.
+The following classes are private to their modules.
 
 {\small
 \begin{xltabular}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.42\linewidth}>{\raggedright\arraybackslash}p{0.16\linewidth}X@{}}
@@ -211,13 +211,13 @@ The following classes never leave their module; each carries a search or saturat
 Class & Base class & Meaning \\
 \midrule
 
-\texttt{archytaszx.rewrite.\allowbreak{}egraph.\allowbreak{}\_Stop} & \texttt{Exception} & Internal signal ending a saturation run with \texttt{reason}. \\
-\texttt{archytaszx.rewrite.\allowbreak{}tactics.\allowbreak{}\_Found} & \texttt{Exception} & Internal signal carrying the forward and backward step chains of a meet. \\
-\texttt{archytaszx.rewrite.\allowbreak{}tactics.\allowbreak{}\_Accepted} & \texttt{Exception} & Internal signal carrying the step chain to a state the predicate accepted. \\
-\texttt{archytaszx.rewrite.\allowbreak{}tactics.\allowbreak{}\_Limit} & \texttt{Exception} & Internal signal ending a search with \texttt{status}. \\
-\texttt{archytaszx.semantics.\allowbreak{}interop.\allowbreak{}\_OneSided} & \texttt{Exception} & The reference evaluates at a sample and the other side is outside its domain there. \\
-\texttt{archytaszx.semantics.\allowbreak{}lean\_pathsum.\allowbreak{}\_LiftRaises} & \texttt{PathSum\-Unsupported} & A canonical form whose XOR lift raises; it carries both reduced sums. \\
-\texttt{archytaszx.semantics.\allowbreak{}prove.\allowbreak{}\_Stopped} & \texttt{BaseException} & Raised in a layer callback to stop a search another search has made moot. \\
+\texttt{archytaszx.\allowbreak{}rewrite.\allowbreak{}egraph.\allowbreak{}\_\allowbreak{}Stop} & \texttt{Exception} & Raised in \texttt{egraph.\allowbreak{}EGraph.\allowbreak{}saturate}, \texttt{egraph.\allowbreak{}EGraph.\allowbreak{}\_\allowbreak{}expand}, \texttt{egraph.\allowbreak{}EGraph.\allowbreak{}\_\allowbreak{}record}. \\
+\texttt{archytaszx.\allowbreak{}rewrite.\allowbreak{}tactics.\allowbreak{}\_\allowbreak{}Found} & \texttt{Exception} & Raised in \texttt{tactics.\allowbreak{}\_\allowbreak{}Search.\allowbreak{}\_\allowbreak{}expand\_\allowbreak{}moves}. \\
+\texttt{archytaszx.\allowbreak{}rewrite.\allowbreak{}tactics.\allowbreak{}\_\allowbreak{}Accepted} & \texttt{Exception} & Raised in \texttt{tactics.\allowbreak{}\_\allowbreak{}Search.\allowbreak{}\_\allowbreak{}expand\_\allowbreak{}moves}. \\
+\texttt{archytaszx.\allowbreak{}rewrite.\allowbreak{}tactics.\allowbreak{}\_\allowbreak{}Limit} & \texttt{Exception} & Raised in \texttt{tactics.\allowbreak{}\_\allowbreak{}Search.\allowbreak{}\_\allowbreak{}expand\_\allowbreak{}moves}. \\
+\texttt{archytaszx.\allowbreak{}semantics.\allowbreak{}interop.\allowbreak{}\_\allowbreak{}OneSided} & \texttt{Exception} & Raised in \texttt{interop.\allowbreak{}\_\allowbreak{}oracle\_\allowbreak{}mismatch}. \\
+\texttt{archytaszx.\allowbreak{}semantics.\allowbreak{}lean\_\allowbreak{}pathsum.\allowbreak{}\_\allowbreak{}LiftRaises} & \texttt{PathSum\-Unsupported} & Raised in \texttt{lean\_\allowbreak{}pathsum.\allowbreak{}\_\allowbreak{}plan}. \\
+\texttt{archytaszx.\allowbreak{}semantics.\allowbreak{}prove.\allowbreak{}\_\allowbreak{}Stopped} & \texttt{BaseException} & Raised in \texttt{prove.\allowbreak{}\_\allowbreak{}restricted\_\allowbreak{}exhaustive}. \\
 \bottomrule
 \end{xltabular}
 }
