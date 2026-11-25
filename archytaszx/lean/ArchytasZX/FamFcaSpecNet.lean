@@ -145,6 +145,82 @@ theorem wires1 {n : ℕ} (hn : 0 < n) : (D1.famExpand n).wires = W1 n ++ W2 n :=
     have := List.mem_range.1 hj
     rw [h3 j (by omega), h3 (j + 1) (by omega)]
 
+/-! ## The wire labels -/
+
+theorem lab1_0 (n : ℕ) (out : Bool) (k : ℕ) : lab1 n ⟨0, out, k⟩ = labY n 0 0 out k :=
+  lab1_eq (e := (n0, (0, 0))) (by simp [Z1]) out k
+
+theorem lab1_2 (n : ℕ) (out : Bool) (k : ℕ) : lab1 n ⟨2, out, k⟩ = labY n 2 0 out k :=
+  lab1_eq (e := (n2, (2, 0))) (by simp [Z1]) out k
+
+theorem lab1_4 (n : ℕ) (out : Bool) (k : ℕ) : lab1 n ⟨4, out, k⟩ = labY n 4 0 out k :=
+  lab1_eq (e := (n4, (4, 0))) (by simp [Z1]) out k
+
+theorem lab1_b {n j : ℕ} (hj : j < n) (out : Bool) (k : ℕ) :
+    lab1 n ⟨5 + j, out, k⟩ = labY n 1 j out k := lab1_eq (mem_Z1_1 hj) out k
+
+theorem lab1_s {n j : ℕ} (hj : j < n) (out : Bool) (k : ℕ) :
+    lab1 n ⟨n + 5 + j, out, k⟩ = labY n 3 j out k := lab1_eq (mem_Z1_3 hj) out k
+
+/-- The offsets above `rb n` of the wire labels, `n > 0`. -/
+def offR (n : ℕ) : List ℕ :=
+  [0] ++ (range (n - 1)).map (4 + ·) ++ [1, 3] ++ (range (n - 1)).map (n + 3 + ·) ++ [2]
+
+theorem wlabR {n : ℕ} (hn : 0 < n) :
+    (D1.famExpand n).wires.map (fun w => lab1 n w.1) = (offR n).map (rb n + ·) := by
+  rw [wires1 hn]
+  have hn' : n ≠ 0 := by omega
+  simp only [W1, W2, offR, List.map_append, List.map_cons, List.map_nil, List.map_map,
+    Function.comp_def, List.cons_append, List.nil_append, List.append_assoc]
+  rw [lab1_0, lab1_4, lab1_b (by omega), lab1_s (by omega)]
+  simp only [labY, hn', ite_false, bout, sv, show n - 1 + 1 = n by omega, Nat.add_zero, ite_true]
+  congr 1
+  congr 1
+  · refine List.map_congr_left fun j hj => ?_
+    have := List.mem_range.1 hj
+    rw [lab1_b (by omega)]
+    simp only [labY, bout, show j + 1 ≠ n by omega, ite_false]; ring
+  · congr 2
+    congr 1
+    refine List.map_congr_left fun j hj => ?_
+    have := List.mem_range.1 hj
+    rw [lab1_s (by omega)]
+    simp only [labY, sv, show j + 1 ≠ 0 by omega, show j + 1 ≠ n by omega, ite_false]; ring
+
+theorem offR_perm {n : ℕ} (hn : 0 < n) : (offR n).Perm (range (2 * n + 2)) := by
+  rw [show 2 * n + 2 = 4 + (n - 1) + (n - 1) by omega, List.range_add, List.range_add]
+  rw [List.perm_iff_count]; intro a
+  simp only [offR, show range 4 = [0, 1, 2, 3] from rfl,
+    show ∀ x, 4 + (n - 1) + x = n + 3 + x from fun x => by omega, List.count_append,
+    List.count_cons, List.count_nil]
+  omega
+
+theorem intR {n : ℕ} (hn : 0 < n) :
+    ((D1.famExpand n).wires.map fun w => lab1 n w.1).Perm (engR n).int := by
+  rw [wlabR hn]
+  exact (offR_perm hn).map _
+
+theorem hwR {n : ℕ} (hn : 0 < n) : ∀ w ∈ (D1.famExpand n).wires, lab1 n w.1 = lab1 n w.2 := by
+  have hn' : n ≠ 0 := by omega
+  intro w hw
+  rw [wires1 hn, List.mem_append] at hw
+  rcases hw with hw | hw
+  · simp only [W1, List.mem_cons, List.mem_append, List.mem_map, List.mem_range]
+      at hw
+    rcases hw with (rfl | ⟨j, hj, rfl⟩) | rfl | hf
+    · rw [lab1_0, show (5 : ℕ) = 5 + 0 from rfl, lab1_b hn]; simp [labY, bin]
+    · rw [lab1_b (by omega), show 5 + (j + 1) = 5 + (j + 1) from rfl, lab1_b (by omega)]
+      simp only [labY, bout, bin, show j + 1 ≠ n by omega, show j + 1 ≠ 0 by omega, ite_false]; ring
+    · rw [lab1_b (by omega), lab1_2]; simp [labY, bout, hn', show n - 1 + 1 = n by omega]
+    · simp at hf
+  · simp only [W2, List.mem_cons, List.mem_append, List.mem_map, List.mem_range]
+      at hw
+    rcases hw with (rfl | ⟨j, hj, rfl⟩) | rfl | hf
+    · rw [lab1_4, show n + 5 = n + 5 + 0 from rfl, lab1_s hn]; simp [labY, sv, hn']
+    · rw [lab1_s (by omega), lab1_s (by omega)]; simp [labY]
+    · rw [lab1_s (by omega), lab1_2]; simp [labY, sv, hn', show n - 1 + 1 = n by omega]
+    · simp at hf
+
 end FamFca
 
 end ArchytasZX
