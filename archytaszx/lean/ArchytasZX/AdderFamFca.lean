@@ -1213,6 +1213,146 @@ theorem eval_cp (d : ℕ) (hd : 0 < d) (n : ℕ) (σ : ℕ → ℕ) (h0 : σ (sl
         rwa [labDim_z d hn hi] at this
       rw [cp_support hd hz hne l hl, tauC_congr h0' l]
 
+/-! ## Copy `n` glued to the spec -/
+
+theorem eval_reads (E : Env) (N : Net) : Reads (labelsOf N.nodes) (eval E N) :=
+  fun τ τ' h => sumOver_ext _ _ _ _ (prodVal_reads E _) τ τ' (fun x hx _ => h x hx)
+
+theorem cp_off_rhs (n : ℕ) : ∀ x ∈ labelsOf (cp n).nodes, x ∉ (rhsN n).int := by
+  intro x hx hi
+  rcases cp_own n x (mem_all_of_nodes hx) with ⟨t, _, rfl⟩ | hc
+  · have := (fitsR n).1 _ (mem_all_of_int hi); unfold sl at this; omega
+  · exact (fitsR n).2 n le_rfl x hi hc
+
+theorem rhs_off_cp (n : ℕ) : ∀ x ∈ labelsOf (rhsN n).nodes, x ∉ (cp n).int := by
+  intro x hx hi
+  obtain ⟨t, _, rfl⟩ := cp_int hi
+  have := (fitsR n).1 _ (mem_all_of_nodes hx); unfold sl at this; omega
+
+theorem cut_nodup (n : ℕ) : (cut n).Nodup := by
+  have : cut n = (([] : List ℕ) ++ (range n).flatMap fun i =>
+      [0, 1].map fun r => 14 + 8 * i + r).map (sl (n - 1)) := by
+    simp only [cut, pend, pendO, nil_append, map_flatMap, map_cons, map_nil, sl]
+    ring_nf
+  rw [this]
+  exact (nodup_blocks n 14 _ _ (by decide) (by decide) (by decide) (by simp)).map
+    (sl_injective _)
+
+/-- The pending legs before copy `n` at the digits they read in the spec. -/
+def pinsG (n : ℕ) (σ : ℕ → ℕ) : List (ℕ × ℕ) :=
+  (range n).flatMap fun i => [(pend n i, σ (sl i 0)), (pendO n i, σ (sl i 1))]
+
+/-- `σ` with the pending legs before copy `n` at their digits. -/
+def tauG (n : ℕ) (σ : ℕ → ℕ) (x : ℕ) : ℕ := ((pinsG n σ).lookup x).getD (σ x)
+
+theorem pinsG_fst (n : ℕ) (σ : ℕ → ℕ) : (pinsG n σ).map Prod.fst = cut n := by
+  simp [pinsG, cut, map_flatMap]
+
+theorem tauG_off {n x : ℕ} {σ : ℕ → ℕ} (h : x ∉ cut n) : tauG n σ x = σ x := by
+  rw [tauG, lookup_none _ _ (by rw [pinsG_fst]; exact h)]; rfl
+
+theorem tauG_pend {n i : ℕ} {σ : ℕ → ℕ} (hi : i < n) : tauG n σ (pend n i) = σ (sl i 0) := by
+  rw [tauG, lookup_of_mem (pinsG n σ) (by rw [pinsG_fst]; exact cut_nodup n)
+    (mem_flatMap.2 ⟨i, mem_range.2 hi, mem_cons_self⟩)]; rfl
+
+theorem tauG_pendO {n i : ℕ} {σ : ℕ → ℕ} (hi : i < n) : tauG n σ (pendO n i) = σ (sl i 1) := by
+  rw [tauG, lookup_of_mem (pinsG n σ) (by rw [pinsG_fst]; exact cut_nodup n)
+    (mem_flatMap.2 ⟨i, mem_range.2 hi, mem_cons_of_mem _ mem_cons_self⟩)]; rfl
+
+theorem dig_notin_cut {n i s : ℕ} (hs : s < 2) : sl i s ∉ cut n := by
+  intro h
+  obtain ⟨j, hj, e | e⟩ := mem_cut.1 h <;>
+  · have := (sl_inj (by omega) (by omega) e).2; omega
+
+/-- The spec's shift factor at `n` digits. -/
+noncomputable def IndS (d : ℕ) (σ : ℕ → ℕ) (n : ℕ) : ℂ :=
+  if topv d σ n 1 n % d ^ n = (topv d σ n 0 n + 2) % d ^ n then 1 else 0
+
+/-- The spec's pending-leg factors at `n` digits. -/
+def pinsN (n : ℕ) (σ : ℕ → ℕ) : ℂ :=
+  ((range n).map fun i => (if σ (pend n i) = σ (sl i 0) then (1 : ℂ) else 0) *
+    (if σ (pendO n i) = σ (sl i 1) then 1 else 0)).prod
+
+/-- The sum over copy `n`'s Fourier value. -/
+noncomputable def SumC (d n : ℕ) (σ : ℕ → ℕ) : ℂ :=
+  ∑ x ∈ Finset.range d, fou d x (σ (sl n 0)) * ex (phase d (2 * n + 1) x) *
+    (starRingEnd ℂ) (fou d (σ (sl n 1)) x) * pairsF d n σ x
+
+theorem labDim_pend (d : ℕ) {n i : ℕ} (hi : i < n) :
+    labDim (envAt (E0 d) L (n + 1)) (pend n i) = d :=
+  labDim_plain d (by omega) (by omega) (by omega) (by omega) fun _ _ _ _ => by omega
+
+theorem labDim_pendO (d : ℕ) {n i : ℕ} (hi : i < n) :
+    labDim (envAt (E0 d) L (n + 1)) (pendO n i) = d :=
+  labDim_plain d (by omega) (by omega) (by omega) (by omega) fun _ _ _ _ => by omega
+
+/-- Copy `n` glued to the spec at `n` digits: the spec's shift factor, copy `n`'s pending
+factors and Fourier sum with the old pending legs at the spec's digits. -/
+theorem eval_glue (d : ℕ) (hd : 0 < d) (n : ℕ) (σ : ℕ → ℕ) (ha : ∀ i < n + 1, σ (sl i 0) < d)
+    (hb : ∀ i < n + 1, σ (sl i 1) < d) :
+    eval (envAt (E0 d) L (n + 1)) (glueAt (cut n) (cp n) (rhsN n)) σ =
+      IndS d σ n * (pinsCp n (tauG n σ) * SumC d n (tauG n σ)) := by
+  set E := envAt (E0 d) L (n + 1)
+  have hperm : ((cp n).int ++ cut n ++ (rhsN n).int).Perm
+      (cut n ++ ((cp n).int ++ (rhsN n).int)) := by
+    simpa [List.append_assoc] using
+      (List.perm_append_comm (l₁ := (cp n).int) (l₂ := cut n)).append_right (rhsN n).int
+  unfold eval
+  simp only [glueAt]
+  rw [sumOver_perm _ hperm, sumOver_append]
+  rw [sumOver_congr _ (cut n) _ (fun τ => IndS d σ n * pinsN n τ * (pinsCp n τ * SumC d n τ)) σ
+    (fun τ hτ hr => ?_)]
+  · rw [sumOver_single _ (cut n) (cut_nodup n) _ σ (tauG n σ) (fun x hx => tauG_off hx) ?hr ?hs]
+    case hr =>
+      intro l hl
+      obtain ⟨i, hi, rfl | rfl⟩ := mem_cut.1 hl
+      · rw [tauG_pend hi, labDim_pend d hi]; exact ha i (by omega)
+      · rw [tauG_pendO hi, labDim_pendO d hi]; exact hb i (by omega)
+    case hs =>
+      intro τ h0 _ hne l hl
+      have hp : pinsN n τ ≠ 0 := fun h => hne (by rw [h]; ring)
+      have hall : ∀ x ∈ ((range n).map fun i =>
+          (if τ (pend n i) = τ (sl i 0) then (1 : ℂ) else 0) *
+            (if τ (pendO n i) = τ (sl i 1) then 1 else 0)), x ≠ 0 :=
+        fun x hx h0 => hp (by unfold pinsN; exact List.prod_eq_zero (h0 ▸ hx))
+      obtain ⟨i, hi, rfl | rfl⟩ := mem_cut.1 hl
+      · have := hall _ (mem_map.2 ⟨i, mem_range.2 hi, rfl⟩)
+        rw [tauG_pend hi, ← h0 _ (dig_notin_cut (by omega))]
+        by_contra hc; exact this (by rw [if_neg hc]; ring)
+      · have := hall _ (mem_map.2 ⟨i, mem_range.2 hi, rfl⟩)
+        rw [tauG_pendO hi, ← h0 _ (dig_notin_cut (by omega))]
+        by_contra hc; exact this (by rw [if_neg hc]; ring)
+    have h1 : pinsN n (tauG n σ) = 1 := by
+      refine List.prod_eq_one fun x hx => ?_
+      obtain ⟨i, hi, rfl⟩ := mem_map.1 hx
+      have hi := mem_range.1 hi
+      rw [tauG_pend hi, tauG_pendO hi, tauG_off (dig_notin_cut (by omega)),
+        tauG_off (dig_notin_cut (by omega))]
+      simp
+    rw [h1, mul_one]
+  · have hd0 : ∀ i, τ (sl i 0) = σ (sl i 0) := fun i => hτ _ (dig_notin_cut (by omega))
+    have hd1 : ∀ i, τ (sl i 1) = σ (sl i 1) := fun i => hτ _ (dig_notin_cut (by omega))
+    rw [sumOver_append]
+    have step : ∀ τ', sumOver (labDim E) (rhsN n).int
+        (prodVal E ((cp n).nodes ++ (rhsN n).nodes)) τ' =
+        eval E (rhsN n) τ' * prodVal E (cp n).nodes τ' := fun τ' => by
+      have e : prodVal E ((cp n).nodes ++ (rhsN n).nodes) =
+          fun ρ => prodVal E (cp n).nodes ρ * prodVal E (rhsN n).nodes ρ :=
+        funext fun ρ => prodVal_append E _ _ ρ
+      rw [e, sumOver_const_mul _ _ _ _ _ (prodVal_reads _ _) (cp_off_rhs n) τ', mul_comm]; rfl
+    rw [show sumOver (labDim E) (rhsN n).int (prodVal E ((cp n).nodes ++ (rhsN n).nodes)) =
+        fun τ' => eval E (rhsN n) τ' * prodVal E (cp n).nodes τ' from funext step,
+      sumOver_const_mul _ _ _ _ _ (eval_reads _ _) (rhs_off_cp n) τ,
+      eval_cp d hd n τ (by rw [hd0]; exact ha n (by omega)) (by rw [hd1]; exact hb n (by omega))
+        (fun i hi => by have := hr _ (pend_mem hi); rwa [labDim_pend d hi] at this)
+        (fun i hi => by have := hr _ (pendO_mem hi); rwa [labDim_pendO d hi] at this),
+      eval_rhsN d hd (by omega) τ (fun i hi => by rw [hd0]; exact ha i (by omega))
+        (fun i hi => by rw [hd1]; exact hb i (by omega))]
+    have hI : IndS d τ n = IndS d σ n := by
+      simp only [IndS, topv_congr (fun i _ => hd0 i) n le_rfl, topv_congr (fun i _ => hd1 i) n le_rfl]
+    rw [← hI]
+    simp only [IndS, pinsN, SumC]
+
 /-! ## The family -/
 
 /-- The scalar copy `n` adds: `∏_{i<n} d ^ -(n - i + 1)`. -/
