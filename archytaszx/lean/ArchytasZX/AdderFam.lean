@@ -28,6 +28,10 @@ takes carry-in `e (k + 1)` and gives carry-out `e k`.
   the same with copy `n` joining labels of every earlier level through `cut n`.
 * `telescope_off`: `telescope` with root orders `d ^ (k + r + 1)`, end terms at `d ^ r` and
   `d ^ (n + r)`.
+* `cell`, `carrySum`, `carrySum_closed`: the carry chain summed over its inner carries is
+  `[digVal x + e_in = e_out d ^ n + digVal x']`.
+* `om_pow_up`, `phase_digVal`, `telescope_value`, `carrySum_phase`: the copy phases read the
+  chain value, so the chain sum moves the phases of `x`, `e_in` to those of `x'`, `e_out`.
 -/
 
 namespace ArchytasZX
@@ -382,5 +386,119 @@ theorem telescope_off (d n y r : ℕ) (hd : 0 < d) (x x' e : ℕ → ℕ)
       ← pow_add, ← mul_add, h, mul_add, pow_add, om_tower_mul d (n + r) y _ hd]
     linear_combination om (d ^ (n + r + 1)) ^ (y * x' n) *
       ih fun k hk => hc k (Nat.lt_succ_of_lt hk)
+
+/-! ## The carry chain in closed form -/
+
+/-- The cell `[x + e_in = x' + d e_out]`. -/
+def cell (d x ein x' eout : ℕ) : ℂ := if x + ein = x' + d * eout then 1 else 0
+
+/-- The carry chain of `n` copies, carry-in `ein` of copy `n - 1`, carry-out `eout` of copy `0`,
+every inner carry summed over `range C`. -/
+noncomputable def carrySum (d C : ℕ) (x x' : ℕ → ℕ) : ℕ → ℕ → ℕ → ℂ
+  | 0, ein, eout => if ein = eout then 1 else 0
+  | n + 1, ein, eout => ∑ c ∈ range C, cell d (x n) ein (x' n) c * carrySum d C x x' n c eout
+
+/-- The carry chain sum is `[digVal x + e_in = e_out d ^ n + digVal x']`. -/
+theorem carrySum_closed (d C : ℕ) (hd : 0 < d) (hC : 2 ≤ C) (x x' : ℕ → ℕ)
+    (hx : ∀ k, x k < d) (hx' : ∀ k, x' k < d) :
+    ∀ n ein eout, ein ≤ d → carrySum d C x x' n ein eout =
+      if digVal d x n + ein = eout * d ^ n + digVal d x' n then 1 else 0 := by
+  intro n
+  induction n with
+  | zero => intro ein eout _; simp [carrySum, digVal]
+  | succ n ih =>
+    intro ein eout hein
+    rw [carrySum, show digVal d x (n + 1) = d * digVal d x n + x n from rfl,
+      show digVal d x' (n + 1) = d * digVal d x' n + x' n from rfl]
+    have hP : eout * d ^ (n + 1) = d * (eout * d ^ n) := by ring
+    rw [hP]
+    have hxn := hx n
+    have hxn' := hx' n
+    by_cases hm : (x n + ein) % d = x' n
+    · set c0 := (x n + ein) / d
+      have hc0 : x n + ein = x' n + d * c0 := by rw [← hm]; exact digit_carry d _ _
+      have hc02 : c0 < 2 := carry_lt_two d _ _ hxn hein
+      have hcell : ∀ c, cell d (x n) ein (x' n) c = if c = c0 then 1 else 0 := by
+        intro c
+        unfold cell
+        congr 1
+        apply propext
+        constructor
+        · intro h
+          exact Nat.eq_of_mul_eq_mul_left hd (by omega)
+        · rintro rfl; exact hc0
+      simp only [hcell, ite_mul, one_mul, zero_mul]
+      have hcC : c0 ∈ range C := Finset.mem_range.2 (by omega)
+      rw [Finset.sum_ite_eq' (range C) c0, ite_eq_left_iff.2 fun h => absurd hcC h, ih c0 eout (by omega)]
+      congr 1
+      apply propext
+      constructor
+      · intro h
+        have h1 := congrArg (d * ·) h
+        simp only [mul_add] at h1
+        linarith
+      · intro h
+        have h1 : d * (digVal d x n + c0) = d * (eout * d ^ n + digVal d x' n) := by
+          rw [mul_add, mul_add]; linarith
+        exact Nat.eq_of_mul_eq_mul_left hd h1
+    · have hcell : ∀ c, cell d (x n) ein (x' n) c = 0 := by
+        intro c
+        unfold cell
+        refine ite_eq_right_iff.2 fun h => absurd ?_ hm
+        rw [h, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt hxn']
+      simp only [hcell, zero_mul, Finset.sum_const_zero]
+      split_ifs with h
+      · exfalso
+        apply hm
+        have h2 : (d * digVal d x n + (x n + ein)) % d =
+            (d * (eout * d ^ n + digVal d x' n) + x' n) % d := by
+          congr 1; rw [mul_add]; linarith
+        rwa [Nat.mul_add_mod, Nat.mul_add_mod, Nat.mod_eq_of_lt hxn'] at h2
+      · rfl
+
+/-- `om (d ^ (n + r)) ^ (c d ^ n) = om (d ^ r) ^ c`. -/
+theorem om_pow_up (d r c : ℕ) (hd : 0 < d) :
+    ∀ n, om (d ^ (n + r)) ^ (c * d ^ n) = om (d ^ r) ^ c := by
+  intro n
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    have h := om_tower_mul d (n + r) 1 (c * d ^ n) hd
+    rw [show n + 1 + r = n + r + 1 by omega, show c * d ^ (n + 1) = 1 * (d * (c * d ^ n)) by ring,
+      h, one_mul, ih]
+
+/-- The copy phases read the value: `∏ om (d^(k+r+1))^(y x k) = om (d^(n+r))^(y digVal x)`. -/
+theorem phase_digVal (d r y : ℕ) (hd : 0 < d) (x : ℕ → ℕ) :
+    ∀ n, ∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x k) =
+      om (d ^ (n + r)) ^ (y * digVal d x n) := by
+  intro n
+  induction n with
+  | zero => simp [digVal]
+  | succ n ih =>
+    rw [prod_range_succ, ih, show digVal d x (n + 1) = d * digVal d x n + x n from rfl,
+      ← om_tower_mul d (n + r) y _ hd, ← pow_add, show n + 1 + r = n + r + 1 by omega]
+    ring_nf
+
+/-- `telescope_off` from the value equation of the chain alone. -/
+theorem telescope_value (d n y r : ℕ) (hd : 0 < d) (x x' : ℕ → ℕ) (ein eout : ℕ)
+    (hv : digVal d x n + ein = eout * d ^ n + digVal d x' n) :
+    (∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x k)) * om (d ^ (n + r)) ^ (y * ein) =
+      om (d ^ r) ^ (y * eout) * ∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x' k) := by
+  rw [phase_digVal d r y hd x n, phase_digVal d r y hd x' n, ← pow_add, ← mul_add, hv, mul_add,
+    pow_add, ← om_pow_up d r (y * eout) hd n]
+  ring_nf
+
+/-- The carry chain sum carries the copy phases of `x` and `e_in` to those of `x'` and
+`e_out`. -/
+theorem carrySum_phase (d C n y r : ℕ) (hd : 0 < d) (hC : 2 ≤ C) (x x' : ℕ → ℕ)
+    (hx : ∀ k, x k < d) (hx' : ∀ k, x' k < d) (ein eout : ℕ) (hein : ein ≤ d) :
+    carrySum d C x x' n ein eout *
+        ((∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x k)) * om (d ^ (n + r)) ^ (y * ein)) =
+      carrySum d C x x' n ein eout *
+        (om (d ^ r) ^ (y * eout) * ∏ k ∈ range n, om (d ^ (k + r + 1)) ^ (y * x' k)) := by
+  rw [carrySum_closed d C hd hC x x' hx hx' n ein eout hein]
+  split_ifs with hv
+  · rw [telescope_value d n y r hd x x' ein eout hv]
+  · simp
 
 end ArchytasZX
