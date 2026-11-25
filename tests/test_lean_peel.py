@@ -732,3 +732,30 @@ def test_lean_refuses_a_peel_whose_copy_slots_moved(tmp_path: object) -> None:
     assert source is not None
     ok, output = check(source, f"{tmp_path}/moved.lean")
     assert not ok and "PeelFlat" in source, output
+
+
+def _plain_repeel() -> kernel.Theorem:
+    """The repeel of PLAIN at ``s + 1`` copies between its first-copy and last-copy peels."""
+    d, _ = _plain_peel()
+    row = next(b for b in d.bang_boxes.values() if b.parent is None and b.links)
+    return kernel.repeel(d, "s", frozenset(), frozenset(), frozenset({row.id}))
+
+
+def test_a_repeel_exports_through_two_peel_proofs() -> None:
+    source = kernel.lean(_plain_repeel(), "main", semantic=True)
+    assert "\naxiom repeel" not in source and "\naxiom peel" not in source
+    assert "((net1 @ArchytasZX.Export.P1.main s)).symm.trans" in source
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_a_repeel_and_refuses_a_wrong_copy_count(tmp_path: object) -> None:
+    source = kernel.lean(_plain_repeel(), "main", semantic=True)
+    ok, output = check(source, f"{tmp_path}/repeel.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    bad = source.replace("ks 0 = ks 1 + 1 → ∀ y", "ks 0 = ks 1 + 2 → ∀ y", 1)
+    assert bad != source
+    ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok

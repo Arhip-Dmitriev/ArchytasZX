@@ -1865,6 +1865,24 @@ class _Lean:
         """A peel step through :meth:`peel_net`."""
         return self.peel_net(t.lhs, t.rhs, binders, self.call(t.lhs), self.call(t.rhs))
 
+    def repeeled(self, t: Theorem, binders: Sequence[str]) -> str | None:
+        """``(pa).symm.trans pb`` for ``pa`` and ``pb`` the :meth:`peel_net` proofs of the
+        source equal to each side; None when either has none."""
+        source = t.inference.data.get("source")
+        from archytaszx.semantics import lean_linked
+
+        if not isinstance(source, Diagram) or source.scalar != t.rhs.scalar:
+            return None
+        if lean_linked.export_peel(source, t.rhs) is None:
+            return None
+        a = self.peel_net(source, t.lhs, binders, self.call(source), self.call(t.lhs))
+        if a is None:
+            return None
+        b = self.peel_net(source, t.rhs, binders, self.call(source), self.call(t.rhs))
+        if b is None:
+            return None
+        return f"({a}).symm.trans ({b})"
+
     def peel_net(
         self, before: Diagram, after: Diagram, binders: Sequence[str], lhs: str, rhs: str
     ) -> str | None:
@@ -2028,6 +2046,10 @@ class _Lean:
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind == "peel" and self.semantic:
             proved = self.peeled(t, binders)
+            if proved is not None:
+                return proved
+        if inf.kind == "repeel" and self.semantic:
+            proved = self.repeeled(t, binders)
             if proved is not None:
                 return proved
         if inf.kind == "identity_slide" and self.semantic:

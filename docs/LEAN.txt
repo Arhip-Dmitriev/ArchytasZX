@@ -927,7 +927,10 @@ read at revT t, its first coordinate counted from the far end), PeelOK Lbr Lkr, 
 (LinkedSplice.lean: PeelFlat with the copy before the box's copies, copyVs0, the kept copies one
 lower, decT, and slots of one first anchor all on the box or all off it); evalL_peel_first
 composes evalL_rev, evalL_peel and evalL_rev, and PeelFirst.fpos_psi gives the flat positions
-through psi0. A slide, namespace <N>.S<i>, writes C, the diagram both identity forms drop to
+through psi0. A repeel (kernel.repeel, two joint peels a and b of one source) exports as
+(pa).symm.trans (pb), pa and pb the peel proofs (net<i> of P<i>.main) of the source equal to a and
+to b, when both peels export (one box, no pair boxes, the forms above); otherwise the axiom
+repeel. A slide, namespace <N>.S<i>, writes C, the diagram both identity forms drop to
 (chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G, and S<i>.main is
 evalG_flatAt: the two digit sums read at the flat positions of their slot data agree.
 
