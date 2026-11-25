@@ -198,6 +198,63 @@ theorem hw0 (n : ℕ) : ∀ w ∈ (D0.famExpand n).wires, lab0 n w.1 = lab0 n w.
     · rw [lab0_cp' (x := 5) (by decide) h1, lab0_pid, Nat.add_comm 1]; simp only [labX, labP, e]
     · rw [lab0_cp' (x := 9) (by decide) h2, lab0_pid, Nat.add_comm 1]; simp only [labX, labP]
 
+theorem pair_split {β : Type} (l : List (ℕ × ℕ)) (f g : ℕ × ℕ → β) :
+    (l.flatMap fun q => [f q, g q]).Perm (l.map f ++ l.map g) := by
+  have e : (l.flatMap fun q => [f q, g q]) = l.flatMap fun q => [f q] ++ [g q] := rfl
+  rw [e, ← flatMap_single f l, ← flatMap_single g l]
+  exact (List.flatMap_append_perm _ _ _).symm
+
+theorem map_shift_perm (n c T : ℕ) (h : ℕ × ℕ → ℕ) (hp : ((FamDiagram.jk n).map h).Perm (range T)) :
+    ((FamDiagram.jk n).map fun q => c + h q).Perm ((range T).map (c + ·)) := by
+  have := hp.map (c + ·)
+  simpa [List.map_map, Function.comp_def] using this
+
+theorem pairP_eq (n : ℕ) : pairP n = (range (tri n)).map (10 * n + ·) ++
+    (range (tri n)).map (10 * n + tri n + ·) ++ (range (tri n)).map (10 * n + 2 * tri n + ·) ++
+    (range (tri n)).map (10 * n + 3 * tri n + ·) := by
+  rw [pairP, show 4 * tri n = tri n + tri n + tri n + tri n by ring, List.range_add, List.range_add,
+    List.range_add]
+  simp only [List.map_append, List.map_map, Function.comp_def, List.append_assoc, two_mul,
+    show 3 * tri n = tri n + tri n + tri n by ring, Nat.add_assoc]
+
+theorem XL_perm (n : ℕ) : (XL n).Perm (frees n ++ chainP n) := by
+  have h1 := flatMap_map_perm (range n) [1, 5, 6] fun m r => 2 * n + 8 * m + r
+  have h2 := flatMap_map_perm (range n) [0, 2, 3, 4, 7] fun m r => 2 * n + 8 * m + r
+  refine List.Perm.trans ?_ (h1.append h2).symm
+  rw [List.perm_iff_count]
+  intro a
+  simp only [XL, List.flatMap_cons, List.flatMap_nil, List.append_nil, List.count_append]
+  omega
+
+theorem int0 (n : ℕ) : ((D0.famExpand n).wires.map (fun w => lab0 n w.1)).Perm (engL n).int := by
+  rw [wlab0]
+  have e0 : (FamDiagram.jk n).map (fun q => a0 n q.2 q.1) =
+      (FamDiagram.jk n).map (fun q => 10 * n + (tri q.2 + q.1)) :=
+    List.map_congr_left fun q _ => by simp only [a0]; ring
+  have e9 : (FamDiagram.jk n).map (fun q => a9 n q.2 q.1) =
+      (FamDiagram.jk n).map (fun q => 10 * n + 3 * tri n + (tri q.2 + q.1)) :=
+    List.map_congr_left fun q _ => by simp only [a9]; ring
+  have q2 : ((FamDiagram.jk n).map (fun q => a2 n q.1 q.2) ++
+      (FamDiagram.jk n).map (fun q => a0 n q.2 q.1)).Perm
+      ((range (tri n)).map (10 * n + tri n + ·) ++ (range (tri n)).map (10 * n + ·)) := by
+    rw [e0]
+    exact (map_shift_perm n (10 * n + tri n) (tri n) _ (i2_perm n)).append
+      (map_shift_perm n (10 * n) (tri n) _ (a0_perm n))
+  have q3 : ((FamDiagram.jk n).map (fun q => a5 n q.1 q.2) ++
+      (FamDiagram.jk n).map (fun q => a9 n q.2 q.1)).Perm
+      ((range (tri n)).map (10 * n + 2 * tri n + ·) ++ (range (tri n)).map (10 * n + 3 * tri n + ·)) := by
+    rw [e9]
+    exact (map_shift_perm n (10 * n + 2 * tri n) (tri n) _ (i2_perm n)).append
+      (map_shift_perm n (10 * n + 3 * tri n) (tri n) _ (a0_perm n))
+  have p2 := (pair_split (FamDiagram.jk n) (fun q => a2 n q.1 q.2) (fun q => a0 n q.2 q.1)).trans q2
+  have p3 := (pair_split (FamDiagram.jk n) (fun q => a5 n q.1 q.2) (fun q => a9 n q.2 q.1)).trans q3
+  refine ((XL_perm n).append (p2.append p3)).trans ?_
+  refine List.Perm.trans ?_ (int_perm n).symm
+  rw [pairP_eq, List.perm_iff_count]
+  intro a
+  simp only [List.count_append]
+  omega
+
 end FamFca
 
 end ArchytasZX
