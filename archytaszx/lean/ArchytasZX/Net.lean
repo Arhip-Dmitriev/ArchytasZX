@@ -206,6 +206,8 @@ noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List 
   | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
   | .ZP _ _ c, d, _, os, is => tP d c (os ++ is)
+  -- Plain `.B`, `.S` and `Bun m .B`, `Bun m .S` are outside this model and give `0`:
+  -- `val` gives the binder and splitter entries, and no exported net bundles them.
   | .Bun m b, d, ph, os, is => ((List.range (E.mult m)).map fun i =>
       tensor E b d ph (copyOuts E b d i os) (copyIns E b d i is)).prod
   | _, _, _, _, _ => 0
