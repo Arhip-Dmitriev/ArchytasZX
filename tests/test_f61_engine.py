@@ -11,6 +11,8 @@ from archytaszx.algebra.pathsum import SQRT2, Cyclo
 from archytaszx.algebra.phase import INDEX
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import Mult
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram
 from archytaszx.rewrite import rules_axioms as R
 from archytaszx.semantics.contract_symbolic import (
     ReplicatedBlock,
@@ -78,6 +80,16 @@ def test_flatten_keeps_pair_factors_on_the_marked_branch() -> None:
     plain = ReplicatedFactor(Mult.concrete(2), Scalar(2), pairs=Scalar(5))
     tensor = SymbolicTensor((), Scalar(1), (ReplicatedBlock(0, ()),), (plain,))
     assert tensor.flatten().entry.to_sympy() == 20
+
+
+def test_diagram_substitute_reaches_box_multiplicities() -> None:
+    diagram = Diagram()
+    node = diagram.add_node(Z_SPIDER, [], [Dim.concrete(2)])
+    box = diagram.add_bang_box(Mult.symbol("n"), node_scope=frozenset({node}))
+    diagram.bind_parameter("n", 3)
+    out = diagram.substitute({"n": 3})
+    assert out.bang_boxes[box].multiplicity == Mult.concrete(3)
+    assert "n" not in out.parameters
 
 
 if __name__ == "__main__":

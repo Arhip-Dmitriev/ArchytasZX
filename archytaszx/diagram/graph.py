@@ -836,7 +836,7 @@ class Diagram:
             name: value for name, value in self._parameters.items() if name not in mapping
         }
         clone._bang_boxes = {
-            box_id: _box_scalar_substituted(box, scalar_mapping)
+            box_id: _box_mult_substituted(_box_scalar_substituted(box, scalar_mapping), mapping)
             for box_id, box in self._bang_boxes.items()
         }
         clone._next_bang_box_id = self._next_bang_box_id
@@ -881,6 +881,24 @@ def _box_scalar_substituted(box: BangBox, mapping: Mapping[str, ScalarSubstitute
 
     typed = cast(Mapping[ScalarSymbolKey, ScalarSubstituteValue], used)
     return replace(box, copy_scalar=scalar.substitute(typed))
+
+
+def _box_mult_substituted(box: BangBox, mapping: Mapping[str, object]) -> BangBox:
+    """``box`` with every non-negative int of ``mapping`` naming a multiplicity symbol
+    substituted into its multiplicity."""
+    used = {
+        k: v
+        for k, v in mapping.items()
+        if k in box.multiplicity.free_symbols
+        and isinstance(v, int)
+        and not isinstance(v, bool)
+        and v >= 0
+    }
+    if not used:
+        return box
+    from dataclasses import replace
+
+    return replace(box, multiplicity=box.multiplicity.substitute(used))
 
 
 IncidentIndex = dict[NodeId, tuple[Wire, ...]]
