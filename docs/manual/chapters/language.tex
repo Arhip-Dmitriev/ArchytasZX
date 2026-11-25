@@ -94,12 +94,12 @@ Constant & Value & Bound \\
 \label{tab:language-bounds}
 \end{table}
 
-Here the bit size of a rational $p/q$ is $\max(\operatorname{bitlen}(p),\operatorname{bitlen}(q))$, and $0$, $1$, and $-1$ count zero bits. When a scalar of a DSL program or a listing is read, the context value \texttt{\_EXTRA\_BITS} is $64N$ for a diagram of $N$ nodes; the numeral bound then grows by $\lfloor 64N\cdot 30103/100000\rfloor$ digits, and the value, product, and power bounds to $2^{16}+64N$ bits. The term-count estimate of an expression is: a sum adds the estimates of its terms; a product multiplies them; a power $b^{e}$ with $t>1$ base terms and rational exponent $e$ gives $\binom{t+k-1}{k}$ with $k=\lfloor|e|\rfloor$, plus one when $e$ is not an integer; every estimate is capped at $4097$.
+Here the bit size of a rational $p/q$ is $\max(\operatorname{bitlen}(p),\operatorname{bitlen}(q))$, and $0$, $1$, and $-1$ count zero bits. When a scalar of a DSL program or a listing is read, the context value \texttt{\_EXTRA\_BITS} is $64N$ for a diagram of $N$ nodes; the numeral bound then grows by $\lfloor 64N\cdot 30103/100000\rfloor$ digits, and the value, product, and power bounds to $2^{16}+64N$ bits. The term-count estimate of an expression is: a sum adds the estimates of its terms; a product multiplies them; a power $b^{e}$ gives the larger of the estimate of $e$ and, with $t$ the estimate of $b$, $\binom{t+k-1}{k}$ when $t>1$ and $e$ is rational, where $k=\lfloor|e|\rfloor$ plus one when $e$ is not an integer, else $t$; any other compound node gives the largest estimate of its arguments, and an atom $1$; every estimate is capped at $4097$.
 
 \begin{signature}
 \py!lifted_bounds() -> ContextManager[None]!
 \end{signature}
-Inside a \py!with lifted_bounds():! block, the numeral digit bounds, the leg-count bounds, the range-length bound, the rational, product, and power bounds are lifted. The depth bound, the term bounds, and the per-parse leg bound \texttt{\_MAX\_EXPANDED\_LEGS} stay. The block sets a context variable, so it applies to the current thread or task only.
+Inside a \py!with lifted_bounds():! block, the numeral digit bounds, the leg-count bounds (the DSL count \code!m -> n! included), the range-length bound, and the rational, product, power, and root bounds are lifted. The depth bound, the term bounds, and the bound on the legs one Dirac parse expands stay. The block sets a context variable, so it applies to the current thread or task only.
 
 \subsection{Abstraction on entry}\label{sec:language-abstraction}
 
@@ -266,7 +266,7 @@ A \code!Zp! node (the pair-phase generator, exactly two ports of any sides) take
 
 The \term{default dimension} is the first name bound by a \code!dim! statement, or \code!d! when there is none. The default is the dimension symbol of that name, never abstracted.
 
-The phase suffix sets the node's phase vector (\cref{ch:algebra}). Its dimension is, in order: the bracketed dimension after \code!phase!; the bracketed dimension after \code!weight!; the dimension of the \code!m -> n, D! form or the shorthand form; the dimension of the node's first input, else its first output. A node with no ports and no bracketed dimension raises \code!ParseDomainError("node 'X' has no legs; its phase needs 'phase[D]'")!. The suffix \code!phase 0! is the zero vector. Each entry is \code!i: expr! for an integer index $i$ (at most 18 digits), or \code!x: expr! for an identifier $x$, the \term{rule} of the vector: \code!expr! with $x$ standing for the index symbol \py!INDEX!, giving the value at every index. At most one rule appears, and no index twice. A phase entry written as a plain integer or \code!p/q! with at most 30 digits each and $q\ne0$ is read directly; any other entry through the phase role. Weight entries are read through the scalar role. A \code!Zp! node instead takes the \term{pair phase} \code!phase{x, y: EXPR}!: two distinct identifiers and one phase expression in which $x$ stands for the index symbol \py!INDEX! of the node's first port and $y$ for \py!INDEX2! of its second (outputs before inputs); the value is \py!PairPhase(port1, port2, turns)! (\cref{ch:algebra}). Any other suffix, or a node without exactly two ports, raises \code!a Zp node takes two legs and 'phase{x, y: EXPR}', got 'TEXT'!; the same name twice raises \code!pair phase names 'x' twice!. For every other generator the vector is \py!PhaseVector(D, entries, rule, expand=E)!, with the weights when a weight suffix is present, where \code!E! is false exactly when $D$ is concrete and above $2^{16}$.
+The phase suffix sets the node's phase vector (\cref{ch:algebra}). Its dimension is, in order: the bracketed dimension after \code!phase!; the bracketed dimension after \code!weight!; the dimension of the \code!m -> n, D! form or the shorthand form; the dimension of the node's first input, else its first output. A node with no ports and no bracketed dimension raises \code!ParseDomainError("node 'X' has no legs; its phase needs 'phase[D]'")!. The suffix \code!phase 0! is the zero vector. Each entry is \code!i: expr! for an integer index $i$ (at most 18 digits), or \code!x: expr! for an identifier $x$, the \term{rule} of the vector: \code!expr! with $x$ standing for the index symbol \py!INDEX!, giving the value at every index. At most one rule appears, and no index twice. A phase entry written as a plain integer or \code!p/q! with at most 30 digits each and $q\ne0$ is read directly; any other entry through the phase role. Weight entries are read through the scalar role. A \code!Zp! node instead takes the \term{pair phase} \code!phase{x, y: EXPR}!: two distinct identifiers and one phase expression in which $x$ stands for the index symbol \py!INDEX! of the node's first port and $y$ for \py!INDEX2! of its second (outputs before inputs); the value is \py!PairPhase(D1, D2, turns)! over the dimensions $D_1$, $D_2$ of those two ports (\cref{ch:algebra}). Any other suffix, or a node without exactly two ports, raises \code!a Zp node takes two legs and 'phase{x, y: EXPR}', got 'TEXT'!; the same name twice raises \code!pair phase names 'x' twice!. For every other generator the vector is \py!PhaseVector(D, entries, rule, expand=E)!, with the weights when a weight suffix is present, where \code!E! is false exactly when $D$ is concrete and above $2^{16}$.
 
 \subsection{Wires and chains}\label{sec:language-dsl-wires}
 
@@ -990,7 +990,7 @@ The outcome succeeds exactly for \texttt{EQUAL}.
 \begin{enumerate}
 \item the Dirac outcome, with \code+!=+ for \texttt{UNEQUAL}, \code+!=?+ for \texttt{UNEQUAL\_UNCERTIFIED}, \code+?=+ otherwise;
 \item for \texttt{UNEQUAL}: the refutation at the counterexample (the original-symbol counterexample of a restricted decision) becomes the latest proof, and the disproof line follows; for \texttt{UNEQUAL\_UNCERTIFIED}: the disproof line without a refutation; for \texttt{UNKNOWN}: no disproof line, and the reason for no proof is \code!the decide built no certificate: REASON!;
-\item with a counterexample: \code!counterexample: ASSIGNMENT: REASON!, prefixed \code!uncertified ! unless the verdict is \texttt{UNEQUAL}; else, with an induction counterexample: \code!counterexample: n = V with WITNESS: REASON!; else, unless the method is \texttt{INTERFACE}: the furthest-simplified forms of the proof pair (below) and, when the decision ran saturation, \code!bound: saturation STOP (limits 3 iterations, 128 e-nodes, 1024 applications)!;
+\item with a counterexample: \code!counterexample: ASSIGNMENT: REASON!, prefixed \code!uncertified ! unless the verdict is \texttt{UNEQUAL}; else, with an induction counterexample: \code!counterexample: n = V with WITNESS: REASON!; else, unless the method is \texttt{INTERFACE}: the furthest-simplified forms of the proof pair (below) and, when the decision ran saturation, \code!bound: saturation stop STOP (limits 3 iterations, 128 e-nodes, 1024 applications)!;
 \item for an unrestricted decision, the bound line (below).
 \end{enumerate}
 \end{algorithm}
@@ -1290,7 +1290,7 @@ error in load: lod x
 
 \section{A Worked Session}\label{sec:language-example}
 
-The script \file{examples/copy_induction.azx} proves that an X state copied by a Z spider into $n$ outputs is $n$ X states scaled by $d^{(1-n)/2}$, for every $n$ and $d$:
+The script \file{examples/copy_induction.azx} proves that an X state copied by a Z spider into $n$ outputs is $n$ X states scaled by $d^{(1-n)/2}$, for every $n$ and $d$; without its two comment lines and its last line, \azx!certificate lean copy_induction.lean!, it reads:
 \begin{lstlisting}[style=azx]
 @copies =
     count n
@@ -1332,4 +1332,4 @@ QED  (checked by replay)
 kernel: theorem sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (k1)} |k1>^{n} = ... for all n
   16 inferences; rules: state_copy, port_box_unfusion
 \end{lstlisting}
-(long lines broken and elided here). The proof was found by induction after the bounded search failed; the emitted induction proof re-checks in the proof kernel with 16 inferences that use the rules \code!state_copy! and \code!port_box_unfusion!; \azx!certificate lean FILE! would export it to Lean.
+(long lines broken and elided here). The proof was found by induction after the bounded search failed; the emitted induction proof re-checks in the proof kernel with 16 inferences that use the rules \code!state_copy! and \code!port_box_unfusion!; the script's last line exports it to Lean as \file{copy_induction.lean}.
