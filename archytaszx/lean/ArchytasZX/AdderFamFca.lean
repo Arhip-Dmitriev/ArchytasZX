@@ -1482,6 +1482,191 @@ theorem fam_of_arith_24 (d : ℕ) (hd : 0 < d) (h : Arith d) :
     Equal (envAt (E0 d) L 24) (lhs 24).1 (lhs 24).2 (rhs d 24).1 (rhs d 24).2 :=
   fam_of_arith d hd h 24
 
+/-! ## The arithmetic of copy `n`'s Fourier sum -/
+
+/-- The value of the first `m` digits at slot `s`, least significant first. -/
+def dv (d : ℕ) (σ : ℕ → ℕ) (s m : ℕ) : ℕ := ∑ i ∈ Finset.range m, σ (sl i s) * d ^ i
+
+theorem topv_sum (d : ℕ) (σ : ℕ → ℕ) (n s : ℕ) :
+    ∀ t ≤ n, topv d σ n s t = ∑ j ∈ Finset.range t, σ (sl (n - t + j) s) * d ^ j
+  | 0, _ => by simp [topv]
+  | t + 1, ht => by
+    rw [topv, topv_sum d σ n s t (by omega), Finset.sum_range_succ', Finset.sum_mul,
+      show n - 1 - t = n - (t + 1) + 0 by omega, pow_zero, mul_one]
+    congr 1
+    refine Finset.sum_congr rfl fun j _ => ?_
+    rw [show n - (t + 1) + (j + 1) = n - t + j by omega, pow_succ, mul_assoc]
+
+theorem topv_dv (d : ℕ) (σ : ℕ → ℕ) (n s : ℕ) : topv d σ n s n = dv d σ s n := by
+  rw [topv_sum d σ n s n le_rfl, dv]
+  simp only [Nat.sub_self, zero_add]
+
+theorem dv_succ (d : ℕ) (σ : ℕ → ℕ) (s n : ℕ) :
+    dv d σ s (n + 1) = dv d σ s n + σ (sl n s) * d ^ n :=
+  Finset.sum_range_succ _ _
+
+theorem lprod_range (f : ℕ → ℂ) : ∀ n, ((List.range n).map f).prod = ∏ i ∈ Finset.range n, f i
+  | 0 => by simp
+  | n + 1 => by
+    rw [List.range_succ, List.map_append, List.prod_append, lprod_range f n,
+      Finset.prod_range_succ]
+    simp
+
+theorem om_lift (d : ℕ) (hd : 0 < d) {n i D : ℕ} (hi : i ≤ n) (hD : D = d ^ (n - i + 1)) :
+    om D = om (d ^ (n + 1)) ^ (d ^ i) := by
+  have h := om_pow_up d (n - i + 1) 1 hd i
+  rw [show i + (n - i + 1) = n + 1 by omega, one_mul, pow_one] at h
+  rw [hD, h]
+
+theorem fou_lift (d : ℕ) (hd : 0 < d) {n i D : ℕ} (hi : i ≤ n) (hD : D = d ^ (n - i + 1))
+    (x a : ℕ) : fou D x a = om (d ^ (n + 1)) ^ (x * (a * d ^ i)) / rt D := by
+  unfold fou
+  rw [om_lift d hd hi hD, ← pow_mul, show d ^ i * (x * a) = x * (a * d ^ i) by ring]
+
+theorem fou_neg_lift (d : ℕ) (hd : 0 < d) {n i D : ℕ} (hi : i ≤ n) (hD : D = d ^ (n - i + 1))
+    (x b : ℕ) :
+    fou D x ((D - b % D) % D) = (om (d ^ (n + 1)))⁻¹ ^ (x * (b * d ^ i)) / rt D := by
+  have hD0 : 0 < D := hD ▸ pow_pos hd _
+  have hr := Nat.mod_lt b hD0
+  have hb := Nat.mod_add_div b D
+  have key : D ∣ (D - b % D) % D + b := by
+    rcases Nat.eq_zero_or_pos (b % D) with h0 | h0
+    · rw [h0, Nat.sub_zero, Nat.mod_self, zero_add]; exact Nat.dvd_of_mod_eq_zero h0
+    · rw [Nat.mod_eq_of_lt (by omega : D - b % D < D)]
+      refine ⟨1 + b / D, ?_⟩
+      rw [mul_add, mul_one]
+      generalize b % D = r at *
+      generalize D * (b / D) = P at *
+      omega
+  have h1 : om D ^ (x * ((D - b % D) % D)) * om D ^ (x * b) = 1 := by
+    rw [← pow_add, ← mul_add, om_pow_mod D hD0,
+      Nat.mod_eq_zero_of_dvd (Dvd.dvd.mul_left key x), pow_zero]
+  unfold fou
+  rw [eq_inv_of_mul_eq_one_left h1, om_lift d hd hi hD, ← pow_mul, inv_pow,
+    show d ^ i * (x * b) = x * (b * d ^ i) by ring]
+
+theorem ex_lift (d : ℕ) (n x : ℕ) :
+    ex (phase d (2 * n + 1) x) = om (d ^ (n + 1)) ^ (2 * x) := by
+  rw [om_eq_ex]
+  congr 1
+  unfold phase
+  rw [if_neg (by omega), if_pos (by omega), show (2 * n + 1) / 2 + 1 = n + 1 by omega]
+  push_cast
+  ring
+
+theorem rt_inv_sq (D : ℕ) : (rt D)⁻¹ * (rt D)⁻¹ = ((D : ℂ))⁻¹ := by rw [← mul_inv, rt_sq]
+
+theorem pairsF_lift (d : ℕ) (hd : 0 < d) (n : ℕ) (σ : ℕ → ℕ) (x : ℕ) :
+    pairsF d n (tauG n σ) x = cs d n *
+      (om (d ^ (n + 1)) ^ (x * dv d σ 0 n) * (om (d ^ (n + 1)))⁻¹ ^ (x * dv d σ 1 n)) := by
+  have hf : ∀ i ∈ Finset.range n, fou (pD d n i) x (tauG n σ (pend n i)) *
+      fou (pD d n i) x ((pD d n i - tauG n σ (pendO n i) % pD d n i) % pD d n i) =
+      ((d : ℂ) ^ (n - i + 1))⁻¹ * (om (d ^ (n + 1)) ^ (x * (σ (sl i 0) * d ^ i)) *
+        (om (d ^ (n + 1)))⁻¹ ^ (x * (σ (sl i 1) * d ^ i))) := by
+    intro i hi
+    have hi := Finset.mem_range.1 hi
+    rw [tauG_pend hi, tauG_pendO hi, fou_lift d hd (D := pD d n i) hi.le rfl,
+      fou_neg_lift d hd (D := pD d n i) hi.le rfl]
+    have : ((d : ℂ) ^ (n - i + 1))⁻¹ = (rt (pD d n i))⁻¹ * (rt (pD d n i))⁻¹ := by
+      rw [rt_inv_sq, pD]; push_cast; rfl
+    rw [this]
+    ring
+  rw [pairsF, lprod_range, Finset.prod_congr rfl hf, cs, lprod_range, Finset.prod_mul_distrib,
+    Finset.prod_mul_distrib, Finset.prod_pow_eq_pow_sum, Finset.prod_pow_eq_pow_sum, dv, dv,
+    Finset.mul_sum, Finset.mul_sum]
+
+theorem sumC_lift (d : ℕ) (hd : 0 < d) (n : ℕ) (σ : ℕ → ℕ) :
+    SumC d n (tauG n σ) = ((d : ℂ)⁻¹ * cs d n) * ∑ x ∈ Finset.range d,
+      (om (d ^ (n + 1)) ^ (dv d σ 0 (n + 1) + 2) *
+        (om (d ^ (n + 1)))⁻¹ ^ dv d σ 1 (n + 1)) ^ x := by
+  rw [SumC, Finset.mul_sum]
+  refine Finset.sum_congr rfl fun x _ => ?_
+  have h0 : tauG n σ (sl n 0) = σ (sl n 0) := tauG_off (dig_notin_cut (by norm_num))
+  have h1 : tauG n σ (sl n 1) = σ (sl n 1) := tauG_off (dig_notin_cut (by norm_num))
+  have hdn : d = d ^ (n - n + 1) := by simp
+  have hc : (starRingEnd ℂ) (fou d (σ (sl n 1)) x) =
+      (om (d ^ (n + 1)))⁻¹ ^ (x * (σ (sl n 1) * d ^ n)) / rt d := by
+    unfold fou
+    rw [map_div₀, map_pow, conj_om, Complex.conj_ofReal, om_lift d hd le_rfl hdn, ← inv_pow,
+      ← pow_mul, show d ^ n * (σ (sl n 1) * x) = x * (σ (sl n 1) * d ^ n) by ring]
+  rw [h0, h1, hc, fou_lift d hd le_rfl hdn, ex_lift, pairsF_lift d hd, dv_succ, dv_succ,
+    mul_pow, ← pow_mul, ← pow_mul,
+    show (dv d σ 0 n + σ (sl n 0) * d ^ n + 2) * x =
+      x * (σ (sl n 0) * d ^ n) + 2 * x + x * dv d σ 0 n by ring,
+    show (dv d σ 1 n + σ (sl n 1) * d ^ n) * x =
+      x * (σ (sl n 1) * d ^ n) + x * dv d σ 1 n by ring,
+    pow_add, pow_add, pow_add, ← rt_inv_sq d]
+  ring
+
+theorem geom_lift (d : ℕ) (hd : 0 < d) (n P Q : ℕ) (h : P % d ^ n = Q % d ^ n) :
+    ∑ x ∈ Finset.range d, (om (d ^ (n + 1)) ^ P * (om (d ^ (n + 1)))⁻¹ ^ Q) ^ x =
+      if P % d ^ (n + 1) = Q % d ^ (n + 1) then (d : ℂ) else 0 := by
+  have hw : om (d ^ (n + 1)) ≠ 0 := om_ne_zero _ (pow_pos hd _)
+  have hwd : om (d ^ (n + 1)) ^ (d ^ n) = om d :=
+    (om_lift d hd (le_refl n) (D := d) (by simp)).symm
+  have eP : P = Q % d ^ n + d ^ n * (P / d ^ n) := by rw [← h]; exact (Nat.mod_add_div P _).symm
+  have eQ : Q = Q % d ^ n + d ^ n * (Q / d ^ n) := (Nat.mod_add_div Q _).symm
+  have key : ∀ r p q : ℕ, om (d ^ (n + 1)) ^ (r + d ^ n * p) *
+      (om (d ^ (n + 1)))⁻¹ ^ (r + d ^ n * q) = om d ^ p * (om d)⁻¹ ^ q := by
+    intro r p q
+    rw [pow_add (om (d ^ (n + 1))), pow_add (om (d ^ (n + 1)))⁻¹, pow_mul (om (d ^ (n + 1))),
+      pow_mul (om (d ^ (n + 1)))⁻¹, inv_pow (om (d ^ (n + 1))) (d ^ n), hwd,
+      inv_pow (om (d ^ (n + 1))) r]
+    have hr := mul_inv_cancel₀ (pow_ne_zero r hw)
+    calc _ = (om (d ^ (n + 1)) ^ r * (om (d ^ (n + 1)) ^ r)⁻¹) * (om d ^ p * (om d)⁻¹ ^ q) := by
+          ring
+      _ = _ := by rw [hr, one_mul]
+  have hu := key (Q % d ^ n) (P / d ^ n) (Q / d ^ n)
+  rw [← eP, ← eQ] at hu
+  rw [hu, ← conj_om]
+  have hs : ∀ x ∈ Finset.range d, (om d ^ (P / d ^ n) * (starRingEnd ℂ) (om d) ^ (Q / d ^ n)) ^ x
+      = om d ^ (x * (P / d ^ n)) * (starRingEnd ℂ) (om d) ^ (x * (Q / d ^ n)) := fun x _ => by
+    rw [mul_pow, ← pow_mul, ← pow_mul, mul_comm (P / d ^ n), mul_comm (Q / d ^ n)]
+  rw [Finset.sum_congr rfl hs, char_sum d hd]
+  have hpos : 0 < d ^ n := pow_pos hd _
+  have hiff : P / d ^ n % d = Q / d ^ n % d ↔ P % d ^ (n + 1) = Q % d ^ (n + 1) := by
+    rw [pow_succ, Nat.mod_mul, Nat.mod_mul, h]
+    constructor
+    · intro e; rw [e]
+    · intro e; exact Nat.eq_of_mul_eq_mul_left hpos (Nat.add_left_cancel e)
+  by_cases e : P / d ^ n % d = Q / d ^ n % d
+  · rw [if_pos e, if_pos (hiff.1 e)]
+  · rw [if_neg e, if_neg (fun e' => e (hiff.2 e'))]
+
+/-- The Fourier-sum arithmetic of copy `n` for every `n`. -/
+theorem arith (d : ℕ) (hd : 0 < d) : Arith d := by
+  intro n σ _ _
+  rw [sumC_lift d hd]
+  simp only [IndS, topv_dv]
+  have hP : (dv d σ 0 (n + 1) + 2) % d ^ n = (dv d σ 0 n + 2) % d ^ n := by
+    rw [dv_succ, show dv d σ 0 n + σ (sl n 0) * d ^ n + 2 = dv d σ 0 n + 2 + σ (sl n 0) * d ^ n
+      by ring, Nat.add_mul_mod_self_right]
+  have hQ : dv d σ 1 (n + 1) % d ^ n = dv d σ 1 n % d ^ n := by
+    rw [dv_succ, Nat.add_mul_mod_self_right]
+  have hdv : d ^ n ∣ d ^ (n + 1) := pow_dvd_pow d (Nat.le_succ n)
+  have hd0 : (d : ℂ) ≠ 0 := by exact_mod_cast hd.ne'
+  by_cases h : dv d σ 1 n % d ^ n = (dv d σ 0 n + 2) % d ^ n
+  · rw [if_pos h, geom_lift d hd n _ _ (by rw [hP, hQ, h])]
+    by_cases h2 : (dv d σ 0 (n + 1) + 2) % d ^ (n + 1) = dv d σ 1 (n + 1) % d ^ (n + 1)
+    · rw [if_pos h2, if_pos h2.symm]; field_simp
+    · rw [if_neg h2, if_neg (fun e => h2 e.symm)]; simp
+  · rw [if_neg h, if_neg]
+    · simp
+    · intro e
+      apply h
+      rw [← hP, ← hQ, ← Nat.mod_mod_of_dvd _ hdv, e, Nat.mod_mod_of_dvd _ hdv]
+
+/-- The boxed adder equals the spec at every `n`. -/
+theorem fam (d : ℕ) (hd : 0 < d) (n : ℕ) :
+    Equal (envAt (E0 d) L n) (lhs n).1 (lhs n).2 (rhs d n).1 (rhs d n).2 :=
+  fam_of_arith d hd (arith d hd) n
+
+theorem fam_8 (d : ℕ) (hd : 0 < d) :
+    Equal (envAt (E0 d) L 8) (lhs 8).1 (lhs 8).2 (rhs d 8).1 (rhs d 8).2 := fam d hd 8
+
+theorem fam_24 (d : ℕ) (hd : 0 < d) :
+    Equal (envAt (E0 d) L 24) (lhs 24).1 (lhs 24).2 (rhs d 24).1 (rhs d 24).2 := fam d hd 24
+
 end Fca
 
 end ArchytasZX
