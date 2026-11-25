@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """Parametric induction: the hypothesis taken at a substituted phase parameter, and a phase
-constant generalised to a parameter (PROOFS.txt 4.4)."""
+constant generalised to a parameter (docs/manual, kernel chapter)."""
 
 from __future__ import annotations
 

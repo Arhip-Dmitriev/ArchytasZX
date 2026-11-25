@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run outcomes, stages and cause codes (BENCHMARKS.txt, section 10.6), and the classifier that
+"""Run outcomes, stages and cause codes (docs/manual, benchmark chapter), and the classifier that
 gives every run record its ``outcome``, ``stage``, ``cause`` and ``cause_message``.
 
 :func:`classify` reads only a record's fields, so it applies to new records (the runner) and to

@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """The Cooley-Tukey lemma: the shift by one over s*t between B(s, t) and S(s, t) in digit-wise
-form (PROOFS.txt 4.4)."""
+form (docs/manual, kernel chapter)."""
 
 from __future__ import annotations
 

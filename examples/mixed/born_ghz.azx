@@ -3,7 +3,7 @@
 # others give (they are discarded). The probability is the closed mixed diagram's CPM scalar;
 # the target is the trace of |0><0| / d. Over the qudit count n, induct proves it for every n
 # at d = 3, the step by symbolic contraction, with no re-checkable certificate
-# (docs/MIXED.txt, section 8).
+# (docs/manual, mixed-states chapter).
 
 @p =
   x = X(0 -> 1)

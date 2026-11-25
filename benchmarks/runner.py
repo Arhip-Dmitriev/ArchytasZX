@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The runner (BENCHMARKS.txt, section 10): every (equation, tool) unit through the symbolic
+"""The runner (docs/manual, benchmark chapter): every (equation, tool) unit through the symbolic
 run, the phase 1 ladder and phase 2 fill, each run a fresh worker process under a memory cap,
 each finished run appended to this worker's log before the next starts.
 
@@ -400,7 +400,7 @@ def _sampled(key: str, share: float) -> bool:
 
 
 class UnitRun:
-    """The schedule of one unit (BENCHMARKS.txt, sections 5 and 9)."""
+    """The schedule of one unit (docs/manual, benchmark chapter)."""
 
     def __init__(self, unit: Unit, inst: Any, ctx: Context) -> None:
         self.unit, self.inst, self.ctx = unit, inst, ctx

@@ -12,7 +12,7 @@ import ArchytasZX.Cyclo
 # The generators of [P1] and [P2] in their papers' conventions
 
 Each generator's entry as the paper defines it, and its equality with the tensor of the
-ArchytasZX generator it maps to, with the scalar of docs/COMPLETENESS.txt, section 2, for
+ArchytasZX generator it maps to, with the scalar of docs/manual, completeness chapter, for
 every dimension `d`. Leg values are read below `d`.
 
 [P1] B. Poór et al., Completeness for arbitrary finite dimensions of ZXW-calculus (LICS 2023).

@@ -13,7 +13,7 @@
 
 """Tests of the benchmark suite, ``python -m tests._bench_suite_script [false] [schedule]
 [rivals] [stats] [resume] [trace] [--jobs J]`` (all when none is named; default 2 workers,
-each capped at 6 GiB of address space; BENCHMARKS.txt, section 13):
+each capped at 6 GiB of address space; docs/manual, benchmark chapter):
 
 - false: every F record differs at its stored witness and is equal wherever its break kind
   says; the boxed beyond_N gadget equals its closed form at N = 1, 2, 3 (its equal-where check:

@@ -11,8 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The false set F: one break per S equation, applied to the circuit IR (BENCHMARKS.txt,
-section 4).
+"""The false set F: one break per S equation, applied to the circuit IR (docs/manual,
+"The Benchmark Suite").
 
 A break kind lists the edits it tries on an equation (``variants``), each with the points
 where it should differ (``probe``) and the record of where it stays equal (``equal_where``).

@@ -14,7 +14,7 @@
 """The axioms of [P1] and [P2] as template rules, with the definitional and structural rules
 that translate between their generators and the engine's.
 
-Conventions (docs/COMPLETENESS.txt, section 2): H is F, H^dagger is F^3, D is F^2, a pink
+Conventions (docs/manual, completeness chapter): H is F, H^dagger is F^3, D is F^2, a pink
 K_j spider is an X spider with phase vector K_j in [P1]'s normalisation (``pink=True``), a
 Z box is a Z spider whose parameter is a weighted :class:`~archytaszx.algebra.phase.PhaseVector`.
 A W transpose is a W node whose legs are bent; a cap or cup is a wire.
@@ -2685,7 +2685,7 @@ QF_S1 = TemplateAxiom(
 )
 
 
-# -- the older rules (RULES.txt 2.1-2.28) as templates, for their converses -------------------
+# -- the older rules as templates, for their converses -------------------
 
 
 def _x(t: TB, ins: int, outs: int, param: Param = PHASELESS, key: str | None = None) -> str:
@@ -2708,28 +2708,28 @@ FOURIER_ORDER = TemplateAxiom(
     "fourier_cancellation",
     fixed_side(_chain_side([FOURIER_BOX] * 4)),
     fixed_side(_bare),
-    description="F^4 is the identity (RULES.txt 2.3).",
+    description="F^4 is the identity.",
 )
 
 TRIANGLE_CANCEL = TemplateAxiom(
     "triangle_inverse_cancellation",
     fixed_side(_chain_side([TRIANGLE, TRIANGLE_INVERSE])),
     fixed_side(_bare),
-    description="T followed by Ti is the identity (RULES.txt 2.6).",
+    description="T followed by Ti is the identity.",
 )
 
 TRIANGLE_CANCEL_SWAPPED = TemplateAxiom(
     "triangle_inverse_cancellation_ti_t",
     fixed_side(_chain_side([TRIANGLE_INVERSE, TRIANGLE])),
     fixed_side(_bare),
-    description="Ti followed by T is the identity (RULES.txt 2.6).",
+    description="Ti followed by T is the identity.",
 )
 
 W_IDENTITY_T = TemplateAxiom(
     "w_identity",
     fixed_side(_chain_side([W_NODE])),
     fixed_side(_bare),
-    description="A W node with one output is the identity (RULES.txt 2.17).",
+    description="A W node with one output is the identity.",
 )
 
 
@@ -2749,7 +2749,7 @@ ZX_CAP_T = TemplateAxiom(
     fixed_side(_cap_left(Z_SPIDER, X_SPIDER)),
     fixed_side(_empty),
     scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
-    description="A plain Z state into a plain X effect is sqrt(d) (RULES.txt 2.4).",
+    description="A plain Z state into a plain X effect is sqrt(d).",
 )
 
 ZX_CAP_SWAPPED_T = TemplateAxiom(
@@ -2757,7 +2757,7 @@ ZX_CAP_SWAPPED_T = TemplateAxiom(
     fixed_side(_cap_left(X_SPIDER, Z_SPIDER)),
     fixed_side(_empty),
     scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
-    description="A plain X state into a plain Z effect is sqrt(d) (RULES.txt 2.11).",
+    description="A plain X state into a plain Z effect is sqrt(d).",
 )
 
 
@@ -2821,22 +2821,19 @@ STATE_COPY_T = _copy_axiom(
     "state_copy",
     X_SPIDER,
     Z_SPIDER,
-    "A plain X state into a plain Z spider (1 -> n) is n plain X states, times d^((1-n)/2) "
-    "(RULES.txt 2.7).",
+    "A plain X state into a plain Z spider (1 -> n) is n plain X states, times d^((1-n)/2).",
 )
 STATE_COPY_SWAPPED_T = _copy_axiom(
     "state_copy_swapped",
     Z_SPIDER,
     X_SPIDER,
-    "A plain Z state into a plain X spider (1 -> n) is n plain Z states, times d^((1-n)/2) "
-    "(RULES.txt 2.12).",
+    "A plain Z state into a plain X spider (1 -> n) is n plain Z states, times d^((1-n)/2).",
 )
 W_ZERO_COPY_T = _copy_axiom(
     "w_zero_copy",
     X_SPIDER,
     W_NODE,
-    "A plain X state into a W node (1 -> n) is n plain X states, times d^((1-n)/2) "
-    "(RULES.txt 2.18).",
+    "A plain X state into a W node (1 -> n) is n plain X states, times d^((1-n)/2).",
 )
 
 
@@ -2876,10 +2873,7 @@ def _color_axiom(
         name,
         fixed_side(left),
         fixed_side(right),
-        description=(
-            f"F on a plain {first.name} {what} is the plain {second.name} {what} "
-            "(RULES.txt 2.10, 2.15)."
-        ),
+        description=(f"F on a plain {first.name} {what} is the plain {second.name} {what}."),
     )
 
 
@@ -2909,7 +2903,7 @@ def _tri_state(gen: GeneratorType) -> TemplateAxiom:
         f"triangle_zero_state_{gen.name.lower()}",
         fixed_side(left),
         fixed_side(right),
-        description=f"{gen.name} fixes the plain X state (RULES.txt 2.19).",
+        description=f"{gen.name} fixes the plain X state.",
     )
 
 
@@ -2933,7 +2927,7 @@ TRIANGLE_ZERO_EFFECT_T = TemplateAxiom(
     fixed_side(_tri_effect_left),
     fixed_side(_tri_effect_right),
     scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
-    description="T into a plain X effect is a plain Z effect times sqrt(d) (RULES.txt 2.20).",
+    description="T into a plain X effect is a plain Z effect times sqrt(d).",
 )
 
 
@@ -2982,7 +2976,7 @@ W_Z_EFFECT_T = TemplateAxiom(
     "w_z_effect",
     Side(_w_effect_sides(Z_SPIDER)[0], lambda _d, _n, _dim: ()),
     Side(_w_effect_sides(Z_SPIDER)[1], _w_effect_right_arities),
-    description="A W output on a plain Z effect is T followed by the smaller W (RULES.txt 2.26).",
+    description="A W output on a plain Z effect is T followed by the smaller W.",
     quantifiers=("m",),
 )
 
@@ -2991,7 +2985,7 @@ W_ZERO_EFFECT_T = TemplateAxiom(
     Side(_w_effect_sides(X_SPIDER)[0], lambda _d, _n, _dim: ()),
     Side(_w_effect_sides(X_SPIDER)[1], _w_effect_right_arities),
     scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
-    description="A W output on a plain X effect is the smaller W times sqrt(d) (RULES.txt 2.27).",
+    description="A W output on a plain X effect is the smaller W times sqrt(d).",
     quantifiers=("m",),
 )
 
@@ -3033,7 +3027,7 @@ def _hopf_axiom(name: str, swapped: bool) -> TemplateAxiom:
         scalar=lambda dim, _b: Scalar.dim_power(dim, -1, 1),
         description=(
             "A Z and an X spider joined by a plain wire and a wire through F^2 fall apart, "
-            "times 1/d (RULES.txt 2.8, 2.13)."
+            "times 1/d."
         ),
     )
 
@@ -3070,9 +3064,7 @@ BIALGEBRA_SWAPPED_T = TemplateAxiom(
     fixed_side(_bialg_swapped_left),
     fixed_side(_bialg_swapped_right),
     scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
-    description=(
-        "Z (2 -> 1) into X (1 -> 2) is the crossed bialgebra, times sqrt(d) (RULES.txt 2.14)."
-    ),
+    description=("Z (2 -> 1) into X (1 -> 2) is the crossed bialgebra, times sqrt(d)."),
 )
 
 
@@ -3122,8 +3114,7 @@ WZ_BIALGEBRA_T = TemplateAxiom(
     Side(_wz_sides()[0], lambda _d, _n, _dim: ()),
     Side(_wz_sides()[1], _wz_right_arities),
     description=(
-        "A plain Z (n -> 1) into a W node (1 -> m) is n W nodes crossed into m plain Z spiders "
-        "(RULES.txt 2.25)."
+        "A plain Z (n -> 1) into a W node (1 -> m) is n W nodes crossed into m plain Z spiders."
     ),
     quantifiers=("n", "m"),
 )
@@ -3207,7 +3198,7 @@ X_FUSION_CONVERSE = TemplateAxiom(
     description=(
         "spider_fusion for X spiders read right to left: the X spider c is X spiders a and b "
         "(ab = c) joined by an output of a into an input of b, the legs split by masks; by "
-        "default a = c and b is the plain X spider (RULES.txt 2.1)."
+        "default a = c and b is the plain X spider."
     ),
     quantifiers=("ni", "no", "mi", "mo"),
 )
@@ -3242,7 +3233,7 @@ CONNECTIVE_INVERSE_T = TemplateAxiom(
     Side(_conn_inverse_left, lambda _d, _n, _dim: ()),
     Side(lambda _dim, _a: _bare(), _factor_arities),
     concrete_only=True,
-    description="S taking s t to s and t, both into B, is the identity (RULES.txt 2.21).",
+    description="S taking s t to s and t, both into B, is the identity.",
     quantifiers=("s", "t"),
 )
 
@@ -3289,7 +3280,7 @@ def _conn_states(gen: GeneratorType, effect: bool) -> TemplateAxiom:
         concrete_only=True,
         description=(
             f"Plain {gen.name} {'effects on a splitter' if effect else 'states on a binder'} "
-            f"are one plain {gen.name} {'effect' if effect else 'state'} (RULES.txt 2.23, 2.24)."
+            f"are one plain {gen.name} {'effect' if effect else 'state'}."
         ),
         quantifiers=("s", "t"),
     )

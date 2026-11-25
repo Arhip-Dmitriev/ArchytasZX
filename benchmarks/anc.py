@@ -12,8 +12,8 @@
 # limitations under the License.
 
 """The ancillary-file export: ``python -m benchmarks anc OUT_DIR`` copies the benchmark
-scripts, the subject catalogue, the config, the logs, the aggregates, the plots and
-docs/BENCHMARKS.txt into OUT_DIR."""
+scripts, the subject catalogue, the config, the logs, the aggregates, the plots and the
+manual's two benchmark chapters (docs/manual/chapters/benchmarks-*.tex) into OUT_DIR."""
 
 from __future__ import annotations
 
@@ -41,5 +41,6 @@ def main(cfg: dict[str, Any], out: Path) -> None:
     if plots.exists():
         shutil.copytree(plots, out / "plots", dirs_exist_ok=True)
     (out / "docs").mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "docs" / "BENCHMARKS.txt", out / "docs" / "BENCHMARKS.txt")
+    for name in ("benchmarks-pipeline.tex", "benchmarks-tools.tex"):
+        shutil.copy2(ROOT / "docs" / "manual" / "chapters" / name, out / "docs" / name)
     print(f"anc -> {out}")

@@ -1,5 +1,5 @@
 # [P1] Lemma 38 (d = 3), derived by rule applications: a W node with one output on the pink
-# dot effect is the identity, here the phaseless Z spider with two legs (COMPLETENESS.txt, 7).
+# dot effect is the identity, here the phaseless Z spider with two legs (docs/manual, completeness chapter).
 
 @rhs =
     z = Z(1 -> 1, literal 3)

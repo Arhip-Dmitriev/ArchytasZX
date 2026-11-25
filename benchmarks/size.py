@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """B3 element counts of a diagram, and the smallest diagram of a decision's derivations
-(BENCHMARKS.txt, section 6, B3).
+(docs/manual, benchmark chapter, B3).
 
 Counted: nodes per generator, node-scope and port-scope boxes and the deepest nesting, phase
 entries (a rule counts once), weight entries, wires, self-loops, boundary inputs and outputs,

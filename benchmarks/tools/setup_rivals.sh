@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 # Builds every rival tool at its pinned version under benchmarks/.venvs/ (or $BENCH_VENVS)
-# (docs/BENCHMARKS.txt, section 11), and the harness extra (.[benchmarks]) into the active
+# (docs/manual, benchmark tools chapter), and the harness extra (.[benchmarks]) into the active
 # Python. Usage:
 # bash benchmarks/tools/setup_rivals.sh [harness|python|dizx|haskell|autoq|quantomatic|coq|all|fetch [TARGET...]]
 # fetch downloads every source, wheel, toolchain and dependency the build targets need and builds

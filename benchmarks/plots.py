@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Plots from results/aggregate (BENCHMARKS.txt, section 12.2): Okabe-Ito hues in fixed order
+"""Plots from results/aggregate (docs/manual, benchmark chapter): Okabe-Ito hues in fixed order
 (yellow and black left out), a marker shape per tool beside its hue, white background, solid
 lines, embedded fonts, 300 dpi PNG and PDF."""
 

@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Whether an F pair differs at a point (BENCHMARKS.txt, sections 4 and 5).
+"""Whether an F pair differs at a point (docs/manual, benchmark chapter).
 
 Decided from the F record's kind and edit parameters by exact integer arithmetic:
 

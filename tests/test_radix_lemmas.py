@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """The radix chain lemmas: pair rows through B and S chains, the top digit split off a chain
-(PROOFS.txt 4.4)."""
+(docs/manual, kernel chapter)."""
 
 from __future__ import annotations
 

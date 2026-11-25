@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The point schedule of one (equation, tool) (BENCHMARKS.txt, section 5).
+"""The point schedule of one (equation, tool) (docs/manual, benchmark chapter).
 
 A point is ``(n, d)``, n None for a subject without a size parameter. Phase 1 is a fixed
 growing ladder, ended by its first failure; phase 2 draws log-uniform points from the region not

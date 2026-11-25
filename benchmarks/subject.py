@@ -116,7 +116,7 @@ class Equation:
 
 @dataclass(frozen=True)
 class Subject:
-    """A subject file's declaration (BENCHMARKS.txt, section 3)."""
+    """A subject file's declaration (docs/manual, benchmark chapter)."""
 
     id: str
     name: str

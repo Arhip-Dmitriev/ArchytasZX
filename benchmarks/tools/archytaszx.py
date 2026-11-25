@@ -11,8 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ArchytasZX adapter: generation of the script, then the four stages of BENCHMARKS.txt
-section 8 in this process, and the B3 counts of a decided run."""
+"""ArchytasZX adapter: generation of the script, then the four stages of a run (docs/manual,
+benchmark chapter) in this process, and the B3 counts of a decided run."""
 
 from __future__ import annotations
 

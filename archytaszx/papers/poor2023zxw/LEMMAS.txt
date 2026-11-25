@@ -12,7 +12,7 @@ Each entry: number (as printed), LaTeX label, statement figure (src/figures/), s
 conditions as stated, proof figure, and the step labels of the proof as the PDF prints them
 above its equality signs: an axiom name, a notation's definition (HZ, Du, Mu, WN, YT, S3, S4,
 H dagger), or the number of an earlier lemma. "encoded" names the engine command file holding
-the lemma at a fixed dimension, run by the corpus run (docs/COMPLETENESS.txt, section 9).
+the lemma at a fixed dimension, run by the corpus run (docs/manual, completeness chapter).
 
 Lemma 7  label kjgalm
     statement figure(s): lemmas/kjga

@@ -692,7 +692,7 @@ def ch_bang3(L: Lesson) -> None:
     tip("""
         "certificate lean FILE" writes the same proof as a Lean 4 file, which the Lean proof
         assistant checks again on its own, so you need not trust the engine at all
-        (docs/LEAN.txt).
+        (docs/manual, the Lean chapters).
     """)
     L.quiz(
         "In an induction over a !-box multiplicity n, what is the base case?",
@@ -741,11 +741,12 @@ def ch_next(L: Lesson) -> None:
           rules [RULE]         the rule list            zxunicode / dirac   switch the view
     """)
     say("""
-        Further reading, in docs/: SHELL.txt and ENGINE_COMMANDS.txt for commands,
-        DIAGRAM.txt for !-boxes, RULES.txt for every rule, PROOFS.txt for decide, prove and
-        induction, PYTHON_API.txt for the Python pieces, and MIXED.txt for discarding and
-        measurement. The examples/ folder holds complete proofs of the qudit Deutsch-Jozsa
-        and Bernstein-Vazirani algorithms for every n and d.
+        Further reading, in the reference manual (docs/manual, build it with latexmk): the
+        shell and input-language chapters for commands, the diagrams chapter for !-boxes, the
+        rule library for every rule, the proof and kernel chapters for decide, prove and
+        induction, the Python chapter for the Python pieces, and the mixed-states chapter for
+        discarding and measurement. The examples/ folder holds complete proofs of the qudit
+        Deutsch-Jozsa and Bernstein-Vazirani algorithms for every n and d.
     """)
     L.pause()
 

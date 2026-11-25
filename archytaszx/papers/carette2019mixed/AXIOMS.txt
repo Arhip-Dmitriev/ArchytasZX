@@ -130,12 +130,12 @@ are two discards.
 
 [CJPV] is stated for qubit languages only. The engine registers, in
 archytaszx/rewrite/rules_discard.py, the equation ground . V = ground for the qudit analogue of
-each element of the ZX spanning set, through the mapping of docs/COMPLETENESS.txt, section 2,
+each element of the ZX spanning set, through the mapping of docs/manual, completeness chapter,
 and for the [P2] connectives:
 
   ZX axiom       engine rule         engine diagram of V
   -------------  ------------------  ----------------------------------------------------
-  ground-phase   (scalar convention) a mixed scalar is compared by modulus (docs/MIXED.txt)
+  ground-phase   (scalar convention) a mixed scalar is compared by modulus (docs/manual, Mixed States)
   ground-ket-0   discard_zero        the pink dot state (X (0 -> 1) times d^(-1/2)), |0>
   ground-H       discard_fourier     F
   ground-gn      discard_spider      Z (1 -> n), n >= 1, phases only (n = 1: R_Z(alpha))
@@ -146,4 +146,4 @@ and for the [P2] connectives:
 
 discard_spider for n >= 2 and discard_loop are consequences of the others; they are
 registered as single steps. Whether the analogues form a spanning set of the qudit and
-qufinite isometries is docs/MIXED.txt, section 6.
+qufinite isometries is in docs/manual, Mixed States.

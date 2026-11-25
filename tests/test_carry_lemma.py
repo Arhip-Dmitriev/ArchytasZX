@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """The telescoping carry lemma U decided for every n and d by induction at the chain's last
-copy (PROOFS.txt 4.4)."""
+copy (docs/manual, kernel chapter)."""
 
 from __future__ import annotations
 

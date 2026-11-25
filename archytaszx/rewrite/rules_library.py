@@ -1800,7 +1800,7 @@ PROMOTED_RULE_NAMES: frozenset[str] = frozenset(
         "qf_s1",
     }
 )
-"""The template rules the automatic layers use (docs/COMPLETENESS.txt, section 8)."""
+"""The template rules the automatic layers use (docs/manual, completeness chapter)."""
 
 
 def fixed_template_scalar(axiom: TemplateAxiom) -> Scalar | None:

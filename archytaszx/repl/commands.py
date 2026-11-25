@@ -702,7 +702,7 @@ def _rule_scalar(rule: Rule) -> str:
         isinstance(rule.pattern, TemplatePattern)
         and fixed_template_scalar(rule.pattern.axiom) is None
     ):
-        return "per match (RULES.txt)"
+        return "per match (docs/manual, The Rule Library)"
     return _expr(rule.scalar_introduced)
 
 
@@ -1625,7 +1625,10 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             sym = None
         if sym is not None:
             blocks.append(
-                Text("lean: the doubled diagrams' equality, which is the CPMs' (MIXED.txt, 2.3)")
+                Text(
+                    "lean: the doubled diagrams' equality, which is the CPMs' "
+                    "(docs/manual, Mixed States)"
+                )
             )
             return _kernel_symbolic(sym, action, path, blocks)
     left, right = _math(theorem.lhs, False), _math(theorem.rhs, False)

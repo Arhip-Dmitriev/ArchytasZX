@@ -1,4 +1,4 @@
-# ArchytasZX benchmark suite, version 2: everything that defines what runs (BENCHMARKS.txt).
+# ArchytasZX benchmark suite, version 2: everything that defines what runs (docs/manual, benchmark chapter).
 # Every value can be overridden with --set key=value (for example --set points.K=4).
 
 [subjects]

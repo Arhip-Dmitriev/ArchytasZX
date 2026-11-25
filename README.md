@@ -7,7 +7,7 @@ rewrites, decisions of equality and proofs that hold for every `n` and every `d`
 [![PyPI](https://img.shields.io/pypi/v/archytaszx.svg)](https://pypi.org/project/archytaszx/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/LICENSE)
-[![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt)
+[![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/docs/manual)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
 
 ArchytasZX is a symbolic engine for the qufinite ZX(W)-calculus. Qudit count, dimension and
@@ -132,8 +132,8 @@ writes n data qudits as `repeat n: X(0 -> 1) -> F^4`.
 Diagrams are loaded in a DSL, in Dirac notation or as a graph listing, then rewritten,
 normalised, decided and proved with commands such as `apply`, `normalize`, `decide`, `prove`,
 `prove exhaustive` and `induct`; `help` lists them all. `--zx`, `--both` and `--raw` switch between Dirac notation
-and ZX drawings. The reference is
-[`docs/ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt).
+and ZX drawings. The reference is the chapter "The Input Language and Engine Commands" of the
+[reference manual](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/docs/manual).
 
 ### From Python
 
@@ -231,28 +231,23 @@ dict(p.parameters)   # {'d': 3, 'n': 29}
 
 ## Documentation
 
-The full reference documentation is in [`docs/`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/docs):
+The reference manual is a LaTeX book in [`docs/manual/`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/docs/manual). Build it with
 
-| Document | Contents |
+```sh
+cd docs/manual && latexmk        # writes archytaszx.pdf
+```
+
+CI builds it on every push. It specifies every data structure, algorithm, input and output
+format, rule, parameter and error of the engine, the Lean library and the benchmark suite:
+
+| Part | Chapters |
 |---|---|
-| [`INDEX.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INDEX.txt) | Index of the documentation, conventions and reading order |
-| [`OVERVIEW.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/OVERVIEW.txt) | What the engine is, its guarantees and its limits |
-| [`INSTALL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INSTALL.txt) | Installation, the Lean library, configuration and environment variables |
-| [`SHELL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SHELL.txt) | The `archytaszx` command: flags, views, shell commands, exit codes |
-| [`ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt) | The engine commands and the diagram input forms |
-| [`PYTHON_API.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PYTHON_API.txt) | The engine import map and a worked example |
-| [`ALGEBRA.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ALGEBRA.txt) | Layer A: dimensions, phases, exact scalars |
-| [`DIAGRAM.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/DIAGRAM.txt) | Layer B: generators, diagrams, bang boxes, scalable notation, validation |
-| [`REWRITE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/REWRITE.txt) | Layer C: rules, matching, strategies, normal form, e-graph, tactics |
-| [`RULES.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/RULES.txt) | Every rewrite rule with its scalar and side conditions |
-| [`MIXED.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/MIXED.txt) | Mixed states: the discard, doubling, purification, channels and the discard rules |
-| [`SEMANTICS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SEMANTICS.txt) | Layer D: denotation, contraction, the oracle |
-| [`PROOFS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PROOFS.txt) | Deciding equality, proof search, induction, certificates, the kernel |
-| [`COMPLETENESS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/COMPLETENESS.txt) | The ZXW axioms as rules, the completeness argument, exhaustive search |
-| [`LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) | The Lean 4 library and the export of proofs and refutations |
-| [`BENCHMARKS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/BENCHMARKS.txt) | The benchmark suite: subjects, false set, points, timing spans, rival tools, outputs |
-| [`ERRORS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ERRORS.txt) | The exception hierarchy of every module |
-| [`GLOSSARY.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/GLOSSARY.txt) | Definitions of the terms used throughout |
+| Using ArchytasZX | Overview; installation and configuration; the command-line shell; the input language and engine commands; the Python interface |
+| Mathematical model and engine | Algebra; diagrams; rewriting; the rule library; mixed states; the complete axiomatization and exhaustive search; semantics; deciding equality and proof search; induction and the proof kernel; pictorial representation |
+| Lean | The library (foundations and rules; !-boxes, families and chains; path sums; linked diagrams and symbolic normalizers); the export of tensor networks; the export of path sums, symbolic sums, inductions and refutations |
+| Benchmarks | The benchmark suite; benchmark tools and rival drivers |
+| Development | Repository layout, tests, code quality, CI, tracing, the manual |
+| Appendices | Engine parameters; rule sets; exceptions; glossary |
 
 ## Formal proofs in Lean
 
@@ -275,8 +270,8 @@ cd archytaszx/lean && lake exe cache get && lake build      # once only
 lake env lean /path/to/proof.lean
 ```
 
-[`docs/LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) has the
-semantics, the trust boundary, the normaliser and the refutation method.
+The Lean part of the [reference manual](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/docs/manual) has the semantics, the trust boundary, the
+normalisers and the refutation methods.
 
 ## Architecture
 

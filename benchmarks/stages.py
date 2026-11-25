@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ArchytasZX stages of one run (BENCHMARKS.txt, section 8), in the calling process.
+"""ArchytasZX stages of one run (docs/manual, benchmark chapter), in the calling process.
 
 decide runs the equation script line by line in one fresh session, as ``archytaszx FILE``
 runs it (concrete axioms on); certificate runs ``certificate kernel``; lean_export runs

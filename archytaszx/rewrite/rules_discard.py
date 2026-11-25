@@ -16,7 +16,7 @@
 [CJPV] (archytaszx/papers/carette2019mixed/AXIOMS.txt) adds to a complete pure language one
 equation ``G . V = G`` per isometry ``V`` of a spanning set, and for the qubit ZX-calculus
 takes the set (e^{i alpha}, |0>, H, R_Z(alpha), CNot). The rules here are those equations for
-the qudit analogues under the mapping of COMPLETENESS.txt, section 2 (H is F, |0> the pink dot
+the qudit analogues under the mapping of docs/manual, completeness chapter (H is F, |0> the pink dot
 state, R_Z(alpha) the Z spider (1 -> 1) with phase alpha, CNot the Z (1 -> 2) and pink (2 -> 1)
 pair), with the Z spider (1 -> n) for n >= 1, the [P2] connectives B and S, the closed
 discard pair, and the derived merge of two discarded legs of one Z spider. The global phase

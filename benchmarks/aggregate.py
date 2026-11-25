@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Aggregates from the logs (BENCHMARKS.txt, section 12.1), written to results/aggregate as CSV
+"""Aggregates from the logs (docs/manual, benchmark chapter), written to results/aggregate as CSV
 and JSON: points, units, counts, causes, breakdown, b3, overhead, calibration, wrong and
 harness_errors.
 
