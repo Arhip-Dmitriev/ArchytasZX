@@ -1469,6 +1469,39 @@ def align_merged(diagram: Diagram, root: BangBoxId) -> Diagram:
     return out
 
 
+def chain_merged(diagram: Diagram, root: BangBoxId) -> Diagram:
+    """:func:`align_merged` of the alignment group of ``root`` with the members' links
+    concatenated in member order on the merged box."""
+    members = aligned_members(diagram, root)
+    links = tuple(link for m in members for link in diagram.bang_boxes[m].links)
+    out = align_merged(diagram, root)
+    out.set_bang_box_extension(root, links=links)
+    return out
+
+
+def chain_splitted(diagram: Diagram, box_id: BangBoxId, parts: list[frozenset[NodeId]]) -> Diagram:
+    """``diagram`` with box ``box_id`` split into aligned boxes over ``parts`` (the first keeps
+    ``box_id`` and its copy scalar), each taking the links whose ports lie in its part,
+    ``groups`` dropped."""
+    box = diagram.bang_boxes[box_id]
+    out = diagram.copy()
+
+    def own(part: frozenset[NodeId]) -> tuple[tuple[PortRef, PortRef], ...]:
+        return tuple((p, q) for p, q in box.links if p.node_id in part and q.node_id in part)
+
+    out.set_bang_box_extension(box_id, node_scope=parts[0], links=own(parts[0]), groups=())
+    for part in parts[1:]:
+        out.add_bang_box(
+            box.multiplicity,
+            node_scope=part,
+            sheets=box.sheets,
+            links=own(part),
+            index=box.index,
+            align=box_id,
+        )
+    return out
+
+
 def _member_wires(
     diagram: Diagram, members: list[BangBoxId]
 ) -> list[tuple[Wire, BangBoxId, BangBoxId]]:

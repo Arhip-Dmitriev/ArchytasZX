@@ -741,6 +741,81 @@ def align_merge(d: Diagram, merged: Diagram) -> Theorem:
     raise KernelError("align_merge: the diagram is no aligned box merge of the other")
 
 
+def _chain_group(d: Diagram, root: BangBoxId) -> list[BangBoxId]:
+    """The alignment group of ``root`` when it may be one chain box: two or more top-level
+    open node-scope boxes without trees, feeds, groups, children or pair boxes, of one
+    multiplicity, index and sheets flag, at least one with links and each link's ports in its
+    own scope, at most one copy scalar, pairwise disjoint scopes that meet no other box."""
+    from archytaszx.diagram.bangbox import aligned_members
+
+    members = aligned_members(d, root)
+    boxes = [d.bang_boxes[m] for m in members]
+    if len(members) < 2 or members[0] != root or boxes[0].align is not None:
+        raise KernelError("chain_split: no alignment group at the box")
+    head = boxes[0]
+    for box in boxes:
+        if (
+            box.parent is not None
+            or not box.node_scope
+            or box.port_scope
+            or box.cyclic
+            or box.tree
+            or box.feed is not None
+            or box.pair_of is not None
+            or box.groups
+            or box.sheets != head.sheets
+            or box.index != head.index
+            or sp.expand(box.multiplicity.to_sympy() - head.multiplicity.to_sympy()) != 0
+        ):
+            raise KernelError("chain_split: the aligned boxes differ in kind, count or index")
+        scope = box.node_scope
+        if any(p.node_id not in scope or q.node_id not in scope for p, q in box.links):
+            raise KernelError("chain_split: a link leaves its box")
+    if not any(box.links for box in boxes):
+        raise KernelError("chain_split: no aligned box is a chain")
+    if sum(box.copy_scalar is not None for box in boxes) > 1:
+        raise KernelError("chain_split: two aligned boxes carry copy scalars")
+    seen: set[NodeId] = set()
+    for box in boxes:
+        if seen & box.node_scope:
+            raise KernelError("chain_split: the aligned scopes overlap")
+        seen |= box.node_scope
+    for box_id, box in d.bang_boxes.items():
+        if box_id in members:
+            continue
+        if box.parent in members or box.align in members[1:] or box.pair_of in members:
+            raise KernelError("chain_split: a box lies in, aligns to or pairs over a member")
+        if box.node_scope & seen or any(r.node_id in seen for r in box.port_scope):
+            raise KernelError("chain_split: another box meets the aligned scopes")
+    return members
+
+
+@_trace.traced("kernel.chain_split")
+def chain_split(d: Diagram, split: Diagram) -> Theorem:
+    """``d = split`` when ``d`` is :func:`~archytaszx.diagram.bangbox.chain_merged` of one
+    alignment group of ``split`` passing :func:`_chain_group`, links in any order: copy j of a
+    chain box over independent chains is copy j of each chain's aligned box."""
+    from archytaszx.diagram.bangbox import BangBoxError, chain_merged
+
+    roots = sorted({b.align for b in split.bang_boxes.values() if b.align is not None})
+    for root in roots:
+        if root not in split.bang_boxes or root not in d.bang_boxes:
+            continue
+        try:
+            members = _chain_group(split, root)
+            candidate = chain_merged(split, root)
+        except (KernelError, BangBoxError):
+            continue
+        links = d.bang_boxes[root].links
+        got = [link for m in members for link in split.bang_boxes[m].links]
+        if len(set(links)) != len(links) or sorted(links, key=str) != sorted(got, key=str):
+            continue
+        candidate.set_bang_box_extension(root, links=links)
+        if _same(candidate, d):
+            return Theorem(_TOKEN, d, split, Inference("chain_split", data={"box": root}))
+    raise KernelError("chain_split: the diagram is no chain box split of the other")
+
+
 @_trace.traced("kernel.power_split")
 def power_split(d: Diagram, split: Diagram) -> Theorem:
     """``d = split`` when ``split`` is :func:`~archytaszx.diagram.bangbox.split_power` of one
@@ -2132,6 +2207,7 @@ class _Lean:
             "identity_slide",
             "box_split",
             "align_merge",
+            "chain_split",
             "leg_move",
             "power_split",
             "w_fusion",
@@ -2143,6 +2219,7 @@ class _Lean:
                 "identity_slide": "a boxed identity spider moved onto another wire",
                 "box_split": "a boxed spider unfused in every copy",
                 "align_merge": "copy-aligned boxes of one count merged into one box",
+                "chain_split": "a chain box over independent chains split into aligned chains",
                 "leg_move": "legs moved between two wired spiders of one type",
                 "power_split": "a box of b^(e + 1) copies split into b boxes of b^e copies",
             }[inf.kind]
