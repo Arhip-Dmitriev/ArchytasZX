@@ -2087,7 +2087,7 @@ the constraint into the row $x_0+x_1$ on both sides. \textnormal{\texttt{export\
 \begin{lstlisting}[style=lean]
 def sL : Data := { path := [2], phase := [([0, 2], 2), ([1, 2], 2)], cons := [], rows := [] }
 def sR : Data := { path := [], phase := [], cons := [[[0], [1]]], rows := [] }
-def stepsL : List Step := [.perm [2], .hhCons, .canon 0]
+def stepsL : List Step := [.front 2, .hhCons, .canon 0]
 def stepsR : List Step := [.canon 0]
 
 theorem facL : facs stepsL = (2 : ℂ) := by
@@ -2305,7 +2305,7 @@ set_option maxRecDepth 100000
 set_option maxHeartbeats 0
 def sL : Data := { path := ..., phase := ..., cons := ..., rows := [] }
 def sR : Data := ...
-def stepsL : List Step := [.perm [...], .elim, ...]
+def stepsL : List Step := [.front ..., .elim, ...]
 def stepsR : List Step := [...]
 theorem facL : facs stepsL = <fL> := by
   simp only [stepsL, facs, fac]
