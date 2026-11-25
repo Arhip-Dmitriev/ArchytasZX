@@ -26,7 +26,6 @@ import hashlib
 import json
 import os
 import platform
-import shutil
 import signal
 import socket
 import subprocess
@@ -718,9 +717,6 @@ def _row(p: Any, rec: dict[str, Any], phase: Any) -> dict[str, Any]:
 def calibrate(ctx_cfg: dict[str, Any], results: Path) -> dict[str, Any]:
     """The pinned calibration script, run three times in fresh processes: CPU seconds each and
     their median."""
-    from benchmarks import stages
-
-    _ = stages
     times = []
     for _ in range(3):
         code = (
@@ -788,6 +784,7 @@ def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, A
     falses = {f"{r['equation']}!": r for r in false_records if r.get("kind") is not None}
     subjects = {s.id: s for s in subject.catalogue()}
     out: set[str] = set()
+    unchecked: set[str] = set()
     once: dict[str, bool] = {}
     for rec in done.values():
         tool = str(rec.get("tool"))
@@ -806,8 +803,9 @@ def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, A
         if rec.get("unit") or false is None or rec.get("d") is None:
             continue
         if not differs(false, rec.get("n"), rec["d"]):
-            out.add(f"{rec['config']}|{rec['equation']}@{rec['source']}|unit|{rec['tool']}")
-    return {k for k in out if k in done and not done[k].get("differs_checked")}
+            unchecked.add(f"{rec['config']}|{rec['equation']}@{rec['source']}|unit|{rec['tool']}")
+    out |= {k for k in unchecked if k in done and not done[k].get("differs_checked")}
+    return {k for k in out if k in done}
 
 
 FALSE_SET_POLL = 30.0
@@ -929,4 +927,3 @@ def run(
     if _stop.is_set():
         print("benchmarks: interrupted; finished runs are logged, rerun to resume", flush=True)
         sys.exit(130)
-    _ = shutil

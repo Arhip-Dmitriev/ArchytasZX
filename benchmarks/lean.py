@@ -378,7 +378,8 @@ def statement_level(source: str) -> str:
 
 
 def classify(axioms: list[str] | None, source: str) -> str:
-    """The axiom class of the final theorem's axioms (see the module docstring)."""
+    """The axiom class of the final theorem's axioms (see the module docstring); ``unknown``
+    when no axiom list was printed."""
     if _opaque(source):
         return "opaque"
     if axioms is None:

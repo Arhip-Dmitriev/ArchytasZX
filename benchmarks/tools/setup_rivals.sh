@@ -25,7 +25,7 @@ V="${BENCH_VENVS:-$(cd "$(dirname "$0")/.." && pwd)/.venvs}"
 UV="${UV:-uv}"
 OFFLINE="${BENCH_OFFLINE:-0}"
 FETCH=0
-mkdir -p "$V/src" "$V/logs"
+mkdir -p "$V/src"
 UVFLAGS=()
 if [ -n "${BENCH_WHEELS:-}" ]; then UVFLAGS=(--no-index --find-links "$BENCH_WHEELS"); fi
 if [ "$OFFLINE" = 1 ]; then UVFLAGS+=(--offline); export UV_PYTHON_DOWNLOADS=never; fi
@@ -143,14 +143,14 @@ autoq() {  # AutoQ 2.0 at its pinned commit (AutoQ-Para has no public release); 
         && mkdir -p "$V/autoq/bin" && cp build/cli/autoq "$V/autoq/bin/autoq")
 }
 
-quantomatic() {  # Quantomatic at its pinned commit with the headless driver, sbt on Temurin JDK 8
+quantomatic() {  # Quantomatic at its pinned commit with the headless driver, sbt on Temurin JDK 8u432-b06
     clone https://github.com/Quantomatic/quantomatic quantomatic 0762b5fad411f80ea0bba14b4ad5c801efd7f019
     if [ ! -x "$V/sbt/bin/sbt" ]; then
         need_net sbt && curl -sSL https://github.com/sbt/sbt/releases/download/v1.10.7/sbt-1.10.7.tgz | tar xz -C "$V"
     fi
     if [ ! -x "$V/jdk8/bin/java" ]; then
         need_net jdk8 && mkdir -p "$V/jdk8" && curl -sSL \
-            "https://api.adoptium.net/v3/binary/latest/8/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+            "https://api.adoptium.net/v3/binary/version/jdk8u432-b06/linux/x64/jdk/hotspot/normal/eclipse" \
             | tar xz -C "$V/jdk8" --strip-components=1
     fi
     export JAVA_HOME="$V/jdk8" PATH="$V/jdk8/bin:$PATH"
@@ -179,7 +179,7 @@ quantomatic() {  # Quantomatic at its pinned commit with the headless driver, sb
         && cp "$V/src/quantomatic/rulesets/red_green/default.rules" "$V/quantomatic/red_green.rules")
 }
 
-coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1) and coqq (Coq 8.18.0);
+coq() {  # opam root with switches bench (Coq 8.20.1), sqir23 (Coq 8.16.1) and coqq (Coq 8.18.0);
          # SQIR/VOQC, VyZX, CoqQ, QBricks at pinned commits, all under an ASCII path (Coq's dune
          # build rejects non-ASCII paths). Every opam command names its switch (OPAMSWITCH).
     local C="${BENCH_COQ_HOME:-$HOME/.cache/archytaszx-bench/coq}"
@@ -211,9 +211,8 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
     coqclone https://github.com/inQWIRE/SQIR SQIR-2023 b1a3ef452c95f13a9a3f79fb26064a21df1570ab
     coqclone https://github.com/inQWIRE/VyZX VyZX 10f8c16741952dbaa2bb7a73e13767945e696b8f
     coqclone https://github.com/coq-quantum/CoqQ CoqQ b169ea462b13d20b05e03615ad1d56cc8d8f5784
-    coqclone https://github.com/Qbricks/qbricks.github.io qbricks e00fc97f14fb9fcbc44bbfbc5e5ec3e483f87367
     coqclone https://github.com/inQWIRE/QuantumLib QuantumLib 0b72c0fa552986c8a6b82f4cb56384c99b9de963
-    (   # bench: SQIR 134fb94 and VyZX on QuantumLib 1.8.0; why3 and alt-ergo for QBricks
+    (   # bench: SQIR 134fb94 and VyZX on QuantumLib 1.8.0
         newswitch bench
         export OPAMSWITCH=bench
         eval "$(opam env)"
@@ -226,8 +225,6 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
         have coq-voqc || build opam pin add -y coq-voqc "$C/src/SQIR" || true
         (cd "$C/src/SQIR" && build dune build) || true
         (cd "$C/src/VyZX" && build dune build) || true
-        CC="gcc -std=gnu17 -Wno-error=incompatible-pointer-types" \
-            oinst why3.1.8.0 alt-ergo.2.6.2 || true  # QBricks' pins; why3's C predates GCC 15
     )
     (   # sqir23: SQIR's Bernstein-Vazirani, Deutsch-Jozsa, Grover, QPE and GHZ proofs, which last
         # build at SQIR b1a3ef4 (2023-04-08), on Coq 8.16.1 and QuantumLib 1.1.0

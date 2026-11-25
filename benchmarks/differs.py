@@ -232,11 +232,12 @@ def _value(x: Any, n: int | None, d: int, k: int | None = None) -> sp.Rational |
     return v if v.is_Rational else None
 
 
-def _diagonal_identity(g: Any, size: int, n: int | None, d: int) -> bool:
-    """Whether a ZPhase or XPhase is the identity on a wire of ``size`` levels."""
-    if size > MAX_LEVELS:
-        return False
+def _diagonal_identity(g: Any, size: int, n: int | None, d: int) -> bool | None:
+    """Whether a ZPhase or XPhase is the identity on a wire of ``size`` levels (entries past
+    the wire act on no level); None for a rule over more than MAX_LEVELS levels."""
     if g.rule is not None:
+        if size > MAX_LEVELS:
+            return None
         vals = [_value(g.rule, n, d, k) for k in range(size)]
     else:
         vals = [_value(v, n, d) for key, v in g.entries.items() if int(key) < size]
@@ -250,7 +251,7 @@ def _gate_trivial(false: dict[str, Any], n: int | None, d: int) -> bool | None:
     divides 2 s; missing_gate when the dropped X^a or Z^a has D dividing a, a ZPhase or XPhase
     is an integer at every level, a CX, CZ or F has D = 1; swapped_control_target when a wire
     has one level. False for other gates or an unfound gate; None when the gate differs across
-    the unrolled probe n."""
+    the unrolled probe n or a dropped rule gate has more than MAX_LEVELS levels."""
     import json
 
     from benchmarks import ir

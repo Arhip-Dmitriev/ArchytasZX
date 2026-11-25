@@ -49,7 +49,7 @@ SIZE_FIELDS = (
 
 
 def n_bin(n: int | None) -> str:
-    """The decade of n: 0, 1-9, 10-99, ...; ``none`` without n."""
+    """The decade of n: ``0``, then ``1e<k>`` for 10^k <= n < 10^(k+1); ``none`` without n."""
     if n is None:
         return "none"
     if n == 0:

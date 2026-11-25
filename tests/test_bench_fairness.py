@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 DRIVERS = Path(__file__).resolve().parent.parent / "benchmarks" / "tools" / "drivers"
+HASH_LAPTOP = "2ee8c01367cf"
 TOOL_MODULES = {"pyzx", "quizx", "qiskit", "cirq", "mqt", "dizx", "pytket"}
 
 
@@ -263,3 +264,36 @@ def test_quantomatic_unparsable_output_keeps_its_times() -> None:
     ):
         q.run(inst, job)
     assert seen["status"] == "error" and seen["cpu"] == 1.5 and seen["wall"] == 2.5
+
+
+def test_stale_units_mark_a_checked_f_unit_of_a_check_once_tool_with_k_not_1() -> None:
+    from benchmarks import runner
+
+    rec: dict[str, Any] = {
+        "key": "c|deutsch/main!@s|unit|published_proofs",
+        "unit": True,
+        "tool": "published_proofs",
+        "K": 2,
+        "check_phase": True,
+        "differs_checked": True,
+        "equation": "deutsch/main!",
+    }
+    key = str(rec["key"])
+    assert key in runner.stale_units({key: rec}, [])
+
+
+def test_config_toml_hash_is_unchanged() -> None:
+    from benchmarks import config
+
+    cfg = config.load(None, [], "laptop")
+    assert "prepare_timeout_seconds" not in cfg["stages"]
+    assert config.digest(cfg) == HASH_LAPTOP
+
+
+def test_diagonal_identity_past_the_level_cap() -> None:
+    from benchmarks import differs, ir
+
+    big = differs.MAX_LEVELS + 1
+    assert differs._diagonal_identity(ir.ZPhase("a", {3: 1}), big, None, big) is True
+    assert differs._diagonal_identity(ir.ZPhase("a", {3: Fraction(1, 2)}), big, None, big) is False
+    assert differs._diagonal_identity(ir.ZPhase("a", rule="k"), big, None, big) is None

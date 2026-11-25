@@ -23,17 +23,18 @@ n_min = 0
 n_max = 100_000_000
 d_min = 1
 d_max = 2048
-distribution = "log_uniform"
+distribution = "log_uniform"         # not read (the draw is log-uniform)
 seed = 20261106
 phase2_extra_failures = 32            # cap on failed phase 2 draws per equation and tool
 symbolic = true                       # run the symbolic version too, outside K
 
 [stages]
-decide = true
+decide = true                         # not read (decide always runs)
 certificate = true                    # proof object build plus kernel check
 lean_export = true
 lean_check = true
 timeout_seconds = 3600                # CPU seconds per stage per run
+# prepare_timeout_seconds = 3600      # CPU seconds of a rival's preparation; default timeout_seconds
 wall_factor = 4                       # a run is killed after this many times its stage limits in wall time
 memory_fraction = 0.85
 
