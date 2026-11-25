@@ -374,6 +374,90 @@ theorem eval_engR (d : ℕ) (hd : 0 < d) {n : ℕ} (hn : 0 < n) (σ : ℕ → �
   rw [prodVal_engR, hH, hBs, hX, hSs, hE]
   ring
 
+/-! ## The adder arithmetic over all copies -/
+
+section arith
+
+open Fca
+
+/-- Copy `i`'s Fourier sum in the form of `Fca.sumC_lift`, without its pair scalar. -/
+noncomputable def Gl (d : ℕ) (σ : ℕ → ℕ) (i : ℕ) : ℂ :=
+  (d : ℂ)⁻¹ * ∑ x ∈ Finset.range d, (om (d ^ (i + 1)) ^ (dv d σ 0 (i + 1) + 2) *
+    (om (d ^ (i + 1)))⁻¹ ^ dv d σ 1 (i + 1)) ^ x
+
+theorem cs_ne (d n : ℕ) (hd : 0 < d) : cs d n ≠ 0 := by
+  unfold cs
+  rw [lprod_range]
+  exact Finset.prod_ne_zero_iff.2 fun i _ => inv_ne_zero (pow_ne_zero _ (by exact_mod_cast hd.ne'))
+
+theorem prod_Gl (d : ℕ) (hd : 0 < d) (σ : ℕ → ℕ) : ∀ n, (∀ i < n, σ (sl i 0) < d) →
+    (∀ i < n, σ (sl i 1) < d) → ∏ i ∈ Finset.range n, Gl d σ i = IndS d σ n
+  | 0, _, _ => by simp [IndS, topv]
+  | n + 1, ha, hb => by
+    rw [Finset.prod_range_succ, prod_Gl d hd σ n (fun i hi => ha i (by omega))
+      (fun i hi => hb i (by omega))]
+    have h := arith d hd n σ ha hb
+    rw [sumC_lift d hd] at h
+    apply mul_left_cancel₀ (cs_ne d n hd)
+    rw [← h, Gl]
+    ring
+
+theorem tP_pos (D a x : ℕ) : tP D 1 [a, x] = om D ^ (a * x) := by
+  rw [om_eq_ex]; simp only [tP]; congr 1; push_cast; ring
+
+theorem tP_neg (D o x : ℕ) : tP D (-1) [o, x] = (om D ^ (o * x))⁻¹ := by
+  rw [om_eq_ex, ex_inv]; simp only [tP]; congr 1; push_cast; ring
+
+/-- Copy `i`'s summand at the Fourier value `x`, its pairs as pair phases. -/
+noncomputable def Ce (d : ℕ) (σ : ℕ → ℕ) (i x : ℕ) : ℂ :=
+  fou d x (σ (sl i 0)) * ex (phase d (2 * i + 1) x) * (starRingEnd ℂ) (fou d (σ (sl i 1)) x) *
+    ((range i).map fun k => tP (pD d i k) 1 [σ (sl k 0), x] * tP (pD d i k) (-1) [σ (sl k 1), x]).prod
+
+theorem Ce_sum (d : ℕ) (hd : 0 < d) (σ : ℕ → ℕ) (i : ℕ) :
+    ∑ x ∈ Finset.range d, Ce d σ i x = Gl d σ i := by
+  rw [Gl, Finset.mul_sum]
+  refine Finset.sum_congr rfl fun x _ => ?_
+  have hp : ((range i).map fun k => tP (pD d i k) 1 [σ (sl k 0), x] *
+      tP (pD d i k) (-1) [σ (sl k 1), x]).prod =
+      om (d ^ (i + 1)) ^ (x * dv d σ 0 i) * (om (d ^ (i + 1)))⁻¹ ^ (x * dv d σ 1 i) := by
+    have hf : ∀ k ∈ Finset.range i, tP (pD d i k) 1 [σ (sl k 0), x] *
+        tP (pD d i k) (-1) [σ (sl k 1), x] =
+        om (d ^ (i + 1)) ^ (x * (σ (sl k 0) * d ^ k)) *
+          (om (d ^ (i + 1)))⁻¹ ^ (x * (σ (sl k 1) * d ^ k)) := by
+      intro k hk
+      have hk := Finset.mem_range.1 hk
+      rw [tP_pos, tP_neg, om_lift d hd (n := i) (D := pD d i k) hk.le rfl, ← pow_mul, ← pow_mul,
+        ← inv_pow,
+        show d ^ k * (σ (sl k 0) * x) = x * (σ (sl k 0) * d ^ k) by ring,
+        show d ^ k * (σ (sl k 1) * x) = x * (σ (sl k 1) * d ^ k) by ring]
+    rw [lprod_range, Finset.prod_congr rfl hf, Finset.prod_mul_distrib,
+      Finset.prod_pow_eq_pow_sum, Finset.prod_pow_eq_pow_sum, dv, dv, Finset.mul_sum,
+      Finset.mul_sum]
+  have hdn : d = d ^ (i - i + 1) := by simp
+  have hc : (starRingEnd ℂ) (fou d (σ (sl i 1)) x) =
+      (om (d ^ (i + 1)))⁻¹ ^ (x * (σ (sl i 1) * d ^ i)) / rt d := by
+    unfold fou
+    rw [map_div₀, map_pow, conj_om, Complex.conj_ofReal, om_lift d hd le_rfl hdn, ← inv_pow,
+      ← pow_mul, show d ^ i * (σ (sl i 1) * x) = x * (σ (sl i 1) * d ^ i) by ring]
+  rw [Ce, hp, hc, fou_lift d hd le_rfl hdn, ex_lift, dv_succ, dv_succ, mul_pow, ← pow_mul,
+    ← pow_mul,
+    show (dv d σ 0 i + σ (sl i 0) * d ^ i + 2) * x =
+      x * (σ (sl i 0) * d ^ i) + 2 * x + x * dv d σ 0 i by ring,
+    show (dv d σ 1 i + σ (sl i 1) * d ^ i) * x =
+      x * (σ (sl i 1) * d ^ i) + x * dv d σ 1 i by ring,
+    pow_add, pow_add, pow_add, ← rt_inv_sq d]
+  ring
+
+/-- Every copy's Fourier sum with its pair phases, multiplied: the shift factor. -/
+theorem prod_Ce (d : ℕ) (hd : 0 < d) (σ : ℕ → ℕ) (n : ℕ) (ha : ∀ i < n, σ (sl i 0) < d)
+    (hb : ∀ i < n, σ (sl i 1) < d) :
+    ∏ i ∈ Finset.range n, ∑ x ∈ Finset.range d, Ce d σ i x = IndS d σ n := by
+  simp only [Ce_sum d hd]
+  exact prod_Gl d hd σ n ha hb
+
+end arith
+
+
 /-! ## The engine's literal exports -/
 
 /-- The engine export of the boxed side at n = 1. -/
