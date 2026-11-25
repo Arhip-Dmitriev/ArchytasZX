@@ -1853,6 +1853,16 @@ def _delta_step(
             if rest.is_integer is not True or _bound_symbols(weight) & rest.free_symbols:
                 continue
             sign = _unit_sign(sp.Integer(coefficient), modulus)
+            if (
+                var not in weight.free_symbols
+                and modulus.is_Integer
+                and size.is_Integer
+                and not _divides(modulus, size)
+            ):
+                g = math.gcd(int(coefficient), int(modulus))
+                if int(size) % (int(modulus) // g) == 0:
+                    count = int(size) // (int(modulus) // g)
+                    return weight * count * ModDelta(rest, g), _without(limits, index)
             if not _divides(modulus, size):
                 wrapped = _wrap_pin(weight, var, coefficient, rest, modulus, size)
                 if wrapped is None and sign is not None:

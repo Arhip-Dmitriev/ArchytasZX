@@ -49,6 +49,7 @@ from archytaszx.algebra.phase import INDEX, PairPhase, PhaseVector
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
+    ModResidue,
     Scalar,
     ScalarBudgetError,
     ScalarSubstituteValue,
@@ -2791,10 +2792,14 @@ def _sum_out(
                     product * sp.Mul(*context), symbol, top, max_steps, open_ranges, final
                 )
             if carried is None or len(carried.atoms(sp.Sum)) > len(product.atoms(sp.Sum)):
-                deferred.add(symbol)
-                continue
-            head = sp.Mul(*(f for f in sp.Mul.make_args(head) if f not in context))
-            closed = carried
+                geometric = _context_geometric(product, symbol, top + 1, context, open_ranges)
+                if geometric is None:
+                    deferred.add(symbol)
+                    continue
+                closed = geometric
+            else:
+                head = sp.Mul(*(f for f in sp.Mul.make_args(head) if f not in context))
+                closed = carried
         del widths[symbol]
         where.pop(symbol)
         deferred -= touched
@@ -2807,6 +2812,134 @@ def _sum_out(
             widths[other] = width(other)
     return Scalar(head * sp.Mul(*(expr for expr, _symbols in live.values()))).simplify(
         max_steps=max_steps, ranges=boundary
+    )
+
+
+def _context_geometric(
+    product: sp.Expr,
+    symbol: sp.Symbol,
+    size: sp.Expr,
+    context: Sequence[sp.Expr],
+    ranges: Mapping[str, Dim],
+) -> sp.Expr | None:
+    """``Sum(product, (symbol, 0, size - 1))`` as ``size [c == 0 mod M]`` times the factors
+    free of ``symbol``, for ``product`` those factors times ``exp(2 pi i c symbol / M)`` with
+    ``c`` an integer linear form, ``size | M`` and ``c`` a multiple of ``M / size`` once each
+    ``context`` delta ``[L == 0 mod m]`` with a ``±1`` index of range ``m`` pins that index to
+    ``L``'s residue (residues written as ``x - m q`` with ``q`` an integer); else None."""
+    if not size.is_Integer:
+        return None
+    free: list[sp.Expr] = []
+    exponent = sp.Integer(0)
+    for factor in sp.Mul.make_args(product):
+        if symbol not in factor.free_symbols:
+            free.append(factor)
+        elif isinstance(factor, sp.exp):
+            exponent += factor.args[0]
+        else:
+            return None
+    turns = sp.expand(exponent / (2 * sp.pi * sp.I))
+    rate = turns.coeff(symbol, 1)
+    rest = sp.expand(turns - rate * symbol)
+    if symbol in rest.free_symbols or symbol in rate.free_symbols or rate == 0:
+        return None
+    modulus = 1
+    for term in sp.Add.make_args(rate):
+        coeff, atom = term.as_coeff_Mul()
+        if not coeff.is_Rational or not (atom == 1 or atom.is_integer):
+            return None
+        modulus = math.lcm(modulus, int(coeff.q))
+    if modulus % int(size):
+        return None
+    step = modulus // int(size)
+    count = sp.expand(rate * modulus)
+    quotients: dict[tuple[sp.Expr, int], sp.Symbol] = {}
+
+    def linear(expr: sp.Expr) -> sp.Expr | None:
+        expr = sp.expand(expr)
+        while residues := [a for a in expr.atoms(ModResidue) if not a.args[0].has(ModResidue)]:
+            for residue in residues:
+                inner, m = residue.args
+                if not m.is_Integer:
+                    return None
+                key = (sp.expand(inner), int(m))
+                q = quotients.setdefault(key, sp.Symbol(f"_quot{len(quotients)}", integer=True))
+                expr = expr.xreplace({residue: inner - m * q})
+            expr = sp.expand(expr)
+        return expr
+
+    def coefficients(expr: sp.Expr) -> dict[sp.Expr, sp.Expr] | None:
+        found: dict[sp.Expr, sp.Expr] = {}
+        for term in sp.Add.make_args(expr):
+            coeff, atom = term.as_coeff_Mul()
+            if not coeff.is_Integer or not (atom == 1 or (atom.is_Symbol and atom.is_integer)):
+                return None
+            found[atom] = found.get(atom, sp.Integer(0)) + coeff
+        return found
+
+    inside: set[sp.Expr] = set()
+    deltas = [*context, *(f for f in free if isinstance(f, ModDelta))]
+    for expr in (count, *deltas):
+        for residue in expr.atoms(ModResidue):
+            inside |= residue.args[0].free_symbols
+    pins: dict[sp.Symbol, sp.Expr] = {}
+    relations: list[tuple[sp.Expr, int]] = []
+    for delta in deltas:
+        relation, m = delta.args
+        reduced = linear(relation) if m.is_Integer else None
+        terms = coefficients(reduced) if reduced is not None else None
+        if not terms or reduced is None:
+            continue
+        relations.append((reduced, int(m)))
+        g = math.gcd(int(m), *(int(c) for c in terms.values()))
+        size_m = int(m) // g
+        for atom in sorted(terms, key=lambda a: (a in inside, str(a))):
+            dim = ranges.get(str(atom.name)) if atom.is_Symbol else None
+            sign = int(terms[atom]) // g
+            if (
+                abs(sign) != 1
+                or atom == symbol
+                or atom in pins
+                or dim is None
+                or not dim.is_concrete
+                or dim.to_int() != size_m
+            ):
+                continue
+            value = sp.expand(-(reduced / g - sign * atom) * sign)
+            key = (value, size_m)
+            q = quotients.setdefault(key, sp.Symbol(f"_quot{len(quotients)}", integer=True))
+            pins[atom] = value - size_m * q
+            break
+    reduced_count = linear(count)
+    if reduced_count is None:
+        return None
+
+    def resolved(expr: sp.Expr) -> sp.Expr | None:
+        for _round in range(len(pins) + 1):
+            expr = sp.expand(expr.xreplace(pins))
+        return None if expr.free_symbols & set(pins) else expr
+
+    reduced_count = resolved(reduced_count)
+    terms = coefficients(reduced_count) if reduced_count is not None else None
+    for relation, m in relations if terms is not None else ():
+        generator = resolved(relation * (step // math.gcd(step, m)))
+        spans = coefficients(generator) if generator is not None else None
+        if spans is None or terms is None:
+            continue
+        for atom in sorted(spans, key=str):
+            left = int(terms.get(atom, 0)) % step
+            if left and int(spans[atom]) and left % int(spans[atom]) == 0:
+                factor = left // int(spans[atom])
+                terms = {
+                    a: terms.get(a, sp.Integer(0)) - factor * spans.get(a, sp.Integer(0))
+                    for a in {*terms, *spans}
+                }
+                break
+    if terms is None or any(int(c) % step for c in terms.values()):
+        return None
+    return cast(
+        sp.Expr,
+        sp.Mul(*free) * sp.exp(2 * sp.pi * sp.I * rest) * size * ModDelta(count, modulus),
     )
 
 

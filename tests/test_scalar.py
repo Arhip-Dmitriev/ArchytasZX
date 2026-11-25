@@ -444,3 +444,20 @@ def test_a_pivot_pinned_under_two_moduli_keeps_a_delta() -> None:
         assert out.xreplace(at) == body.xreplace(at)
     summed = Scalar(sp.Sum(body, (k30, 0, 2))).simplify(ranges=ranges)
     assert summed == Scalar(ModDelta(i2 + 3 * i3 - k27, 9))
+
+
+def test_delta_sum_over_a_whole_period_of_its_reduced_modulus() -> None:
+    """Sum over k < 5 of [2 k + r == 0 mod 10] is [r even]."""
+    k = sp.Symbol("_k0", integer=True)
+    assert (
+        Scalar(sp.Sum(ModDelta(2 * k + 4, 10), (k, 0, 4)))
+        .simplify(enumerate_concrete=False)
+        .to_sympy()
+        == 1
+    )
+    assert (
+        Scalar(sp.Sum(ModDelta(2 * k + 3, 10), (k, 0, 4)))
+        .simplify(enumerate_concrete=False)
+        .to_sympy()
+        == 0
+    )

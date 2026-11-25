@@ -808,3 +808,23 @@ def test_partial_sum_with_free_exponentials_outside_is_the_whole_sum() -> None:
             .to_sympy()
         )
         assert _close_partial(product, k, sp.Integer(2), 1024, ranges, final) == whole
+
+
+def test_context_geometric_closes_a_carry_sum() -> None:
+    """A geometric sum whose rate is a multiple of M/size once a carry delta pins an index
+    closes to size [c == 0 mod M], equal to the sum wherever the delta holds."""
+    from archytaszx.semantics.contract_symbolic import _context_geometric
+
+    a, b, c, k = sp.symbols("_i0 _i1 _i2 _k0", integer=True, nonnegative=True)
+    ranges = {"_i0": Dim(2), "_i1": Dim(2), "_i2": Dim(2)}
+    count = a + b - c
+    product = sp.exp(2 * sp.pi * sp.I * count * k / 4)
+    closed = _context_geometric(product, k, sp.Integer(2), [ModDelta(count, 2)], ranges)
+    assert closed == 2 * ModDelta(count, 4)
+    for values in itertools.product(range(2), repeat=3):
+        point = dict(zip((a, b, c), values, strict=True))
+        if (values[0] + values[1] - values[2]) % 2:
+            continue
+        direct = sum(complex(product.subs(point).subs(k, j)) for j in range(2))
+        assert abs(direct - complex(closed.subs(point))) < 1e-12
+    assert _context_geometric(product, k, sp.Integer(2), [], ranges) is None
