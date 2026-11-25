@@ -1480,18 +1480,31 @@ class FusionPattern(Pattern):
     """
 
     dimension_guards: tuple[DimensionGuard, ...] = ()
+    z_only: bool = False
+    """Keep only matches whose spiders are Z spiders."""
 
     locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_matches`. See the module docstring."""
-        return find_matches(diagram, dimension_guards=self.dimension_guards)
+        return self._kept(diagram, find_matches(diagram, dimension_guards=self.dimension_guards))
 
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
         """Delegate to :func:`find_matches` with the candidate wires restricted to ``anchors``."""
-        return find_matches(diagram, dimension_guards=self.dimension_guards, anchors=anchors)
+        return self._kept(
+            diagram,
+            find_matches(diagram, dimension_guards=self.dimension_guards, anchors=anchors),
+        )
+
+    def _kept(self, diagram: Diagram, matches: tuple[FusionMatch, ...]) -> tuple[Match, ...]:
+        """``matches``, only the Z spider ones under :attr:`z_only`."""
+        if not self.z_only:
+            return matches
+        return tuple(
+            m for m in matches if diagram.nodes[m.a_id].generator_type.name == Z_SPIDER.name
+        )
 
     def order_key(self, match: Match) -> tuple[object, ...]:
         """The pair's node ids, tiebroken by the consumed wire's per-side direction and index."""

@@ -27,6 +27,8 @@ from archytaszx.rewrite import rules_axioms as R
 from archytaszx.rewrite.match import find_cap_matches, find_triangle_matches
 from archytaszx.rewrite.match_template import TemplateAxiom
 from archytaszx.rewrite.match_zxw import find_w_identity_matches
+from archytaszx.rewrite.rule import RewriteError
+from archytaszx.rewrite.rules_library import Z_FUSION_PRIME_D, ZX_CAP_SWAPPED
 from archytaszx.semantics.check import compare
 from archytaszx.semantics.contract_symbolic import (
     ReplicatedBlock,
@@ -251,6 +253,32 @@ def test_converse_of_a_converse_keeps_the_free_defaults() -> None:
     there = axiom.converse("there")
     assert set(there.converse_free) == set(axiom.free)
     assert set(there.converse("back").free) == set(axiom.free)
+
+
+def test_z_fusion_prime_d_fuses_only_z_spiders() -> None:
+    dim = Dim.concrete(3)
+    for generator, count in ((X_SPIDER, 0), (Z_SPIDER, 1)):
+        diagram = Diagram()
+        a = diagram.add_node(generator, input_dims=[dim], output_dims=[dim])
+        b = diagram.add_node(generator, input_dims=[dim], output_dims=[dim])
+        diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b, Direction.OUTPUT, 0)])
+        assert len(Z_FUSION_PRIME_D.pattern.find_matches(diagram)) == count
+
+
+def test_zx_cap_swapped_refuses_an_unswapped_match() -> None:
+    dim = Dim.concrete(3)
+    diagram = Diagram()
+    state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim])
+    effect = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[])
+    diagram.add_wire(PortRef(state, Direction.OUTPUT, 0), PortRef(effect, Direction.INPUT, 0))
+    (match,) = find_cap_matches(diagram)
+    try:
+        ZX_CAP_SWAPPED.builder(diagram.copy(), match)
+    except RewriteError:
+        return
+    raise AssertionError("zx_cap_swapped built an unswapped cap")
 
 
 if __name__ == "__main__":

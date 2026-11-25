@@ -409,7 +409,11 @@ def spider_fusion_builder(
 
 
 def z_fusion_prime_d_builder(diagram: Diagram, match: Match) -> BuildResult:
-    """:func:`spider_fusion_builder` under :data:`PRIME_DIMENSION_GUARDS`."""
+    """:func:`spider_fusion_builder` under :data:`PRIME_DIMENSION_GUARDS`, on Z spiders."""
+    if isinstance(match, FusionMatch):
+        node = diagram.nodes.get(match.a_id)
+        if node is None or node.generator_type.name != Z_SPIDER.name:
+            raise RewriteDomainError("z_fusion_prime_d fuses Z spiders only")
     return spider_fusion_builder(
         diagram,
         match,
@@ -451,7 +455,7 @@ z_fusion_prime_d_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignor
 
 Z_FUSION_PRIME_D = Rule(
     name="z_fusion_prime_d",
-    pattern=FusionPattern(dimension_guards=PRIME_DIMENSION_GUARDS),
+    pattern=FusionPattern(dimension_guards=PRIME_DIMENSION_GUARDS, z_only=True),
     builder=z_fusion_prime_d_builder,
     side_conditions=FUSION_SIDE_CONDITIONS,
     quantifiers=Quantifiers(
@@ -606,10 +610,18 @@ The X effect reads ``sum_j conj(omega_d^{j k}) / sqrt(d)``, which the character 
 factor changes the answer.
 """
 
+
+def zx_cap_swapped_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """:func:`zx_cap_builder` on a swapped match only."""
+    if not isinstance(match, CapMatch) or not match.swapped:
+        raise RewriteDomainError("zx_cap_swapped requires a swapped cap match")
+    return zx_cap_builder(diagram, match)
+
+
 ZX_CAP_SWAPPED = Rule(
     name="zx_cap_swapped",
     pattern=CapPattern(swapped=True),
-    builder=zx_cap_builder,
+    builder=zx_cap_swapped_builder,
     side_conditions=CAP_SWAPPED_SIDE_CONDITIONS,
     quantifiers=Quantifiers(dimensions=("d",)),
     scalar_introduced=zx_cap_scalar(Dim.symbol("d")),
