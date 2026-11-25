@@ -3001,7 +3001,7 @@ class Scalar:
     @classmethod
     def index_sum(cls, dim: Dim, body: Callable[[Scalar], Scalar]) -> Scalar:
         """A sum of body(k) over k from 0 to dim - 1, left unevaluated."""
-        placeholder = sp.Symbol("_kbound", integer=True, nonnegative=True)
+        placeholder = sp.Dummy("_kbound", integer=True, nonnegative=True)
         body_scalar = body(cls(placeholder))
         if not isinstance(body_scalar, Scalar):
             raise ScalarSumError(
