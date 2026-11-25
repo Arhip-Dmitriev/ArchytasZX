@@ -165,8 +165,8 @@ imports, then a module docstring \code|/-! ... -/| headed by a Markdown title, t
 direct imports, its line count, its number of top-level theorems and of top-level definitions
 (\lean|def|, \lean|abbrev|, \lean|structure|, \lean|inductive|), and the chapter that specifies it.
 Imports from Mathlib are counted, not named, except in \texttt{Net}, which carries all 43
-Mathlib imports of the foundation. The library has 73{,}961 lines, 3{,}581 top-level theorems and
-1{,}794 top-level definitions. \texttt{Light} has no declarations: it imports 87 modules, none of which imports \texttt{Cyclo} or \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). The modules \texttt{AdderFamEnv}, \texttt{LinkedMerge}, and \texttt{LinkedPair} also avoid \texttt{Cyclo} and \texttt{NumField} and are not imported by \texttt{Light}. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
+Mathlib imports of the foundation. The library has 79{,}662 lines, 3{,}957 top-level theorems and
+1{,}990 top-level definitions. \texttt{Light} has no declarations: it imports 87 modules, none of which imports \texttt{Cyclo} or \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). The modules \texttt{AdderFamEnv}, \texttt{FamDiagram}, \texttt{FamExpandEq}, \texttt{LinkedMerge}, and \texttt{LinkedPair} also avoid \texttt{Cyclo} and \texttt{NumField} and are not imported by \texttt{Light}. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
 of this chapter.
 
 {\small
@@ -185,8 +185,11 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \bottomrule
 \endfoot
 \texttt{AdderFam} & Closed, ChainInduct & 504 & 26 & 11 & B \\
+\texttt{AdderFamDraper} & AdderFamFca & 1517 & 115 & 42 & B \\
+\texttt{AdderFamDraperEng} & AdderFamDraper, AdderFamFcaEng & 1610 & 105 & 57 & B \\
 \texttt{AdderFamEnv} & AdderFam, ChainMixed & 69 & 2 & 3 & B \\
-\texttt{AdderFamFca} & AdderFamEnv, Ball, Weights, PairEval & 1487 & 115 & 40 & B \\
+\texttt{AdderFamFca} & AdderFamEnv, Ball, Weights, PairEval & 1672 & 131 & 41 & B \\
+\texttt{AdderFamFcaEng} & AdderFamFca & 1304 & 91 & 53 & B \\
 \texttt{Assume} & Bundle & 96 & 4 & 4 & C \\
 \texttt{Ball} & Cyclo, 2 Mathlib & 280 & 36 & 4 & C \\
 \texttt{Bialgebra} & ZXRules & 189 & 4 & 0 & C \\
@@ -220,6 +223,8 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{ExpandFacts} & Digits & 230 & 13 & 2 & C \\
 \texttt{FamBridge} & NetDigits & 268 & 11 & 3 & B \\
 \texttt{FamCheck} & FamBridge & 153 & 8 & 10 & B \\
+\texttt{FamDiagram} & OrderK, PairBox & 172 & 8 & 19 & B \\
+\texttt{FamExpandEq} & FamDiagram & 68 & 7 & 0 & B \\
 \texttt{FamK} & OrderK & 243 & 12 & 2 & B \\
 \texttt{FuseB} & Unfuse & 284 & 14 & 1 & C \\
 \texttt{Gather} & PortBox & 246 & 22 & 1 & C \\
@@ -291,6 +296,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{SymCanon} & SymNorm & 851 & 35 & 45 & S \\
 \texttt{SymCarry} & SymRange & 728 & 29 & 17 & S \\
 \texttt{SymChunk} & SymNet & 283 & 19 & 16 & S \\
+\texttt{SymDig} & SymCarry, Cyclo & 845 & 34 & 24 & S \\
 \texttt{SymF2} & SymNet & 1231 & 87 & 58 & S \\
 \texttt{SymF2Bridge} & SymF2, DiagramBridge & 160 & 3 & 2 & S \\
 \texttt{SymF2Chain} & SymF2 & 136 & 0 & 7 & S \\

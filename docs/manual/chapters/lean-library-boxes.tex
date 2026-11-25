@@ -1614,7 +1614,7 @@ theorem pair_family {DA DB : Diagram} {pA pB : DPair} {bA bB : DBox}
 
 \section{Adder Families}\label{sec:boxes-adder}
 
-Three modules state family theorems for adders built one copy at a time: \file{AdderFam} (an induction interface, carry chains, and Fourier identities), \file{AdderFamEnv} (the interface over a growing label list), and \file{AdderFamFca} (the Fourier constant adder as a network family).
+Six modules state family theorems for adders built one copy at a time: \file{AdderFam} (an induction interface, carry chains, and Fourier identities), \file{AdderFamEnv} (the interface over a growing label list), \file{AdderFamFca} (the Fourier constant adder as a network family), \file{AdderFamFcaEng} (the engine's flat networks of that adder for every $n$), \file{AdderFamDraper} (the Draper adder as a network family), and \file{AdderFamDraperEng} (the engine's flat networks of the Draper adder for every $n$).
 
 \subsection{The induction interface}
 
@@ -1730,8 +1730,104 @@ by \lbx!netIfaceAtE_fam! with \lbx!labsMono!, \lbx!copyAt!, \lbx!fitsL!, and \lb
 \[
 \mathrm{IndS}(d,\sigma,n)\cdot\mathrm{SumC}(d,n,\tau)=\mathrm{cs}(d,n)\cdot\mathrm{IndS}(d,\sigma,n+1),\qquad \tau=\mathrm{tauG}(n,\sigma).
 \]
-\lbx!close_of d hd h n! proves the close step at $n$ from \lbx!h : Arith d!: the boundary range gives the digit bounds (\lbx!dig_mem_bndL!: the slots $0,1$ of every level $i<m$ lie on $\mathrm{bndL}(m)$; \lbx!labDim_plain!), \lbx!eval_glue! and \lbx!eval_rhsN! rewrite both sides, \lbx!pinsCp_tauG! ($\mathrm{pinsCp}(n,\mathrm{tauG}(n,\sigma))=\mathrm{pinsN}(n+1,\sigma)$) matches the pin factors, and \lbx!h! closes the equation. \lbx!fam_of_arith d hd h n! is \cref{thm:boxes-fca-fam} with \lbx!close_of!; \lbx!fam_of_arith_8! and \lbx!fam_of_arith_24! are its instances at $n=8$ and $n=24$. At this commit (\texttt{1e4a941}) \lbx!Arith d! is a hypothesis of these theorems; the module does not prove it.
+\lbx!close_of d hd h n! proves the close step at $n$ from \lbx!h : Arith d!: the boundary range gives the digit bounds (\lbx!dig_mem_bndL!: the slots $0,1$ of every level $i<m$ lie on $\mathrm{bndL}(m)$; \lbx!labDim_plain!), \lbx!eval_glue! and \lbx!eval_rhsN! rewrite both sides, \lbx!pinsCp_tauG! ($\mathrm{pinsCp}(n,\mathrm{tauG}(n,\sigma))=\mathrm{pinsN}(n+1,\sigma)$) matches the pin factors, and \lbx!h! closes the equation. \lbx!fam_of_arith d hd h n! is \cref{thm:boxes-fca-fam} with \lbx!close_of!; \lbx!fam_of_arith_8! and \lbx!fam_of_arith_24! are its instances at $n=8$ and $n=24$.
 \end{theorem}
+
+\begin{theorem}[The Fourier-sum arithmetic]\label{thm:boxes-fca-arith-proof}
+With $\mathrm{dv}(d,\sigma,s,m)=\sum_{i<m}\sigma(\mathrm{sl}(i,s))\,d^i$ (the first $m$ digits of slot $s$, least significant first), \lbx!topv_sum! and \lbx!topv_dv! give $\mathrm{topv}(\sigma,n,s,n)=\mathrm{dv}(\sigma,s,n)$. For $i\le n$ and $D=d^{\,n-i+1}$, every factor is a power of $\omega=\omega_{d^{n+1}}$: $\omega_D=\omega^{\,d^i}$ (\lbx!om_lift!), $\mathrm{fou}(D,x,a)=\omega^{\,x a d^i}/\sqrt D$ (\lbx!fou_lift!), $\mathrm{fou}(D,x,(D-b\bmod D)\bmod D)=\omega^{-x b d^i}/\sqrt D$ (\lbx!fou_neg_lift!), and $\mathrm{ex}(\mathrm{phase}(d,2n+1,x))=\omega^{2x}$ (\lbx!ex_lift!). So $\mathrm{pairsF}(d,n,\tau,x)=\mathrm{cs}(d,n)\,\omega^{x\,\mathrm{dv}(\sigma,0,n)}\omega^{-x\,\mathrm{dv}(\sigma,1,n)}$ (\lbx!pairsF_lift!) and
+\[
+\textstyle\mathrm{SumC}(d,n,\tau)=d^{-1}\mathrm{cs}(d,n)\sum_{x<d}\bigl(\omega^{\,\mathrm{dv}(\sigma,0,n+1)+2}\,\omega^{-\mathrm{dv}(\sigma,1,n+1)}\bigr)^x\qquad\text{(\lbx!sumC_lift!)}.
+\]
+\lbx!geom_lift!: for $P\equiv Q\pmod{d^n}$, $\sum_{x<d}(\omega^P\omega^{-Q})^x$ is $d$ when $P\equiv Q\pmod{d^{n+1}}$ and $0$ otherwise. \lbx!arith d hd : Arith d! follows with $P=\mathrm{dv}(\sigma,0,n+1)+2$, $Q=\mathrm{dv}(\sigma,1,n+1)$, the indicator $\mathrm{IndS}(d,\sigma,n)$ giving $P\equiv Q\pmod{d^n}$. \lbx!fam d hd n! is \lbx!fam_of_arith d hd (arith d hd) n!, with no hypothesis beyond $0<d$; \lbx!fam_8! and \lbx!fam_24! are its instances.
+\end{theorem}
+
+\subsection{Expansion of parentless node boxes}\label{sec:boxes-expand-parentless}
+
+\file{FamExpandEq.lean} (imports \file{FamDiagram}). For a parentless box $b$, \lbx!gather_none! gives \lbx!D.gather b = D! and \lbx!expandNode_none! gives \lbx!D.expandNode b k = D.copyNodes b k!; \lbx!expandFuel_nil!: a diagram without boxes is fixed by \lbx!expandFuel! at every fuel. \lbx!copyNodes_boxes_one!: copying the only box leaves no box; \lbx!copyNodes_boxes_two!: with boxes $[b,c]$, distinct ids, no node of $c$ in $b$, $c$'s nodes nonempty and $c$ without ports, copying $b$ leaves $[c]$.
+\begin{itemize}
+\item \lbx!expand_one!: when \lbx!D.boxes = [b]!, $b$ parentless and without ports, \lbx!D.expand ks = D.copyNodes b (ks b.mult)!.
+\item \lbx!expand_two!: when \lbx!D.boxes = [b, c]!, $b.\mathit{id}<c.\mathit{id}$, both parentless and without ports, no node of $c$ in $b$, and $c$'s nodes nonempty, \lbx!D.expand ks = (D.copyNodes b (ks b.mult)).copyNodes c (ks c.mult)!.
+\end{itemize}
+
+\subsection{The engine's Fourier constant adder}\label{sec:boxes-fca-eng}
+
+\file{AdderFamFcaEng.lean} (imports \file{AdderFamFca}, namespace \lbx!FcaEng!) writes the networks the engine exports for the flat \texttt{fourier\_constant\_adder} at $n$ copies, and its spec, as functions of $n$, and proves them equal for every $n$ and every $d>0$.
+
+\begin{definition}[The engine's networks]\label{def:boxes-fca-eng}
+With $\mathrm{tri}(j)=j(j-1)/2$ (recursive: $\mathrm{tri}(j+1)=\mathrm{tri}(j)+j$), $\mathrm{off}(n,m)$ the number of pairs $(m',j)$ with $m'<m$, $m'<j<n$, and $\mathrm{i2}(n,m,j)=\mathrm{off}(n,m)+(j-m-1)$ the position of the pair $(m,j)$, $m<j$:
+\begin{itemize}
+\item \lbx!engL n!: outputs $0,\ldots,n-1$, inputs $n,\ldots,2n-1$; copy $j$'s chain at $\mathrm{cb}(n,j)=2n+8j$ with the nodes $F$, the Z phase index $j+1$, and $F^3$ (\lbx!chainN!); the Z spiders joining the input, the chain, and the pair legs; the pair legs $\mathrm{a0},\mathrm{a2},\mathrm{a5},\mathrm{a9}$ from $10n$ (blocks of $\mathrm{tri}(n)$); and for each pair $(m,j)$ the pair phases \lbx!ZP 0 0 1! from $\mathrm{a0}(n,j,m)$ to $\mathrm{a2}(n,m,j)$ and \lbx!ZP 0 0 (-1)! from $\mathrm{a9}(n,j,m)$ to $\mathrm{a5}(n,m,j)$, dimension index $j-m$. Its summed labels are $2n,\ldots,10n+4\,\mathrm{tri}(n)-1$.
+\item \lbx!engR n!: from $\mathrm{rb}(n)=2n^2+8n$, a binder head, the binder chain \lbx!bN! (inputs $n+t$), the X spider of phase index $n+1$ on dimension index $n-1$, the splitter chain \lbx!sN! (outputs $t$), and a splitter end; at $n=0$ the three nodes Z, X, Z on dimension index $0$.
+\item \lbx!engE d n!: dimension $i<n$ is $d^{\,i+1}$, dimension $n$ is $1$ (\lbx!engD!); phase $0$ is zero, phase $p\in[1,n]$ is $k\mapsto 2k/d^{\,n-p+1}$, phase $n+1$ is $k\mapsto -2k/d^n$ (\lbx!engP!); the listed labels \lbx!engLabs n! give the spec's $2n+2$ labels their dimension indices.
+\end{itemize}
+\lbx!engL_lit1!, \ldots, \lbx!engL_lit5!, \lbx!engR_lit1!, \ldots, \lbx!engR_lit5!, and \lbx!engLabs_lit1!, \ldots, \lbx!engLabs_lit5! check by \lbx!decide +kernel! that these are the engine's literal exports at $n=1,\ldots,5$.
+\end{definition}
+
+\begin{theorem}[The spec in closed form]\label{thm:boxes-fca-eng-R}
+With $\mathrm{etv}(d,\sigma,c,0)=0$ and $\mathrm{etv}(d,\sigma,c,t+1)=d\,\mathrm{etv}(d,\sigma,c,t)+\sigma(c+t)$, \lbx!eval_engR! ($d>0$, $n>0$, all boundary digits below $d$): $\mathrm{eval}(\mathrm{engE}(d,n),\mathrm{engR}(n),\sigma)=[\mathrm{etv}(\sigma,0,n)\equiv\mathrm{etv}(\sigma,n,n)+2\pmod{d^n}]$. The proof pins every summed label of the spec at its value (\lbx!tauE!, \lbx!pv!) by \lbx!engR_support! and \lbx!Fca.sumOver_single!.
+\end{theorem}
+
+\begin{theorem}[The boxed side in closed form]\label{thm:boxes-fca-eng-L}
+The summed labels of \lbx!engL n! are a permutation of the free labels \lbx!frees n! (the Fourier value and the two inner $F^3$ legs of each copy), the pinned chain labels \lbx!chainP n!, and the pair labels \lbx!pairP n! (\lbx!int_perm!, through the pair-position decoders \lbx!jOf! and \lbx!mOf! with \lbx!jOf_tri!, \lbx!mOf_off!). \lbx!engL_support!: a nonzero node product forces every pinned label $l$ to $\mathrm{tz}(n,\tau,l)$, the input digit, the Fourier value, or the output digit of its copy. \lbx!prodVal_tz!: at those values the node product is $\prod_{m<n}\mathrm{Tm}(d,n,\tau,m,\ldots)$, $\mathrm{Tm}$ the product of $F$ of the input, the copy phase, the $F^3$ legs, and the pair phases with the later copies. \lbx!eval_engL! ($d>0$, $n>0$, boundary digits below $d$): $\mathrm{eval}(\mathrm{engE}(d,n),\mathrm{engL}(n),\sigma)=\prod_{m<n}\sum_{x<d}\mathrm{Ec}(d,n,\sigma,m,x)$, the $F^3$ legs summed by \lbx!sumOver_blocks! and \lbx!fou_three!.
+\end{theorem}
+
+\begin{theorem}[The engine's family]\label{thm:boxes-fca-eng-fam}
+\lbx!Ce d σ i x! is copy $i$'s summand of \file{AdderFamFca} with its pairs as pair phases; \lbx!Ce_sum! sums it to the form of \lbx!Fca.sumC_lift! without its pair scalar (\lbx!Gl!), and \lbx!prod_Ce!: $\prod_{i<n}\sum_{x<d}\mathrm{Ce}(d,\sigma,i,x)=\mathrm{Fca.IndS}(d,\sigma,n)$ (from \lbx!Fca.arith!). \lbx!Ec_Ce!: engine copy $m$ is \file{AdderFamFca} copy $n-1-m$ under the relabelling \lbx!sigF n σ!. Then
+\begin{lstlisting}[style=leanbox]
+theorem engFam (d : ℕ) (hd : 0 < d) (n : ℕ) : Equal (engE d n) 1 (engL n) 1 (engR n)
+\end{lstlisting}
+from \lbx!engFam0! at $n=0$, else \lbx!eval_engL!, \lbx!eval_engR!, \lbx!Ec_Ce!, and \lbx!prod_Ce!; its axioms are \lbx!propext!, \lbx!Classical.choice!, \lbx!Quot.sound!. \lbx!engFam_8! and \lbx!engFam_2! are its instances at $n=8$ and $d=2$.
+\end{theorem}
+
+\subsection{The Draper adder}\label{sec:boxes-draper}
+
+\file{AdderFamDraper.lean} (imports \file{AdderFamFca}, namespace \lbx!Draper!) writes the boxed \texttt{draper\_adder} at $n$ copies, copy $i$ of weight $d^i$, as networks over $\mathrm{envAt}(E_0(d),L,n)$, $E_0(d)$ with the dimensions of \file{AdderFamFca} and every phase zero.
+
+\begin{definition}[Levels and copy $n$]\label{def:boxes-draper-cp}
+Level $n$ owns $[B(n),B(n+1))$ with $B(n)=5n^2+19n+5$ ($B(n+1)=B(n)+10n+24$); $\mathrm{sl}(n,t)=B(n)+t$. Its slots are the $a$ input $0$, the $b$ input $1$, the $a$ output $2$, the $b$ output $3$, the wire chain $4,\ldots,11$, the spec's chain values $12,\ldots,16$ (dimension index $n+2$ in $L$), and per earlier copy $i$ the slots $20+10i,\ldots,28+10i$. The pending legs of copy $i$ before copy $n$ are $\mathrm{pend}(n,i)$, $\mathrm{pendO}(n,i)$, $\mathrm{pendA}(n,i)$ at slots $20+10i$, $21+10i$, $22+10i$ of level $n-1$; $\mathrm{cut}(n)$ lists them for $i<n$. Copy $n$ (\lbx!cp n!) has the fixed nodes \lbx!fixN n! (a Z spider on the $b$ input with its pending leg, then $F$; a Z spider copying the $a$ input to the $a$ output and its pending leg, then $F$; a Z spider merging the two $F$ outputs with the pair legs \lbx!legs n!; three $F$ nodes; a Z spider onto the $b$ output and its pending leg) and for each $i<n$ the pair nodes \lbx!pairN n i!: per pending leg of copy $i$ a Z spider moving it on and a pair phase \lbx!ZP 0 0 c! of dimension index $n-i+2$ to copy $n$'s Fourier value, $c=1$ for the $b$ and $a$ inputs and $c=-1$ for the $b$ output. Its free summed labels are the Fourier value and the two inner $F^3$ legs (\lbx!freeC!).
+\end{definition}
+
+\begin{definition}[The two sides]\label{def:boxes-draper-sides}
+\lbx!lhsN! glues the copies by \lbx!glueAt! as in \cref{def:boxes-fca-sides}, with scalar $1$. The spec \lbx!rhsN n! (scalar $1$) has the binder chains of $a$ and $b$ (chain values $\mathrm{cv}(c,t)$, $c=0,1$), the Z copy of $a$ and the X sum $a+b$ mod $d^n$ on dimension index $n+1$, the splitter chains ($c=2,3$), the chain heads and ends, and the pending legs as Z spiders on the inputs and outputs. \lbx!labsMono!, \lbx!copyAt!, \lbx!fitsL!, and \lbx!fitsR! are the side conditions of \lbx!netIfaceAtE!.
+\end{definition}
+
+\begin{theorem}[Closed forms and the family]\label{thm:boxes-draper-fam}
+With $\mathrm{IndS}(d,\sigma,n)=[\mathrm{topv}(\sigma,n,3,n)\equiv\mathrm{topv}(\sigma,n,1,n)+\mathrm{topv}(\sigma,n,0,n)\pmod{d^n}]\cdot[\mathrm{topv}(\sigma,n,2,n)=\mathrm{topv}(\sigma,n,0,n)]$:
+\begin{itemize}
+\item \lbx!eval_rhsN! ($n\le m$, digits of slots $0,\ldots,3$ below $d$): $\mathrm{eval}(\ldots,\mathrm{rhsN}(n),\sigma)=(\sqrt{d^n})^{-1}\,\mathrm{IndS}(d,\sigma,n)\,\mathrm{pinsN}(n,\sigma)$, \lbx!pinsN! the pending-leg equalities;
+\item \lbx!eval_cp!: copy $n$ summed over its labels is $\mathrm{pinsCp}(n,\sigma)\cdot\mathrm{aeqC}(n,\sigma)\cdot\mathrm{SumC}(d,n,\sigma)$, with $\mathrm{aeqC}$ the equality of the $a$ output and input and $\mathrm{SumC}(d,n,\sigma)=\sum_{x<d}\mathrm{fou}(d,x,\sigma(\mathrm{sl}_n1))\,\mathrm{fou}(d,x,\sigma(\mathrm{sl}_n0))\,\overline{\mathrm{fou}(d,\sigma(\mathrm{sl}_n3),x)}\,\mathrm{pairsF}(d,n,\sigma,x)$;
+\item \lbx!eval_glue!: copy $n$ glued to $\mathrm{rhsN}(n)$ is $(\sqrt{d^n})^{-1}\,\mathrm{IndS}(d,\sigma,n)\cdot\mathrm{pinsCp}(n,\tau)\,\mathrm{aeqC}(n,\tau)\,\mathrm{SumC}(d,n,\tau)$, $\tau=\mathrm{tauG}(n,\sigma)$;
+\item \lbx!arith!: $\mathrm{IndS}(d,\sigma,n)\cdot\mathrm{aeqC}(n,\sigma)\,\mathrm{SumC}(d,n,\tau)=(\sqrt d)^{-1}\,\mathrm{IndS}(d,\sigma,n+1)$, by \lbx!sumC_lift! (every factor a power of $\omega_{d^{n+1}}$, \lbx!tP_lift!, \lbx!tP_lift_neg!), \lbx!copy_iff!, and \lbx!Fca.geom_lift!;
+\item \lbx!close!: the close step of \lbx!netIfaceAtE!, from \lbx!eval_glue!, \lbx!arith!, \lbx!pinsCp_tauG!, \lbx!aeqC_tauG!, and \lbx!dig_mem_bndL!.
+\end{itemize}
+\lbx!fam d hd n : Equal (envAt (E0 d) L n) (lhs n).1 (lhs n).2 (rhs n).1 (rhs n).2! by \lbx!netIfaceAtE_fam! with \lbx!base!, \lbx!peel! (\lbx!Equal.refl!), and \lbx!close!; \lbx!fam_8! and \lbx!fam_24! are its instances.
+\end{theorem}
+
+\subsection{The engine's Draper adder}\label{sec:boxes-draper-eng}
+
+\file{AdderFamDraperEng.lean} (imports \file{AdderFamDraper}, \file{AdderFamFcaEng}, namespace \lbx!DraperEng!) is the analogue of \cref{sec:boxes-fca-eng} for the flat \texttt{draper\_adder}, reusing \lbx!tri!, \lbx!off!, \lbx!i2!, \lbx!later!, \lbx!dI!, \lbx!engD!, and the decoders of \lbx!FcaEng!.
+\begin{itemize}
+\item \lbx!engL n!: outputs $2j$ ($a$) and $2j+1$ ($b$), inputs $2n+2j$ and $2n+2j+1$, copy $j$'s chain at $4n+11j$, the pair legs from $15n$ (\lbx!a0!, \lbx!a2!, \lbx!a7!, \lbx!g8o!, \lbx!a8!, \lbx!a10!, \lbx!a14!), the pair phases as \lbx!ZP! nodes. \lbx!engR n!: the spec from $\mathrm{rb}(n)=16n+6\,\mathrm{tri}(n)$ (the binder chains, the Z copy and the X sum, the splitter chains; at $n=1$ the labels permuted by \lbx!pofs!, \lbx!rofs!). \lbx!engE d n!: dimension $i<n$ is $d^{\,i+1}$, dimension $n$ is $1$, every phase zero.
+\item \lbx!engL_lit!, \lbx!engR_lit!, \lbx!engLabs_lit!: equal to the engine's literal exports at $n=0,\ldots,5$ (\lbx!decide!).
+\item \lbx!eval_engR! ($d>0$, $n>0$, boundary digits below $d$): $(\sqrt{d^n})^{-1}\,[\mathrm{evd}(\sigma,1,n)\equiv\mathrm{evd}(\sigma,2n+1,n)+\mathrm{evd}(\sigma,2n,n)\pmod{d^n}]\,[\mathrm{evd}(\sigma,0,n)=\mathrm{evd}(\sigma,2n,n)]$, the copy of $a$ and the sum $a+b$ of the digit values.
+\item \lbx!engL_support!, \lbx!prodVal_tz!, \lbx!eval_engL!: as in \cref{thm:boxes-fca-eng-L}; $\mathrm{Tm}$ and $\mathrm{Ec}$ carry the copy factor $[\sigma(a\text{ out})=\sigma(a\text{ in})]$ and three pair phases per later copy.
+\item \lbx!Ec_Ce!: engine copy $m$ is \lbx!aeqC! times \lbx!Ce! of Draper copy $n-1-m$ under \lbx!sigF!; \lbx!prod_Ce!: $\prod_{i<n}\mathrm{aeqC}(i,\sigma)\sum_{x<d}\mathrm{Ce}(d,\sigma,i,x)=(\sqrt{d^n})^{-1}\,\mathrm{Draper.IndS}(d,\sigma,n)$ (from \lbx!Draper.arith!).
+\item \lbx!engFam d hd n : Equal (engE d n) 1 (engL n) 1 (engR n)! for every $n$ (\lbx!engFam0! at $n=0$); \lbx!engFamS d hd n s!: the same with any common scalar $s$ on both sides; \lbx!engFam_8!, \lbx!engFam_2!.
+\end{itemize}
+
+\section{Diagram Families with Differing Copies}\label{sec:boxes-famdiagram}
+
+\file{FamDiagram.lean} (imports \file{OrderK}, \file{PairBox}). A \lbx!FamDiagram! is a boxed diagram \lbx!base! at one copy count $n$ with chain links \lbx!links! (\lbx!FLink!: ports $l_1,l_2,e_1,e_2$), pair boxes \lbx!pairs! (\lbx!DPair!), and phase, dimension, and leg-dimension indices \lbx!ph!, \lbx!dim!, \lbx!legs! keyed by template node or leg, each an \lbx!Ix := ℕ → ℕ → ℕ! read at $(n,c)$: $c=j$ on copy $j$ of a boxed node, $c=k-j$ on the node of the pair $(j,k)$, $c=0$ outside the boxes.
+
+\begin{definition}[\lbx!famExpand!]\label{def:boxes-famExpand}
+\lbx!famExpand F n! is $X=$ \lbx!F.base.expandK (fun _ => n)! with:
+\begin{itemize}
+\item every node of $X$ (copy $j$ of template node $x$, \lbx!orgOf!) given the indices \lbx!ph!, \lbx!dim!, \lbx!legs! at $(n,j)$ (default its own), and each pair box's \lbx!left! leg grown to $n-1-j$ legs and its \lbx!right! leg to $j$ legs in place (\lbx!cnt!, \lbx!growC!, \lbx!posC!); every port of $X$ moved to its place after the growth (\lbx!mv!);
+\item for each link, the wires $e_2$ to copy $0$'s $l_2$, copy $j$'s $l_1$ to copy $j+1$'s $l_2$, and copy $n-1$'s $l_1$ to $e_1$; at $n=0$ the wire $e_2$ to $e_1$;
+\item for each pair $(j,k)$, $j<k<n$, of each pair box, a copy of its node with id $X.\mathit{fresh}+\mathrm{pair}(a,\mathrm{pair}(j,k))$ and indices at $(n,k-j)$, its input wired to copy $j$'s grown \lbx!left! leg $k-j-1$ and its output to copy $k$'s grown \lbx!right! leg $j$.
+\end{itemize}
+\lbx!famExpand_plain!: with no links, pairs, or indices, \lbx!famExpand F n = F.base.expandK fun _ => n!.
+\end{definition}
 
 \section{Auxiliary Lemmas}\label{sec:boxes-aux}
 
