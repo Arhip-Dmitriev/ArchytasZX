@@ -470,9 +470,11 @@ With $d$ symbolic, two Fourier boxes in sequence (input on the first, output on 
 -(n-1)\prod_{p}\delta_d(o_p)\,\delta_d(i)\;+\;\sum_{p}\delta_d(o_p-i)\prod_{q\ne p}\delta_d(o_q).
 \]
 At $i=0$ with every output 0 this is $-(n-1)+n=1$.
+\item \textbf{Pair phase} (\code!Zp!): the entry $e^{2\pi i\,\phi(x,y)}$ of its pair phase $\phi$ at its two port indices (outputs, then inputs; \py!PairPhase.at_pair!); a missing pair phase or another port count raises \py!SymbolicContractionGrammarError!.
 \item \textbf{Ruled Z or X} (the phase vector carries a rule or weights): \py!_ruled_entry!, below.
 \item \textbf{Bilinear phase table}: \py!_bilinear_table_entry!, below.
 \item \textbf{Linear phase table}: when \py!_linear_table! finds the slope $a$ (below), an X spider has entry $d^{-L/2}\,d\,\delta_d(\tau+a)$, and a Z spider with $L\ge1$ ports has entry $\omega_d^{\,a\ell_1}\prod_{r\ge2}\delta_d(\ell_1-\ell_r)$.
+\item \textbf{Rational slope} (a Z spider without an integer slope): when \py!_rational_slope! finds $r$ (a concrete dimension $d\ge3$, entry~1 a rational turn $r$ with $rd$ not an integer, every entry $k<d$ equal to $rk$ up to an integer, entry~0 an integer when stored, and no entry at $k\ge d$), the Z spider with $L\ge1$ ports has entry $e^{2\pi i\,r\ell_1}\prod_{r\ge2}\delta_d(\ell_1-\ell_r)$.
 \item \textbf{Z and X with sparse phases.} Let $C$ be the stored phase entries, each $(c,\alpha_c)$ with a concrete index $c$, in ascending order (\py!_phase_corrections!), and $\varepsilon_c=e^{2\pi i\alpha_c}-1$. Then
 \begin{align}
 E_Z &= \prod_{r\ge 2}\delta_d(\ell_1-\ell_r) \;+\; \sum_{(c,\alpha_c)\in C}\varepsilon_c\prod_{r=1}^{L}\delta_d(\ell_r-c), &&(L\ge 1)\label{eq:semantics-z-sym}\\
@@ -533,9 +535,10 @@ Input: a head factor, the parts (one entry per node, and one closed factor per c
 \item If some summed dimension is symbolic and there are at most \py!_NESTED_INDICES! $=24$ summed indices, form $\text{head}\cdot\prod\text{parts}$, wrap one nested sum (the first summed index outermost), and simplify once.
 \item Otherwise eliminate one index at a time, in the manner of bucket elimination~\cite{dechter1999bucket}. The \term{width} of an index is the number of distinct summed indices carried by the parts it occurs in. Repeat while indices remain:
   \begin{enumerate}
-  \item Choose, among the indices not deferred (all of them if every one is deferred), the one of least (width, name). It is \term{final} when it was deferred.
+  \item Choose, among the indices not deferred, the one of least (width, name). When every index is deferred, more than one remains, and all their dimensions are concrete, raise \py!SymbolicContractionUnsupportedError! (``indices [\ldots] do not close at concrete dimensions''); otherwise choose among all of them. It is \term{final} when it was deferred.
   \item With no part carrying it, multiply the head by its dimension and drop it.
-  \item Otherwise sum the product of the parts carrying it over the index and simplify, with the boundary indices and the other summed indices of those parts sized, and with concrete enumeration (\py!enumerate_concrete!) only when final. When the index is not final and the result carries more unevaluated sums than the product did, defer the index and choose again.
+  \item Otherwise close the sum of the product of the parts carrying it over the index (\py!_close_partial!), with the boundary indices and the other summed indices of those parts sized, and with concrete enumeration (\py!enumerate_concrete!) only when final: when the sum holds no unevaluated sum, its factors free of the index that are exponentials or constants are split off (\py!_split_on!), the rest is summed and simplified, and, when that is one term without sums, multiplied back and simplified; otherwise the whole sum is simplified. When the index is not final and the result carries more unevaluated sums than the product did, the sum is closed again with the head's \py!ModDelta! factors multiplied in; when that closes, those factors leave the head; otherwise defer the index and choose again.
+  \item Pass the result through \py!_parity_pair! (a sum $f+f\,e^{i\pi\theta}$ of two terms whose exponent $\theta$ is a polynomial with integer coefficients in integer symbols becomes $2f\,\mathrm{ModDelta}(\theta,2)$), then add it: its factors free of every open summed index (and the free terms of an exponential's exponent) join the head (\py!_peel!).
   \item Replace those parts by the result, drop the index, clear the deferral of every index those parts carried, and recompute their widths.
   \end{enumerate}
 \item Return $\text{head}\cdot\prod\text{remaining parts}$, simplified with the boundary indices sized.
@@ -769,22 +772,23 @@ A port of dimension $2^k$ is $k$ Boolean \term{digits} $x_0,\dots,x_{k-1}$, low 
 \subsection{Translation}
 
 \begin{signature}
-\py!from_diagram(diagram: Diagram, layout: dict[str, object] | None = None, w_nodes: bool = False) -> PathSum | QuditPathSum!
+\py!from_diagram(diagram: Diagram, layout: dict[str, object] | None = None, w_nodes: bool = False, triangles: bool = False) -> PathSum | QuditPathSum!
 \end{signature}
 
 \begin{algorithm}[\texttt{from\_diagram}]\label{alg:semantics-from-diagram}
 \begin{enumerate}
-\item Expand every \bbox{} of concrete multiplicity; one of symbolic multiplicity raises \py!PathSumUnsupported!. Every node must be Z, X, F, B or S (and W when \py!w_nodes!); another generator raises \py!PathSumUnsupported! (``node \ldots is a \ldots'').
+\item Expand every \bbox{} of concrete multiplicity; one of symbolic multiplicity raises \py!PathSumUnsupported!. Every node must be Z, X, F, B or S (and W when \py!w_nodes!, the triangle and inverse triangle when \py!triangles!); another generator raises \py!PathSumUnsupported! (``node \ldots is a \ldots''). A mixed diagram (\py!is_mixed!, \cref{sec:semantics-pathsum-mixed}) is returned as \py!mixed_sum(diagram)!; with a layout it raises \py!PathSumUnsupported! (``a layout of a diagram on dimensions 2, 3 and 6'').
 \item Fix the base (\py!diagram_base!) and each port's digit count.
 \item \textbf{Digit identification.} Over items \code!("p", port key, j)! and \code!("z", node, j)!, a union-find (\py!_Union!, path-compressing; on union the root with the smaller \py!repr! survives) identifies: the two ends of each wire, digit by digit (a wire between different digit counts raises \py!PathSumUnsupported!); every port digit $j$ of a Z spider with the spider's digit $j$ (a portless Z spider has the digit count of its phase vector's dimension); and, for B and S, the whole port's low $q$ digits with the low part's digits and its next digits with the high part's digits, where the low part is input~1 of B or output~1 of S ($q$ its digit count) and the high part is input~0 or output~0.
 \item \textbf{Variables.} Each boundary digit, in order, becomes the next boundary variable. A boundary digit whose class already has a variable adds the constraint $x_a+x_b=0$ and records the equal pair. Every class without a variable, in \py!repr! order of its root, becomes a path variable, numbered after the boundary.
-\item With base $p$ odd, a W node raises \py!PathSumUnsupported!; the rest follows \cref{alg:semantics-qudit}.
+\item With base $p$ odd, a W node or a triangle raises \py!PathSumUnsupported!; the rest follows \cref{alg:semantics-qudit}.
 \item \textbf{Constant.} $(c,e)$ = \py!constant(diagram.scalar)!: the scalar as a cyclotomic number times $\sqrt2^{\,e}$ (\cref{ch:algebra}); a scalar of another form raises.
 \item \textbf{Nodes}, by id:
   \begin{itemize}
   \item Z with digits $z$: add the phase terms of its table over $z$ (\py!_phase_terms!, below); with a weighted vector, the weighted terms instead (below).
   \item X of $k$ digits: fresh path digits $y_0,\dots,y_{k-1}$; for each port of sign $\sigma$ ($+1$ output, $-1$ input) with digits $x$, add the terms $\sigma\,2^{a+b}y_a x_b/2^k$ for $a+b<k$ (the products with $a+b\ge k$ are integers); subtract $k$ from $e$ per port; then the table terms over $y$ as for~Z.
   \item F of $k$ digits with output digits $x$ and input digits $z$: add $2^{a+b}x_az_b/2^k$ for $a+b<k$ and subtract $k$ from~$e$.
+  \item Triangle or inverse triangle (only with \py!triangles!) with output digit $y$ and input digit $x$, its output of one digit (else \py!PathSumUnsupported!): the amplitude atom $(0,\ y+xy)$; an inverse triangle also adds the phase terms $\tfrac12x+\tfrac12xy$.
   \item W (only with \py!w_nodes!; every port of dimension~2, else \py!PathSumUnsupported!): record the parity $\text{in}+\sum\text{outs}$ and the products $o_ao_b$ of every two outputs.
   \end{itemize}
 \item \textbf{W constraints.} For each recorded W node, in order, substitute the earlier pins into its parity. When the parity has a degree-one monomial on a path variable, pin the least such variable $v$ to the rest of the parity (substituted into the phase, the constraints and the amplitude atoms; $v$ leaves the path) and record the pin; otherwise add the nonzero parity as a constraint. Each pair product, with the pins substituted, becomes a constraint. A constraint left on a path variable raises \py!PathSumUnsupported! (``a W node's two outputs on path variables'').
@@ -818,7 +822,7 @@ The X and F terms with $a+b\ge k$ are dropped for the same reason: $2^{a+b}/2^k$
 An X spider $1\to1$ on dimension~2 with phase $\tfrac12$ has boundary variables $0$ (output $o$) and $1$ (input $i$), one path variable $y$ (variable~2), phase $\tfrac12 yo+\tfrac12 yi+\tfrac12 y$ (the input term $-\tfrac12 yi$ read mod~1), constant~1 and $\sqrt2$ exponent $-2$: $\tfrac12\sum_y(-1)^{y(o+i+1)}=\delta_2(o+i+1)$, the NOT gate. The symbolic contraction returns the entry \py!ModDelta(_i0 + _i1 + 1, 2)!, and \py!compare_path_sums! against a phaseless Z spider $1\to1$ returns \code!unequal! at boundary index $(1,0)$ with entries $1$ and $0$.
 \end{example}
 
-\paragraph{Weighted tables.} \py!_weights(node_id, node, d)! reads each coefficient $a_v$ as $q\,\zeta_n^{\,u}\sqrt2^{\,\kappa}$ (one root-of-unity term with a rational $q$; zero allowed). Its turn is $u/n$, plus $\tfrac12$ when $q<0$, mod~1; its squared magnitude $q^2 2^\kappa$. The base is the entry of least squared magnitude; every nonzero entry's ratio to it must be 1 or 2, else \py!PathSumUnsupported!; all-zero weights also raise. The Z (or X) spider then adds the interpolated turns, multiplies $c$ by the base's $|q|$ and adds its $\kappa$ to $e$, adds the amplitude atom $(0,I_0)$ with $I_0$ the $\mathbb F_2$ indicator of the zero entries, and adds $(\sqrt2, I_2)$ with $I_2$ the indicator of the entries of ratio~2. The indicator of a 0/1 table is its Möbius inversion mod~2 (\py!_f2_indicator!).
+\paragraph{Weighted tables.} \py!_weights(node_id, node, d)! reads each coefficient $a_v$ by \py!constant!. A zero coefficient has turn $0$ and is marked zero. A coefficient of one root-of-unity term $q\,\zeta_n^{\,u}\sqrt2^{\,\kappa}$ ($q$ rational) has turn $u/n$, plus $\tfrac12$ when $q<0$, mod~1, and squared magnitude $q^2 2^\kappa$. Any other coefficient is read by \py!_root_square!: its squared magnitude $|a_v|^2$ and its turn $\arg(a_v)/2\pi$ mod~1 must both simplify to rationals (else \py!PathSumUnsupported! ``\ldots a weight \ldots that is not a root times a real''), and its magnitude counts as irrational. All-zero weights raise. The base is the entry of least squared magnitude, which must not be irrational (``\ldots a least weight of irrational magnitude''). The Z (or X) spider then adds the interpolated turns, multiplies $c$ by the base's $|q|$ and adds its $\kappa$ to $e$, adds the amplitude atom $(0,I_0)$ with $I_0$ the $\mathbb F_2$ indicator of the zero entries, and, for each squared-magnitude ratio $r\ne1$ to the base in increasing order, the atom $(\sqrt r,I_r)$ with $I_r$ the indicator of the entries of that ratio: $\sqrt2$ for $r=2$, else $\sqrt{r_{\mathrm{num}}r_{\mathrm{den}}}/r_{\mathrm{den}}$ as a cyclotomic number times a power of $\sqrt2$ (\py!_sqrt_integer!, \py!with_sqrt2!). The indicator of a 0/1 table is its Möbius inversion mod~2 (\py!_f2_indicator!).
 
 \subsection{Mixed-dimension path sums}\label{sec:semantics-pathsum-mixed}
 
@@ -862,9 +866,9 @@ with $\Phi$, the constraints $C_j$ and each atom argument $A_t$ polynomials over
 
 \begin{algorithm}[\texttt{\_qudit\_sum}]\label{alg:semantics-qudit}
 \begin{enumerate}
-\item $(c,e)$ = \py!constant(scalar)!, folded into one cyclotomic constant (\py!with_sqrt2!). Let $r=1/\sqrt p$ (\py!sqrt_prime(p)/p!).
+\item $(c,e)$ = \py!constant(scalar)!, folded into one cyclotomic constant (\py!with_sqrt2!). Each F and each port of an X spider counts one root factor; with $\rho$ root factors in all, $c$ is finally multiplied by $p^{-\lfloor\rho/2\rfloor}$, and by $\sqrt p/p$ when $\rho$ is odd.
 \item Z with digits $z$: add \py!_qudit_part!: the Lagrange interpolation $\sum_v \bigl(p\,t(v)\bigr)\prod_j\bigl(1-(z_j-v_j)^{p-1}\bigr)$ over $\mathbb F_p$, $v_j$ the base-$p$ digits of $v$, which requires every $t(v)$ to be a multiple of $1/p$; when it is not, or the vector is weighted, and the node has a phase vector, the coefficients $a_v$ become an atom on the digit (one digit) or a multi-digit atom (several), and the phase part is zero.
-\item X and F must have one digit (dimension $p$), else \py!PathSumUnsupported!. F with output digit $x$ and input digit $z$ adds $xz$ and multiplies $c$ by $r$; an F whose two ports share a digit (a self-loop) raises. X adds a fresh digit $y$, the term $\sigma\,yx$ for each port of sign $\sigma$ with digit $x$, its table part over $y$, and a factor $r$ per port.
+\item X and F must have one digit (dimension $p$), else \py!PathSumUnsupported!. F with output digit $x$ and input digit $z$ adds $xz$ and one root factor; an F whose two ports share a digit (a self-loop) raises. X adds a fresh digit $y$, the term $\sigma\,yx$ for each port of sign $\sigma$ with digit $x$, its table part over $y$, and one root factor per port.
 \item Each equal pair $(a,b)$ of boundary variables becomes the constraint $x_a-x_b$.
 \end{enumerate}
 \end{algorithm}
@@ -880,8 +884,8 @@ with $\Phi$, the constraints $C_j$ and each atom argument $A_t$ polynomials over
 
 \begin{algorithm}[\texttt{compare\_path\_sums}]\label{alg:semantics-compare-pathsums}
 \begin{enumerate}
-\item Both diagrams must have one base and the same boundary digit layout, else \py!PathSumUnsupported!. An odd base goes to the qudit comparison (step~7).
-\item Translate and reduce both, and take the canonical forms with \py!parity=True!.
+\item Both diagrams must have one base (base $2$ for a mixed side) and the same boundary digit layout, else \py!PathSumUnsupported!. An odd base goes to the qudit comparison (step~7).
+\item Translate both with \py!triangles=True!, reduce both inside \py!zero_indicators()! (\cref{ch:algebra}), and take the canonical forms with \py!parity=True!.
 \item If either has no canonical form: when neither sum is zero and both residual forms exist and agree up to renaming of path variables, return \code!equal! (``path sums reduce to one residual form up to renaming of $n$ path variable(s) ($a$ and $b$ rule steps)''). Otherwise the stuck reason is ``path\_sum: $a$ and $b$ path variable(s) left after reduction'' (or ``path\_sum: a support constraint is not affine'' with no path variable left); with \py!max_residual_paths! go to \py!_enumerate_residual!, else return \code!unknown!.
 \item Equal canonical forms (\py!Canon.same!) give \code!equal! (``path sums reduce to one canonical form \ldots'').
 \item With parity terms on either side, return \py!_compare_parity!: \code!equal! when the phase difference (\py!parity_difference!) is a constant $c_0$ and $c_L\,\zeta^{c_0}=c_R$; else \code!unequal! at the first of \py!parity_points! where the two canonical evaluators differ; else \code!unknown! (``\ldots differ at none of $N$ tried points'').
@@ -899,7 +903,7 @@ The symbolic contraction reads the contraction of a box-free diagram from its re
 \begin{algorithm}[\texttt{\_path\_sum\_tensor}]\label{alg:semantics-pathsum-tensor}
 Return \py!None! (fall back to contraction) at any failed condition.
 \begin{enumerate}
-\item Every boundary dimension is concrete and equal to 1 or 2; the base is~2; \py!from_diagram! (without W nodes) and \py!reduce! succeed.
+\item Every boundary dimension is concrete and equal to 1 or 2; the base is~2; \py!from_diagram! (without W nodes) and \py!reduce! inside \py!dyadic_columns()! (\cref{ch:algebra}) succeed.
 \item The axes are \code!_i<k>! over the boundary ports. The dimension-2 axes must match the boundary variables one to one; each path variable $v$ is named \code!_p<v>!; every variable the phase, the amplitude atoms and the constraints use must be named.
 \item With no path variable and more than one constraint, build the entry from the canonical form (\py!_canon_entry!, below) and return it simplified (a simplifier budget error returns \py!None!); when there is no canonical form, continue with step~4.
 \item Otherwise the entry is

@@ -107,7 +107,7 @@ Input is read as physical lines and joined into \term{logical lines}, each of wh
 \py!_logical_lines(lines)! yields logical lines from physical lines. It keeps a pending logical line (initially none) and a list of continuation parts (initially empty). For each physical line, with trailing newline characters and whitespace removed, and its code being the text before its first \code!#!, stripped:
 \begin{enumerate}
 \item With no parts and empty code (a blank or comment line), yield the line stripped and continue. The pending line is kept, so a later indented line still joins it.
-\item With no parts, a pending line, and a first character that is a space or a tab: replace the pending line by its text before its first \code!#!, right-stripped, a newline, and the code; continue.
+\item With no parts, a pending line, and a first character that is a space or a tab: when the pending line is still a single line, cut it before its first \code!#! and right-strip it; append a newline and the code; continue.
 \item If the line ends in a backslash and either parts exist or the line is not a comment line, append the line without the backslash, stripped, to the parts; continue.
 \item Append the line stripped to the parts. Yield the pending line if there is one. The new pending line is the nonempty parts joined by single spaces; clear the parts.
 \end{enumerate}
