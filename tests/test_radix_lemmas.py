@@ -26,7 +26,8 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.diagram.bangbox import Mult
 from archytaszx.semantics import kernel, lemmas
 
-NAMES = ["row_bind", "row_split", "top_bind", "top_split"]
+NAMES = ["row_bind", "row_split", "top_bind", "top_split", "radix_add", "row_split_up"]
+REWRITTEN = [name for name in NAMES if name != "radix_add"]
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -38,13 +39,35 @@ def test_proved_for_every_p_with_a_kernel_theorem(name: str) -> None:
     assert kernel._same(theorem.lhs, left) and kernel._same(theorem.rhs, right)
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", REWRITTEN)
 def test_rewrite_finds_the_left_side(name: str) -> None:
     entry = lemmas.lemma(name)
     n = Mult.symbol("n").to_sympy()
     left, right = lemmas.sides(entry, n)
     theorem = cast(kernel.Theorem, lemmas.rewrite(left, entry))
     kernel.iso(theorem.rhs, right)
+
+
+def test_radix_add_instance_at_symbolic_p() -> None:
+    n = Mult.symbol("n").to_sympy()
+    theorem = cast(kernel.Theorem, lemmas.instance(lemmas.RADIX_ADD, n))
+    left, right = lemmas.sides(lemmas.RADIX_ADD, n)
+    assert kernel._same(theorem.lhs, left) and kernel._same(theorem.rhs, right)
+
+
+def test_sign_flipped_row_split_up_is_refused() -> None:
+    entry = lemmas.ROW_SPLIT_UP
+    flipped = lemmas.Lemma(
+        name="row_split_up_flipped",
+        symbol="p",
+        statement="ROW_SPLIT_UP with the right pair phase sign flipped",
+        build=lambda p: lemmas._dsl_sides(
+            lemmas._ROW_SPLIT_LEFT.replace("-x*y", "x*y"), lemmas._ROW_SPLIT_RIGHT, p
+        ),
+        values=entry.values,
+    )
+    with pytest.raises((lemmas.LemmaError, kernel.KernelError)):
+        lemmas.proved(flipped)
 
 
 def test_bounds_take_symbolic_coefficients_of_known_sign() -> None:
@@ -57,7 +80,10 @@ def test_bounds_take_symbolic_coefficients_of_known_sign() -> None:
 if __name__ == "__main__":
     for name in NAMES:
         test_proved_for_every_p_with_a_kernel_theorem(name)
-        test_rewrite_finds_the_left_side(name)
+        if name in REWRITTEN:
+            test_rewrite_finds_the_left_side(name)
         print(name, "ok")
+    test_radix_add_instance_at_symbolic_p()
+    test_sign_flipped_row_split_up_is_refused()
     test_bounds_take_symbolic_coefficients_of_known_sign()
-    print("bounds ok")
+    print("instance, flipped, bounds ok")
