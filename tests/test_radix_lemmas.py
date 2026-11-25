@@ -49,7 +49,7 @@ def test_rewrite_finds_the_left_side(name: str) -> None:
 
 
 @pytest.mark.parametrize("shift", [0, 1])
-def test_radix_add_instance_at_symbolic_p(shift: int = 0) -> None:
+def test_radix_add_instance_at_symbolic_p(shift: int) -> None:
     p = Mult.symbol("n").to_sympy() + shift
     theorem = cast(kernel.Theorem, lemmas.instance(lemmas.RADIX_ADD, p))
     left, right = lemmas.sides(lemmas.RADIX_ADD, p)
