@@ -785,6 +785,9 @@ def _regrow_port(
         if other_id == owner_box_id or other_id not in diagram.bang_boxes:
             continue
         if ref.node_id in other.node_scope:
+            moved_groups = tuple(
+                frozenset(new_node_id if n == ref.node_id else n for n in g) for g in other.groups
+            )
             if any(r.node_id == ref.node_id for link in other.links for r in link):
                 moved_links = []
                 for link in other.links:
@@ -803,19 +806,15 @@ def _regrow_port(
                         new_node_id if n == ref.node_id else n for n in other.node_scope
                     ),
                     links=tuple(moved_links),
+                    groups=moved_groups,
                 )
             else:
-                diagram.set_bang_box_node_scope(
-                    other_id,
-                    frozenset(new_node_id if n == ref.node_id else n for n in other.node_scope),
-                )
-            if other.groups:
                 diagram.set_bang_box_extension(
                     other_id,
-                    groups=tuple(
-                        frozenset(new_node_id if n == ref.node_id else n for n in g)
-                        for g in other.groups
+                    node_scope=frozenset(
+                        new_node_id if n == ref.node_id else n for n in other.node_scope
                     ),
+                    groups=moved_groups,
                 )
         if any(p.node_id == ref.node_id for p in other.port_scope):
             new_port_scope = frozenset(
@@ -2950,10 +2949,13 @@ def peel_one(
     return PeelResult(working, copy_node_ids, separable)
 
 
-def peel_aligned(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> PeelResult:
-    """Peel copy j off every box of ``box_id``'s alignment group: j the first copy when a chain
-    member :func:`peels_first` and ``last`` is False, else the last; the wires between the
-    residual boxes stay aligned and the peeled copies are wired copy to copy."""
+def peel_aligned(
+    diagram: Diagram, box_id: BangBoxId, *, last: bool = False, first: bool = False
+) -> PeelResult:
+    """Peel copy j off every box of ``box_id``'s alignment group: j the first copy when
+    ``first``, or when a chain member :func:`peels_first` and ``last`` is False, else the last;
+    the wires between the residual boxes stay aligned and the peeled copies are wired copy to
+    copy."""
     working = diagram.copy()
     members = aligned_members(working, box_id)
     if len(members) < 2:
@@ -2967,7 +2969,8 @@ def peel_aligned(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> 
         if box.multiplicity != boxes[0].multiplicity:
             raise BangBoxGrammarError(f"aligned boxes {members!r} differ in count")
     chains = [b for b in boxes if b.links]
-    first = not last and bool(chains) and all(peels_first(b) for b in chains)
+    forced = first and not last
+    first = forced or (not last and bool(chains) and all(peels_first(b) for b in chains))
     predecessor = _predecessor(boxes[0].multiplicity)
     root = members[0]
     wires = _member_wires(working, members)
@@ -2980,7 +2983,11 @@ def peel_aligned(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> 
         box = working.bang_boxes[box.id]
         if box.is_extended:
             maps[box.id] = _peel_extended(
-                working, box, predecessor.to_sympy(), force_last=not first and peels_first(box)
+                working,
+                box,
+                predecessor.to_sympy(),
+                force_last=not first and peels_first(box),
+                force_first=forced,
             )
         else:
             maps[box.id] = _peel_node_scope(working, box, first)
@@ -3109,9 +3116,11 @@ def peel_owners(
         group = aligned_members(working, box_id) if working.bang_boxes[box_id].is_node_scope else []
         if len(group) > 1 and set(group) <= set(owners):
             done |= set(group)
-            if set(group) & first:
+            if set(group) & first and not set(group) <= first:
                 raise BangBoxGrammarError(f"aligned box {box_id!r} has no first-copy peel")
-            result = peel_aligned(working, box_id, last=bool(set(group) & last))
+            result = peel_aligned(
+                working, box_id, last=bool(set(group) & last), first=set(group) <= first
+            )
             working, copies = result.diagram, copies | result.copy_node_ids
             continue
         result = peel_one(working, box_id, last=box_id in last, first=box_id in first)

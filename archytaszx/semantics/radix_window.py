@@ -76,9 +76,10 @@ def _first_peels(source: Diagram, k: str) -> kernel.Theorem:
     return kernel.repeel(source, k, a_first=boxes)
 
 
-def _core(d: Diagram, k: str) -> frozenset[NodeId]:
+def _core(d: Diagram, k: str, joint: bool = False) -> frozenset[NodeId]:
     """The scopes of the chain boxes whose multiplicity reads ``k``, closed under unboxed nodes
-    every wired neighbour of which lies in it."""
+    every wired neighbour of which lies in it; with ``joint``, under the connected sets of
+    unboxed nodes every wired neighbour of which outside the set lies in it."""
     core = {
         n
         for box in d.bang_boxes.values()
@@ -88,22 +89,34 @@ def _core(d: Diagram, k: str) -> frozenset[NodeId]:
     if not core:
         return frozenset()
     partner = _partner(d)
+
+    def far(node: NodeId) -> list[NodeId]:
+        return [partner[r].node_id for r in _legs(d, node) if r in partner]
+
     grown = True
     while grown:
         grown = False
-        for node in sorted(d.nodes):
-            if node in core or _boxed(d, node):
+        seen: set[NodeId] = set()
+        for start in sorted(d.nodes):
+            if start in core or start in seen or _boxed(d, start):
                 continue
-            far = [partner[r].node_id for r in _legs(d, node) if r in partner]
-            if far and all(f in core for f in far):
-                core.add(node)
+            part, todo = {start}, [start]
+            while todo:
+                for f in far(todo.pop()):
+                    if joint and f not in part and f not in core and not _boxed(d, f):
+                        part.add(f)
+                        todo.append(f)
+            seen |= part
+            outside = [f for n in part for f in far(n) if f not in part]
+            if outside and all(f in core for f in outside):
+                core |= part
                 grown = True
     return frozenset(core)
 
 
 def _pair_splits(t: kernel.Theorem) -> Iterator[kernel.Theorem]:
-    """``t`` continued by each split of a Z spider (phased, or of three or more outputs) off
-    its output leg into a pair phase, toward its first other output
+    """``t`` continued by each split of a Z spider (phased, of three or more outputs, or of four
+    or more legs) off its output leg into a pair phase, toward its first other output
     (:func:`~archytaszx.semantics.lemmas._split_off`)."""
     from archytaszx.semantics.lemmas import LemmaError, _split_off, _split_theorem
 
@@ -111,7 +124,10 @@ def _pair_splits(t: kernel.Theorem) -> Iterator[kernel.Theorem]:
     partner = _partner(d)
     for node_id in sorted(d.nodes):
         node = d.nodes[node_id]
-        if node.generator_type.name != "Z" or (len(node.outputs) < 3 and node.phase is None):
+        legs = len(node.inputs) + len(node.outputs)
+        if node.generator_type.name != "Z" or (
+            len(node.outputs) < 3 and legs < 4 and node.phase is None
+        ):
             continue
         outs = [PortRef(node_id, Direction.OUTPUT, i) for i in range(len(node.outputs))]
         into = [
@@ -155,10 +171,11 @@ def expose(
     if peeled is not None and not kernel._same(t.lhs, peeled):
         raise RadixWindowError("the re-peel does not end at the peeled successor")
     for _ in range(MAX_ROUNDS):
-        core = _core(t.rhs, k)
-        cut = find_cut_region(t.rhs, core, own_k) if core else None
-        if cut is not None:
-            return t, cut
+        for joint in (False, True):
+            core = _core(t.rhs, k, joint)
+            cut = find_cut_region(t.rhs, core, own_k) if core else None
+            if cut is not None:
+                return t, cut
         nxt = _lemma_round(t)
         if nxt is None:
             nxt = next((r for s in _pair_splits(t) if (r := _lemma_round(s)) is not None), None)

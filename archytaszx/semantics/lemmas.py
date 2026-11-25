@@ -646,6 +646,73 @@ TOP_SPLIT = Lemma(
     values=_radix_values,
 )
 
+_RADIX_ADD_LEFT = """
+dim d
+count p
+ba = B(d, d^p)
+bb = B(d, d^p)
+z = Z(1 -> 2, d^(p + 1))
+x = X(2 -> 1, d^(p + 1))
+sa = S(d, d^p)
+sb = S(d, d^p)
+wire ba.out0 -- z.in0, z.out0 -- sa.in0, z.out1 -- x.in1, bb.out0 -- x.in0, x.out0 -- sb.in0
+inputs ba.in0, ba.in1, bb.in0, bb.in1
+outputs sa.out0, sa.out1, sb.out0, sb.out1
+"""
+
+_RADIX_ADD_RIGHT = """
+dim d
+count p
+za = Z(1 -> 2, d)
+fa = F(d)
+fb = F(d)
+hub = Z(2 -> 4, d)
+g1 = F(d)
+g2 = F(d)
+g3 = F(d)
+zl = Z(1 -> 2, d^p)
+xl = X(2 -> 1, d^p)
+rb = Z(2 -> 1, d^p)
+pb = Zp(in: [d], out: [d^p]) phase{x, y: x*y/d^(p+1)}
+ra = Z(2 -> 1, d^p)
+pa = Zp(in: [d], out: [d^p]) phase{x, y: x*y/d^(p+1)}
+rs = Z(2 -> 1, d^p)
+ps = Zp(in: [d], out: [d^p]) phase{x, y: -x*y/d^(p+1)}
+wire za.out0 -- fa.in0, fa.out0 -- hub.in1, fb.out0 -- hub.in0, hub.out0 -- g1.in0
+wire g1.out0 -- g2.in0, g2.out0 -- g3.in0, hub.out1 -- ps.in0, ps.out0 -- rs.in1
+wire hub.out2 -- pa.in0, pa.out0 -- ra.in1, hub.out3 -- pb.in0, pb.out0 -- rb.in1
+wire rb.out0 -- xl.in0, zl.out1 -- xl.in1, zl.out0 -- ra.in0, xl.out0 -- rs.in0
+inputs za.in0, zl.in0, fb.in0, rb.in0
+outputs za.out1, ra.out0, g3.out0, rs.out0
+"""
+
+RADIX_ADD = Lemma(
+    name="radix_add",
+    symbol="p",
+    statement=(
+        "a d^(p + 1) adder on registers bound from a top digit and a d^p register by B(d, d^p), "
+        "split by S(d, d^p), is the d^p adder on the low registers and, on the top digits, F "
+        "into a Z hub, F^3 out, the hub read into pair phases x y/d^(p + 1) against the low "
+        "addend before the adder and the low copied register after it, and -x y/d^(p + 1) "
+        "against the low sum"
+    ),
+    build=lambda p: _dsl_sides(_RADIX_ADD_LEFT, _RADIX_ADD_RIGHT, p),
+    values=_radix_values,
+)
+
+ROW_SPLIT_UP = Lemma(
+    name="row_split_up",
+    symbol="p",
+    statement=(
+        "a pair phase x y/d^(p + 1) between a d wire and a d^p register split into p digits by "
+        "an S(d^j, d) chain is one pair phase x y/d^(j + 2) on each digit j after the chain"
+    ),
+    build=lambda p: _dsl_sides(
+        _ROW_SPLIT_LEFT.replace("-x*y", "x*y"), _ROW_SPLIT_RIGHT.replace("-x*y", "x*y"), p
+    ),
+    values=_radix_values,
+)
+
 LIBRARY: tuple[Lemma, ...] = (
     CARRY_SHIFT,
     AND_REGISTER,
@@ -658,6 +725,8 @@ LIBRARY: tuple[Lemma, ...] = (
     ROW_SPLIT,
     TOP_BIND,
     TOP_SPLIT,
+    RADIX_ADD,
+    ROW_SPLIT_UP,
 )
 
 _SPLIT_BIND_LEFT = """
