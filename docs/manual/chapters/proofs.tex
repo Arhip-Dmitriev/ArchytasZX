@@ -1753,7 +1753,7 @@ Let $\Theta$ be \py!proved(entry)! and $(A,B)$ the sides at \py!value!.
 \py!close_by_cores(a, b, index) -> object!\\
 \py!close_with_lemmas(replaced, target, source, index) -> object!
 \end{signature}
-\py!close_by_cores! returns \py!kernel.iso(a, b)! when the diagrams are isomorphic; otherwise it takes on each side the union of the chain cores (\py!box_core!: a chain box's scope and the nodes off it reached from its link-in ends without passing a scope node) of every chain \bbox{} carrying \py!index! (\py!_owner_cores!; none when no such box exists or a core's head meets its tail) and returns \py!kernel.local_contraction(a, core_a, b, core_b, open_region(a, core_a))!. It raises \py!KernelError! \code!no chain cores carrying the index on both sides! when a side has no core.
+\py!close_by_cores! returns \py!kernel.iso(a, b)! when the diagrams are isomorphic; otherwise it takes on each side the union of the chain cores (\py!box_core!: a chain box's scope and the nodes off it reached from its link-in ends without passing a scope node) of every chain \bbox{} carrying \py!index! (\py!_owner_cores!; none when no such box exists or a core's head meets its tail) and returns \py!kernel.local_contraction(a, core_a, b, core_b, _open_region(a, core_a))! (\py!_open_region! of \module{archytaszx.semantics.induction}). It raises \py!KernelError! \code!no chain cores carrying the index on both sides! when a side has no core.
 
 \begin{algorithm}[Lemma window]\label{alg:proofs-lemma-window}
 \py!close_with_lemmas(replaced, target, source, index)! proves $\text{replaced}=\text{target}$, \py!target! being the joint peel of \py!source!'s boxes carrying \py!index!:
