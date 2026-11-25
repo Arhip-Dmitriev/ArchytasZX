@@ -33,6 +33,7 @@ from archytaszx.semantics.contract_symbolic import (
     SymbolicTensor,
     _mark_symbol,
 )
+from archytaszx.semantics.periodic import PeriodicError, chain_period
 
 
 def test_index_sum_nested_keeps_both_indices() -> None:
@@ -230,6 +231,18 @@ def test_aligned_boxes_are_refused_by_to_scalable_and_kept_by_doubling() -> None
     assert len(aligned) == 1
     assert aligned[0].align in doubled.bang_boxes
     assert other in diagram.bang_boxes
+
+
+def test_chain_period_sees_an_index_in_a_copy_scalar() -> None:
+    diagram, (z,) = _states(1)
+    diagram.add_bang_box(
+        Mult.concrete(2), node_scope=frozenset({z}), copy_scalar=Scalar.symbol("n")
+    )
+    try:
+        chain_period(diagram, "n")
+    except PeriodicError:
+        return
+    raise AssertionError("an index read by a copy scalar passed as unread")
 
 
 if __name__ == "__main__":

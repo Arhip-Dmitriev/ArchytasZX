@@ -38,14 +38,21 @@ def chain_period(diagram: Diagram, index: str) -> tuple[int, sp.Expr] | None:
     from archytaszx.semantics.contract_symbolic import chain_period as transfer_period
 
     owners = [b for b, box in diagram.bang_boxes.items() if index in box.multiplicity.free_symbols]
-    carried = any(
-        index in node.phase.free_symbols
-        for node in diagram.nodes.values()
-        if node.phase is not None
-    ) or any(
-        index in port.dim.free_symbols
-        for node in diagram.nodes.values()
-        for port in (*node.inputs, *node.outputs)
+    carried = (
+        any(
+            index in node.phase.free_symbols
+            for node in diagram.nodes.values()
+            if node.phase is not None
+        )
+        or any(
+            index in port.dim.free_symbols
+            for node in diagram.nodes.values()
+            for port in (*node.inputs, *node.outputs)
+        )
+        or any(
+            box.copy_scalar is not None and index in box.copy_scalar.free_symbols
+            for box in diagram.bang_boxes.values()
+        )
     )
     if carried or len(owners) > 1:
         raise PeriodicError(f"{index} is read outside the scalar and one box")
