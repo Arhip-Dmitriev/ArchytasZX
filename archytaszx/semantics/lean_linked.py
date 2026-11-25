@@ -1044,16 +1044,19 @@ PairSpec = tuple[int, Port, Port, str, bool]
 first) meets the right leg."""
 
 
-def _strip_pairs(d: Diagram) -> tuple[Diagram, BangBoxId, list[PairSpec]] | None:
-    """``d`` without its pair boxes and their nodes, its one outermost box and the pair boxes
-    over it; None unless each pair box (multiplicity 1, no parent, no copy scalar) holds one Zp
-    node wired once to its left port and once to its right port, both legs of Z nodes of the
-    outermost box off the boundary and wired only there."""
+def _strip_pairs(
+    d: Diagram, owner: BangBoxId | None = None
+) -> tuple[Diagram, BangBoxId, list[PairSpec]] | None:
+    """``d`` without its pair boxes and their nodes, its one outermost box (or ``owner``) and the
+    pair boxes over it; None unless each pair box (multiplicity 1, no parent, no copy scalar)
+    holds one Zp node wired once to its left port and once to its right port, both legs of Z
+    nodes of the outermost box off the boundary and wired only there."""
     owners = [b for b, x in sorted(d.bang_boxes.items()) if x.pair_of is None]
     pairs = [(b, x) for b, x in sorted(d.bang_boxes.items()) if x.pair_of is not None]
-    if len(owners) != 1 or not pairs:
+    if owner is None and len(owners) == 1:
+        owner = owners[0]
+    if owner not in owners or not pairs:
         return None
-    owner = owners[0]
     scope = d.bang_boxes[owner].node_scope
     bnd = {*d.boundary_inputs, *d.boundary_outputs}
     out = d.copy()

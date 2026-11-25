@@ -2062,6 +2062,22 @@ class _Lean:
         )
         return self.linked_net(source, "S", tail, binders, self.call(t.lhs), self.call(t.rhs))
 
+    def merged(self, t: Theorem, binders: Sequence[str]) -> str | None:
+        """An align merge through :meth:`linked_net` of :func:`lean_merge.export_merge`; None
+        outside its form."""
+        from archytaszx.semantics import lean_merge
+
+        source = lean_merge.export_merge(t.lhs, t.rhs)
+        if source is None:
+            return None
+        tail = (
+            "the digit sums being LDiagram.evalP with the pair boxes {ns}.ps (each box index read "
+            "at the copy through cph and cdim, each aligned wire an entry of LDiagram.aligned), "
+            "with box groups {ns}.G and {ns}.G', each flat boundary position read at "
+            "LDiagram.flatAt of its LDiagram.slotData"
+        )
+        return self.linked_net(source, "M", tail, binders, self.call(t.lhs), self.call(t.rhs))
+
     def split(self, t: Theorem, binders: Sequence[str]) -> str | None:
         """A power split through :meth:`linked_net` of :func:`lean_split.export_split`; None
         outside its form."""
@@ -2195,6 +2211,10 @@ class _Lean:
                 return proved
         if inf.kind == "identity_slide" and self.semantic:
             proved = self.slid(t, binders)
+            if proved is not None:
+                return proved
+        if inf.kind == "align_merge" and self.semantic:
+            proved = self.merged(t, binders)
             if proved is not None:
                 return proved
         if inf.kind == "power_split" and self.semantic:
