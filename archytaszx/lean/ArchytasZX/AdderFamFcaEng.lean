@@ -21,7 +21,7 @@ binder / shift / splitter spec, with their environment.
   `ZP` pair phases, by pinning every chain and pair label.
 * `prod_Ce`: that product, copy `k` read as `Fca`'s copy `n - 1 - k`, is `Fca.IndS` (from
   `Fca.arith`).
-* `engFam`: `engL n = engR n` over `engE d n` for every `n ≥ 1` and every `d`.
+* `engFam`: `engL n = engR n` over `engE d n` for every `n` and every `d > 0`.
 -/
 
 namespace ArchytasZX
@@ -117,7 +117,8 @@ def eN (n : ℕ) : Node := ⟨.Z, [], [rb n + 3], n, 0⟩
 
 /-- The engine's spec at `n` digits. -/
 def engR (n : ℕ) : Net where
-  nodes := if n = 1 then [hN n] ++ bN n ++ [xN n] ++ sN n ++ [eN n]
+  nodes := if n = 0 then [⟨.Z, [0], [], 0, 0⟩, ⟨.X, [1], [0], 0, 0⟩, ⟨.Z, [], [1], 0, 0⟩]
+    else if n = 1 then [hN n] ++ bN n ++ [xN n] ++ sN n ++ [eN n]
     else [hN n, xN n, eN n] ++ bN n ++ sN n
   int := (range (2 * n + 2)).map (rb n + ·)
   bnd := range (2 * n)
@@ -548,15 +549,17 @@ theorem pv_lt {d : ℕ} {σ : ℕ → ℕ} {n k : ℕ} (hk : k < 2 * n + 2)
     | exact etv_lt hb _ (by omega)
     | omega
 
-theorem mem_engR {n : ℕ} {x : Node} :
+theorem mem_engR {n : ℕ} (hn : 0 < n) {x : Node} :
     x ∈ (engR n).nodes ↔ x = hN n ∨ x ∈ bN n ∨ x = xN n ∨ x ∈ sN n ∨ x = eN n := by
   unfold engR
+  rw [if_neg hn.ne']
   split_ifs <;> simp only [mem_append, mem_cons, not_mem_nil, or_false] <;> tauto
 
-theorem prodVal_engR (E : Env) (n : ℕ) (τ : ℕ → ℕ) :
+theorem prodVal_engR (E : Env) {n : ℕ} (hn : 0 < n) (τ : ℕ → ℕ) :
     prodVal E (engR n).nodes τ = val E τ (hN n) * ((bN n).map (val E τ)).prod * val E τ (xN n) *
       ((sN n).map (val E τ)).prod * val E τ (eN n) := by
   unfold engR prodVal
+  rw [if_neg hn.ne']
   split_ifs <;> simp only [map_append, prod_append, map_cons, map_nil, prod_cons, prod_nil] <;>
     ring
 
@@ -570,26 +573,26 @@ theorem engR_support (d : ℕ) {n : ℕ} (hn : 0 < n) {τ : ℕ → ℕ}
       ∀ t ≤ n, τ (sv n t) = etv d τ 0 t := by
   have hv := Fca.prodVal_ne h
   have h0 : τ (rb n) = 0 := by
-    have h1 := hv _ (mem_engR.2 (Or.inl rfl))
+    have h1 := hv _ ((mem_engR hn).2 (Or.inl rfl))
     simp only [hN, val, map_cons, map_nil, append_nil] at h1
     rw [show (engE d n).dimv n = 1 by simp [engE, engD], show (engE d n).phase 0 = fun _ => 0
       from engP_zero d n, Fca.tZ_one _ _ (fun _ => rfl)] at h1
     simpa using h1
   have hB : ∀ t < n, τ (bout n t) = τ (bin n t) * d + τ (n + t) := by
     intro t ht
-    have h1 := hv _ (mem_engR.2 (Or.inr (Or.inl (mem_map.2 ⟨t, mem_range.2 ht, rfl⟩))))
+    have h1 := hv _ ((mem_engR hn).2 (Or.inr (Or.inl (mem_map.2 ⟨t, mem_range.2 ht, rfl⟩))))
     simp only [val, map_cons, map_nil] at h1
     have e := Fca.tB_eq h1
     rwa [show (engE d n).dimv 0 = d from engD_zero d hn] at e
   have hS : ∀ t < n, τ (sv n (t + 1)) = τ (sv n t) * d + τ t := by
     intro t ht
-    have h1 := hv _ (mem_engR.2 (Or.inr (Or.inr (Or.inr (Or.inl
+    have h1 := hv _ ((mem_engR hn).2 (Or.inr (Or.inr (Or.inr (Or.inl
       (mem_map.2 ⟨t, mem_range.2 ht, rfl⟩))))))
     simp only [val, map_cons, map_nil] at h1
     have e := Fca.tB_eq h1
     rwa [show (engE d n).dimv 0 = d from engD_zero d hn] at e
   have hE : τ (sv n 0) = 0 := by
-    have h1 := hv _ (mem_engR.2 (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))
+    have h1 := hv _ ((mem_engR hn).2 (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))
     simp only [eN, val, map_cons, map_nil, nil_append] at h1
     rw [show (engE d n).dimv n = 1 by simp [engE, engD], show (engE d n).phase 0 = fun _ => 0
       from engP_zero d n, Fca.tZ_one _ _ (fun _ => rfl)] at h1
@@ -705,7 +708,7 @@ theorem eval_engR (d : ℕ) (hd : 0 < d) {n : ℕ} (hn : 0 < n) (σ : ℕ → �
       tauE_sv d σ hn (by omega), hoff t (by omega)]
     unfold tB
     rw [if_pos ⟨etv_lt hb' t ht.le, hb t ht, by simp [etv]⟩]
-  rw [prodVal_engR, hH, hBs, hX, hSs, hE]
+  rw [prodVal_engR _ hn, hH, hBs, hX, hSs, hE]
   ring
 
 /-! ## The boxed side at its pinned labels -/
@@ -1186,10 +1189,24 @@ end closed
 
 /-! ## The engine's fca family -/
 
-/-- The engine's boxed Fourier constant adder equals its spec at every `n ≥ 1` copies, for
-every dimension `d`. -/
-theorem engFam (d : ℕ) (hd : 0 < d) (n : ℕ) (hn : 1 ≤ n) :
-    Equal (engE d n) 1 (engL n) 1 (engR n) := by
+theorem engFam0 (d : ℕ) : Equal (engE d 0) 1 (engL 0) 1 (engR 0) := by
+  refine ⟨List.Perm.refl _, fun σ _ => ?_⟩
+  have hD : labDim (engE d 0) = fun _ => 1 := funext fun x => by
+    simp [labDim, engE, engD]
+  have hL : eval (engE d 0) (engL 0) σ = 1 := by
+    simp [eval, engL, prodVal, tri, sumOver]
+  have hR : eval (engE d 0) (engR 0) σ = 1 := by
+    unfold eval
+    rw [hD, show (engR 0).int = [0, 1] from rfl]
+    simp only [sumOver, Finset.range_one, Finset.sum_singleton]
+    simp [prodVal, engR, val, engE, engD, engP, tZ, tX, fou, ex_zero]
+  rw [hL, hR]
+
+/-- The engine's boxed Fourier constant adder equals its spec at every `n` copies, for every
+dimension `d`. -/
+theorem engFam (d : ℕ) (hd : 0 < d) (n : ℕ) : Equal (engE d n) 1 (engL n) 1 (engR n) := by
+  rcases Nat.eq_zero_or_pos n with rfl | hn
+  · exact engFam0 d
   refine ⟨List.Perm.refl _, fun σ hσ => ?_⟩
   have hrb : 2 * n ≤ rb n := by unfold rb; nlinarith
   have hb : ∀ x < 2 * n, σ x < d := fun x hx => by
@@ -1209,9 +1226,9 @@ theorem engFam (d : ℕ) (hd : 0 < d) (n : ℕ) (hn : 1 ≤ n) :
   simp
 
 theorem engFam_8 (d : ℕ) (hd : 0 < d) : Equal (engE d 8) 1 (engL 8) 1 (engR 8) :=
-  engFam d hd 8 (by norm_num)
+  engFam d hd 8
 
-theorem engFam_2 : ∀ n, 1 ≤ n → Equal (engE 2 n) 1 (engL n) 1 (engR n) :=
+theorem engFam_2 : ∀ n, Equal (engE 2 n) 1 (engL n) 1 (engR n) :=
   engFam 2 (by norm_num)
 
 
