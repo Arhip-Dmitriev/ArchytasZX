@@ -48,6 +48,7 @@ reclassify.py & Reclassification of logged runs (\cref{sec:bench-reclassify}).\\
 size.py & B3 element counts (\cref{sec:bench-size}).\\
 lean.py & The Lean runner (\cref{sec:bench-lean}).\\
 memcap.py & Per-child memory caps (\cref{sec:bench-memcap}).\\
+memcap\_step.py & The in-step wrapper of the \code{srun} cap (\cref{sec:bench-memcap}).\\
 anc.py & The ancillary-file export (\cref{sec:bench-anc}).\\
 slurm.py & The cluster job array (\cref{sec:bench-slurm}).\\
 \end{xltabular}
@@ -1822,11 +1823,15 @@ allocation.
   cgroup flag is set (\py!memcap.mechanism()! is \code{systemd} at start-up); else
   \code{cgroup_v2} when the context's \code{memcap} override, or \py!memcap.mechanism()!, is
   \code{cgroup_v2} and a child cgroup \code{azx-worker-*} of the cap can be made
-  (\cref{sec:bench-memcap}); else \code{rlimit_as}.
+  (\cref{sec:bench-memcap}); else \code{srun} when \code{BENCH_WORKER_STEP} is \code{srun}
+  and \code{srun} is usable (inside a Slurm job, \code{srun} on \code{PATH}); else
+  \code{rlimit_as}. (The \code{srun} test comes before the \code{cgroup_v2} test.)
 \item Write the job JSON to a temporary file \code{bench-job-*.json}. The command is
   \code{python -m benchmarks.worker FILE}; under \code{systemd} it runs under
   \code{systemd-run --user --scope --quiet --collect -p MemoryMax=<cap>M -p MemorySwapMax=0};
-  under \code{cgroup_v2} the child joins its cgroup before exec.
+  under \code{cgroup_v2} the child joins its cgroup before exec; under \code{srun} it is wrapped
+  by a \py!memcap.Cap! of the cap with mechanism \code{srun} and tag \code{worker}, a Slurm step
+  of its own.
 \item The environment adds \code{OMP_NUM_THREADS=1}, \code{OPENBLAS_NUM_THREADS=1},
   \code{PYTHONHASHSEED=0}, the repository on \code{PYTHONPATH}, \code{BENCH_MEMORY_MB} (the cap
   under \code{rlimit_as}, else empty), \code{BENCH_MEMCAP_WORKER} (the mechanism),
@@ -1834,8 +1839,9 @@ allocation.
   \code{BENCH_LEAN_SLOTS} and \code{BENCH_LEAN_BUDGET_MB}.
 \item Start the process in a new session; a timer kills it at the wall limit (\py!terminate!:
   \code{SIGTERM} to the process group, \code{SIGKILL} after 5 seconds). After exit, a
-  \code{cgroup_v2} cap reports an oom kill when its cgroup's \code{oom_kill} counter rose; the
-  cgroup is removed.
+  \code{cgroup_v2} cap reports an oom kill when its cgroup's \code{oom_kill} counter rose, an
+  \code{srun} cap when the exit is nonzero and standard error matches a memory-kill message
+  (\py!Cap.oom!); the cgroup and the \code{srun} stats file are removed.
 \item Read standard output line by line: \code{@@STAGE NAME} sets the current stage,
   \code{@@RESULT JSON} the result, \code{@@OOMKILL K} the scope's oom-kill rise, \code{@@SPANS JSON} the spans (source \code{sigterm}).
 \item Without a result or spans, read the spans from the side file (source \code{snapshot});
@@ -1844,7 +1850,7 @@ allocation.
   \code{process_wall} and \code{memcap} (the mechanism) and is returned.
 \item Otherwise classify the kill: \code{timeout} by the stage timer; \code{oom} by exit code
   $-9$ or 137 (\code{SIGKILL}); \code{oom} by a positive oom-kill rise reported by the worker or
-  by the \code{cgroup_v2} cap (\code{cgroup oom_kill});
+  by the \code{cgroup_v2} or \code{srun} cap (\code{cgroup oom_kill});
   else \code{error} (\code{exit CODE}). An error with exit 143 or $-15$ under cgroups becomes
   \code{oom} when the user journal shows an oom-kill failure of scope \code{run-p<pid>-*} since
   the start (polled every 0.5\,s for up to 3\,s). Return \texttt{\{outcome, killed\_in, exit, kill, detail (the last 400 characters of standard error), process\_wall, memcap[, spans, spans\_source, open\_span]\}}.
@@ -2457,7 +2463,8 @@ Each attempt:
   $\lfloor\mathit{timeout}\rfloor$ (hard $+5$). A watcher polls every 0.25\,s the
   \code{RssAnon} and the CPU ticks (\code{utime}, \code{stime}, \code{cutime}, \code{cstime} of
   \file{/proc/PID/stat}) summed over the process tree, keeps their maxima, and kills the group
-  past the budget; a wall timer at \code{timeout} kills it. Afterwards close the cap, release the
+  past the budget; a wall timer at \code{timeout} kills it (both by \py!Cap.kill_group!).
+  Afterwards read the cap's \py!usage()!, close the cap, remove its stats file, release the
   slot, and remove the probe.
 \item Status, in order: over budget, \code{oom} with \code{lean_kill = budget}; a cap kill
   (\py!Cap.oom!), \code{oom} with \code{lean_kill = memcap.<mechanism>}; timer kill or
@@ -2469,6 +2476,8 @@ Each attempt:
   larger of the rusage user-plus-system time, \code{lean_cpu_rusage}, and the polled tree CPU,
   \code{lean_cpu_tree}), \code{lean_wall}, \code{lean_peak_mb} (rusage), \code{lean_peak_anon_mb}
   (polled), \code{decl_ms}, and \code{axioms} (parsed from \texttt{\#print axioms} when accepted).
+  Under \code{srun} the wrapper's \code{cpu} and \code{maxrss_kb} replace the rusage CPU and
+  peak, and its \code{peak_anon_mb} and \code{cpu_tree} raise the polled maxima.
 \end{enumerate}
 The result finally receives \code{axiom_class} and \code{unproved} (the count of
 \code{unproved_*} axioms).
@@ -2507,25 +2516,39 @@ cgroup\_v2 & A child cgroup \code{azx-<tag>-<pid>-<k>} in a delegated cgroup v2 
   delegated directory (cached) is the first of \code{BENCH_CGROUP_PARENT}, the parent of the
   process's own cgroup, and that cgroup itself in which a 64\,MiB probe cgroup can be made and
   \code{true} run inside it.\\
-srun & \code{srun --overlap --quiet -n1 -N1 --mem=<cap>M}; usable inside a Slurm job with
-  \code{srun} on \code{PATH}; chosen only when \code{BENCH_MEMCAP=srun}.\\
+srun & \code{srun --overlap --quiet -n1 -N1 --mem=<cap>M python -I memcap_step.py STATS CMD}
+  (the wrapper below, \code{STATS} a temporary file \code{azx-<tag>-*.json}); usable inside a
+  Slurm job with \code{srun} on \code{PATH}.\\
 watchdog & A thread polling the tree's \code{RssAnon} every 0.25\,s and killing the tree past
   the cap; always usable.\\
 \end{xltabular}
 
-\py!mechanism()! returns \code{BENCH_MEMCAP} when it names a usable mechanism, else the first
-usable of \code{systemd}, \code{cgroup_v2}, \code{watchdog}. \py!Cap(limit_mb, mech=None, tag="child", no_swap=True)! creates the cgroup at construction (falling back to \code{watchdog}
+\py!mechanism()! returns \code{BENCH_MEMCAP} when it names a usable mechanism; else
+\code{srun} when \code{srun} is usable and neither \code{systemd} nor \code{cgroup_v2} is; else
+the first usable of \code{systemd}, \code{cgroup_v2}, \code{watchdog}. \py!Cap(limit_mb, mech=None, tag="child", no_swap=True)! creates the cgroup at construction (falling back to \code{watchdog}
 when it cannot); \py!command(cmd)! wraps the command (systemd, srun); \py!preexec()! is the
 cgroup join; \py!watch(pid, kill)! starts the watchdog; \py!oom(code, text)! reports a cap kill:
 the watchdog fired, the cgroup's \code{oom_kill} counter is positive, or under srun a nonzero
 exit whose output matches \code{oom[-_ ]kill}, \code{Exceeded (step|job) memory limit}, or
 \code{out of memory} (case-insensitive); \py!close()! stops the watchdog and removes the cgroup
-(retried for 2\,s). \py!child_cap(tag)! gives a rival child a cap at \code{BENCH_MEMORY_MB}
+(retried for 2\,s). \py!kill_group(pgid)! sends \code{SIGKILL} to the process group; under
+\code{srun} it sends \code{SIGTERM} (which \code{srun} passes to the step) and \code{SIGKILL}
+3\,s later. \py!usage()! is, under \code{srun}, the wrapper's stats read from \code{STATS}
+(\py!None! when absent or not a JSON object); \py!discard()! removes \code{STATS}.
+\py!child_cap(tag)! gives a rival child a cap at \code{BENCH_MEMORY_MB}
 (none when unset); \py!run(cmd, cap, timeout)! runs a command to its end under a cap in a
-session of its own, killing the group on timeout and re-raising
-\py!TimeoutExpired!, and returns (the completed process, whether the cap killed it).
+session of its own, killing the group on timeout (by \py!kill_group! under a cap), removing
+the stats file and re-raising \py!TimeoutExpired!, and returns (the completed process, whether the cap killed it).
 \py!worker_mechanism()! is \code{BENCH_MEMCAP_WORKER}, else \code{rlimit_as};
 \py!describe()! reports each mechanism's usability and the chosen one.
+
+\paragraph{The in-step wrapper.} \module{benchmarks.memcap_step} uses the standard library only.
+\code{python -I memcap_step.py STATS CMD...} starts \code{CMD} as its child and polls every
+0.25\,s the \code{RssAnon} and the CPU ticks (\code{utime}, \code{stime}, \code{cutime},
+\code{cstime}) summed over the child's process tree, keeping their maxima. When the child ends it
+writes to \code{STATS} the JSON object \texttt{\{code, cpu, maxrss\_kb, peak\_anon\_mb,
+cpu\_tree\}}, \code{cpu} and \code{maxrss_kb} from the \code{RUSAGE_CHILDREN} of the reaped
+child, and exits with the child's code ($128+N$ for a signal $N$).
 
 \section{The ancillary export}\label{sec:bench-anc}
 
@@ -2587,6 +2610,6 @@ reads are \code{SLURM_ARRAY_JOB_ID}, \code{SLURM_JOB_ID}, \code{SLURM_ARRAY_TASK
 environment, and false-set temporary file names, Lean slot scope), \code{SLURM_MEM_PER_NODE},
 \code{SLURM_MEM_PER_CPU}, \code{SLURM_CPUS_PER_TASK} (memory caps), \code{SLURM_SUBMIT_DIR}
 (the batch file), every \code{SLURM_*} variable (the environment record), and the suite's own
-\code{BENCH_MEMORY_MB}, \code{BENCH_MEMCAP}, \code{BENCH_MEMCAP_WORKER},
+\code{BENCH_MEMORY_MB}, \code{BENCH_MEMCAP}, \code{BENCH_MEMCAP_WORKER}, \code{BENCH_WORKER_STEP},
 \code{BENCH_CGROUP_PARENT}, \code{BENCH_SPAN_FILE}, \code{BENCH_LEAN_SLOTS},
 \code{BENCH_LEAN_BUDGET_MB}, \code{BENCH_JOBS}, and \code{ARCHYTASZX_TRACE}.
