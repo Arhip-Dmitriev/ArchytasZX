@@ -1833,6 +1833,16 @@ With $\mathrm{IndS}(d,\sigma,n)=[\mathrm{topv}(\sigma,n,3,n)\equiv\mathrm{topv}(
 \lbx!famExpand_plain!: with no links, pairs, or indices, \lbx!famExpand F n = F.base.expandK fun _ => n!.
 \end{definition}
 
+\subsection{The boxed Fourier constant adder's expansion}\label{sec:boxes-famfca-expand}
+
+\file{FamFcaExpand.lean} (imports \file{FamExpandEq}, namespace \lbx!FamFca!). \lbx!D0! is the engine's boxed \texttt{fourier\_constant\_adder} as a \lbx!FamDiagram!: nine template nodes $0,1,2,4,5,6,7,8,9$ (Z, $F$, Z, Z, Z, $F$, $F$, $F$, Z) in a chain, one parentless node box \lbx!b0! over all of them, the pair boxes $(2.\mathrm{out}\,1,\ 0.\mathrm{in}\,1)$ with node \lbx!ZP 0 0 1! (id $3$) and $(5.\mathrm{out}\,1,\ 9.\mathrm{in}\,1)$ with node \lbx!ZP 0 0 (-1)! (id $10$), the phase index of node $4$ read as $j+1$ at copy $j$, and the dimension index of nodes $3$ and $10$ read as the copy coordinate $c$. With \lbx!rk x! the rank of $x$ in the box and \lbx!cp0 j x! $=10+9j+\mathrm{rk}(x)$ (\lbx!cpId0!; \lbx!fresh0!: the fresh id is $10$):
+\begin{itemize}
+\item \lbx!expand0!: \lbx!D0.base.expand (fun _ => n) = D0.base.copyNodes b0 n! (by \lbx!expand_one!);
+\item \lbx!copyNodes0_nodes!: the nodes are, template node by template node, its copies $j<n$ with id \lbx!cp0 j x.id!;
+\item \lbx!copyNodes0_wires!: the wires are, wire by wire, its copies $j<n$ between \lbx!cp0 j! of both ends (\lbx!nimg0!; \lbx!crossP0!: no port crosses the box);
+\item \lbx!copyNodes0_outs!, \lbx!copyNodes0_ins!: the outputs are $\langle\mathrm{cp0}(j,9),\mathrm{out},0\rangle$ and the inputs $\langle\mathrm{cp0}(j,0),\mathrm{in},0\rangle$ for $j<n$.
+\end{itemize}
+
 \section{Auxiliary Lemmas}\label{sec:boxes-aux}
 
 \Cref{tab:boxes-aux} states the lemmas of the chapter's modules that the preceding sections use without naming. Hypotheses that every lemma of a section shares (\lbx!SplitData!, \lbx!WF D!, $b\in D.\mathit{boxes}$, $b$ a leaf, $b.\mathit{nodes}=[\,]$ or $b.\mathit{ports}=[\,]$, distinct node ids) are omitted; ``perm'' is \lbx!List.Perm!.

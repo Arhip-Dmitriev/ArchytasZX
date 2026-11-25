@@ -165,8 +165,8 @@ imports, then a module docstring \code|/-! ... -/| headed by a Markdown title, t
 direct imports, its line count, its number of top-level theorems and of top-level definitions
 (\lean|def|, \lean|abbrev|, \lean|structure|, \lean|inductive|), and the chapter that specifies it.
 Imports from Mathlib are counted, not named, except in \texttt{Net}, which carries all 43
-Mathlib imports of the foundation. The library has 79{,}662 lines, 3{,}957 top-level theorems and
-1{,}990 top-level definitions. \texttt{Light} has no declarations: it imports 87 modules, none of which imports \texttt{Cyclo} or \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). The modules \texttt{AdderFamEnv}, \texttt{FamDiagram}, \texttt{FamExpandEq}, \texttt{LinkedMerge}, and \texttt{LinkedPair} also avoid \texttt{Cyclo} and \texttt{NumField} and are not imported by \texttt{Light}. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
+Mathlib imports of the foundation. The library has 79{,}797 lines, 3{,}971 top-level theorems and
+1{,}994 top-level definitions. \texttt{Light} has no declarations: it imports 87 modules, none of which imports \texttt{Cyclo} or \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). The modules \texttt{AdderFamEnv}, \texttt{FamDiagram}, \texttt{FamExpandEq}, \texttt{FamFcaExpand}, \texttt{LinkedMerge}, and \texttt{LinkedPair} also avoid \texttt{Cyclo} and \texttt{NumField} and are not imported by \texttt{Light}. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
 of this chapter.
 
 {\small
@@ -225,6 +225,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{FamCheck} & FamBridge & 153 & 8 & 10 & B \\
 \texttt{FamDiagram} & OrderK, PairBox & 172 & 8 & 19 & B \\
 \texttt{FamExpandEq} & FamDiagram & 68 & 7 & 0 & B \\
+\texttt{FamFcaExpand} & FamExpandEq & 135 & 14 & 4 & B \\
 \texttt{FamK} & OrderK & 243 & 12 & 2 & B \\
 \texttt{FuseB} & Unfuse & 284 & 14 & 1 & C \\
 \texttt{Gather} & PortBox & 246 & 22 & 1 & C \\
