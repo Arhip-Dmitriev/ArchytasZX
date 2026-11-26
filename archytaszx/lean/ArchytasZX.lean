@@ -134,5 +134,6 @@ import ArchytasZX.FamDraperExpand
 import ArchytasZX.FamDraperNet
 import ArchytasZX.FamDraperWire
 import ArchytasZX.FamDraperEq
+import ArchytasZX.FamDraperSpec
 import ArchytasZX.PairSum
 import ArchytasZX.LinkedMerge
