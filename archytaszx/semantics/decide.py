@@ -294,6 +294,7 @@ _STEP_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.SYMBOLIC_CONTRACTION,
     StepDischarge.CHAIN_WINDOW,
     StepDischarge.TREE_WINDOW,
+    StepDischarge.HYPOTHESIS_REWRITE,
 )
 _DOMAIN_ERRORS: tuple[type[Exception], ...] = (
     BangBoxError,

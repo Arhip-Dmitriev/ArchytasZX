@@ -46,7 +46,7 @@ def test_the_hypothesis_is_a_rule() -> None:
 def test_a_chain_step_is_settled_through_the_hypothesis() -> None:
     obligation = _obligation()
     assert not induction.discharge_peeled_hypothesis(obligation).settled
-    outcome = induction.discharge_induction_rewrite(obligation)
+    outcome = induction.discharge_hypothesis_rewrite(obligation)
     assert outcome.settled, outcome.reason
     assert any(step.rule_name == induction.HYPOTHESIS_RULE_NAME for step in outcome.steps)
 
@@ -64,15 +64,37 @@ def test_a_headed_chain_step_is_settled_through_the_hypothesis() -> None:
     obligation = induction.build_obligation(
         parse_dsl(_headed(PAIRS)), parse_dsl(_headed(SINGLES.format(phase=""))), witness={"d": 2}
     )
-    outcome = induction.discharge_induction_rewrite(obligation)
+    outcome = induction.discharge_hypothesis_rewrite(obligation)
     assert outcome.settled, outcome.reason
     assert any(step.rule_name == induction.HYPOTHESIS_RULE_NAME for step in outcome.steps)
+
+
+def test_a_hypothesis_rule_step_certifies() -> None:
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.decide import decide_equal
+    from archytaszx.semantics.induction_kernel import induction_theorem
+    from archytaszx.semantics.prove import induction_base
+
+    for text_l, text_r in (
+        (PAIRS, SINGLES.format(phase="")),
+        (_headed(PAIRS), _headed(SINGLES.format(phase=""))),
+    ):
+        left, right = parse_dsl(text_l), parse_dsl(text_r)
+        result = induction.prove_by_induction(
+            left, right, witness={"d": 2}, ladder=(induction.StepDischarge.HYPOTHESIS_REWRITE,)
+        )
+        assert result.verdict is induction.Verdict.PROVED_INDUCTION
+        pair = (induction_base(left, result.index), induction_base(right, result.index))
+        theorem, why = induction_theorem(left, right, result, False, pair, decide_equal(*pair))
+        assert isinstance(theorem, kernel.Theorem), why
+        assert theorem.inference.kind == "induction"
+        assert kernel.lean(theorem, semantic=False)
 
 
 def test_a_phase_difference_is_not_settled() -> None:
     obligation = _obligation(" phase {1: 1/2}")
     assert not compare(obligation.left_at_k, obligation.right_at_k, {"d": 2, "k": 1}).matched
-    assert not induction.discharge_induction_rewrite(obligation).settled
+    assert not induction.discharge_hypothesis_rewrite(obligation).settled
 
 
 def test_the_hypothesis_does_not_match_the_unpeeled_goal() -> None:

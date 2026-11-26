@@ -125,6 +125,7 @@ class StepDischarge(enum.Enum):
     SYMBOLIC_CONTRACTION = "symbolic_contraction"
     CHAIN_WINDOW = "chain_window"
     TREE_WINDOW = "tree_window"
+    HYPOTHESIS_REWRITE = "hypothesis_rewrite"
 
 
 DEFAULT_WINDOW_WIDTH = 4
@@ -136,6 +137,7 @@ DEFAULT_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.SYMBOLIC_CONTRACTION,
     StepDischarge.CHAIN_WINDOW,
     StepDischarge.TREE_WINDOW,
+    StepDischarge.HYPOTHESIS_REWRITE,
     StepDischarge.ORACLE_WINDOW,
 )
 
@@ -223,6 +225,7 @@ class InductionResult:
             StepDischarge.SYMBOLIC_CONTRACTION,
             StepDischarge.CHAIN_WINDOW,
             StepDischarge.TREE_WINDOW,
+            StepDischarge.HYPOTHESIS_REWRITE,
         )
         if self.discharge in symbolic_tiers:
             return self.obligation.held_symbolic
@@ -496,6 +499,7 @@ _VERDICT: dict[StepDischarge, Verdict] = {
     StepDischarge.SYMBOLIC_CONTRACTION: Verdict.PROVED_INDUCTION,
     StepDischarge.CHAIN_WINDOW: Verdict.PROVED_INDUCTION,
     StepDischarge.TREE_WINDOW: Verdict.PROVED_INDUCTION,
+    StepDischarge.HYPOTHESIS_REWRITE: Verdict.PROVED_INDUCTION,
     StepDischarge.ORACLE_WINDOW: Verdict.SCHEMA_CHECKED,
 }
 
@@ -3390,14 +3394,27 @@ def discharge_induction_rewrite(
     peeled = discharge_peeled_hypothesis(obligation, max_steps=max_steps)
     if peeled.settled:
         return peeled
+    return TierOutcome(
+        StepDischarge.INDUCTION_REWRITE,
+        False,
+        "hypothesis not expressible as a rule: "
+        + _hypothesis_inexpressible_reason(obligation)
+        + f"; peeling did not settle it either: {peeled.reason}",
+    )
+
+
+def discharge_hypothesis_rewrite(
+    obligation: InductionObligation,
+    *,
+    rules: Sequence[Rule] | None = None,
+    max_steps: int = DEFAULT_MAX_STEPS,
+) -> TierOutcome:
+    """Rewrite the left successor onto the right one with :func:`hypothesis_rule` tried first
+    at every step."""
     hypothesis = hypothesis_rule(obligation)
     if hypothesis is None:
         return TierOutcome(
-            StepDischarge.INDUCTION_REWRITE,
-            False,
-            "hypothesis not expressible as a rule: "
-            + _hypothesis_inexpressible_reason(obligation)
-            + f"; peeling did not settle it either: {peeled.reason}",
+            StepDischarge.HYPOTHESIS_REWRITE, False, "the hypothesis is not expressible as a rule"
         )
     rules_in_use = rules if rules is not None else DEFAULT_RULES
     try:
@@ -3406,9 +3423,7 @@ def discharge_induction_rewrite(
         )
     except (RewriteDomainError, BangBoxError, InductionDomainError) as exc:
         ok, steps, reason = False, (), f"applying the hypothesis raised: {exc}"
-    if not ok:
-        reason = f"{reason}; peeling did not settle it either: {peeled.reason}"
-    return TierOutcome(StepDischarge.INDUCTION_REWRITE, ok, reason, steps=steps)
+    return TierOutcome(StepDischarge.HYPOTHESIS_REWRITE, ok, reason, steps=steps)
 
 
 def discharge_oracle_window(
@@ -3498,6 +3513,7 @@ _DISPATCH: dict[StepDischarge, Callable[..., TierOutcome]] = {
     StepDischarge.SYMBOLIC_CONTRACTION: discharge_symbolic_contraction,
     StepDischarge.CHAIN_WINDOW: discharge_chain_window,
     StepDischarge.TREE_WINDOW: discharge_tree_window,
+    StepDischarge.HYPOTHESIS_REWRITE: discharge_hypothesis_rewrite,
 }
 
 

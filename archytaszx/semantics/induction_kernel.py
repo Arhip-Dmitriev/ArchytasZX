@@ -107,6 +107,9 @@ def induction_theorem(
         elif tier.discharge is StepDischarge.INDUCTION_REWRITE:
             base = _base(first, second, result.index, base_pair, base_decision, reversed_)
             theorem = _peeled(first, second, result, tier, base, rules)
+        elif tier.discharge is StepDischarge.HYPOTHESIS_REWRITE:
+            base = _base(first, second, result.index, base_pair, base_decision, reversed_)
+            theorem = _hypothesis(first, second, result, base, rules)
         elif tier.discharge in (StepDischarge.CHAIN_WINDOW, StepDischarge.TREE_WINDOW):
             base = _base(first, second, result.index, base_pair, base_decision, reversed_)
             window = "cut" if tier.discharge is StepDischarge.CHAIN_WINDOW else "tree"
@@ -249,6 +252,25 @@ def _peeled(
             ),
         )
     return kernel.induction(start, goal, index, k, base, InductionSide.START, expose, region, step)
+
+
+def _hypothesis(
+    start: Diagram,
+    goal: Diagram,
+    result: InductionResult,
+    base: kernel.Theorem,
+    rules: Sequence[Rule] | None,
+) -> kernel.Theorem:
+    """``start = goal`` by the kernel's induction rule over a cut or closed region of the
+    peeled successor, the step closed as in :func:`_windowed`."""
+    reasons: list[str] = []
+    for window in ("cut", "region"):
+        for contract in (False, True):
+            try:
+                return _windowed(start, goal, result, window, base, rules, contract=contract)
+            except NoInductionTheorem as exc:
+                reasons.append(f"{window}: {exc}")
+    raise NoInductionTheorem("; ".join(reasons))
 
 
 def _contracted(
