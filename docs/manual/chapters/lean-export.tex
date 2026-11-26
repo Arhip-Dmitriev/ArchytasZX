@@ -47,7 +47,8 @@ verdict is about the engine's diagrams only when the export is diagram-level
 (\py!kernel.diagram_level!: its final theorem states \lexlean!DEqual! or an \lexlean!Equal! of
 \lexlean!Diagram! literals' \lexlean!toNet!); otherwise \code!certificate lean! adds the
 encoding-level line. Exports that end without a diagram-level theorem: the path-sum networks
-(\py!lean_pathsum.export_net!, \py!export_qudit_net!, \py!export_mixed_net!), the qudit digit
+(\py!lean_pathsum.export_net!, \py!export_qudit_net! and \py!export_mixed_net! without \py!diagrams!, or when a side has
+no literal), the qudit digit
 networks (\py!lean_qdigits.export_qudit_digits_net!, when the symbolic normaliser gives no
 diagram-level export), the restricted chain and pair families (\py!lean_chainfam!,
 \py!lean_pairs!), \py!lean_net.export! when no diagram literal is built, and a restricted
@@ -1086,13 +1087,35 @@ whose reductions take [Quarter] or [Turn] steps: each side's pin steps run as pl
 \lexlean!ArchytasZX.PathSumChain!.
 
 \begin{signature}
-\lexpy!export_net(left: Diagram, right: Diagram, name: str = "main") -> str!
+\lexpy!export_net(left: Diagram, right: Diagram, name: str = "main", diagrams: bool = False) -> str!
 \end{signature}
 Dispatch: atoms on either raw sum select the atom network proof; two qubit sums of which a
 reduction is quartered select the quarter network proof; otherwise \lexpy!net_body! under
 \lexlean!import ArchytasZX.PathSumNetW! (plus \lexlean!ArchytasZX.PathSumSupport! when
 \lexlean!finalS_sound! occurs), namespace \lexlean!ArchytasZX.PathSumNetProof!, \lexpy!NET_OPTIONS!, and
-\lexpy!net_env(phases, labs, "2 ^ k", M, coefs)!.
+\lexpy!net_env(phases, labs, "2 ^ k", M, coefs)!. With \py!diagrams! (set by
+\py!certify_decision.path_sum_proof!), each of the three forms appends \py!diagram_lines(body, name)!
+before the namespace end; without it the source is unchanged.
+
+\begin{signature}
+\lexpy!literal(tag, diagram, nodes, summed, dim_of, label0, labs="labs") -> Literal | None!\\
+\lexpy!diagram_lines(body: NetBody, name: str) -> list[str]!
+\end{signature}
+\py!NetBody.sides! holds each side's diagram, network side and first wire label ($2^{16}$ left,
+$2^{17}$ right; \py!net_body!, \py!_zero_body!, \py!net_amp_body!, \py!net_quarter_body!).
+\py!literal! writes the engine's diagram as \lexlean!def D<tag> : Diagram!: nodes in sorted id order,
+each \lexlean!⟨id, kind, dim, ph, outs, ins⟩! with kind, dimension and phase index read from the
+network node \lexlean!N<tag>! (\py!_NODE!) and each leg's dimension index \py!dim_of! at its label (0
+when \py!dim_of! is None), wires in sort-key order, boundary outputs then inputs. Boundary port $i$
+must be label $i$ and wire $j$ label \py!summed[j]! on every node (else None, as for a boxed diagram
+or a node count differing from the network's). It emits \lexlean!D<tag>_chk : D<tag>.check labs off = true!
+and, when \py!summed! is consecutive from \py!off = summed[0]! (or empty, \py!off = label0!),
+\lexlean!D<tag>_net : D<tag>.toNet off = N<tag>!, both \lexlean!by decide +kernel!; otherwise
+\py!Literal.perm! is the permutation (\py!_swap!) of the toNet labels \py!off + j! and \py!summed!
+taking one to the other. \py!diagram_lines! needs both literals with empty \py!perm! and emits
+\lexlean!theorem name_diagrams : DEqual E (sL) DL (sR) DR! by
+\lexlean!rw [DEqual_iff (o₁ := offL) (o₂ := offR) (L := labs) rfl DL_chk DR_chk, DL_net, DR_net]!,
+\lexlean!exact name!; else no lines.
 
 \subsection{Qudit network proofs}
 
@@ -1129,7 +1152,16 @@ the \lexlean!lg! and \lexlean!qg! theorems, \lexlean!facL!, \lexlean!facR!, \lex
 \lexlean!QSem.run_sound! and \lexlean!QSem.final_sound!. Every label has digit count 1.
 \lexpy!export_qudit_net! wraps it under \lexlean!import ArchytasZX.PathSumQuditNet!, namespace
 \lexlean!ArchytasZX.PathSumQuditNetProof!, \lexpy!QNET_OPTIONS!, the prime instance, and
-\lexpy!net_env(phases, {}, str(p), p)!.
+\lexpy!net_env(phases, {}, str(p), p)!. With \py!diagrams! (set by
+\py!certify_decision.path_sum_proof!) it appends \py!iso_diagram_lines(body, name)! and, when that
+is not empty, \lexlean!import ArchytasZX.EqualLabs!. \py!qnet_body! records both sides with first
+wire label \py!QDIAGRAM_LABEL0! $=2^{24}$. \py!iso_diagram_lines! builds both literals with
+\py!dim_of! None against \lexlean!labsD! (each boundary label and each literal wire label at index 0)
+and emits \lexlean!theorem name_diagrams : DEqual { E with labs := labsD } (sL) DL (sR) DR! as
+\lexlean!DEqual_of_labs (o₁ := offL) (o₂ := offR) (fun _ => rfl) DL_chk DR_chk! applied to
+\lexlean!((iso E (sL) (DL.toNet offL) NL πL idL _).trans name).trans (iso E (sR) (DR.toNet offR) NR πR idR _).symm!,
+with $\pi$ the literal's \py!perm!, the identity node order, and each \lexlean!isoOK! check
+\lexlean!by decide +kernel!.
 
 \subsection{Mixed network proofs \texttt{export\_mixed\_net}}\label{sec:lean-export-mixed}
 
@@ -1385,6 +1417,15 @@ theorem main : Equal E (sL) NL (sR) NR := by
 \lexlean!afinalS_perm! occurs), namespace \lexlean!ArchytasZX.PathSumMixedProof!,
 \lexlean!open ArchytasZX ArchytasZX.PSem ArchytasZX.MSem!, \lexpy!QNET_OPTIONS!, the coefficient
 vector \lexlean!A! (\lexpy!Coefs.lean_def!), and \lexpy!net_env(phases, labs, MIX_DIMS, M)!.
+With \py!diagrams! (set by \py!certify_decision.path_sum_proof!) it appends
+\py!labelled_diagram_lines(body, name, dims)! with the mixed side's label dimensions and
+$2^k$ at each qubit label of $k$ digits, and adds the literals' wire labels with those
+dimensions to \lexlean!labs!. \py!mixed_net_body! records both sides with first wire labels
+\py!MIX_DIAGRAM_LABEL0! $=2^{24}$ and $2^{25}$. \py!labelled_diagram_lines! builds both literals
+(\py!literal!, checked against \lexlean!labs!) and emits
+\lexlean!theorem name_diagrams : DEqual E (sL) DL (sR) DR! as
+\lexlean!(DEqual_iff (o₁ := offL) (o₂ := offR) (L := labs) rfl DL_chk DR_chk).2! applied to the
+\lexlean!iso! chain of \py!iso_diagram_lines!.
 
 % ---------------------------------------------------------------------------
 \section{Amplitude-Atom Step Writer}\label{sec:lean-export-amp}

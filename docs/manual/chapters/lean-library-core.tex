@@ -191,6 +191,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{AdderFamFca} & AdderFamEnv, Ball, Weights, PairEval & 1672 & 131 & 41 & B \\
 \texttt{AdderFamFcaEng} & AdderFamFca & 1304 & 91 & 53 & B \\
 \texttt{Assume} & Bundle & 96 & 4 & 4 & C \\
+\texttt{EqualLabs} & Assume, Diagram & 51 & 4 & 0 & C \\
 \texttt{Ball} & Cyclo, 2 Mathlib & 280 & 36 & 4 & C \\
 \texttt{Bialgebra} & ZXRules & 189 & 4 & 0 & C \\
 \texttt{BoxedBridge} & FamK, DiagramBridge & 624 & 26 & 18 & B \\
@@ -2338,6 +2339,18 @@ $N.\mathrm{mapDim}(\mathrm{dimMap}\,ps)$, $M.\mathrm{mapDim}(\mathrm{dimMap}\,ps
 $\mathrm{mapLabs}(\mathrm{dimMap}\,ps)$ gives \lean|Equal E s N s' M|. The primed form takes the merged
 environment and networks as named arguments with equations to them.
 \end{theorem}
+
+\section{Label tables of one dimension (\texttt{EqualLabs})}\label{sec:lean-core-equallabs}
+
+\lean|Node.mapDim_id| ($n.\mathrm{mapDim}\,\mathrm{id}=n$); \lean|eval_labs| (if every label has the same
+\lean|labDim| under $E$ and under $E$ with label table $L$, both evaluate a network alike, by
+\lean|val_mapDim| at \lean|id|).
+
+\begin{theorem}[\lean|Equal.labs_iff|, \lean|DEqual_of_labs|]
+Under the same hypothesis, \lean|Equal { E with labs := L } s N s' M| holds exactly when
+\lean|Equal E s N s' M| does. Hence $\mathrm{Equal}\,E\,s_1\,(D_1.\mathrm{toNet}\,o_1)\,s_2\,(D_2.\mathrm{toNet}\,o_2)$ and
+$D_i.\mathrm{check}\,L\,o_i=\mathrm{true}$ give $\mathrm{DEqual}\,\{E \text{ with labs} := L\}\,s_1\,D_1\,s_2\,D_2$ (by \lean|DEqual_iff|).
+\end{theorem}
 %======================================================================
 \section{Lean statements of the principal declarations}\label{sec:lean-core-listings}
 
@@ -3231,5 +3244,16 @@ theorem eval_expandK_evalD (hW : WF D) (E : Env) (σ'' : ℕ → ℕ)
 theorem Equal.of_mapDim (E : Env) (ps : List (ℕ × ℕ)) (hps : ∀ p ∈ ps, E.dimv p.2 = E.dimv p.1)
     {s s' : ℂ} {N M : Net}
     (h : Equal { E with labs
+\end{lstlisting}
+
+\subsection{\texttt{EqualLabs}}
+\begin{lstlisting}[style=leancore]
+theorem Equal.labs_iff (E : Env) (L : List (ℕ × ℕ))
+    (hL : ∀ l, labDim { E with labs := L } l = labDim E l) {s s' : ℂ} {N M : Net} :
+    Equal { E with labs := L } s N s' M ↔ Equal E s N s' M
+theorem DEqual_of_labs {E : Env} {L : List (ℕ × ℕ)} {s₁ s₂ : ℂ} {D₁ D₂ : Diagram} {o₁ o₂ : ℕ}
+    (hL : ∀ l, labDim { E with labs := L } l = labDim E l) (h₁ : D₁.check L o₁ = true)
+    (h₂ : D₂.check L o₂ = true) (h : Equal E s₁ (D₁.toNet o₁) s₂ (D₂.toNet o₂)) :
+    DEqual { E with labs := L } s₁ D₁ s₂ D₂
 \end{lstlisting}
 

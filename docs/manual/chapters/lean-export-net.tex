@@ -2393,7 +2393,7 @@ follows.
 \item \py!pair_proof(..., concrete_kernel=True)! tries the kernel's \py!from_decision! first for
   any non-contraction verdict and, with \py!concrete_kernel!, for a symbolic-contraction verdict on
   a concrete pair (\py!_concrete_pair!: no parameter and no free symbol in either diagram).
-\item \py!path_sum_proof! tries, in order, \py!export_net!, \py!export_qudit_net!,
+\item \py!path_sum_proof! tries, in order, \py!export_net!, \py!export_qudit_net! (with \py!diagrams=True!, as \py!export_mixed_net!),
   \texttt{export\_\allowbreak{}qudit\_\allowbreak{}digits\_\allowbreak{}net} and \py!export_mixed_net! (\cref{ch:lean-export}), and joins the four
   reasons when all fail.
 \end{itemize}
