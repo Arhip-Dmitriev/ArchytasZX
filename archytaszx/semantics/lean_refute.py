@@ -586,12 +586,19 @@ class _Refuter:
         return out
 
     def tx(self, ph: int, d: int, os: Sequence[int], is_: Sequence[int]) -> Vec:
+        """Kept per (phase, dimension, q·Σos + q(d-1)·Σis mod M)."""
         q = self.M // d
-        out: Vec = {}
-        for k in range(d):
-            e, ks = self.P(ph, k)
-            _add(out, (ks, e + q * (k * sum(os)) + q * ((d - 1) * (k * sum(is_)))), 1, self.M)
-        return out
+        c = (q * sum(os) + q * (d - 1) * sum(is_)) % self.M
+        memo: dict[Any, Vec] = self.__dict__.setdefault("_tx", {})
+        key = (self.M, ph, d, c)
+        out = memo.get(key)
+        if out is None:
+            out = {}
+            for k in range(d):
+                e, ks = self.P(ph, k)
+                _add(out, (ks, e + k * c), 1, self.M)
+            memo[key] = out
+        return dict(out)
 
     @staticmethod
     def twz(d: int, os: Sequence[int], i: int) -> int:
@@ -1639,8 +1646,44 @@ class _Refuter:
         memo: dict[Any, int] = self.__dict__.setdefault("_node_res", {})
         value = memo.get(key)
         if value is None:
-            value = memo[key] = int(self.res(self.node(n, sigma)))
+            if _head(n.kind) in ("Bun", "X"):
+                os = [sigma.get(x, 0) for x in n.outs]
+                is_ = [sigma.get(x, 0) for x in n.ins]
+                value = self.tensor_res(n.kind, self.dimv(n.dim), n.ph, os, is_)
+            else:
+                value = int(self.res(self.node(n, sigma)))
+            memo[key] = value
         return value
+
+    def tensor_res(self, kind: Any, d: int, ph: int, os: Sequence[int], is_: Sequence[int]) -> int:
+        """``res(tensor(...))``, a `Bun` as the product of its copies' residues mod p."""
+        if _head(kind) == "X":
+            q = self.M // d
+            c = (q * sum(os) + q * (d - 1) * sum(is_)) % self.M
+            memo: dict[Any, int] = self.__dict__.setdefault("_tx_res", {})
+            key = (self.p, self.w, self.M, ph, d, c)
+            if key not in memo:
+                memo[key] = int(self.res(self.tx(ph, d, os, is_)))
+            return memo[key]
+        if _head(kind) != "Bun":
+            return int(self.res(self.tensor(kind, d, ph, os, is_)))
+        b = kind[2]
+        acc = 1
+        for i in range(self.mult(kind[1])):
+            acc = (
+                acc
+                * self.tensor_res(
+                    b,
+                    d,
+                    ph,
+                    self.copy_legs(d, i, _outcs(b, len(os)), os),
+                    self.copy_legs(d, i, _incs(b, len(is_)), is_),
+                )
+                % self.p
+            )
+            if not acc:
+                break
+        return acc
 
     def share_node_res(self, other: _Refuter) -> None:
         """Takes ``other``'s :meth:`node_res` values when both evaluate every node alike."""
