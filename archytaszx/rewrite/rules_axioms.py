@@ -3953,8 +3953,8 @@ CONVERSES: tuple[TemplateAxiom, ...] = (
     *EXPLICIT_CONVERSES,
     *LEGACY_CONVERSES,
 )
-"""The converse of every axiom: generated where the right side determines the left side's
-parameters, written out otherwise. ``weight_to_phase`` is the converse of
+"""The converse of every axiom but ``qf_s1``: generated where the right side determines the
+left side's parameters, written out otherwise. ``weight_to_phase`` is the converse of
 ``phase_to_weight``."""
 
 
