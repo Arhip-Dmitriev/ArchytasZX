@@ -537,3 +537,30 @@ def test_a_step_without_a_lemma_is_unsupported() -> None:
 
     with pytest.raises(PathSumUnsupported):
         _step_line("left", 0, Step(rule="bsub", var=0), None)
+
+
+def test_net_body_tries_the_zero_plan_after_a_failed_parity_plan() -> None:
+    from archytaszx.algebra.dimension import Dim
+    from archytaszx.algebra.pathsum import PathSumUnsupported
+    from archytaszx.diagram.generators import Z_SPIDER
+    from archytaszx.diagram.graph import Diagram, Direction, PortRef
+    from archytaszx.semantics import lean_pathsum as LP
+
+    d = Diagram()
+    node = d.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim(2)])
+    d.set_boundary_outputs([PortRef(node, Direction.OUTPUT, 0)])
+
+    def lift(*_a: object, **_k: object) -> None:
+        raise LP._LiftRaises(None, None)  # type: ignore[arg-type]
+
+    def parity(*_a: object, **_k: object) -> None:
+        raise PathSumUnsupported("parity")
+
+    saved = (LP._plan, LP._parity_plan, LP._zero_plan, LP._zero_body)
+    LP._plan, LP._parity_plan = lift, parity  # type: ignore[assignment]
+    LP._zero_plan = lambda *_a: "zero"  # type: ignore[assignment]
+    LP._zero_body = lambda *_a: "body"  # type: ignore[assignment]
+    try:
+        assert LP.net_body(d, d.copy(), "t", []) == "body"  # type: ignore[comparison-overlap]
+    finally:
+        LP._plan, LP._parity_plan, LP._zero_plan, LP._zero_body = saved

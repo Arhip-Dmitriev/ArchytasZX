@@ -1720,12 +1720,13 @@ def net_body(
     m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
     parity: tuple[int, list[int]] | None = None
     try:
-        red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(
-            raw_l, raw_r, m_min, support=True
-        )
-    except _LiftRaises as held:
-        m, k_p, order_p, steps_l, steps_r = _parity_plan(raw_l, raw_r, held, m_min)
-        red_l, red_r, boolean, parity = held.red_l, held.red_r, False, (k_p, order_p)
+        try:
+            red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(
+                raw_l, raw_r, m_min, support=True
+            )
+        except _LiftRaises as held:
+            m, k_p, order_p, steps_l, steps_r = _parity_plan(raw_l, raw_r, held, m_min)
+            red_l, red_r, boolean, parity = held.red_l, held.red_r, False, (k_p, order_p)
     except PathSumUnsupported:
         zero = _zero_plan(left, right, m_min)
         if zero is None:
