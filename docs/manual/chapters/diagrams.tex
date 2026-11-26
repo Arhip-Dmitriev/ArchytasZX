@@ -1443,7 +1443,7 @@ The profile of a diagram under a labeling $\lambda$ of its nodes is the tuple of
 \item Raise \py!TypeError! for a non-\py!Diagram!. Return \py!None! when the numbers of nodes, wires, boxes, boundary inputs, or boundary outputs differ, the scalars differ, or the sorted parameter items differ.
 \item Use symmetric mode when it is on for both diagrams. Refine both jointly (\cref{alg:diagrams-refine}). The candidates of a node of $a$ are the nodes of $b$ of the same color, in id order; return \py!None! when some node has none.
 \item Order the nodes of $a$ by (number of candidates, color, id) and search depth-first, with an explicit stack, for an assignment: a candidate is accepted when it is unused, has as many incidence entries as the source, and the multiset of wires from the source to already assigned nodes, carried through the assignment, equals the multiset of wires from the candidate to already used nodes. Exhausting the candidates of the first node returns \py!None!.
-\item With the first complete assignment $m$, return $m$ when the profile of $a$ labeled by $m$ equals the profile of $b$ labeled by its own ids, and \py!None! otherwise.
+\item For each complete assignment $m$ in search order, return $m$ when the profile of $a$ labeled by $m$ equals the profile of $b$ labeled by its own ids (boundary order and bang boxes included); otherwise backtrack to the next assignment. Return \py!None! when none remains.
 \end{enumerate}
 \py!isomorphic! is \py!isomorphism(...) is not None!. Both run in trace spans named \code!rewrite.isomorphism!.
 \end{algorithm}

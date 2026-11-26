@@ -348,7 +348,7 @@ Let $d=3$, node~0 a phaseless Z spider $1\to2$, nodes~1 and~2 Fourier boxes, the
 
 \subsection{Size guard}
 
-A node's element count is the product of its per-port dimensions. The cap \py!max_elements! is checked against each node's tensor before it is denoted, against the output before contraction, and against every intermediate; each check raises \py!ContractSizeError! with the text ``\ldots would have $N$ elements, exceeding the cap of $C$ \ldots; pass a larger max\_elements to contract() if this is intentional'', where the cap's source is appended in parentheses when the cap is the default. Every array also has at most \py!MAX_AXES! $=64$ axes, the most NumPy gives one array; a node or output tensor above it raises \py!ContractSizeError! (``\ldots would have $k$ axes, above numpy's 64'').
+A node's element count is the product of its per-port dimensions. The cap \py!max_elements! is checked against each node's tensor before it is denoted, against the output before contraction, and against every intermediate; each check raises \py!ContractSizeError! with the text ``\ldots would have $N$ elements, exceeding the cap of $C$ \ldots; pass a larger max\_elements to contract() if this is intentional'', where the cap's source is appended in parentheses when the cap is the default. Every array also has at most \py!MAX_AXES! $=64$ axes, the most NumPy gives one array; a node, intermediate or output tensor above it raises \py!ContractSizeError! (``\ldots would have $k$ axes, above numpy's 64''). One \py!einsum! call reads at most \py!EINSUM_LABELS! $=52$ distinct subscripts; a merge reading more raises \py!ContractSizeError! (``a contraction step would read $k$ distinct axes, above numpy.einsum's 52'').
 
 \begin{definition}[Default cap]\label{def:semantics-default-cap}
 \py!DEFAULT_MAX_ELEMENTS! and \py!DEFAULT_CAP_SOURCE! are computed once, at import, by \py!_default_cap()!:
@@ -1308,6 +1308,7 @@ Constant & Value & Meaning \\
 \py!FALLBACK_MAX_ELEMENTS! & $10\,000\,000$ & numeric element cap without a memory limit \\
 \py!DEFAULT_MAX_ELEMENTS! & memory$/16/4$ & default numeric element cap (\cref{def:semantics-default-cap}) \\
 \py!MAX_AXES! & 64 & most axes of one numeric array \\
+\py!EINSUM_LABELS! & 52 & most distinct subscripts of one \py!einsum! call \\
 \py!DEFAULT_MAX_SIMPLIFY_STEPS! & 1024 & simplifier step budget (\cref{ch:algebra}) \\
 \py!_NESTED_INDICES! & 24 & most symbolic-dimension indices summed as one nested sum \\
 \py!MAX_PERIOD! & 8 & largest power tried by \py!chain_period! \\

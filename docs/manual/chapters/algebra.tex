@@ -148,7 +148,7 @@ Let $L$ and $R$ be the two canonical expressions.
 \begin{enumerate}
 \item If both are concrete, return \texttt{SUCCESS} when their integer values agree, else \texttt{FAILURE}.
 \item If $L$ and $R$ are identical, return \texttt{SUCCESS}.
-\item \emph{Cancel common factors} (\py!_cancel_common_factors!): write $L=\prod_b b^{l_b}$ and $R=\prod_b b^{r_b}$ by SymPy's \py!as_powers_dict!. For every base $b$ of either side, in ascending order of \py!srepr(b)!, let $\nu=\mathrm{expand}(l_b-r_b)$. If $\nu$ is an integer, put $b^{\nu}$ on the left when $\nu>0$, $b^{-\nu}$ on the right when $\nu<0$, and nothing when $\nu=0$. Otherwise keep $b^{l_b}$ on the left and $b^{r_b}$ on the right (each when nonzero). The reduced pair $(L',R')$ shares no base whose exponents differ by an integer. Bases are compared as SymPy objects: the integers $4$ and $12$ are two bases, so $4d=12e$ is not reduced to $d=3e$.
+\item \emph{Cancel common factors} (\py!_cancel_common_factors!): write $L=\prod_b b^{l_b}$ and $R=\prod_b b^{r_b}$ by SymPy's \py!as_powers_dict!. For every base $b$ of either side, in ascending order of \py!srepr(b)!, let $\nu=\mathrm{expand}(l_b-r_b)$. If $\nu$ is an integer, put $b^{\nu}$ on the left when $\nu>0$, $b^{-\nu}$ on the right when $\nu<0$, and nothing when $\nu=0$. Otherwise keep $b^{l_b}$ on the left and $b^{r_b}$ on the right (each when nonzero). The reduced pair $(L',R')$ shares no base whose exponents differ by an integer. Then, when the leading coefficients of both sides (\py!as_coeff_Mul!) are integers, both are divided by their gcd, so $4d=12e$ reduces to $d=3e$.
 \item Return the decision of the reduced pair (\cref{alg:algebra-decide-reduced}).
 \end{enumerate}
 \end{algorithm}

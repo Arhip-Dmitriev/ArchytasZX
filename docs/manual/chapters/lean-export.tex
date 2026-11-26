@@ -513,8 +513,8 @@ Rule & Lemma & Rule & Lemma \\
 \end{tabular}
 \end{center}
 A rule outside the table and outside \lexcode!omega!, \lexcode!omega_conj!, \lexcode!dyadic! (for
-example \lexcode!bsub!, \lexcode!average!, \lexcode!pin!, \lexcode!quarter!) raises Python's
-\lexcode!KeyError!, not \lexpy!PathSumUnsupported!.
+example \lexcode!bsub!, \lexcode!average!, \lexcode!pin!, \lexcode!quarter!) raises
+\lexpy!PathSumUnsupported! (\lexcode!no PathSum.lean lemma for the R step!).
 
 \subsection{Replaying a trace as \texttt{PSem.Step} constructors}\label{sec:lean-export-trace-step}
 
@@ -3568,7 +3568,7 @@ boundary place; its dimension is that of $p$ (with \lexcode!readings!, the text 
 \lexcode!(ghost, True, j)!, or \lexcode!(x, True, j + 1)! when it is in \lexcode!held! with \lexcode!held[p]!
 holding the node $x$; the new port is wired to the original port.
 \item Every box of \lexcode!held! must hold one node, else
-\lexcode!a held identity box of more than one node!.
+\lexcode!a held identity box of other than one node!; this is checked before the ghost step.
 \item Each \bbox in id order must be a plain node box (no port scope, nonempty node scope, not
 cyclic, no index unless \lexcode!readings!, no copy scalar, pair, tree, feed, sheets or alignment),
 else \lexcode!box <id> is no plain node box!. Each link port must be on exactly one wire not used by

@@ -121,7 +121,7 @@ Field & Type & Content \\
 \begin{itemize}
 \item \py!proved! is true when \py!verdict! is \texttt{PROVED\_UNIFORM} or \texttt{PROVED\_INDUCTION};
 \item \py!discharge! is the discharge of the last settled tier, \py!None! when none settled;
-\item \py!held_symbolic! is \py!obligation.held_symbolic! when \py!discharge! is \texttt{UNIFORM\_REWRITE}, \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, or \texttt{CHAIN\_WINDOW}, and the empty set otherwise.
+\item \py!held_symbolic! is \py!obligation.held_symbolic! when \py!discharge! is \texttt{UNIFORM\_REWRITE}, \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, or \texttt{TREE\_WINDOW}, and the empty set otherwise.
 \end{itemize}
 \end{definition}
 
@@ -228,7 +228,7 @@ Discharge & Function & Method \\
 
 \begin{algorithm}[\texttt{\_\allowbreak{}build\_\allowbreak{}derivation}]\label{alg:kernel-derivation}
 \begin{enumerate}
-\item The \emph{concrete child} at a value $v$ (\py!_concrete_child!): instantiate both hypothesis diagrams at $k=v$ by \py!_at_base! (with the obligation's witness and \py!base_proved!), and rewrite the left into the right by \py!_rewrite_to! (\cref{sec:kernel-tier-uniform}) with \code!rules! (default \py!DEFAULT_RULES!, in the given order), \code!max_steps!, and no guard. When the target is not reached, fail with \code!at k=v: R!; otherwise the child is a \texttt{STEP\_SEQUENCE} derivation from the left instance to the right one with those steps.
+\item The \emph{concrete child} at a value $v$ (\py!_concrete_child!): instantiate both hypothesis diagrams at $k=v$ by \py!_at_base! (with the obligation's witness and \py!base_proved!), and rewrite the left into the right by \py!_rewrite_to! (\cref{sec:kernel-tier-uniform}) with \code!rules! (default \py!DEFAULT_RULES!) sorted by rule name, \code!max_steps!, and no guard. When the target is not reached, fail with \code!at k=v: R!; otherwise the child is a \texttt{STEP\_SEQUENCE} derivation from the left instance to the right one with those steps.
 \item Build the base child at $v=b$ and the step child at $v=b+1$; the first failure is returned.
 \item The claim is \texttt{InductionClaim(\allowbreak{}symbol=n,\allowbreak{} base\_\allowbreak{}value=b,\allowbreak{} held\_\allowbreak{}symbolic=sorted(\allowbreak{}held\_\allowbreak{}symbolic),\allowbreak{} step\_\allowbreak{}discharge=outcome.\allowbreak{}discharge.\allowbreak{}value)}.
 \item Return the \texttt{INDUCTION} derivation from \texttt{left\_at\_k} to \texttt{right\_at\_k} with the outcome's steps, the two children, and the claim.
@@ -257,7 +257,7 @@ A \term{restriction} is a conjunction of clauses on symbols (\cref{ch:proofs}, r
 Returns \py!(reached, steps, reason)!.
 \begin{enumerate}
 \item $W\gets$ a copy of \code!source!; the step list is empty.
-\item Repeat \code!max_steps! times:
+\item Repeat \code!max_steps! $+\,1$ times (the last pass only tests the target):
   \begin{enumerate}
   \item When $W\equiv\text{target}$ and \py!_same_bang_boxes(W, target)!, return \texttt{(\allowbreak{}True,\allowbreak{} steps,\allowbreak{} "structurally reached the target")}.
   \item Take the first rule of \code!rules!, in the given order, whose \py!pattern.find_matches(W)! is nonempty, and its first match. When there is none, return \texttt{(\allowbreak{}False,\allowbreak{} steps,\allowbreak{} "no applicable rule")}.
@@ -266,7 +266,7 @@ Returns \py!(reached, steps, reason)!.
   \end{enumerate}
 \item Return \texttt{(\allowbreak{}False,\allowbreak{} steps,\allowbreak{} "step budget N exhausted")}.
 \end{enumerate}
-The test of step~2(a) runs before each firing, so a target reached by the last permitted firing is reported as an exhausted budget.
+The test of step~2(a) also runs after the last permitted firing, so a target reached by it is reported as reached.
 \end{algorithm}
 
 \py!_same_bang_boxes(a, b)! holds when both diagrams carry the same !-box ids and, per id, equal multiplicities, parents, node scopes (sorted), port scopes (sorted by \py!_port_scope_key!, the triple of node id, direction value, and index), and extensions. The extension of a !-box (\py!_extension!) is the tuple of its links, cyclic flag, index, copy scalar, pair parent, pair index, left ports and right ports (sorted), tree ports, tree parent port, level, position, feed, feed port, alignment, and groups (each sorted).
