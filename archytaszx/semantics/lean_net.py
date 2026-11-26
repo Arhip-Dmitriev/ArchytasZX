@@ -8341,12 +8341,20 @@ def export(
         and not theorem.variables
     ):
         from archytaszx.algebra.pathsum import PathSumError
+        from archytaszx.semantics.kernel import diagram_level
         from archytaszx.semantics.lean_qdigits import export_qudit_digits_net
+        from archytaszx.semantics.lean_sym import export_symbolic
 
         try:
-            return export_qudit_digits_net(theorem.lhs, theorem.rhs, name)
+            digits = export_qudit_digits_net(theorem.lhs, theorem.rhs, name)
         except (PathSumError, ScalarUnsupported):
-            pass
+            digits = None
+        if digits is not None:
+            try:
+                sym = export_symbolic(theorem.lhs, theorem.rhs, name, describe)
+            except (NetUnsupported, ScalarUnsupported):
+                return digits
+            return sym if diagram_level(sym) else digits
 
     def run(everything: bool, linked: set[str] | None = None) -> tuple[str, _Export]:
         out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))

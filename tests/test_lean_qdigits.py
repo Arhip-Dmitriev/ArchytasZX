@@ -72,6 +72,21 @@ def test_unequal_digit_networks_are_refused() -> None:
         export_qudit_digits_net(parse_dsl(wrong), parse_dsl(DRAPER[1]))
 
 
+def test_a_digit_contraction_exports_at_the_diagram_level() -> None:
+    from archytaszx.repl.commands import Session, run
+    from archytaszx.semantics import kernel
+
+    s = Session()
+    s.names.update(l=parse_dsl(DRAPER[0]), r=parse_dsl(DRAPER[1]))
+    run(s, "load @l")
+    run(s, "decide against @r")
+    run(s, "certificate kernel")
+    assert isinstance(s.certificate, kernel.Theorem)
+    assert s.certificate.inference.kind == "contraction"
+    source = L.export(s.certificate)
+    assert kernel.diagram_level(source) and "theorem main_diagrams" in source
+
+
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
