@@ -1662,6 +1662,8 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             blocks.append(Text(f"lean: tensor-network semantics, {note}"))
         else:
             blocks.append(Text("lean: opaque diagrams, every step an axiom"))
+        if not kernel.diagram_level(source):
+            blocks.append(Text(kernel.ENCODING_ONLY_LINE))
         if kernel.UNLINKED in source.split("-/")[0]:
             blocks.append(Text(_UNLINKED_LINE))
         condition = _symbolic_condition(source)
@@ -1704,6 +1706,8 @@ def _kernel_symbolic(sym: kernel.Symbolic, action: str, path: str, blocks: list[
         blocks.append(
             Text("lean: tensor-network semantics, the normal form computed by the Lean kernel")
         )
+        if not kernel.diagram_level(sym.source):
+            blocks.append(Text(kernel.ENCODING_ONLY_LINE))
         if kernel.UNLINKED in sym.source.split("-/")[0]:
             blocks.append(Text(_UNLINKED_LINE))
         if path:
@@ -1742,6 +1746,8 @@ def _kernel_refutation(
             else f"refuted exactly at {point}"
         )
         blocks.append(Text(f"lean: tensor-network semantics, {how}"))
+        if not kernel.diagram_level(source):
+            blocks.append(Text(kernel.ENCODING_ONLY_LINE))
         if path:
             try:
                 with open(path, "w", encoding="utf-8") as handle:

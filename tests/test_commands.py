@@ -980,6 +980,33 @@ class TestDecisionProofs:
         lines = texts(ok(s, f"certificate lean {tmp_path / 'mixed.lean'}"))
         assert "lean: conditional on (d ^ p) = (d ^ q)" in lines
 
+    def test_a_network_level_export_is_encoding_level_only(self, tmp_path: Path) -> None:
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics.lean_pathsum import export_net
+
+        left = parse_dsl(
+            "a = Z(1 -> 1, literal 2) phase {1: 1/8}; b = Z(1 -> 1, literal 2) phase {1: 1/8}; "
+            "wire a.out0 -- b.in0"
+        )
+        right = parse_dsl("a = Z(1 -> 1, literal 2) phase {1: 1/4}")
+        source = export_net(left, right)
+        assert not kernel.diagram_level(source)
+        s = Session()
+        s.certificate = kernel.Symbolic(left, right, source)
+        lines = texts(ok(s, f"certificate lean {tmp_path / 'net.lean'}"))
+        assert kernel.ENCODING_ONLY_LINE in lines
+
+    def test_a_diagram_level_export_is_not_encoding_level(self, tmp_path: Path) -> None:
+        left, right = PROVED["state_copy"]()
+        s = Session()
+        s.names.update(l=left, r=right)
+        ok(s, "load @l")
+        ok(s, "decide against @r")
+        target = tmp_path / "copy.lean"
+        lines = texts(ok(s, f"certificate lean {target}"))
+        assert kernel.diagram_level(target.read_text(encoding="utf-8"))
+        assert kernel.ENCODING_ONLY_LINE not in lines
+
     def test_induct_rederives_a_theorem(self) -> None:
         s = session(BOXED, "name b", "induct d=2 against @b")
         lines = texts(ok(s, "certificate kernel"))

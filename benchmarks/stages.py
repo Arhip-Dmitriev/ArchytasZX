@@ -237,7 +237,10 @@ def _kinds(t: Any) -> dict[str, int]:
 
 
 def lean_export_stage(run_: Run, path: Path) -> dict[str, Any]:
-    """``certificate lean PATH``: the file's bytes and lines and the shell's semantics line."""
+    """``certificate lean PATH``: the file's bytes and lines, the shell's semantics line and
+    ``lean_encoding_only`` (the final theorem not over the diagrams)."""
+    from archytaszx.semantics.kernel import ENCODING_ONLY_LINE
+
     out = execute(run_, f"certificate lean {path}")
     if not out.ok:
         raise RuntimeError(text_of(out)[-300:])
@@ -250,6 +253,7 @@ def lean_export_stage(run_: Run, path: Path) -> dict[str, Any]:
         "lean_semantics": semantics.removeprefix("lean: ")[:200],
         "lean_bytes": len(data),
         "lean_lines": data.count(b"\n") + 1,
+        "lean_encoding_only": ENCODING_ONLY_LINE in lines,
     }
 
 

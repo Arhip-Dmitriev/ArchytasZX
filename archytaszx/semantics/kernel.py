@@ -2757,6 +2757,26 @@ def _induction_rung_run(x: Diagram, y: Diagram) -> Theorem | None:
 OPAQUE_NS = "ArchytasZX.Opaque"
 """The namespace of the opaque diagrams in an export that imports the Lean library."""
 
+_FINAL_DECL = re.compile(r"^(?:private\s+)?(?:theorem|lemma)\s+[^\s(:{\[]+", re.MULTILINE)
+
+ENCODING_ONLY_LINE = (
+    "lean: encoding-level only: the final theorem is about the exporter's encoding "
+    "(network, path sum or symbolic form), not a DEqual theorem over the diagrams"
+)
+"""The certificate line of an export whose final theorem is not over the diagrams."""
+
+
+def diagram_level(source: str) -> bool:
+    """Whether the final theorem of a Lean export is over the diagrams: opaque diagrams, a
+    ``DEqual`` statement, or an ``Equal`` of Lean ``Diagram`` literals' ``toNet``."""
+    if "import ArchytasZX" not in source or f"namespace {OPAQUE_NS}" in source:
+        return True
+    starts = [m.start() for m in _FINAL_DECL.finditer(source)]
+    if not starts:
+        return False
+    stmt = source[starts[-1] :].split(":=", 1)[0]
+    return re.search(r"\bDEqual\w*\b|\.toNet\b", stmt) is not None
+
 
 def _semantic_pair(x: Diagram, y: Diagram) -> str | None:
     """Lean source whose theorem ``main`` proves ``x`` and ``y`` equal over their networks: the
