@@ -2776,15 +2776,15 @@ ENCODING_ONLY_LINE = (
 
 
 def diagram_level(source: str) -> bool:
-    """Whether the final theorem of a Lean export is over the diagrams: opaque diagrams, a
-    ``DEqual`` statement, or an ``Equal`` of Lean ``Diagram`` literals' ``toNet``."""
+    """Whether the final theorem of a Lean export is over the diagrams: opaque diagrams or a
+    ``DEqual`` statement."""
     if "import ArchytasZX" not in source or f"namespace {OPAQUE_NS}" in source:
         return True
     starts = [m.start() for m in _FINAL_DECL.finditer(source)]
     if not starts:
         return False
     stmt = source[starts[-1] :].split(":=", 1)[0]
-    return re.search(r"\bDEqual\w*\b|\.toNet\b", stmt) is not None
+    return re.search(r"\bDEqual\w*\b", stmt) is not None
 
 
 def _semantic_pair(x: Diagram, y: Diagram) -> str | None:
