@@ -1856,7 +1856,7 @@ ranges \lexpy!lab_ranges(labs, dt, ix, n0.boundary)!; success appends it and ret
 returns false.
 \item For the translations \lexpy!tr_net!, then \lexpy!tr_net_full! (skipped when either network's
 full term count, the product of its nodes' term counts, \lexpy!_full_terms!, exceeds
-\lexpy!FULL_TERMS!): if both translate and the products are admissible, let
+\lexpy!FULL_TERMS!; a \lexpy!NetUnsupported! from \lexpy!tr_net! moves on to \lexpy!tr_net_full!, one from \lexpy!tr_net_full! propagates): if both translate and the products are admissible, let
 $\mathit{rest} = \mathit{nf\_ex}(s_0 e_0 + (-s_1) e_1)$. Return true when $\mathit{rest}$ is
 empty; with \lexpy!fz!, when \lexpy!fz_cert(rest)! succeeds (appended); with \lexpy!rg!, when
 \lexpy!rg_cert(rest, lab_ranges(...))! succeeds (appended).
@@ -2238,6 +2238,7 @@ marks a table.
 \item \lexpy!sym_check(..., rx=self.rx)! succeeds.
 \item Restore \lexpy!_BS_ON!, the rules and the table; clear \lexpy!cp_rows! and \lexpy!rx!; fail.
 \end{enumerate}
+A \lexpy!NetUnsupported! raised by steps 3--4 runs step 5's restore, then propagates.
 On success \lexpy!_BS_ON! stays set until \lexpy!_export_symbolic! restores it.
 \end{algorithm}
 
