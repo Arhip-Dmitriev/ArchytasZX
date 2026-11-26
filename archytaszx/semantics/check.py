@@ -110,14 +110,7 @@ class CheckError(Exception):
 
 
 class CheckDomainError(CheckError):
-    """The domain half of this module's domain/grammar error split. Currently unraised.
-
-    Every refusal this module makes today is a malformed request (an incomplete assignment,
-    an unknown mode), so it raises :class:`CheckGrammarError`; a non-concrete value reaches
-    :mod:`archytaszx.semantics.contract_numeric` and is refused there instead. Declared so the
-    split matches every other module here, and so a future domain refusal has its class
-    already in the hierarchy.
-    """
+    """A request outside the domain of a check: an up-to-global-phase symbolic comparison."""
 
 
 class CheckGrammarError(CheckError):

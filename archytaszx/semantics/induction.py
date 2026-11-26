@@ -155,7 +155,8 @@ class InductionObligation:
 @dataclass(frozen=True, slots=True)
 class TierOutcome:
     """The result of running one discharge tier; a settled peeling tier carries each peeled
-    successor and its peeled copy's node ids."""
+    successor and its peeled copy's node ids; a settled tree-window tier carries the one
+    side it peeled."""
 
     discharge: StepDischarge
     settled: bool
@@ -1933,11 +1934,12 @@ def _boxed_split(
     partner: Mapping[PortRef, PortRef],
     slots: Sequence[PortRef],
 ) -> Iterator[tuple[Diagram, frozenset[NodeId]]]:
-    """Per boxed spider off ``copy`` wired to nodes of ``copy`` in its own boxes, or in a box
-    aligned with its one box, per such home and per boundary slot it holds: ``diagram`` with
-    a phaseless leaf split off the spider (the slot and the legs into ``copy``, in the boxes
-    :func:`_leaf_home` names; the spider keeps its id, its other legs and a connector in the
-    slot's place), and ``copy`` with the leaf; its own boxes first."""
+    """Per boxed Z or X spider outside ``copy``, per home :func:`_leaf_home` gives its legs into
+    ``copy`` (an aligned box only toward a node of the other generator type; its own boxes
+    first), and per leg of it in ``slots``: ``diagram`` with a phaseless leaf split off the
+    spider (that slot and the legs into ``copy`` with that home, in the home's boxes; the spider
+    keeps its id, its other legs and a connector in the slot's place), and ``copy`` with the
+    leaf."""
     for v in sorted(diagram.nodes):
         node = diagram.nodes[v]
         if v in copy or node.generator_type not in (Z_SPIDER, X_SPIDER):
@@ -3080,7 +3082,9 @@ def discharge_tree_window(
             obligation.left_at_successor,
         ),
     )
-    for own_successor, own_k, other_k, other_successor in sides:
+    for own_is_left, (own_successor, own_k, other_k, other_successor) in zip(
+        (True, False), sides, strict=True
+    ):
         owner = _tree_owner(own_successor, index)
         if owner is None:
             reasons.append("no tree box carries the step index")
@@ -3106,7 +3110,8 @@ def discharge_tree_window(
                     True,
                     "peeled the tree's leaf level; the rest is the hypothesis diagram, replaced "
                     f"by the other side's with the leaf level on its leaf run; {why}",
-                    left_peeled=exposed,
+                    left_peeled=exposed if own_is_left else None,
+                    right_peeled=None if own_is_left else exposed,
                 )
             reasons.append(why)
         try:
@@ -3124,7 +3129,8 @@ def discharge_tree_window(
                     "by the other side's with the leaf level on its leaf run; the leaf copies are "
                     "a weighted W fused into the W leg feeding them; "
                     f"{why}",
-                    left_peeled=exposed,
+                    left_peeled=exposed if own_is_left else None,
+                    right_peeled=None if own_is_left else exposed,
                 )
             reasons.append(f"W fusion: {why}")
     return TierOutcome(StepDischarge.TREE_WINDOW, False, "; ".join(reasons))

@@ -9,8 +9,8 @@ import time
 
 
 def add(circuit, op, inverse, d):
-    """Appends op (or its inverse) as a power of plain gates: X^p, Z^p, HAD^p, CX^s, CZ^s
-    (DiZX's adjoint flag does not reach the graph)."""
+    """Appends op (or its inverse) as a power of plain gates: X^p, Z^p, HAD^p, CX^s, CZ^s;
+    SWAP as one SWAP."""
     name, wires, power = op
     if name == "SWAP":
         circuit.add_gate("SWAP", wires[0], wires[1])

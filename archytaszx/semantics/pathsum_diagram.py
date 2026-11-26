@@ -11,7 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The path sum of a diagram whose every dimension is a concrete power of two.
+"""The path sum of a diagram whose every dimension is a concrete power of two, or of one odd
+prime ``p`` (a :class:`~archytaszx.algebra.pathsum.QuditPathSum` over Z_p).
 
 Each leg of dimension 2^k is k Boolean digits, value ``Sum_j 2^j x_j``. A Z spider identifies
 the digits of all its legs and adds the multilinear interpolation of its phase table; an X

@@ -29,11 +29,11 @@ with ``a`` in ``[0, s)`` and ``b`` in ``[0, t)`` corresponds to the single index
 Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})``, weights ``(w_1, ..., w_{d-1})``
 and ``alpha_0 == 0``, ``w_0 == 1`` as gauge::
 
-    Z_{m -> n} = sum_{k=0}^{d-1} w_k e^{i * angle(alpha_k)} |k>^{ox n} <k|^{ox m}
+    Z_{m -> n} = sum_{k=0}^{d-1} w_k e^{2 pi i alpha_k} |k>^{ox n} <k|^{ox m}  (alpha_k in turns)
 
 The tensor is zero off the "all axes equal k" diagonal and holds ``Phase.to_complex()`` of
 ``phase.get(k)`` on it; a missing entry is ``Phase.zero()``, so a ``phase=None`` node is
-the all-ones diagonal. ``m = n = 0`` collapses to the scalar ``sum_k e^{i alpha_k}``.
+the all-ones diagonal. ``m = n = 0`` collapses to the scalar ``sum_k w_k e^{2 pi i alpha_k}``.
 
 X spider, the Fourier conjugate of Z::
 

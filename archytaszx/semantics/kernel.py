@@ -136,8 +136,10 @@ _TOKEN = object()
 @dataclass(frozen=True, eq=False)
 class Inference:
     """The rule that built a theorem: ``kind`` is refl, rule, iso, algebraic, contraction,
-    congr, symm, trans, induction, induction_offset, induction_param, induction_offset_param,
-    phase_instance, subst or shift."""
+    path_sum, peel, repeel, identity_slide, align_merge, power_split, box_split, chain_split,
+    leg_move, regroup, w_fusion, congr, symm, trans, instance, periodic, induction,
+    induction_offset, induction_param, induction_offset_param, phase_instance, subst or
+    shift."""
 
     kind: str
     premises: tuple[Theorem, ...] = ()
@@ -1125,7 +1127,6 @@ def periodic(start: Diagram, goal: Diagram, index: str, bases: Sequence[Theorem]
         raise KernelError(f"{index!r} is not a free multiplicity or there is no base theorem")
     if any(b.domain for b in bases):
         raise KernelError("a base theorem holds under a restriction")
-    _refuse_on("periodic", bases, frozenset({index}))
     step = len(bases)
     try:
         for value, base in enumerate(bases):
@@ -2190,7 +2191,7 @@ class _Lean:
         if inf.kind == "rule":
             note = f"rule {inf.rule}" + (f" at {inf.detail}" if inf.detail else "")
             stem = "ax"
-            if inf.rule is not None and inf.rule.startswith("discard_"):
+            if inf.rule.startswith("discard_"):
                 stem = f"unproved_DISCARD_{inf.rule.removeprefix('discard_')}_"
             return self.axiom(stem, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind == "iso":

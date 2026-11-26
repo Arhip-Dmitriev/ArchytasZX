@@ -25,9 +25,11 @@
 5. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal;
    ``SYMBOLIC_WITNESS``: otherwise, one entry of the two contractions, evaluated at a sample
    assignment and an index tuple the difference's deltas pin, differs.
-   ``PATH_SUM``: both diagrams, every dimension a concrete power of two and every generator Z,
-   X, F, B or S, reduce to one canonical path sum (:mod:`archytaszx.algebra.pathsum`);
-   canonical forms that differ give a ``SYMBOLIC_WITNESS`` at a boundary index.
+   ``PATH_SUM``: both diagrams, every dimension a concrete power of two (or of one odd prime
+   ``p``, over Z_p) and every generator one the path sum translates
+   (:mod:`archytaszx.semantics.pathsum_diagram`), reduce to one canonical path sum
+   (:mod:`archytaszx.algebra.pathsum`); canonical forms that differ give a
+   ``SYMBOLIC_WITNESS`` at a boundary index.
 6. ``INDUCTION``: a recursively decided base case plus a proved step case on one
    multiplicity index.
 
