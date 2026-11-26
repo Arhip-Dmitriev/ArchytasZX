@@ -20,8 +20,9 @@ inputs, ``D1`` inputs, scalar ``c * conj(c)``. With ``T`` that diagram's tensor 
 ``(o, o', i, i')``, ``D`` is the CPM ``rho -> sum_{i, i'} T[o, o', i, i'] rho[i, i']``.
 
 Conjugation per generator: Z phase ``alpha`` -> ``-alpha``, Z weights ``a`` -> ``conj(a)``; X
-phase ``alpha_k`` -> ``-alpha_{-k mod d}``, X weights ``a_k`` -> ``conj(a_{-k mod d})``; ``F`` ->
-``F^3``; ``T``, ``Ti``, ``W``, ``B``, ``S``, ``G`` unchanged.
+phase ``alpha_k`` -> ``-alpha_{-k mod d}``, X weights ``a_k`` -> ``conj(a_{-k mod d})``; Zp pair
+phase ``f`` -> ``-f``; ``F`` -> ``F^3``; ``T``, ``Ti``, ``W``, ``B``, ``S``, ``G`` unchanged; each
+bang box copy scalar ``c`` -> ``conj(c)``.
 
 A ``G`` leg wired to another node doubles to a direct wire between the two copies of that
 node's port, or, for a ``G`` in a bang box, to a phase-free two-leg Z in that box. A ``G`` leg
@@ -39,13 +40,14 @@ from dataclasses import dataclass, field
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, _exponent_symbol
-from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
+from archytaszx.algebra.phase import INDEX, PairPhase, Phase, PhaseVector
 from archytaszx.algebra.scalar import ModDelta, Scalar
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.generators import (
     DISCARD,
     FOURIER_BOX,
     MIXED_ONLY,
+    PAIR_PHASE,
     X_SPIDER,
     Z_SPIDER,
 )
@@ -176,9 +178,12 @@ def conj_phase_vector(phase: PhaseVector, *, reflected: bool) -> PhaseVector:
 
 
 def conj_node_phase(node: Node) -> PhaseVector | None:
-    """The phase slot of ``conj(node)`` for a Z or X spider; ``node.phase`` otherwise."""
+    """The phase slot of ``conj(node)``: conjugated for a Z or X spider, the pair phase negated
+    for a Zp node, ``node.phase`` otherwise."""
     if node.phase is None:
         return None
+    if isinstance(node.phase, PairPhase):
+        return PairPhase(node.phase.dim, node.phase.dim2, -node.phase.pair)
     name = node.generator_type.name
     if name == Z_SPIDER.name:
         return conj_phase_vector(node.phase, reflected=False)
@@ -251,7 +256,7 @@ def conj_with_origin(diagram: Diagram) -> tuple[Diagram, dict[NodeId, NodeId]]:
     for node_id in sorted(diagram.nodes):
         node = diagram.nodes[node_id]
         name = node.generator_type.name
-        if name in (Z_SPIDER.name, X_SPIDER.name):
+        if name in (Z_SPIDER.name, X_SPIDER.name, PAIR_PHASE.name):
             out.set_phase(node_id, conj_node_phase(node))
         elif name == FOURIER_BOX.name:
             dim = node.inputs[0].dim
@@ -269,6 +274,9 @@ def conj_with_origin(diagram: Diagram) -> tuple[Diagram, dict[NodeId, NodeId]]:
             _move_link_port(
                 out, PortRef(node_id, Direction.OUTPUT, 0), PortRef(third, Direction.OUTPUT, 0)
             )
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if box.copy_scalar is not None:
+            out.set_bang_box_extension(box_id, copy_scalar=box.copy_scalar.conjugate())
     out.set_scalar(diagram.scalar.conjugate())
     return out, origin
 

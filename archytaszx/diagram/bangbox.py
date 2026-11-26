@@ -1316,14 +1316,27 @@ def _tree_copy(
     values: Mapping[str, int],
     new_boxes: Iterable[BangBoxId],
 ) -> None:
-    """Copy ``id_map``'s nodes and child boxes with each index of ``values`` set, and the copy
-    scalar at those values multiplied in by :func:`_multiply_copy_factor`."""
+    """Copy ``id_map``'s nodes (phases and port dims) and child boxes (multiplicities and copy
+    scalars) with each index of ``values`` set, and the copy scalar at those values multiplied
+    in by :func:`_multiply_copy_factor`."""
     nodes = frozenset(id_map.values())
     for node_id in sorted(nodes):
         phase = diagram.nodes[node_id].phase
         hit = {k: v for k, v in values.items() if phase is not None and k in phase.free_symbols}
         if phase is not None and hit:
             diagram.set_phase(node_id, phase.substitute(hit))  # type: ignore[arg-type]
+        node = diagram.nodes[node_id]
+        legs = (*node.inputs, *node.outputs)
+        if any(name in p.dim.free_symbols for name in values for p in legs):
+
+            def at(dim: Dim) -> Dim:
+                for name, value in values.items():
+                    dim = _dim_at(dim, name, value)
+                return dim
+
+            diagram.set_port_dims(
+                node_id, [at(p.dim) for p in node.inputs], [at(p.dim) for p in node.outputs]
+            )
     for child_id in new_boxes:
         child = diagram.bang_boxes.get(child_id)
         if child is None:
@@ -1337,6 +1350,12 @@ def _tree_copy(
                 mult = mult.subs(_mult_symbol(name), value)
         if mult != child.multiplicity.to_sympy():
             diagram.set_bang_box_multiplicity(child_id, Mult._from_expr(sp.expand(mult)))
+        if child.copy_scalar is not None:
+            scalar = child.copy_scalar
+            for name, value in values.items():
+                scalar = _scalar_at(scalar, name, value)
+            if scalar != child.copy_scalar:
+                diagram.set_bang_box_extension(child_id, copy_scalar=scalar)
     if box.copy_scalar is not None:
         factor = box.copy_scalar
         for name, value in values.items():
