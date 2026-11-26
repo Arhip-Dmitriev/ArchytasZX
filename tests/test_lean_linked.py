@@ -34,3 +34,17 @@ def test_an_empty_held_box_is_unsupported_not_an_index_error() -> None:
     held = {(int(node), True, 0): LBox(9, 0, None, ())}
     with pytest.raises(LinkedUnsupported):
         linked(d, _Tables(), ghost=7, held=held)
+
+
+def test_drop_ok_checks_the_port_dimension_and_readings() -> None:
+    from archytaszx.semantics.lean_linked import LDiag, LNode, drop_ok
+
+    y = LNode(1, "Z", 0, 0, (1,), ())
+    x = LNode(2, "Z", 0, 0, (0,), (0,))
+    u, v, P = (2, False, 0), (2, True, 0), (1, True, 0)
+    w = (P, u)
+    D = LDiag([y, x], [w], [v], [], [], [])
+    assert not drop_ok(D, x, w, u, v, P)
+    same = LDiag([LNode(1, "Z", 0, 0, (0,), ()), x], [w], [v], [], [], [])
+    assert drop_ok(same, x, w, u, v, P)
+    assert not drop_ok(same, x, (u, v), u, v, P)

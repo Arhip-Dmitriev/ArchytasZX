@@ -1963,7 +1963,7 @@ def c_choice(r: Sequence[tuple[int, int]], t: STm) -> tuple[STm, tuple[int, int,
     before such a pin, else :func:`elim_choice`, else a carry step (rules 15, 13, 14, 8 or 9,
     11, 12, 16, 10)."""
     got = x_choice(r, t)
-    if got is not None and got[1][1] in (5, 6, 20):
+    if got is not None and got[1][1] in (5, 20):
         return got
     pin: tuple[STm, tuple[int, int, int]] | None = _c_pin(r, t)
     if pin is not None:

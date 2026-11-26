@@ -1861,10 +1861,18 @@ def drop_id(D: LDiag, x: int, w: tuple[Port, Port], v: Port, P: Port) -> Dropped
 
 def drop_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Port) -> bool:
     """The Lean ``DropOK D x w u v P``, field by field."""
+    if w not in D.wires:
+        return False
     rest = list(D.wires)
     rest.remove(w)
+    owner = next((n for n in D.nodes if n.id == P[0]), None)
+    dims = None if owner is None else (owner.outs if P[1] else owner.ins)
     return (
-        all(D.chain(a[0]) == D.chain(b[0]) for a, b in D.wires)
+        not D.cph
+        and dims is not None
+        and P[2] < len(dims)
+        and dims[P[2]] == x.dim
+        and all(D.chain(a[0]) == D.chain(b[0]) for a, b in D.wires)
         and len({n.id for n in D.nodes}) == len(D.nodes)
         and D.nodes[-1] == x
         and x.kind == "Z"
