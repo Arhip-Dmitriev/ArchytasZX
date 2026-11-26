@@ -24,6 +24,7 @@ from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
 from archytaszx.semantics.lean_pathsum import (
+    export_mixed_net,
     export_net,
     export_pair,
     export_proof,
@@ -220,6 +221,28 @@ def test_a_trace_export_names_both_sides() -> None:
         export_pair(parse_dsl(left), parse_dsl(f"a = Z(1 -> 1, {_D})"))
 
 
+_MIXED = (
+    "a = Z(0 -> 1, literal 3); q = Z(1 -> 1, literal 2); b = B(literal 3, literal 2); "
+    "z = Z(1 -> 1, literal 6); s = S(literal 3, literal 2); e = Z(1 -> 0, literal 3); "
+    "wire a.out0 -- b.in0; wire q.out0 -- b.in1; wire b.out0 -- z.in0; wire z.out0 -- s.in0; "
+    "wire s.out0 -- e.in0; inputs q.in0; outputs s.out1"
+)
+"""A qubit wire through a binder and splitter on 6 with a qutrit loop: 3 times the wire."""
+
+
+def _mixed(scalar: str) -> str:
+    return export_mixed_net(
+        parse_dsl(_MIXED), parse_dsl(f"a = Z(1 -> 1, literal 2); scalar {scalar}"), "mixed"
+    )
+
+
+def test_a_mixed_network_exports_against_its_qubit_side() -> None:
+    source = _mixed("3")
+    assert "theorem mixed" in source and "sorry" not in source
+    with pytest.raises(ScalarUnsupported):
+        _mixed("1")
+
+
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
@@ -231,6 +254,12 @@ needs_lean = pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean proj
 @pytest.mark.parametrize("name", sorted(PAIRS))
 def test_lean_proves_a_qudit_pair(name: str, tmp_path: object) -> None:
     ok, output = L.check(_export(name), f"{tmp_path}/{name}.lean")
+    assert ok, output
+
+
+@needs_lean
+def test_lean_proves_a_mixed_network_pair(tmp_path: object) -> None:
+    ok, output = L.check(_mixed("3"), f"{tmp_path}/mixed.lean")
     assert ok, output
 
 
