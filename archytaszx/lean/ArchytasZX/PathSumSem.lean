@@ -2041,7 +2041,7 @@ theorem fz_gather (τ : ℕ → ZMod 2) (C : List F2) :
   fz_gatherM τ _ C fun q hq m hm =>
     mem_vlist (List.mem_flatMap.2 ⟨q, hq, by simpa using hm⟩)
 
-/-- Whether there is a constraint to gather and no path variable. -/
+/-- Whether the path is empty. -/
 def gatherOK (s : Data) : Bool := decide (s.path = [])
 
 /-- Every constraint replaced by the one constraint `1 + Prod (1 + c)`. -/

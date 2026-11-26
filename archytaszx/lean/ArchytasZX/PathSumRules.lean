@@ -1296,23 +1296,6 @@ def dyRest (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2) (
     decide (normP M (s.phase.filter fun t => hasAny ds t.1) =
       normP M (dyTerms M (2 ^ ds.length) S ds 1))
 
-/-- Whether the head `k = ds.length` path variables are digits `ds` with phase `Y S / 2^k`
-(Y = Sum_a 2^a d_a, `S` free of them, `2^k ∣ M`), in no constraint or row, the fresh variables
-`fs` in no phase term, constraint or row of `S`'s digits, and `S`'s binary digits exist. -/
-def dyadicOK (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data) : Bool :=
-  match dyBits ds.length S with
-  | none => false
-  | some bs => dyRest M ds S fs bs s
-
-/-- The digits `ds` summed: their terms replaced by `f_j b_j / 2` over the fresh `fs`. -/
-def dyadicS (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data) : Data :=
-  match dyBits ds.length S with
-  | none => s
-  | some bs =>
-    { path := fs ++ s.path.drop ds.length,
-      phase := s.phase.filter (fun t => !hasAny ds t.1) ++ dyNew M fs bs,
-      cons := s.cons, rows := s.rows }
-
 theorem fvars_mem {q : F2} {C : List F2} {m : Mono} {f : ℕ} (hq : q ∈ C) (hm : m ∈ q)
     (hf : f ∈ m) : f ∈ fvars C :=
   List.mem_flatMap.2 ⟨q, hq, List.mem_flatMap.2 ⟨m, hm, hf⟩⟩
@@ -1404,16 +1387,6 @@ theorem dyadic_core (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List �
   rw [hK] at h3
   simp only [h3]
 
-
-theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data)
-    (σ : ℕ → ZMod 2) (h : dyadicOK M ds S fs s = true) :
-    val M c s σ = val M c (dyadicS M ds S fs s) σ := by
-  unfold dyadicOK at h
-  unfold dyadicS
-  rcases hb : dyBits ds.length S with _ | bs
-  · simp [hb] at h
-  simp only [hb] at h
-  exact dyadic_core M c ds S fs bs s σ (dyBits_length _ S bs hb) (fun τ => dy_bits τ _ S bs hb) h
 
 /-- Whether `bs` are the binary digits of `S` (bitsOK) and [Dyadic]'s side conditions hold. -/
 def dyadicBOK (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2) (s : Data) : Bool :=
@@ -2079,7 +2052,6 @@ inductive Step where
   | hhNl
   | pin (B : F2)
   | norm
-  | dyadic (ds : List ℕ) (S : Poly) (fs : List ℕ)
   | pdrop
   | dyadicB (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
   | bsub (v : ℕ)
@@ -2103,7 +2075,6 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .hhNl, s => hhNlOK M s
   | .pin B, s => pinOK B s
   | .norm, _ => true
-  | .dyadic ds S fs, s => dyadicOK M ds S fs s
   | .pdrop, _ => true
   | .dyadicB ds S fs bs, s => dyadicBOK M ds S fs bs s
   | .bsub v, s => canonOK v s
@@ -2127,7 +2098,6 @@ def stepS (M : ℕ) : Step → Data → Data
   | .hhNl, s => hhNlS M s
   | .pin B, s => pinS M B s
   | .norm, s => normS M s
-  | .dyadic ds S fs, s => dyadicS M ds S fs s
   | .pdrop, s => pdropS s
   | .dyadicB ds _ fs bs, s => dyadicBS M ds fs bs s
   | .bsub v, s => bsubS M v s
@@ -2141,7 +2111,7 @@ noncomputable def fac : Step → ℂ
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
   | .columns ds => 2 ^ ds.length
-  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
+  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm
     | .pdrop | .dyadicB _ _ _ _ | .bsub _ | .front _ | .canonH _ => 1
 
 /-- Every side condition along a step list. -/
@@ -2176,7 +2146,6 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | hhNl => simpa [fac, stepS] using hhNl_sound M c s σ h
   | pin B => simpa [fac, stepS] using pin_sound M hM c B s σ h
   | norm => simpa [fac, stepS] using norm_sound M (by omega) c s σ
-  | dyadic ds S fs => simpa [fac, stepS] using dyadic_sound M c ds S fs s σ h
   | pdrop => simpa [fac, stepS] using pdrop_sound M c s σ
   | dyadicB ds S fs bs => simpa [fac, stepS] using dyadicB_sound M c ds S fs bs s σ h
   | bsub v => simpa [fac, stepS] using bsub_sound M hM c v s σ h

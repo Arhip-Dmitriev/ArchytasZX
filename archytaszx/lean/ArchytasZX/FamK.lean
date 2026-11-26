@@ -234,10 +234,4 @@ theorem Equal_of_DEqual_expandK {F : Fam} {D₁ D₂ : Diagram} {o₁ o₂ : ℕ
 
 end Diagram
 
-/-- The families `s₁ • D₁` and `s₂ • D₂` agree at every assignment `σ` of their multiplicity
-symbols: the expansions in key order at the multiplicities `M σ`, at the environment `E σ`. -/
-def DEqualF (E : (ℕ → ℕ) → Env) (M : (ℕ → ℕ) → ℕ → ℕ) (s₁ : (ℕ → ℕ) → ℂ) (D₁ : Diagram)
-    (s₂ : (ℕ → ℕ) → ℂ) (D₂ : Diagram) : Prop :=
-  ∀ σ, DEqual (E σ) (s₁ σ) (D₁.expandK (M σ)) (s₂ σ) (D₂.expandK (M σ))
-
 end ArchytasZX

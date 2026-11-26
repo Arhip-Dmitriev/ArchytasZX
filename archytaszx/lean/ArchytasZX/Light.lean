@@ -89,6 +89,15 @@ import ArchytasZX.PairSum
 import ArchytasZX.Sym
 import ArchytasZX.SymCanon
 import ArchytasZX.SymNorm
+import ArchytasZX.AdderFamEnv
+import ArchytasZX.FamDiagram
+import ArchytasZX.FamDraperExpand
+import ArchytasZX.FamDraperSpec
+import ArchytasZX.FamExpandEq
+import ArchytasZX.FamFcaExpand
+import ArchytasZX.FamFcaSpec
+import ArchytasZX.LinkedMerge
+import ArchytasZX.LinkedPair
 
 /-!
 Every module of the library outside the dependency cone of ArchytasZX.Cyclo and

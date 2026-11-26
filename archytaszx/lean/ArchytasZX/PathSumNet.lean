@@ -570,16 +570,11 @@ theorem tZ_congr (d : ℕ) (φ : ℕ → ℝ) (a b : List ℕ) (h : ∀ x, x ∈
     ⟨fun H v hv => H v ((h v).2 hv), fun H v hv => H v ((h v).1 hv)⟩
   simp only [this]
 
-/-- The Z spider's fragment on the legs `ls` around the leg `l0`: `l0 + l = 0` per leg and the
-phase `t0 + (t1 - t0) l0`, in units of `1 / M`. -/
-def zFragAt (M t0 t1 l0 : ℕ) (ls : List ℕ) : Frag :=
-  ⟨[], [([], t0), ([l0], t1 + (M - t0))], ls.map fun l => [[l0], [l]], 1⟩
-
 theorem z_frag_at (E : Env) (σ : ℕ → ℕ) (hσ : ∀ l, σ l < 2) (n : Node) (hk : n.kind = .Z)
     (hd : E.dimv n.dim = 2) (M t0 t1 : ℕ) (hM : 0 < M) (ht : t0 ≤ M)
     (h0 : E.phase n.ph 0 = (t0 : ℝ) / M) (h1 : E.phase n.ph 1 = (t1 : ℝ) / M) (l0 : ℕ)
     (hl : l0 ∈ n.outs ++ n.ins) :
-    ArchytasZX.val E σ n = fval M (zFragAt M t0 t1 l0 (n.outs ++ n.ins)) (bits σ) := by
+    ArchytasZX.val E σ n = fval M (zFrag M t0 t1 l0 (n.outs ++ n.ins)) (bits σ) := by
   have hv : ArchytasZX.val E σ n = tZ 2 (E.phase n.ph) ((n.outs ++ n.ins).map σ) := by
     unfold ArchytasZX.val
     rw [hk]
@@ -595,7 +590,7 @@ theorem z_frag_at (E : Env) (σ : ℕ → ℕ) (hσ : ∀ l, σ l < 2) (n : Node
       · exact List.mem_map.2 ⟨l0, hl, rfl⟩
       · exact hx
   rw [hv, hc0, tZ_bits _ _ _ (hσ l0)]
-  unfold fval val zFragAt
+  unfold fval val zFrag
   simp only [bsum, summand, List.append_nil, List.forall_mem_map]
   have hc : ∀ l, fz (bits σ) [[l0], [l]] = 0 ↔ σ l = σ l0 := by
     intro l

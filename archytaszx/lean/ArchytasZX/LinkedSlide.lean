@@ -9,7 +9,7 @@ import ArchytasZX.Weights
 /-!
 # Dropping a boxed identity spider
 
-`evalL_dropId`: a Z(1 -> 1) node `x` whose phase index reads zero, its leg `u` wired (the wire
+`DropOK.evalL_drop`: a Z(1 -> 1) node `x` whose phase index reads zero, its leg `u` wired (the wire
 `w`) to the leg `P` of another node and its other leg `v` anywhere (a wire, a link end or a
 boundary place), dropped by `dropId`: `x` and `w` removed and `v` read as `P` in every wire, link
 and boundary place. The linked digit sum is unchanged: the digits of `u` and `v` are summed out,

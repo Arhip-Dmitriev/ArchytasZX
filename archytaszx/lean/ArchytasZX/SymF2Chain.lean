@@ -8,9 +8,9 @@ import ArchytasZX.SymF2
 # Checkpoints for `runQ`
 
 `qchain n IM R ks` runs `runQ IM` over the steps `R` with compiled code, states the value after
-each block of steps (the blocks' sizes the list `ks`) as a literal definition `n_s<i>` of raw
-numerals, proves each block by `decide` in its own declaration `n_h<i>`, and composes the
-blocks into `n : runQ IM R st0 = some n_fin`.
+each block of steps (the blocks' sizes the list `ks`) as a literal definition of raw numerals,
+`n_s<i+1>` after block `i`, proves block `i` by `decide` in its own declaration `n_h<i>`, and
+composes the blocks into `n : runQ IM R st0 = some n_fin`.
 `qscal` proves a scalar `a / b * √2^K` equal to its stated form.
 -/
 
@@ -84,8 +84,8 @@ def qAddThm (n : Name) (type value : Expr) : MetaM Unit :=
   withOptions (fun o => o.setBool `Elab.async false) do
     addDecl (.thmDecl { name := n, levelParams := [], type, value })
 
-/-- `n : runQ IM R st0 = some n_fin`, through a literal state `n_s<i>` after each block of
-steps, the blocks' sizes the list `ks`, each block a theorem `n_h<i>` proved by `decide`. -/
+/-- `n : runQ IM R st0 = some n_fin`, through a literal state `n_s<i+1>` after block `i` of
+steps, the blocks' sizes the list `ks`, block `i` a theorem `n_h<i>` proved by `decide`. -/
 elab "qchain " n:ident im:ident r:ident ks:ident : command =>
   liftTermElabM do
     let imE := mkConst (← resolveGlobalConstNoOverload im)

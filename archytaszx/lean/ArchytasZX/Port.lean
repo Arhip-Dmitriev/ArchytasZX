@@ -394,7 +394,7 @@ theorem legFacts_of (S : Spec) (H k dim : ℕ) (ls : List ℕ) (cs : List (List 
   have hsub : ∀ x ∈ tailOf ls cs, x ∈ ls := fun x hx => List.mem_of_mem_drop hx
   refine ⟨⟨by simp [tailOf]; omega, h2, hc, hp, fun x hx => hg x (hsub x hx),
     fun x hx => hh x (hsub x hx)⟩, ?_⟩
-  exact S.legs_plain D.wf dim _ _ h1
+  exact S.legsOK_not_isB D.wf dim _ _ h1 (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp)
 
 /-! ## W bundles -/
 
@@ -651,7 +651,7 @@ theorem port_node (S : Spec) (H k : ℕ) (D : SplitData S H) (hk : 1 ≤ k) (P :
       have := List.all_eq_true.1 hp c hc
       simpa [hm] using this
     obtain ⟨F, hhd⟩ := legFacts_of S H k dim is cs hli hch hpc hgi hhi D
-    have hos := S.legs_plain D.wf dim os _ hlo
+    have hos := S.legsOK_not_isB D.wf dim os _ hlo (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp)
     obtain ⟨hle, -, -⟩ := S.legsOK_split dim is cs hli
     have hgis : is.map (portG S (S.at k) H P τ) = is.map τ := by
       refine List.map_congr_left fun x hx => ?_
@@ -773,7 +773,7 @@ theorem port_node (S : Spec) (H k : ℕ) (D : SplitData S H) (hk : 1 ≤ k) (P :
       have := List.all_eq_true.1 hp c hc
       simpa [hm] using this
     obtain ⟨F, hhd⟩ := legFacts_of S H k dim os cs hlo hch.1 hpc hgo hho D
-    have his := S.legs_plain D.wf dim is _ hli
+    have his := S.legsOK_not_isB D.wf dim is _ hli (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp)
     obtain ⟨hle, -, -⟩ := S.legsOK_split dim os cs hlo
     have hlen := peel_len S.m H (tailOf os cs) cs
     set g := portG S (S.at k) H P τ with hgdef

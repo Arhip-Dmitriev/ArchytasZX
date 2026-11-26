@@ -49,19 +49,12 @@ theorem bmask_ok (MS : List (ℕ × ℕ)) (D : Diagram) (h : masksOK MS D = true
   simp only [beq_iff_eq] at this
   rw [bmask, this, Option.getD_some, testBit_maskOf]
 
-theorem find?_congr' {α : Type*} (f g : α → Bool) :
-    ∀ l : List α, (∀ y ∈ l, f y = g y) → l.find? f = l.find? g
-  | [], _ => rfl
-  | a :: l, h => by
-    simp only [List.find?_cons, h a List.mem_cons_self]
-    rw [find?_congr' f g l fun y hy => h y (List.mem_cons_of_mem _ hy)]
-
 theorem walk_congr (D : Diagram) (p q : DBox → Bool) (h : ∀ y ∈ D.boxes, p y = q y) :
     ∀ fuel start, D.walk p fuel start = D.walk q fuel start
   | 0, _ => rfl
   | f + 1, s => by
     simp only [Diagram.walk]
-    rw [find?_congr' (fun b => p b && b.parent == s) (fun b => q b && b.parent == s) D.boxes
+    rw [Diagram.find?_congr' D.boxes (fun b => p b && b.parent == s) (fun b => q b && b.parent == s)
       fun y hy => by rw [h y hy]]
     cases D.boxes.find? (fun b => q b && b.parent == s) with
     | none => rfl
@@ -299,8 +292,8 @@ theorem bridgeD_facts (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (
     D.bnd.length ≤ off ∧ (D.nodes.map (·.id)).Nodup ∧ (ends D).Nodup ∧
     (∀ p ∈ ends D, p.pos < P ∧ pkey P p < 2 ^ K) ∧ packW P K D.wires = WB ∧
     (∀ n ∈ D.nodes, n.outs.length ≤ P ∧ n.ins.length ≤ P) ∧ N.nodes.length = D.nodes.length ∧
-    (∀ n ∈ D.nodes, ∀ p ∈ legs n, legOK P K off WB D p (D.label off p) = true) ∧
-    (D.nodes.flatMap legs).Perm (ends D) ∧
+    (∀ n ∈ D.nodes, ∀ p ∈ DNode.legs n, legOK P K off WB D p (D.label off p) = true) ∧
+    (D.nodes.flatMap DNode.legs).Perm (ends D) ∧
     (∀ p ∈ ends D, D.portDim p = ent b T (D.label off p)) := by
   unfold bridgeD at h
   simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.all_eq_true] at h
@@ -346,27 +339,27 @@ theorem bridgeD_facts (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (
         exact this.2
       · rw [hl.1.1]
         exact this.1
-  have hsub : D.nodes.flatMap legs ⊆ ends D := by
+  have hsub : D.nodes.flatMap DNode.legs ⊆ ends D := by
     intro p hp
     obtain ⟨n, hn, hpn⟩ := List.mem_flatMap.1 hp
     obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.1 hn
-    unfold legs at hpn
+    unfold DNode.legs at hpn
     simp only [List.mem_append, List.mem_map, List.mem_range] at hpn
     rcases hpn with ⟨k, hk, rfl⟩ | ⟨k, hk, rfl⟩
     · exact (hleg i hi true k (by simpa using hk)).1.1
     · exact (hleg i hi false k (by simpa using hk)).1.1
   have hperm := ((legs_nodup D hid).subperm hsub).perm_of_length_le (by
-    rw [← hcnt, List.length_flatMap]; simp [legs])
+    rw [← hcnt, List.length_flatMap]; simp [DNode.legs])
   refine ⟨hoff, hid, hnd', hpos', hW, hP, hlen, fun n hn p hpn => ?_, hperm, fun p hp => ?_⟩
   · obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.1 hn
-    unfold legs at hpn
+    unfold DNode.legs at hpn
     simp only [List.mem_append, List.mem_map, List.mem_range] at hpn
     rcases hpn with ⟨k, hk, rfl⟩ | ⟨k, hk, rfl⟩
     · exact (hleg i hi true k (by simpa using hk)).2
     · exact (hleg i hi false k (by simpa using hk)).2
   obtain ⟨n, hn, hpn⟩ := List.mem_flatMap.1 (hperm.mem_iff.2 hp)
   obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.1 hn
-  unfold legs at hpn
+  unfold DNode.legs at hpn
   simp only [List.mem_append, List.mem_map, List.mem_range] at hpn
   rcases hpn with ⟨k, hk, rfl⟩ | ⟨k, hk, rfl⟩
   · exact (hleg i hi true k (by simpa using hk)).1.2
@@ -390,7 +383,7 @@ def bnodeF (P K off WB : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram) (n : DNode)
 theorem tl_eq (P K off WB : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram) (hm : masksOK MS D = true)
     (hnd : (ends D).Nodup) (hpos : ∀ p ∈ ends D, p.pos < P ∧ pkey P p < 2 ^ K)
     (hW : packW P K D.wires = WB) (n : DNode) (hP : n.outs.length ≤ P ∧ n.ins.length ≤ P)
-    (hl : ∀ p ∈ legs n, legOK P K off WB D p (D.label off p) = true) (out : Bool) :
+    (hl : ∀ p ∈ DNode.legs n, legOK P K off WB D p (D.label off p) = true) (out : Bool) :
     ((List.range (if out then n.outs.length else n.ins.length)).map fun j =>
         (j, D.tail ⟨n.id, out, j⟩)).filter (fun p => p.2 ≠ []) =
       tlF P K off WB MS D n.id out
@@ -409,8 +402,8 @@ theorem tl_eq (P K off WB : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram) (hm : ma
     cases out <;> simp only [ite_true, Bool.false_eq_true, ite_false] at hj' ⊢ <;>
       simp [DNode.node, hj']
   rw [hget]
-  have hmem : (⟨n.id, out, j⟩ : Port) ∈ legs n := by
-    cases out <;> simp only [ite_true, Bool.false_eq_true, ite_false] at hj' <;> simp [legs, hj']
+  have hmem : (⟨n.id, out, j⟩ : Port) ∈ DNode.legs n := by
+    cases out <;> simp only [ite_true, Bool.false_eq_true, ite_false] at hj' <;> simp [DNode.legs, hj']
   have hjP : j < P := by
     cases out <;> simp only [ite_true, Bool.false_eq_true, ite_false] at hj' <;> omega
   rw [tail_eq P K off WB MS D hm hnd hpos hW _ hjP _ (hl _ hmem)]
@@ -418,7 +411,7 @@ theorem tl_eq (P K off WB : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram) (hm : ma
 theorem bnode_eq (P K off WB : ℕ) (MS : List (ℕ × ℕ)) (D : Diagram) (hm : masksOK MS D = true)
     (hnd : (ends D).Nodup) (hpos : ∀ p ∈ ends D, p.pos < P ∧ pkey P p < 2 ^ K)
     (hW : packW P K D.wires = WB) (n : DNode) (hP : n.outs.length ≤ P ∧ n.ins.length ≤ P)
-    (hl : ∀ p ∈ legs n, legOK P K off WB D p (D.label off p) = true) :
+    (hl : ∀ p ∈ DNode.legs n, legOK P K off WB D p (D.label off p) = true) :
     D.bnode off n = bnodeF P K off WB MS D n (n.node (D.label off)) := by
   have ho := tl_eq P K off WB MS D hm hnd hpos hW n hP hl true
   have hi := tl_eq P K off WB MS D hm hnd hpos hW n hP hl false

@@ -3,6 +3,7 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.Diagram
+import ArchytasZX.Elim
 
 /-!
 # Diagrams as networks, checked in linear time
@@ -286,13 +287,8 @@ theorem labs_lookup (b T nb off W : ℕ) (L : List (ℕ × ℕ)) (hnb : nb ≤ o
 
 /-! ## The bridge -/
 
-/-- The legs of `n`: outputs, then inputs. -/
-def legs (n : DNode) : List Port :=
-  (List.range n.outs.length).map (fun k => ⟨n.id, true, k⟩) ++
-    (List.range n.ins.length).map (fun k => ⟨n.id, false, k⟩)
-
 theorem legs_nodup (D : Diagram) (hid : (D.nodes.map (·.id)).Nodup) :
-    (D.nodes.flatMap legs).Nodup := by
+    (D.nodes.flatMap DNode.legs).Nodup := by
   refine List.nodup_flatMap.2 ⟨fun n _ => ?_, ?_⟩
   · refine List.nodup_append.2 ⟨List.nodup_range.map fun _ _ h => by simpa using h,
       List.nodup_range.map fun _ _ h => by simpa using h, fun x hx y hy e => ?_⟩
@@ -301,9 +297,9 @@ theorem legs_nodup (D : Diagram) (hid : (D.nodes.map (·.id)).Nodup) :
     obtain ⟨_, -, rfl⟩ := hy
     simp at e
   · refine (List.pairwise_map.1 hid).imp fun {a b} hab => ?_
-    show List.Disjoint (legs a) (legs b)
+    show List.Disjoint (DNode.legs a) (DNode.legs b)
     intro x hx hy
-    unfold legs at hx hy
+    unfold DNode.legs at hx hy
     simp only [List.mem_append, List.mem_map] at hx hy
     have ha : x.node = a.id := by rcases hx with ⟨_, -, rfl⟩ | ⟨_, -, rfl⟩ <;> rfl
     have hb : x.node = b.id := by rcases hy with ⟨_, -, rfl⟩ | ⟨_, -, rfl⟩ <;> rfl
@@ -391,22 +387,22 @@ theorem bridgeD_ok (P K b off WB T : ℕ) (D : Diagram) (N : Net) (L : List (ℕ
       rw [hl.1.1]
       exact this.2
   -- every boundary port and wire end is a leg
-  have hsub : D.nodes.flatMap legs ⊆ ends D := by
+  have hsub : D.nodes.flatMap DNode.legs ⊆ ends D := by
     intro p hp
     obtain ⟨n, hn, hpn⟩ := List.mem_flatMap.1 hp
     obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.1 hn
-    unfold legs at hpn
+    unfold DNode.legs at hpn
     simp only [List.mem_append, List.mem_map, List.mem_range] at hpn
     rcases hpn with ⟨k, hk, rfl⟩ | ⟨k, hk, rfl⟩
     · exact (hleg i hi true k (by simpa using hk)).1.2
     · exact (hleg i hi false k (by simpa using hk)).1.2
   have hperm := ((legs_nodup D hid).subperm hsub).perm_of_length_le (by
-    rw [← hcnt, List.length_flatMap]; simp [legs])
+    rw [← hcnt, List.length_flatMap]; simp [DNode.legs])
   have hdim : ∀ p ∈ ends D, D.portDim p = ent b T (D.label off p) := by
     intro p hp
     obtain ⟨n, hn, hpn⟩ := List.mem_flatMap.1 (hperm.mem_iff.2 hp)
     obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.1 hn
-    unfold legs at hpn
+    unfold DNode.legs at hpn
     simp only [List.mem_append, List.mem_map, List.mem_range] at hpn
     rcases hpn with ⟨k, hk, rfl⟩ | ⟨k, hk, rfl⟩
     · exact (hleg i hi true k (by simpa using hk)).2

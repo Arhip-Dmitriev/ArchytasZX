@@ -10,10 +10,9 @@ import ArchytasZX.Bundle
 
 Each move removes one bound variable of a term: an unused one, one pinned by a delta whose
 modulus divides its range, one read only through roots of unity of its range (the character
-sum), or one read only through one delta of its range (a gcd). Canonicalisation substitutes
-the pivot of each delta into the factors it determines, reduces and merges factors and sorts
-them. `nfEx` normalises every term and merges terms of equal shape; `nfEx_den` proves it
-keeps the value.
+sum), or one read only through one delta of its range (a gcd). `splitStep` splits a delta by
+the ranges of bound variables; `elimAll` repeats `elimStep`, and `elimAll_ok` keeps the
+value.
 -/
 
 namespace ArchytasZX.Sym

@@ -880,9 +880,21 @@ theorem Spec.val_still (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (τ
     (fun h => by rw [S.dimv_plain _ _ (hph h), S.dimv_plain _ _ (hph h)]) rfl rfl
     fun j hj => S.mult_ne _ _ _ (by rintro rfl; exact hm hj)
 
-theorem Spec.legs_plain (S : Spec) (hwf : S.F.wf = true) (dim : ℕ) (ls : List ℕ) (n : ℕ)
-    (h : S.legsOK dim ls (List.replicate n []) = true) : ∀ l ∈ ls, S.isB l = false :=
-  fun l hl => S.not_isB_of_chain hwf l (by rw [S.plain_of_legsOK dim ls n h l hl]; simp)
+theorem Spec.legsOK_not_isB (S : Spec) (hwf : S.F.wf = true) (dim : ℕ) (ls : List ℕ)
+    (cs : List (List ℕ)) (h : S.legsOK dim ls cs = true) (hm : ∀ c ∈ cs, S.m ∉ c) :
+    ∀ l ∈ ls, S.isB l = false := by
+  induction ls generalizing cs with
+  | nil => simp
+  | cons l ls ih =>
+    cases cs with
+    | nil => simp [Spec.legsOK] at h
+    | cons c cs =>
+      rw [S.legsOK_cons] at h
+      simp only [Bool.and_eq_true, beq_iff_eq] at h
+      intro x hx
+      rcases List.mem_cons.1 hx with rfl | hx
+      · exact S.not_isB_of_chain hwf _ (by rw [h.1.1]; exact hm c List.mem_cons_self)
+      · exact ih cs h.2 (fun c' hc' => hm c' (List.mem_cons_of_mem _ hc')) x hx
 
 theorem val_split (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (hn : S.nodeOK n = true)
     (τ : ℕ → ℕ)
@@ -929,7 +941,7 @@ theorem val_split (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (hn : S.
     simp only [Kind.outCs, Kind.inCs, S.chainsOK_append, S.chainsOK_replicate, Bool.true_and,
       Bool.and_eq_true] at hn
     obtain ⟨⟨hch, hlo⟩, hli⟩ := hn
-    have hpi := S.legs_plain D.wf dim is _ hli
+    have hpi := S.legsOK_not_isB D.wf dim is _ hli (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp)
     simp only [Node.split, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one,
       val, hdk]
     rw [show is.map (S.combine H k τ) = is.map τ from
@@ -1007,8 +1019,8 @@ theorem val_split (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (hn : S.
     simp only [Kind.outCs, Kind.inCs, S.chainsOK_replicate, Bool.true_and, Bool.and_eq_true] at hn
     refine plain rfl (fun l hl => ?_) (by simp) rfl
     rcases List.mem_append.1 hl with hl | hl
-    · exact S.legs_plain D.wf dim os _ hn.1 l hl
-    · exact S.legs_plain D.wf dim is _ hn.2 l hl
+    · exact S.legsOK_not_isB D.wf dim os _ hn.1 (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp) l hl
+    · exact S.legsOK_not_isB D.wf dim is _ hn.2 (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp) l hl
 
 
 /-! ## Splitting networks -/
@@ -1323,22 +1335,6 @@ theorem Spec.chain_of_legsOK (S : Spec) (dim : ℕ) (ls : List ℕ) (cs : List (
   simp only [Spec.legsOK, Bool.and_eq_true, List.all_eq_true, beq_iff_eq] at h
   exact (h.2 _ hz).1
 
-theorem Spec.legsOK_not_isB (S : Spec) (hwf : S.F.wf = true) (dim : ℕ) (ls : List ℕ)
-    (cs : List (List ℕ)) (h : S.legsOK dim ls cs = true) (hm : ∀ c ∈ cs, S.m ∉ c) :
-    ∀ l ∈ ls, S.isB l = false := by
-  induction ls generalizing cs with
-  | nil => simp
-  | cons l ls ih =>
-    cases cs with
-    | nil => simp [Spec.legsOK] at h
-    | cons c cs =>
-      rw [S.legsOK_cons] at h
-      simp only [Bool.and_eq_true, beq_iff_eq] at h
-      intro x hx
-      rcases List.mem_cons.1 hx with rfl | hx
-      · exact S.not_isB_of_chain hwf _ (by rw [h.1.1]; exact hm c List.mem_cons_self)
-      · exact ih cs h.2 (fun c' hc' => hm c' (List.mem_cons_of_mem _ hc')) x hx
-
 /-- A spider's legs kept at `m = 0` are not bundles along `m`. -/
 theorem Spec.dropM_not_isB (S : Spec) (hwf : S.F.wf = true) (dim : ℕ) (ls : List ℕ)
     (cs : List (List ℕ)) (h : S.legsOK dim ls (List.replicate (ls.length - cs.length) [] ++ cs) = true)
@@ -1375,7 +1371,7 @@ theorem Node.zero_labels (S : Spec) (hwf : S.F.wf = true) (n m : Node) (hn : S.n
     obtain ⟨⟨hch, hlo⟩, hli⟩ := hn
     simp only [Node.zero, Option.some.injEq] at h; subst h
     rcases List.mem_append.1 hl with hl | hl
-    · exact S.legs_plain hwf dim os _ hlo l hl
+    · exact S.legsOK_not_isB hwf dim os _ hlo (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp) l hl
     · exact S.dropM_not_isB hwf dim is cs hli hch l hl
   | XB co ci =>
     simp only [Kind.outCs, Kind.inCs, S.chainsOK_append, S.chainsOK_replicate, Bool.true_and,
@@ -1392,7 +1388,7 @@ theorem Node.zero_labels (S : Spec) (hwf : S.F.wf = true) (n m : Node) (hn : S.n
     simp only [Node.zero, Option.some.injEq] at h; subst h
     rcases List.mem_append.1 hl with hl | hl
     · exact S.dropM_not_isB hwf dim os cs hlo hch.1 l hl
-    · exact S.legs_plain hwf dim is _ hli l hl
+    · exact S.legsOK_not_isB hwf dim is _ hli (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp) l hl
   | Bun m' b =>
     simp only [Bool.and_eq_true, decide_eq_true_eq] at hn
     obtain ⟨⟨⟨-, hmb⟩, hlo⟩, hli⟩ := hn
@@ -1429,8 +1425,8 @@ theorem Node.zero_labels (S : Spec) (hwf : S.F.wf = true) (n m : Node) (hn : S.n
     simp only [Node.zero, Option.some.injEq] at h; subst h
     simp only [Kind.outCs, Kind.inCs, S.chainsOK_replicate, Bool.true_and, Bool.and_eq_true] at hn
     rcases List.mem_append.1 hl with hl | hl
-    · exact S.legs_plain hwf dim _ _ hn.1 l hl
-    · exact S.legs_plain hwf dim _ _ hn.2 l hl
+    · exact S.legsOK_not_isB hwf dim _ _ hn.1 (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp) l hl
+    · exact S.legsOK_not_isB hwf dim _ _ hn.2 (fun c hc => by rw [List.eq_of_mem_replicate hc]; simp) l hl
 
 theorem sumOver_drop (D : ℕ → ℕ) (p : ℕ → Bool) (S₀ : List ℕ) (f : (ℕ → ℕ) → ℂ)
     (hf : Reads S₀ f) (ls : List ℕ) (hD : ∀ l ∈ ls, p l = false → D l = 1)
