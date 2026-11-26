@@ -412,7 +412,8 @@ def export_chain_family(left: Diagram, right: Diagram, name: str = "main") -> st
     copy and its head, and the two sides at ``0`` copies, proved by the verified normaliser
     (``export_symbolic``) and moved to one environment (``Equal.env0``, ``Equal.mapL2``,
     ``Equal.reorder``); ``chain_pair`` for every ``k``, and ``main`` at the box multiplicity in
-    the engine's symbol; :class:`PathSumUnsupported` outside that form."""
+    the engine's symbol, with ``main_diagrams`` (``DEqual_of_chainNet``) over the two expansions
+    when neither side has a boundary link port; :class:`PathSumUnsupported` outside that form."""
     from archytaszx.semantics.lean_net import NetUnsupported
     from archytaszx.semantics.lean_sym import export_symbolic
 
@@ -572,7 +573,16 @@ def export_chain_family(left: Diagram, right: Diagram, name: str = "main") -> st
         f"theorem {name} {bind} ({nv} : ℕ) :\n    {at(kk)} :=",
         f"  family {args} {kk}",
         "",
-        "end ArchytasZX.Export",
-        "",
     ]
+    if len(sa.nodes) == len(left.nodes) and len(sb.nodes) == len(right.nodes):
+        lines += [
+            "/-- The two sides' expansions equal as diagrams at the box multiplicity. -/",
+            f"theorem {name}_diagrams {bind} ({nv} : ℕ) :",
+            f"    DEqual (Ec d) ({a_t} * ({ra_t}) ^ {kk}) (DA.expandChain cA {kk})",
+            f"      ({b_t} * ({rb_t}) ^ {kk}) (DB.expandChain cB {kk}) :=",
+            "  DEqual_of_chainNet okA okB (by decide +kernel) (by decide +kernel) (by decide)",
+            f"    (fun _ _ => rfl) (by decide) {kk} ({name} {args} {nv})",
+            "",
+        ]
+    lines += ["end ArchytasZX.Export", ""]
     return "\n".join(lines)

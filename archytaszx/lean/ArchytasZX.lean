@@ -128,6 +128,7 @@ import ArchytasZX.FamFcaExpand
 import ArchytasZX.FamFcaNet
 import ArchytasZX.FamFcaWire
 import ArchytasZX.FamEval
+import ArchytasZX.FamDEqual
 import ArchytasZX.FamFcaEq
 import ArchytasZX.FamFcaSpec
 import ArchytasZX.FamFcaSpecNet

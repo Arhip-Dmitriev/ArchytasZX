@@ -302,7 +302,8 @@ def export_pair_family(left: Diagram, right: Diagram, name: str = "main") -> str
     (ArchytasZX/PairBox.lean), its pair legs pinned to the same slots on both sides; the two
     templates proved by the verified normaliser (``export_symbolic``) and moved to one
     environment (``Equal.env0``, ``Equal.mapL2``, ``Equal.reorder``); ``pair_family`` for every
-    ``k`` and ``main`` at the box multiplicity in the engine's symbol;
+    ``k``, ``main`` at the box multiplicity in the engine's symbol and ``main_diagrams``
+    (``DEqual_of_pairNet``) over the two expansions;
     :class:`PathSumUnsupported` outside that form."""
     from archytaszx.semantics.lean_net import NetUnsupported
     from archytaszx.semantics.lean_sym import export_symbolic
@@ -358,6 +359,13 @@ def export_pair_family(left: Diagram, right: Diagram, name: str = "main") -> str
             f"Equal (Ec d) (1 * ({a_t}) ^ {kx} * {q_t} ^ {sc})"
             f" ((PA.expandP {kx}).toNet ({kx} * {m}))\n"
             f"      (1 * ({b_t}) ^ {kx} * {q_t} ^ {sc}) ((PB.expandP {kx}).toNet ({kx} * {m}))"
+        )
+
+    def at_d(kx: str) -> str:
+        sc = f"({kx} * ({kx} - 1) / 2)"
+        return (
+            f"DEqual (Ec d) (1 * ({a_t}) ^ {kx} * {q_t} ^ {sc}) (PA.expandP {kx})\n"
+            f"      (1 * ({b_t}) ^ {kx} * {q_t} ^ {sc}) (PB.expandP {kx})"
         )
 
     def cert(c: list[tuple[int, int]]) -> str:
@@ -445,6 +453,11 @@ def export_pair_family(left: Diagram, right: Diagram, name: str = "main") -> str
         "/-- The two sides equal at the box multiplicity. -/",
         f"theorem {name} {bind} ({nv} : ℕ) :\n    {at(kk)} :=",
         f"  family {args} {kk}",
+        "",
+        "/-- The two sides' expansions equal as diagrams at the box multiplicity. -/",
+        f"theorem {name}_diagrams {bind} ({nv} : ℕ) :\n    {at_d(kk)} :=",
+        "  DEqual_of_pairNet okA okB (by decide +kernel) (by decide +kernel) (by decide)",
+        f"    (by decide) (by decide) (fun _ _ => rfl) {kk} ({name} {args} {nv})",
         "",
         "end ArchytasZX.Export",
         "",
