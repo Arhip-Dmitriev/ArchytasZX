@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import numpy as np
 import pytest
@@ -153,6 +154,43 @@ def test_a_pair_peel_of_another_diagram_is_refused() -> None:
     node = next(n for n, x in sorted(tampered.nodes.items()) if x.generator_type.name == "Zp")
     tampered.set_phase(node, None)
     assert lean_linked.export_peel(source, tampered) is None
+
+
+def test_pair_ok_mirrors_the_pair_form(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[Any, ...]] = []
+    real = lean_linked.pair_ok
+
+    def spy(*args: Any) -> bool:
+        seen.append(args)
+        return real(*args)
+
+    monkeypatch.setattr(lean_linked, "pair_ok", spy)
+    t = _pair_repeel(_PAIRS)
+    source = induction_renamed(parse_dsl(_PAIRS), "n", "k")
+    assert lean_linked.export_peel(source, t.lhs) is not None
+    assert seen and all(real(*a) for a in seen)
+    L, R, bid, mb, c, B, pairs = seen[-1]
+    assert not real(L, R, bid, mb + 1, c, B, pairs)
+    assert not real(L, R, bid, mb, c, [], pairs)
+    (lp, rp), *_ = pairs
+    assert not real(L, R, bid, mb, c, B, [(lp, (rp[0], rp[1], 99))])
+    assert not real(L, R, bid, mb, c, B, [(lp, (max(B) + 100, rp[1], rp[2]))])
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_the_pairs_repeel(tmp_path: object) -> None:
+    source = kernel.lean(_pair_repeel(_PAIRS), "main", semantic=True)
+    ok, output = check(source, f"{tmp_path}/pairs.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    head, sep, tail = source.partition("right := ⟨")
+    port, close, rest = tail.partition("⟩")
+    bad = head + sep + port.rsplit(", ", 1)[0] + ", 99" + close + rest
+    assert sep and bad != source
+    ok, _ = check(bad, f"{tmp_path}/far.lean")
+    assert not ok
 
 
 @pytest.mark.skipif(

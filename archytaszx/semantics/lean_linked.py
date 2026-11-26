@@ -1102,6 +1102,23 @@ def _strip_pairs(
     return out, owner, specs
 
 
+def pair_ok(
+    L: LDiag,
+    R: LDiag,
+    bid: int,
+    mb: int,
+    c: int,
+    B: Sequence[int],
+    pairs: Sequence[tuple[Port, Port]],
+) -> bool:
+    """The Lean ``PairFirst`` and ``PairLast`` fields ``multL``, ``multR`` and ``form`` for pairs
+    of default ``LPair`` flags over the box ``bid``, each pair its left and right legs."""
+    if L.mult_of(bid) != mb or R.mult_of(bid) != c:
+        return False
+    legs = set(L.legs())
+    return all(q in legs and q[0] in B and _leg_chain(L, q) == [mb] for pair in pairs for q in pair)
+
+
 def _export_pair_peel(before: Diagram, after: Diagram, first: bool) -> str | None:
     """:func:`export_peel` of a box with pair boxes (``LinkedPair.lean``): ``after`` must be the
     engine's peel of ``before`` (``first`` its first copy); the digit sums are ``evalP`` of the
@@ -1228,6 +1245,10 @@ def _export_peel(
     if gl is None or gr is None:
         return None
     if pairs is not None and (not xm or gl or gr or sl or sr):
+        return None
+    if pairs is not None and not pair_ok(
+        L, R, box.id, box.mult, c, B, [(lp, rp) for _, lp, rp, _, _ in pairs]
+    ):
         return None
     try:
         Tl = linked(before, tables, ghost=G, held=held, readings=xm)
