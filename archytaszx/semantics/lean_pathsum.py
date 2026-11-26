@@ -79,7 +79,10 @@ def _f2(poly: frozenset[frozenset[int]] | None) -> str:
 
 
 def _step_line(tag: str, k: int, step: Step, p: int | None) -> list[str]:
-    """One step: its data as a comment and the instance of its rule lemma."""
+    """One step: its data as a comment and the instance of its rule lemma; raises
+    :class:`PathSumUnsupported` for a rule with no PathSum.lean lemma."""
+    if step.rule not in _LEMMA and step.rule not in ("omega", "omega_conj", "dyadic"):
+        raise PathSumUnsupported(f"no PathSum.lean lemma for the {step.rule} step")
     data = f"var {step.var}"
     if step.pivot is not None:
         data += f", pivot {step.pivot}"

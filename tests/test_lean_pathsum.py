@@ -527,3 +527,13 @@ def test_lean_checks_a_columns_step(
         source = source.replace("([5, 6], 2)", "([5, 6], 1)", 1)
     ok, output = L.check(source, f"{tmp_path}/columns.lean")
     assert ok != tamper, output
+
+
+def test_a_step_without_a_lemma_is_unsupported() -> None:
+    import pytest
+
+    from archytaszx.algebra.pathsum import PathSumUnsupported, Step
+    from archytaszx.semantics.lean_pathsum import _step_line
+
+    with pytest.raises(PathSumUnsupported):
+        _step_line("left", 0, Step(rule="bsub", var=0), None)
