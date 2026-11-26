@@ -44,14 +44,15 @@ tables), the side conditions of that data as Boolean checks closed by \lexlean!d
 theorem whose proof applies a soundness lemma of the library. The Lean kernel then checks the
 file; an exported verdict is Lean-certified only when the file compiles. A Lean-certified
 verdict is about the engine's diagrams only when the export is diagram-level
-(\py!kernel.diagram_level!: its final theorem states \lexlean!DEqual! or an \lexlean!Equal! of
-\lexlean!Diagram! literals' \lexlean!toNet!); otherwise \code!certificate lean! adds the
+(\py!kernel.diagram_level!: its final theorem states \lexlean!DEqual!, the reading of the
+benchmarks' \code!statement_level! \code!diagram!); otherwise \code!certificate lean! adds the
 encoding-level line. Exports that end without a diagram-level theorem: the path-sum networks
-(\py!lean_pathsum.export_net!, \py!export_qudit_net! and \py!export_mixed_net! without \py!diagrams!, or when a side has
-no literal), the qudit digit
-networks (\py!lean_qdigits.export_qudit_digits_net!, when the symbolic normaliser gives no
-diagram-level export), the restricted chain and pair families (\py!lean_chainfam!,
-\py!lean_pairs!), \py!lean_net.export! when no diagram literal is built, and a restricted
+(\py!lean_pathsum.export_net!, \py!export_qudit_net!, \py!export_mixed_net! and
+\py!lean_qdigits.export_qudit_digits_net! without \py!diagrams!, or when a side has no literal;
+\py!certify_decision.path_sum_proof! and the kernel's restricted concrete route pass it), the
+restricted chain and pair families (\py!lean_chainfam!, \py!lean_pairs!: their final
+\lexlean!Equal! of the expansions' \lexlean!toNet! is over the diagrams with identities on the
+boundary link ports, not the originals), \py!lean_net.export! when no diagram literal is built, and a restricted
 corollary (\py!lean_restrict!) over a bare final theorem. The exporters never
 enumerate a path sum or a tensor contraction to produce an equality; the refutation exporters
 evaluate at one point, which is their purpose.
@@ -2761,8 +2762,20 @@ $x$ to its parent (\lexcode!no constraint sets the digit <x> to <a>!) gives \lex
 \end{algorithm}
 
 \begin{signature}
-\lexpy!export_qudit_digits_net(left: Diagram, right: Diagram, name: str = "main") -> str!
+\lexpy!export_qudit_digits_net(left: Diagram, right: Diagram, name: str = "main", diagrams: bool = False) -> str!
 \end{signature}
+With \py!diagrams! the file also imports \lexlean!ArchytasZX.NetRelabel! and ends with
+\py!_diagram_lines!: \lexlean!πB! is the permutation (\py!_swap!) of the boundary labels onto the
+slots $0,\dots,n_b-1$; both literals (\py!literal! with the network boundary labels as
+\py!bnd_labels!, first wire labels \py!QDIGIT_DIAGRAM_LABEL0! $=2^{26}$ and $2^{27}$, each leg's
+dimension index its label's digit count) are checked against \lexlean!labsD!, which gives each
+relabelled export label and each literal wire label its digit count; then
+\lexlean!theorem main_diagrams : DEqual { E with labs := labsD } (sL) DL (sR) DR! by
+\lexlean!(DEqual_iff _ rfl DL_chk DR_chk).2! applied to \lexlean!iso! of \lexlean!DL.toNet off!
+onto \lexlean!NL.relabel (ren πB)!, then
+\lexlean!Equal.relabel E labsD (ren πB) (ren_injective πB _ _) _ _ main!, then the \lexlean!iso! of
+the right side reversed, every check \lexlean!by decide +kernel!. No literal (a summed label
+among \lexlean!πB!'s keys included) leaves the export as without \py!diagrams!.
 After building both sides it requires a multi-digit label (\lexcode!no leg of dimension p^k, k > 1!), one prime and boundary (\lexcode!the two path sums have different bases or boundaries!), equal
 boundary labels (\lexcode!the two networks have different boundary labels!), one digit count per
 label (\lexcode!the label <l> has two dimensions!), equal boundary digits (\lexcode!the two networks have different boundary digits!), one canonical form and one elimination order. The constants'
@@ -2898,6 +2911,23 @@ end ArchytasZX.Export
 \lexcode!v_! prefixed to a leading digit; a dimension or count that is not a sum, product or power
 of naturals and symbols raises \lexcode!<e> is not a natural number expression!. No point separating
 the lists raises \lexcode!the leg dimensions agree at every sample point!.
+
+Without \bboxes, at that witness point (merged into \lexpy!point!) it first tries
+\lexpy!_Refuter(left, right, point, None, interface=True).interface_source(name, theorem, lead)!:
+the right side is labelled on fresh slots as for an arity refutation; \lexpy!bare_literal! writes
+each side as \lexlean!DI0!, \lexlean!DI1! (node kinds, dimension and phase indices from
+\lexpy!translate(..., register=False)!, leg dimension indices from \lexpy!raw_index!, no
+\lexlean!toNet! or \lexlean!check! facts); the file holds \lexlean!main! as above and, last,
+\begin{lstlisting}[style=lexlean]
+theorem main_diagrams :
+    ¬ ∀ (d : ℕ) (h_d : 0 < d), DEqual (E d) 1 DI0 1 DI1 := by
+  intro h
+  exact not_DEqual_of_dims (by decide +kernel) (h 2 (by norm_num))
+\end{lstlisting}
+\lexlean!not_DEqual_of_dims! (\texttt{EqualLabs}) needs the boundary dimension values
+\lexlean!D.bdims.map E.dimv! to differ at the witness, so no index difference alone proves it. A
+\lexpy!NetUnsupported! or \lexpy!ScalarUnsupported! there (a family, a parameter without a value at
+the point) leaves the encoding-level file above.
 
 \paragraph{Instantiated families.} For each candidate (the point, then the first
 \lexpy!MAX_POINTS! of the size-ordered grid) giving every multiplicity a value, each diagram is

@@ -191,7 +191,6 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{AdderFamFca} & AdderFamEnv, Ball, Weights, PairEval & 1672 & 131 & 41 & B \\
 \texttt{AdderFamFcaEng} & AdderFamFca & 1304 & 91 & 53 & B \\
 \texttt{Assume} & Bundle & 96 & 4 & 4 & C \\
-\texttt{EqualLabs} & Assume, Diagram & 51 & 4 & 0 & C \\
 \texttt{Ball} & Cyclo, 2 Mathlib & 280 & 36 & 4 & C \\
 \texttt{Bialgebra} & ZXRules & 189 & 4 & 0 & C \\
 \texttt{BoxedBridge} & FamK, DiagramBridge & 624 & 26 & 18 & B \\
@@ -220,6 +219,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{DiagramBridge} & Diagram, Elim & 472 & 17 & 13 & B \\
 \texttt{Digits} & Elim & 196 & 13 & 12 & C \\
 \texttt{Elim} & Bridge, WZ & 331 & 9 & 8 & C \\
+\texttt{EqualLabs} & Assume, Diagram & 56 & 5 & 0 & C \\
 \texttt{Expand} & Diagram & 159 & 0 & 20 & C \\
 \texttt{ExpandFacts} & Digits & 230 & 13 & 2 & C \\
 \texttt{FamBridge} & NetDigits & 268 & 11 & 3 & B \\
@@ -251,6 +251,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{Mixed} & Closed & 210 & 16 & 3 & C \\
 \texttt{Net} & 43 Mathlib & 480 & 20 & 40 & C \\
 \texttt{NetDigits} & Pin & 244 & 6 & 2 & C \\
+\texttt{NetRelabel} & EqualLabs, Iso & 81 & 4 & 2 & C \\
 \texttt{NodeBox} & Split & 1440 & 85 & 7 & B \\
 \texttt{NodeBridge} & NodeVal & 339 & 15 & 1 & B \\
 \texttt{NodeVal} & Tower & 406 & 34 & 11 & B \\
@@ -2351,6 +2352,24 @@ Under the same hypothesis, \lean|Equal { E with labs := L } s N s' M| holds exac
 \lean|Equal E s N s' M| does. Hence $\mathrm{Equal}\,E\,s_1\,(D_1.\mathrm{toNet}\,o_1)\,s_2\,(D_2.\mathrm{toNet}\,o_2)$ and
 $D_i.\mathrm{check}\,L\,o_i=\mathrm{true}$ give $\mathrm{DEqual}\,\{E \text{ with labs} := L\}\,s_1\,D_1\,s_2\,D_2$ (by \lean|DEqual_iff|).
 \end{theorem}
+
+\begin{theorem}[\lean|not_DEqual_of_dims|]
+If the boundary dimension values $D_1.\mathrm{bdims}.\mathrm{map}\,E.\mathrm{dimv}$ and
+$D_2.\mathrm{bdims}.\mathrm{map}\,E.\mathrm{dimv}$ differ, then $\lnot\,\mathrm{DEqual}\,E\,s_1\,D_1\,s_2\,D_2$.
+\end{theorem}
+
+\section{Relabelled networks (\texttt{NetRelabel})}\label{sec:lean-core-netrelabel}
+
+\lean|Net.relabel f N| renames every node leg, summed label and boundary label of $N$ by $f$;
+\lean|relabelOK L L0 f ls| checks that each $f\,x$, $x\in ls$, has in $L$ the dimension index $x$
+has in $L_0$ (\lean|labDim_of_relabelOK|); \lean|sumOver_map2| is \lean|sumOver_map| with
+different dimension functions on the two sides; \lean|eval_relabel|: the relabelled network at
+$\sigma$ is the network at $\sigma\circ f$.
+
+\begin{theorem}[\lean|Equal.relabel|]
+For $f$ injective, \lean|relabelOK L E.labs f (N.int ++ N.bnd)| and \lean|relabelOK L E.labs f M.int|,
+\lean|Equal E s N s' M| gives \lean|Equal { E with labs := L } s (N.relabel f) s' (M.relabel f)|.
+\end{theorem}
 %======================================================================
 \section{Lean statements of the principal declarations}\label{sec:lean-core-listings}
 
@@ -3255,5 +3274,15 @@ theorem DEqual_of_labs {E : Env} {L : List (ℕ × ℕ)} {s₁ s₂ : ℂ} {D₁
     (hL : ∀ l, labDim { E with labs := L } l = labDim E l) (h₁ : D₁.check L o₁ = true)
     (h₂ : D₂.check L o₂ = true) (h : Equal E s₁ (D₁.toNet o₁) s₂ (D₂.toNet o₂)) :
     DEqual { E with labs := L } s₁ D₁ s₂ D₂
+\end{lstlisting}
+
+\subsection{\texttt{NetRelabel}}
+\begin{lstlisting}[style=leancore]
+def Net.relabel (f : ℕ → ℕ) (N : Net) : Net :=
+  ⟨N.nodes.map (Node.rename f), N.int.map f, N.bnd.map f⟩
+theorem Equal.relabel (E : Env) (L : List (ℕ × ℕ)) (f : ℕ → ℕ) (hf : Function.Injective f)
+    {s s' : ℂ} {N M : Net} (hN : relabelOK L E.labs f (N.int ++ N.bnd) = true)
+    (hM : relabelOK L E.labs f M.int = true) (h : Equal E s N s' M) :
+    Equal { E with labs := L } s (N.relabel f) s' (M.relabel f)
 \end{lstlisting}
 
