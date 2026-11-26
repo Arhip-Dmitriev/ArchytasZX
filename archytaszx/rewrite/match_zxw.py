@@ -27,9 +27,10 @@
 * W effect: a W output into a phaseless Z effect is a T before the remaining W; into a
   phaseless X effect, the remaining W alone.
 
-Every pattern requires its legs to carry exactly equal dimensions. Only W fusion fires
-inside a node-scope bang box, both nodes sharing their innermost one; every other pattern
-requires its nodes to lie outside every node-scope box.
+Every pattern requires its legs to carry exactly equal dimensions. W fusion fires inside a
+node-scope bang box, both nodes sharing their innermost one; W identity fires inside one it does
+not empty, with no leg in a port-scope box; every other pattern requires its nodes to lie
+outside every node-scope box.
 """
 
 from __future__ import annotations

@@ -199,7 +199,10 @@ def _surviving_legs(
 
 
 def _over_shared_dim(
-    phase: PhaseVector | None, shared_dim: Dim, bindings: Mapping[str, Dim]
+    phase: PhaseVector | None,
+    shared_dim: Dim,
+    bindings: Mapping[str, Dim],
+    context: str = "spider_fusion",
 ) -> tuple[PhaseVector, Mapping[str, Dim]]:
     """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``
     -- or an all-zero vector over ``shared_dim`` if ``phase`` is absent.
@@ -215,7 +218,7 @@ def _over_shared_dim(
         return reattach_phase(phase, shared_dim, bindings)
     except PhaseDomainError as exc:
         raise RewriteDomainError(
-            f"spider_fusion cannot reattach a phase vector to shared dimension {shared_dim}: {exc}"
+            f"{context} cannot reattach a phase vector to shared dimension {shared_dim}: {exc}"
         ) from exc
 
 
@@ -228,6 +231,7 @@ def _merged_phase(
     bindings: Mapping[str, Dim],
     *,
     any_legs_survive: bool,
+    context: str = "spider_fusion",
 ) -> tuple[PhaseVector | None, Mapping[NodeId, Mapping[str, Dim]]]:
     """The merged node's phase: componentwise sum, both operands read over ``shared_dim``.
 
@@ -244,8 +248,8 @@ def _merged_phase(
         if not any_legs_survive:
             return PhaseVector(shared_dim, {}), {}
         return None, {}
-    phase_a, applied_a = _over_shared_dim(node_a.phase, shared_dim, bindings)
-    phase_b, applied_b = _over_shared_dim(node_b.phase, shared_dim, bindings)
+    phase_a, applied_a = _over_shared_dim(node_a.phase, shared_dim, bindings, context)
+    phase_b, applied_b = _over_shared_dim(node_b.phase, shared_dim, bindings, context)
     substitutions: dict[NodeId, Mapping[str, Dim]] = {}
     if applied_a:
         substitutions[a_id] = applied_a
@@ -363,6 +367,7 @@ def spider_fusion_builder(
         resolution.shared_dim,
         resolution.bindings,
         any_legs_survive=any_legs_survive,
+        context=context,
     )
 
     # node_a.generator_type alone: resolution.passed confirmed it equals node_b's.
@@ -1006,9 +1011,8 @@ def bialgebra_scalar(dim: Dim) -> Scalar:
 
 def bialgebra_builder(diagram: Diagram, match: Match) -> BuildResult:
     """The right-hand side of :data:`BIALGEBRA`: two one-to-two and two two-to-one spiders of
-    the matched colours, each one-to-two feeding both.
-
-    The only builder reporting :attr:`~archytaszx.rewrite.rule.BuildResult.new_wires`.
+    the matched colours, each one-to-two feeding both; the four wires between them are its
+    :attr:`~archytaszx.rewrite.rule.BuildResult.new_wires`.
     """
     if not isinstance(match, BialgebraMatch):
         raise RewriteGrammarError(
