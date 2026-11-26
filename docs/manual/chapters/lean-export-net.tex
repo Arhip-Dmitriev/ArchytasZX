@@ -116,11 +116,13 @@ traced under the span name \code!lean.export!.
 \item If \py!theorem! is not a kernel \py!Theorem!, raise \py!NetUnsupported! with the message
   \code!export takes a Theorem, got !\textit{TypeName}.
 \item If the inference kind is \code!contraction!, \py!original! is \py!None!, and the theorem
-  has no assumptions, no domain and no variables, return
+  has no assumptions, no domain and no variables, try
   \py!export_qudit_digits_net(theorem.lhs, theorem.rhs, name)! of
   \module{archytaszx.semantics.lean_qdigits} (the qudit path-sum export over digit variables,
-  \cref{ch:lean-pathsum}) unless it raises \py!PathSumError! or \py!ScalarUnsupported!, in which
-  case continue.
+  \cref{ch:lean-pathsum}); when it raises \py!PathSumError! or \py!ScalarUnsupported!,
+  continue. Otherwise return
+  \py!lean_sym.export_symbolic(theorem.lhs, theorem.rhs, name, describe)! when it succeeds and is diagram-level (\py!kernel.diagram_level!), else the
+  digit-network source.
 \item Define \textsc{Run}(\textit{everything}, \textit{linked}): create a fresh \py!_Export! with
   the description function; set its \py!alg_everything! to \textit{everything}, its
   \py!original! to \py!original!, its \py!box_syms! to \py!_box_syms(theorem)!, and its

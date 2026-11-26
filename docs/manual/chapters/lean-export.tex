@@ -48,9 +48,9 @@ verdict is about the engine's diagrams only when the export is diagram-level
 \lexlean!Diagram! literals' \lexlean!toNet!); otherwise \code!certificate lean! adds the
 encoding-level line. Exports that end without a diagram-level theorem: the path-sum networks
 (\py!lean_pathsum.export_net!, \py!export_qudit_net!, \py!export_mixed_net!), the qudit digit
-networks (\py!lean_qdigits.export_qudit_digits_net!), the restricted chain and pair families
-(\py!lean_chainfam!, \py!lean_pairs!), the refutations that compare boundary sizes or evaluate
-by ball arithmetic, \py!lean_net.export! when no diagram literal is built, and a restricted
+networks (\py!lean_qdigits.export_qudit_digits_net!, when the symbolic normaliser gives no
+diagram-level export), the restricted chain and pair families (\py!lean_chainfam!,
+\py!lean_pairs!), \py!lean_net.export! when no diagram literal is built, and a restricted
 corollary (\py!lean_restrict!) over a bare final theorem. The exporters never
 enumerate a path sum or a tensor contraction to produce an equality; the refutation exporters
 evaluate at one point, which is their purpose.
@@ -2855,7 +2855,10 @@ differ; within a family that raises \lexcode!the boundaries differ in size withi
 registers them and models both scalars; an opaque scalar raises
 \lexcode!a diagram scalar has no exact Lean form!.
 \item Different boundary sizes: emit \lexlean!refute_bnd (by decide) (h args)! with every
-dimension parameter at 1, every other parameter at 0 and every multiplicity at 0; the header is
+dimension parameter at 1, every other parameter at 0 and every multiplicity at 0; then
+\lexlean!main_diagrams : ∀ binders, ¬ DEqual E s₀ D₀ s₁ D₁! over Lean literals of both
+diagrams (the right one labelled again from 0), proved by
+\lexlean!exact absurd h.1 (by decide)! on the boundary dimension lists; the header is
 \lexcode!refutation: the boundaries differ in size!.
 \item \emph{Environment} (\lexpy!setup_env!): a weighted node (kind \lexcode!ZW!, \lexcode!XW!, or a
 bundle of one) raises \lexcode!a coefficient spider has no cyclotomic entry! when \lexpy!weights_ok! is
@@ -3443,7 +3446,9 @@ exponents (\lexlean!ex_atoms M p (z) gs ks!), the \lexlean!rw! of \lexpy!eval_re
 \lexlean!mono!, \lexlean!zpow_neg!, \lexlean!zpow_one!, \lexlean!zpow_ofNat!, \lexlean!zpow_zero!, then
 \lexlean!have hD : <difference> = 0 := by linear_combination h0!, the ball facts, and
 \lexlean!exact ne_zero_of_near <ball> (Or.inl (by norm_num)) hD! (\lexlean!Or.inr! when the imaginary
-part separates). The header is \lexcode!refutation by ball arithmetic at <point>!.
+part separates), then the \lexlean!¬ DEqual! restatement \lexlean!main_diagrams! over the engine's
+diagrams as for the exact refutation (\lexpy!_Refuter.diagram_negation!). The header is
+\lexcode!refutation by ball arithmetic at <point>!.
 \lexpy!ball_tree(M, out, expr, prefix)! exposes the ball construction for a polynomial in
 $\zeta = \omega_M$ (used for Gauss-sum signs), returning the facts, the text, the fact name and
 the ball.
