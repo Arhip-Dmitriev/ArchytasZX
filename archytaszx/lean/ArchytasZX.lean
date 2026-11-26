@@ -34,6 +34,7 @@ import ArchytasZX.DiagramBridge
 import ArchytasZX.Port
 import ArchytasZX.Assume
 import ArchytasZX.EqualLabs
+import ArchytasZX.NetRelabel
 import ArchytasZX.Paper
 import ArchytasZX.Completeness
 import ArchytasZX.Weights

@@ -156,7 +156,9 @@ def path_sum_proof(left: Diagram, right: Diagram) -> tuple[kernel.Symbolic | Non
         why_qudit = f"qudit network export: {exc}"
     try:
         with _trace.span("decide.proof.path_sum_qudit_digits"):
-            return kernel.Symbolic(left, right, export_qudit_digits_net(left, right)), ""
+            return kernel.Symbolic(
+                left, right, export_qudit_digits_net(left, right, diagrams=True)
+            ), ""
     except (PathSumError, ScalarUnsupported) as exc:
         why_digits = f"qudit digit network export: {exc}"
     try:

@@ -1855,20 +1855,25 @@ def literal(
     dim_of: Mapping[int, int] | None,
     label0: int,
     labs: str = "labs",
+    bnd_labels: Sequence[int] | None = None,
 ) -> Literal | None:
     """The Lean ``Diagram`` ``D<tag>`` of ``diagram``, each node's kind, dimension and phase
-    indices those of its network node in ``nodes`` (sorted node order, wire ``j`` the label
-    ``summed[j]`` in sorted wire order) and each leg's dimension index ``dim_of`` at its label
-    (0 when None), with ``D<tag>_chk`` against ``labs`` and, when ``summed`` is consecutive,
-    ``D<tag>_net : D<tag>.toNet off = N<tag>``; None when the network does not label the ports
-    that way."""
+    indices those of its network node in ``nodes`` (sorted node order, boundary port ``i`` the
+    label ``bnd_labels[i]``, ``i`` when None, wire ``j`` the label ``summed[j]`` in sorted wire
+    order) and each leg's dimension index ``dim_of`` at its label (0 when None), with
+    ``D<tag>_chk`` against ``labs`` and, when the boundary labels are the slots and ``summed`` is
+    consecutive, ``D<tag>_net : D<tag>.toNet off = N<tag>``; None when the network does not label
+    the ports that way."""
     from archytaszx.diagram.graph import Direction, PortRef
 
     wires = sorted(diagram.wires, key=lambda w: w.sort_key())
     if diagram.bang_boxes or len(diagram.nodes) != len(nodes) or len(wires) != len(summed):
         return None
     bnd = [*diagram.boundary_outputs, *diagram.boundary_inputs]
-    label = {ref: i for i, ref in enumerate(bnd)}
+    slots = list(range(len(bnd))) if bnd_labels is None else list(bnd_labels)
+    if len(slots) != len(bnd):
+        return None
+    label = dict(zip(bnd, slots, strict=True))
     for j, w in enumerate(wires):
         label[w.a] = label[w.b] = summed[j]
     consecutive = bool(summed) and list(summed) == list(range(summed[0], summed[0] + len(summed)))
@@ -1909,7 +1914,7 @@ def literal(
         f"    ins := [{', '.join(map(port, diagram.boundary_inputs))}] }}",
         "",
     ]
-    if consecutive or not summed:
+    if (consecutive or not summed) and slots == list(range(len(bnd))):
         lines += [f"theorem {d}_net : {d}.toNet {off} = N{tag} := by decide +kernel", ""]
     lines += [f"theorem {d}_chk : {d}.check {labs} {off} = true := by decide +kernel", ""]
     perm = [] if consecutive or not summed else _swap(range(off, off + len(summed)), summed)

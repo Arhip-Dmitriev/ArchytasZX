@@ -91,6 +91,37 @@ def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
 
+_FUSED = (
+    "a = Z(1 -> 1, literal 9); b = Z(1 -> 1, literal 9); wire a.out0 -- b.in0",
+    "a = Z(1 -> 1, literal 9)",
+)
+"""Two fused spiders on 9: boundary labels 0 and 2, relabelled onto the slots."""
+
+
+def _fused() -> str:
+    return export_qudit_digits_net(parse_dsl(_FUSED[0]), parse_dsl(_FUSED[1]), diagrams=True)
+
+
+def test_a_digit_network_export_ends_in_dequal_of_the_diagrams() -> None:
+    from archytaszx.semantics import kernel
+
+    source = _fused()
+    assert "def πB : List (ℕ × ℕ) := [(0, 0), (1, 2), (2, 1)]" in source
+    assert "theorem main_diagrams : DEqual { E with labs := labsD }" in source
+    assert kernel.diagram_level(source) and "Equal.relabel" in source
+    plain = export_qudit_digits_net(parse_dsl(_FUSED[0]), parse_dsl(_FUSED[1]))
+    assert not kernel.diagram_level(plain)
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_refuses_a_tampered_digit_diagram_literal(tmp_path: object) -> None:
+    source = _fused()
+    tampered = source.replace("⟨1, .Z, 2, 0, [2], [2]⟩", "⟨1, .X, 2, 0, [2], [2]⟩", 1)
+    assert tampered != source
+    ok, _ = L.check(tampered, f"{tmp_path}/qdigits_tampered.lean")
+    assert not ok
+
+
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
 def test_lean_proves_the_digit_network_pair(tmp_path: object) -> None:
     ok, output = L.check(_export(), f"{tmp_path}/qdigits.lean")

@@ -379,7 +379,76 @@ def _side_lines(tag: str, side: _Side, p: int) -> list[str]:
     ]
 
 
-def export_qudit_digits_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+QDIGIT_DIAGRAM_LABEL0 = 1 << 26
+"""The first wire label of the left diagram literal's network; the right one's is twice it."""
+
+
+def _diagram_lines(
+    left: Diagram,
+    right: Diagram,
+    sides: tuple[_Side, _Side],
+    scalars: tuple[str, str],
+    labs: dict[int, int],
+    name: str,
+) -> list[str]:
+    """The theorem ``name_diagrams``: ``DEqual`` of the engine's diagrams at ``E`` with the
+    label table ``labsD``, through ``Equal.relabel`` of ``name`` by the permutation ``πB`` of the
+    boundary labels onto the slots, then each literal's network renamed onto the relabelled
+    export's (``iso``) and ``DEqual_iff``; empty when either diagram has no literal."""
+    from archytaszx.semantics.lean_pathsum import _swap, literal
+
+    side_l, side_r = sides
+    bnd = side_l.bnd
+    pi_b = _swap(bnd, range(len(bnd)))
+    ren = dict(pi_b)
+    lits = [
+        literal(tag, d, side.nodes, side.summed, labs, label0, "labsD", bnd)
+        for tag, d, side, label0 in (
+            ("L", left, side_l, QDIGIT_DIAGRAM_LABEL0),
+            ("R", right, side_r, QDIGIT_DIAGRAM_LABEL0 << 1),
+        )
+    ]
+    lit_l, lit_r = lits
+    if lit_l is None or lit_r is None:
+        return []
+    if any(x in ren for side in sides for x in side.summed):
+        return []
+    table = {ren.get(x, x): labs[x] for side in sides for x in (*side.bnd, *side.summed)}
+    for side, lit in ((side_l, lit_l), (side_r, lit_r)):
+        for j, x in enumerate(side.summed):
+            table[lit.off + j] = labs[x]
+    eb = "{ E with labs := labsD }"
+
+    def iso(tag: str, s: str, lit: Any, side: _Side) -> str:
+        order = list(range(len(side.nodes)))
+        return (
+            f"(iso {eb} ({s}) (D{tag}.toNet {lit.off}) (N{tag}.relabel (ren πB)) {lit.perm} "
+            f"{order} (by decide +kernel))"
+        )
+
+    s_l, s_r = scalars
+    return [
+        f"def πB : List (ℕ × ℕ) := {pi_b}",
+        "",
+        f"def labsD : List (ℕ × ℕ) := {sorted(table.items())}",
+        "",
+        *lit_l.lines,
+        *lit_r.lines,
+        "/-- The theorem on the engine's diagrams, through `Equal.relabel`, `iso` and",
+        "`DEqual_iff`. -/",
+        f"theorem {name}_diagrams : DEqual {eb} ({s_l}) DL ({s_r}) DR :=",
+        f"  (DEqual_iff (o₁ := {lit_l.off}) (o₂ := {lit_r.off}) (L := labsD) rfl DL_chk DR_chk).2",
+        f"    (({iso('L', s_l, lit_l, side_l)}.trans",
+        "      (Equal.relabel E labsD (ren πB) (ren_injective πB (by decide) (by decide))",
+        f"        (by decide +kernel) (by decide +kernel) {name})).trans",
+        f"      {iso('R', s_r, lit_r, side_r)}.symm)",
+        "",
+    ]
+
+
+def export_qudit_digits_net(
+    left: Diagram, right: Diagram, name: str = "main", diagrams: bool = False
+) -> str:
     """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
     F, binder and splitter nodes on the powers of one odd prime p, some leg of dimension p^k with
     k > 1 (ArchytasZX/PathSumQuditDigits.lean): each network's value is its fragments' path sum
@@ -387,7 +456,8 @@ def export_qudit_digits_net(left: Diagram, right: Diagram, name: str = "main") -
     variable, each side's reduction trace is replayed, the Gauss sums take their Legendre form
     and the final comparison gives ``Equal``; raises :class:`PathSumUnsupported` outside that
     class or when the sums do not reduce to one canonical form, :class:`ScalarUnsupported` when
-    the constants' identity has no proof."""
+    the constants' identity has no proof; with ``diagrams``, then ``name_diagrams`` over the
+    engine's diagrams (:func:`_diagram_lines`)."""
     from archytaszx.algebra.pathsum import legendre
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
@@ -494,9 +564,13 @@ def export_qudit_digits_net(left: Diagram, right: Diagram, name: str = "main") -
         "  all_goals exact consts",
         "",
     ]
+    extra = (
+        _diagram_lines(left, right, (side_l, side_r), (s_l, s_r), labs, name) if diagrams else []
+    )
     ns = "ArchytasZX.PathSumQuditDigitsProof"
     lines = [
         "import ArchytasZX.PathSumQuditDigits",
+        *(["import ArchytasZX.NetRelabel"] if extra else []),
         "",
         "/-!",
         f"# Qudit digit network proof `{name}` over Z_{p}",
@@ -516,6 +590,7 @@ def export_qudit_digits_net(left: Diagram, right: Diagram, name: str = "main") -
         "",
         *net_env(phases, labs, f"{p} ^ k", p),
         *body,
+        *extra,
         f"end {ns}",
         "",
     ]
