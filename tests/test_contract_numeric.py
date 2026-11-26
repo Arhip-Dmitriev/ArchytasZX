@@ -297,3 +297,12 @@ class TestManyLabels:
         assert contract(diagram).tensor.shape == ()
         with pytest.raises(ContractSizeError, match="intermediate"):
             contract(diagram, max_elements=1_000)
+
+
+def test_contract_network_above_einsum_labels_raises_size_error() -> None:
+    from archytaszx.semantics.contract_numeric import _contract_network
+
+    view = np.broadcast_to(np.ones(1, dtype=complex), (2,) * 30)
+    operands = [(view, list(range(30))), (view, list(range(30, 60)))]
+    with pytest.raises(ContractSizeError):
+        _contract_network(operands, list(range(60)), dict.fromkeys(range(60), 2), 10**30)

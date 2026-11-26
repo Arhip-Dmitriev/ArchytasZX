@@ -125,6 +125,9 @@ intermediates and output alike, and where it came from."""
 MAX_AXES = 64
 """The most axes numpy gives one array."""
 
+EINSUM_LABELS = 52
+"""The most distinct subscripts one numpy.einsum call reads."""
+
 
 class ContractError(Exception):
     """Base class for all errors raised by this module."""
@@ -283,6 +286,12 @@ def _einsum_local(
         arguments.append(tensor)
         arguments.append([local.setdefault(label, len(local)) for label in axis_labels])
     arguments.append([local.setdefault(label, len(local)) for label in output_labels])
+    _check_axes(len(output_labels), what="an intermediate tensor")
+    if len(local) > EINSUM_LABELS:
+        raise ContractSizeError(
+            f"a contraction step would read {len(local)} distinct axes, "
+            f"above numpy.einsum's {EINSUM_LABELS}"
+        )
     return np.asarray(np.einsum(*arguments, optimize=len(operands) > 1))
 
 
