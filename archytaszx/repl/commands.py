@@ -1693,6 +1693,18 @@ def _count_subst(theorem: kernel.Theorem) -> int:
     return own + sum(_count_subst(p) for p in theorem.inference.premises)
 
 
+_PATH_SUM_HEAD = re.compile(r"path-sum proof|path sum|qudit network proof", re.IGNORECASE)
+
+
+def _symbolic_how(source: str) -> tuple[str, str]:
+    """The proof kind of a symbolic export, for the lean line and the verify line."""
+    if "verified normaliser" in source:
+        return "the normal form computed by the Lean kernel", "by the normal form of symbolic sums"
+    if _PATH_SUM_HEAD.search(source.split("-/")[0]):
+        return "a path-sum proof over the networks", "by a path-sum proof over the networks"
+    return "proved over the networks", "over the networks"
+
+
 def _kernel_symbolic(sym: kernel.Symbolic, action: str, path: str, blocks: list[Block]) -> Outcome:
     """``certificate kernel`` states the equality; ``certificate lean`` exports its proof."""
     left, right = _math(sym.lhs, False), _math(sym.rhs, False)
@@ -1703,9 +1715,7 @@ def _kernel_symbolic(sym: kernel.Symbolic, action: str, path: str, blocks: list[
     if condition:
         blocks.append(Text(f"  assumes {condition}"))
     if action == "lean":
-        blocks.append(
-            Text("lean: tensor-network semantics, the normal form computed by the Lean kernel")
-        )
+        blocks.append(Text(f"lean: tensor-network semantics, {_symbolic_how(sym.source)[0]}"))
         if not kernel.diagram_level(sym.source):
             blocks.append(Text(kernel.ENCODING_ONLY_LINE))
         if kernel.UNLINKED in sym.source.split("-/")[0]:
@@ -1805,7 +1815,7 @@ def _verify(session: Session, args: str) -> Outcome:
     if isinstance(artefact, kernel.Refutation):
         return _verify_refutation(artefact, blocks)
     if isinstance(artefact, kernel.Symbolic):
-        text = "verify: verified: certificate lean proves it by the normal form of symbolic sums"
+        text = f"verify: verified: certificate lean proves it {_symbolic_how(artefact.source)[1]}"
         return _ok("certificate", [*blocks, Text(text)], artefact)
     if isinstance(artefact, kernel.FiniteProof):
         try:

@@ -995,6 +995,12 @@ class TestDecisionProofs:
         s.certificate = kernel.Symbolic(left, right, source)
         lines = texts(ok(s, f"certificate lean {tmp_path / 'net.lean'}"))
         assert kernel.ENCODING_ONLY_LINE in lines
+        assert "lean: tensor-network semantics, a path-sum proof over the networks" in lines
+        assert not any("normal form computed" in line for line in lines)
+        verified = texts(ok(s, "certificate verify"))[-1]
+        assert verified == (
+            "verify: verified: certificate lean proves it by a path-sum proof over the networks"
+        )
 
     def test_a_diagram_level_export_is_not_encoding_level(self, tmp_path: Path) -> None:
         left, right = PROVED["state_copy"]()
