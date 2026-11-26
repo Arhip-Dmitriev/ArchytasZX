@@ -1419,6 +1419,18 @@ Equal E (a * rA ^ k) ((DA.expandChain cA k).toNet o) (b * rB ^ k) ((DB.expandCha
 by \cref{thm:boxes-fam-pair} between two applications of \cref{thm:boxes-expand-chFam}.
 \end{theorem}
 
+\paragraph{Diagram statements (\texttt{FamDEqual}).} \lbx!legsZero D! holds when every leg of
+every node of $D$ has dimension index 0; it passes to \lbx!expandChain! and \lbx!expandPair!
+(the pair node's legs also 0), and then \lbx!D.bdims! is a list of zeros of length
+$|D.\mathrm{bnd}|$. \lbx!DEqual_of_toNet!: at an environment with
+\lbx!∀ x y, labDim E x = E.dimv y!, two diagrams of zero-index legs, equal boundary lengths,
+located ports (\lbx!portsOK!) and $|X.\mathrm{bnd}| \le o$, \lbx!Equal E s₁ (X.toNet o) s₂ (Y.toNet o)!
+gives \lbx!DEqual E s₁ X s₂ Y! (boundary lists by \lbx!bdims_of_legsZero!, entries by
+\lbx!eval_toNet_dim!). \lbx!DEqual_of_chainNet! applies it to two closed chain expansions at $k$
+(ports by \lbx!ChainFamOK.portsX!, boundaries by \lbx!bnd_expand!), \lbx!DEqual_of_pairNet! to two
+pair box expansions at $K$ with offset $K\,|D_A.\mathrm{outs}|$ (ports by \lbx!ports_ok!,
+boundaries by \lbx!bnd_len!).
+
 \lbx!Node.plainKind! holds for the kinds $Z$, $X$, $F$, and the identity. \lbx!Equal.env! moves an equation to an environment $E'$ that reads every label dimension alike and, at every node of both networks (all plain), the same dimension and phase row; \lbx!Equal.env0! is the decidable form for networks whose nodes all have dimension index $0$ and phase index $0$.
 
 \section{A Chain Box Against a Node Box}\label{sec:boxes-chainnode}

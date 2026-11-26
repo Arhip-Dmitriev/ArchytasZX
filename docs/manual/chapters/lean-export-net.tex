@@ -2226,6 +2226,19 @@ theorem family HYPS (k : ℕ) :
 theorem NAME HYPS (n : ℕ) : ...at the multiplicity... := family ARGS MULT
 \end{lstlisting}
   with the multiplicity as a Lean natural in its symbol (\py!_mult_nat!).
+\item When neither side got a Z($1\to1$) behind a boundary link port (\code!DA!, \code!DB! the
+  engine's diagrams), also
+\begin{lstlisting}[style=grammar]
+theorem NAME_diagrams HYPS (n : ℕ) :
+    DEqual (Ec d) (A0 * (RA) ^ MULT) (DA.expandChain cA MULT)
+      (B0 * (RB) ^ MULT) (DB.expandChain cB MULT) :=
+  DEqual_of_chainNet okA okB (by decide +kernel) (by decide +kernel) (by decide)
+    (fun _ _ => rfl) (by decide) MULT (NAME ARGS n)
+\end{lstlisting}
+  (\lean!DEqual_of_chainNet!, \file{ArchytasZX/FamDEqual.lean}). With a Z($1\to1$) added the
+  export ends in \textit{name}, at the encoding level: Lean's \lean!expandChain! wires a link
+  only between ports with partner wires, so no Lean expansion of a diagram with a boundary link
+  port exists.
 \end{enumerate}
 \end{algorithm}
 
@@ -2274,6 +2287,10 @@ pair port $q$ to a boundary slot, returning the certificate $[(i, x), \dots]$ an
   \code!family : ... Equal (Ec d) (1 * (A) ^ k * Q ^ (k * (k - 1) / 2)) ((PA.expandP k).toNet (k * m)) ...!
   by \lean!Diagram.pair_family! with the four pin certificates checked by
   \code!pinOK ... = true! (\code!decide +kernel!), then \textit{name} at the multiplicity.
+\item The final theorem \textit{name}\code!_diagrams! states
+  \code!DEqual (Ec d) (1 * (A) ^ MULT * Q ^ ...) (PA.expandP MULT) ... (PB.expandP MULT)! over
+  the two pair box expansions, by \lean!DEqual_of_pairNet! (\file{ArchytasZX/FamDEqual.lean})
+  from \textit{name}, the zero-index legs by \code!decide!.
 \end{enumerate}
 \end{algorithm}
 
