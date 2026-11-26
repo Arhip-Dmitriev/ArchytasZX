@@ -241,3 +241,10 @@ class TestSoundnessSweep:
         left, right = _random_dim(rng), _random_dim(rng)
         result = left.unify(right)
         assert [result.is_success, result.is_failure, result.is_deferred].count(True) == 1
+
+
+def test_unify_divides_out_integer_gcd() -> None:
+    d, e = Dim.symbol("d"), Dim.symbol("e")
+    result = (Dim.concrete(4) * d).unify(Dim.concrete(12) * e)
+    assert result.is_success
+    assert result.bindings == {"d": Dim.concrete(3) * e}

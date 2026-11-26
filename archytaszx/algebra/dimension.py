@@ -514,8 +514,9 @@ class UnifyResult:
 def _cancel_common_factors(left: sp.Expr, right: sp.Expr) -> tuple[sp.Expr, sp.Expr]:
     """Split ``left == right`` into an equivalent pair sharing no base.
 
-    Subtracts exponents base by base. A base whose residual exponent is not a concrete
-    integer stays on the side or sides it started on.
+    Subtracts exponents base by base, then divides both integer coefficients by their
+    gcd. A base whose residual exponent is not a concrete integer stays on the side or
+    sides it started on.
     """
     left_powers = left.as_powers_dict()
     right_powers = right.as_powers_dict()
@@ -535,6 +536,13 @@ def _cancel_common_factors(left: sp.Expr, right: sp.Expr) -> tuple[sp.Expr, sp.E
             reduced_left *= base**left_exponent
         if right_exponent != 0:
             reduced_right *= base**right_exponent
+    left_coeff, left_rest = reduced_left.as_coeff_Mul()
+    right_coeff, right_rest = reduced_right.as_coeff_Mul()
+    if left_coeff.is_Integer and right_coeff.is_Integer:
+        common = sp.igcd(int(left_coeff), int(right_coeff))
+        if common > 1:
+            reduced_left = sp.Integer(int(left_coeff) // common) * left_rest
+            reduced_right = sp.Integer(int(right_coeff) // common) * right_rest
     return reduced_left, reduced_right
 
 
