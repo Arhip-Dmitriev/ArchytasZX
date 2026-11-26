@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from archytaszx import trace as _trace
@@ -627,13 +628,21 @@ def _extend(
     candidates: dict[NodeId, tuple[NodeId, ...]],
     incidence_a: _Incidence,
     incidence_b: _Incidence,
-) -> bool:
-    """Search, depth-first from ``depth`` over ``order`` with an explicit stack, for a node
-    bijection extending ``mapping`` under which each assigned node's wires to assigned nodes
-    are, as a multiset, its image's wires to their images."""
+) -> Iterator[None]:
+    """Yield, depth-first from ``depth`` over ``order`` with an explicit stack, once per node
+    bijection extending ``mapping`` (held in ``mapping`` at each yield) under which each
+    assigned node's wires to assigned nodes are, as a multiset, its image's wires to their
+    images."""
     start = depth
     cursor = [0] * (len(order) + 1)
-    while depth < len(order):
+    while True:
+        if depth == len(order):
+            yield
+            if depth == start:
+                return
+            depth -= 1
+            used.discard(mapping.pop(order[depth]))
+            continue
         source = order[depth]
         choices = candidates[source]
         while cursor[depth] < len(choices):
@@ -651,13 +660,12 @@ def _extend(
             del mapping[source]
         else:
             if depth == start:
-                return False
+                return
             depth -= 1
             used.discard(mapping.pop(order[depth]))
             continue
         depth += 1
         cursor[depth] = 0
-    return True
 
 
 @_trace.traced("rewrite.isomorphism")
@@ -703,8 +711,10 @@ def isomorphism(
     order = tuple(sorted(colours_a, key=lambda nid: (len(candidates[nid]), colours_a[nid], nid)))
 
     mapping: dict[NodeId, NodeId] = {}
-    if not _extend(order, 0, mapping, set(), candidates, incidence_a, incidence_b):
-        return None
-    label = {nid: str(int(mapping[nid])) for nid in mapping}
     identity = {nid: str(int(nid)) for nid in b.nodes}
-    return mapping if _profile(a, label, symmetric) == _profile(b, identity, symmetric) else None
+    target = _profile(b, identity, symmetric)
+    for _ in _extend(order, 0, mapping, set(), candidates, incidence_a, incidence_b):
+        label = {nid: str(int(mapping[nid])) for nid in mapping}
+        if _profile(a, label, symmetric) == target:
+            return dict(mapping)
+    return None

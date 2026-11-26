@@ -173,6 +173,17 @@ class TestCanonicalKey:
         assert compare_structure(b, boxed(True)).identical
         assert canonical_key(b) == canonical_key(boxed(True))
 
+    def test_isomorphism_backtracks_past_a_box_mismatch(self) -> None:
+        def boxed(pairs: tuple[tuple[int, int], tuple[int, int]]) -> Diagram:
+            diagram = Diagram()
+            nodes = [diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[]) for _ in range(4)]
+            for i, j in pairs:
+                diagram.add_bang_box(Mult.concrete(1), node_scope=frozenset([nodes[i], nodes[j]]))
+            return diagram
+
+        a, b = boxed(((0, 1), (2, 3))), boxed(((0, 2), (1, 3)))
+        assert isomorphic(a, b)
+
     def test_a_non_diagram_is_rejected(self) -> None:
         import pytest
 
