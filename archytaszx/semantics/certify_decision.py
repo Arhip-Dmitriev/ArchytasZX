@@ -146,12 +146,12 @@ def path_sum_proof(left: Diagram, right: Diagram) -> tuple[kernel.Symbolic | Non
 
     try:
         with _trace.span("decide.proof.path_sum"):
-            return kernel.Symbolic(left, right, export_net(left, right)), ""
+            return kernel.Symbolic(left, right, export_net(left, right, diagrams=True)), ""
     except (PathSumError, ScalarUnsupported) as exc:
         why_net = f"path_sum network export: {exc}"
     try:
         with _trace.span("decide.proof.path_sum_qudit"):
-            return kernel.Symbolic(left, right, export_qudit_net(left, right)), ""
+            return kernel.Symbolic(left, right, export_qudit_net(left, right, diagrams=True)), ""
     except (PathSumError, ScalarUnsupported) as exc:
         why_qudit = f"qudit network export: {exc}"
     try:

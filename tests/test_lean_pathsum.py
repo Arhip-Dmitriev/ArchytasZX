@@ -293,6 +293,56 @@ def test_lean_proves_a_qubit_network_pair(name: str, tmp_path: object) -> None:
     assert ok, output
 
 
+def _qubit_diagrams(name: str) -> tuple[str, str]:
+    left, right = QUBIT_NETS[name]
+    x, y = parse_dsl(left), parse_dsl(right)
+    return export_net(x, y, name), export_net(x, y, name, diagrams=True)
+
+
+@pytest.mark.parametrize("name", sorted(QUBIT_NETS))
+def test_a_network_export_ends_in_dequal_of_the_diagrams(name: str) -> None:
+    from archytaszx.semantics import kernel
+
+    plain, source = _qubit_diagrams(name)
+    assert f"theorem {name}_diagrams : DEqual E" in source and kernel.diagram_level(source)
+    assert not kernel.diagram_level(plain)
+    head = plain[: plain.rindex("end ArchytasZX")]
+    assert source.startswith(head) and source.endswith(plain[len(head) :])
+
+
+@needs_lean
+def test_lean_refuses_a_tampered_diagram_literal(tmp_path: object) -> None:
+    _plain, source = _qubit_diagrams("eighths")
+    tampered = source.replace("⟨1, .Z, 1, 2, [1], [1]⟩", "⟨1, .X, 1, 2, [1], [1]⟩", 1)
+    assert tampered != source
+    ok, _ = L.check(tampered, f"{tmp_path}/qnet_tampered.lean")
+    assert not ok
+
+
+def _qudit_diagrams(name: str) -> str:
+    left, right = PAIRS[name]
+    return export_qudit_net(parse_dsl(left), parse_dsl(right), name, diagrams=True)
+
+
+@pytest.mark.parametrize("name", sorted(PAIRS))
+def test_a_qudit_network_export_ends_in_dequal_of_the_diagrams(name: str) -> None:
+    from archytaszx.semantics import kernel
+
+    source = _qudit_diagrams(name)
+    assert f"theorem {name}_diagrams : DEqual {{ E with labs := labsD }}" in source
+    assert kernel.diagram_level(source) and "DEqual_of_labs" in source
+    assert not kernel.diagram_level(_export_net(name))
+
+
+@needs_lean
+def test_lean_refuses_a_tampered_qudit_diagram_literal(tmp_path: object) -> None:
+    source = _qudit_diagrams("gauss")
+    tampered = source.replace("⟨1, .Z, 0, 1, [0], [0]⟩", "⟨1, .X, 0, 1, [0], [0]⟩", 1)
+    assert tampered != source
+    ok, _ = L.check(tampered, f"{tmp_path}/qdnet_tampered.lean")
+    assert not ok
+
+
 _Q = "literal 2"
 
 AMP_PAIRS: dict[str, tuple[str, str]] = {

@@ -24,6 +24,7 @@ variables, then export_proof's steps. None enumerates a sum.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -1614,6 +1615,7 @@ class NetBody:
     m: int
     head: list[str] = field(default_factory=list)
     tabs: dict[int, str] = field(default_factory=dict)
+    sides: tuple[tuple[Diagram, Any, int], ...] = ()
 
 
 @dataclass
@@ -1692,7 +1694,14 @@ def _zero_body(
         "  simp",
         "",
     ]
-    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m)
+    return NetBody(
+        lines,
+        {**side_l.k_of, **side_r.k_of},
+        s_l,
+        s_r,
+        m,
+        sides=((left, side_l, 1 << 16), (right, side_r, 1 << 17)),
+    )
 
 
 def net_body(
@@ -1800,7 +1809,181 @@ def net_body(
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
     ]
-    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m)
+    return NetBody(
+        lines,
+        {**side_l.k_of, **side_r.k_of},
+        s_l,
+        s_r,
+        m,
+        sides=((left, side_l, 1 << 16), (right, side_r, 1 << 17)),
+    )
+
+
+_NODE = re.compile(r"⟨(\.\w+), \[([\d, ]*)\], \[([\d, ]*)\], (\d+), (\d+)⟩")
+"""A network node's text: kind, output labels, input labels, dimension index, phase index."""
+
+
+def _ints(text: str) -> list[int]:
+    """A comma-separated list of naturals."""
+    return [int(t) for t in text.split(",") if t.strip()]
+
+
+@dataclass
+class Literal:
+    """A diagram's Lean literal ``D<tag>``: its lines, the offset of its wire labels, and the
+    renaming ``π`` of its network's summed labels onto the export's (empty when they agree)."""
+
+    lines: list[str]
+    off: int
+    perm: list[tuple[int, int]]
+
+
+def _swap(src: Sequence[int], dst: Sequence[int]) -> list[tuple[int, int]]:
+    """A permutation of ``src`` and ``dst`` taking ``src[j]`` to ``dst[j]``, as pairs."""
+    f = dict(zip(src, dst, strict=True))
+    free = [x for x in src if x not in set(dst)]
+    for x, y in zip([x for x in dst if x not in f], free, strict=True):
+        f[x] = y
+    return sorted(f.items())
+
+
+def literal(
+    tag: str,
+    diagram: Diagram,
+    nodes: Sequence[str],
+    summed: Sequence[int],
+    dim_of: Mapping[int, int] | None,
+    label0: int,
+    labs: str = "labs",
+) -> Literal | None:
+    """The Lean ``Diagram`` ``D<tag>`` of ``diagram``, each node's kind, dimension and phase
+    indices those of its network node in ``nodes`` (sorted node order, wire ``j`` the label
+    ``summed[j]`` in sorted wire order) and each leg's dimension index ``dim_of`` at its label
+    (0 when None), with ``D<tag>_chk`` against ``labs`` and, when ``summed`` is consecutive,
+    ``D<tag>_net : D<tag>.toNet off = N<tag>``; None when the network does not label the ports
+    that way."""
+    from archytaszx.diagram.graph import Direction, PortRef
+
+    wires = sorted(diagram.wires, key=lambda w: w.sort_key())
+    if diagram.bang_boxes or len(diagram.nodes) != len(nodes) or len(wires) != len(summed):
+        return None
+    bnd = [*diagram.boundary_outputs, *diagram.boundary_inputs]
+    label = {ref: i for i, ref in enumerate(bnd)}
+    for j, w in enumerate(wires):
+        label[w.a] = label[w.b] = summed[j]
+    consecutive = bool(summed) and list(summed) == list(range(summed[0], summed[0] + len(summed)))
+    off = summed[0] if consecutive else label0
+    if off < len(bnd) or any(x < len(bnd) for x in summed):
+        return None
+
+    def port(ref: PortRef) -> str:
+        out = "true" if ref.direction is Direction.OUTPUT else "false"
+        return f"⟨{int(ref.node_id)}, {out}, {ref.index}⟩"
+
+    def dim(lab: int | None) -> int | None:
+        if lab is None:
+            return None
+        return 0 if dim_of is None else dim_of.get(lab)
+
+    out = []
+    for nid, text in zip(sorted(diagram.nodes), nodes, strict=True):
+        m = _NODE.fullmatch(text)
+        if m is None:
+            return None
+        node = diagram.nodes[nid]
+        outs, ins = _ints(m.group(2)), _ints(m.group(3))
+        want_o = [label.get(PortRef(nid, Direction.OUTPUT, j)) for j in range(len(node.outputs))]
+        want_i = [label.get(PortRef(nid, Direction.INPUT, j)) for j in range(len(node.inputs))]
+        o_dims, i_dims = [dim(lab) for lab in want_o], [dim(lab) for lab in want_i]
+        if outs != want_o or ins != want_i or None in o_dims + i_dims:
+            return None
+        out.append(f"⟨{int(nid)}, {m.group(1)}, {m.group(4)}, {m.group(5)}, {o_dims}, {i_dims}⟩")
+    links = [f"({port(w.a)}, {port(w.b)})" for w in wires]
+    d = f"D{tag}"
+    lines = [
+        f"/-- The engine's diagram of N{tag}. -/",
+        f"def {d} : Diagram :=",
+        f"  {{ nodes := [{', '.join(out)}],",
+        f"    wires := [{', '.join(links)}],",
+        f"    outs := [{', '.join(map(port, diagram.boundary_outputs))}],",
+        f"    ins := [{', '.join(map(port, diagram.boundary_inputs))}] }}",
+        "",
+    ]
+    if consecutive or not summed:
+        lines += [f"theorem {d}_net : {d}.toNet {off} = N{tag} := by decide +kernel", ""]
+    lines += [f"theorem {d}_chk : {d}.check {labs} {off} = true := by decide +kernel", ""]
+    perm = [] if consecutive or not summed else _swap(range(off, off + len(summed)), summed)
+    return Literal(lines, off, perm)
+
+
+def diagram_lines(body: NetBody, name: str) -> list[str]:
+    """The theorem ``name_diagrams``: the ``Equal`` of ``name`` restated as ``DEqual`` of the
+    engine's diagrams through ``DEqual_iff``; empty when either diagram has no literal (see
+    :func:`literal`)."""
+    if len(body.sides) != 2:
+        return []
+    (dl, sl, ol), (dr, sr, orr) = body.sides
+    lit_l = literal("L", dl, sl.nodes, sl.summed, sl.k_of, ol)
+    lit_r = literal("R", dr, sr.nodes, sr.summed, sr.k_of, orr)
+    if lit_l is None or lit_r is None or lit_l.perm or lit_r.perm:
+        return []
+    return [
+        *lit_l.lines,
+        *lit_r.lines,
+        "/-- The theorem on the engine's diagrams, through `DEqual_iff`. -/",
+        f"theorem {name}_diagrams : DEqual E ({body.s_l}) DL ({body.s_r}) DR := by",
+        (
+            f"  rw [DEqual_iff (o₁ := {lit_l.off}) (o₂ := {lit_r.off}) (L := labs) rfl DL_chk "
+            "DR_chk, DL_net, DR_net]"
+        ),
+        f"  exact {name}",
+        "",
+    ]
+
+
+def iso_diagram_lines(body: NetBody, name: str) -> list[str]:
+    """The theorem ``name_diagrams`` for a network export whose labels all have dimension index
+    0: ``DEqual`` of the engine's diagrams at ``E`` with the label table ``labsD``, through each
+    literal's network renamed onto the export's (``iso``) and ``DEqual_of_labs``; empty when
+    either diagram has no literal (see :func:`literal`)."""
+    if len(body.sides) != 2:
+        return []
+    lits = [
+        literal(tag, d, side.nodes, side.summed, None, label0, "labsD")
+        for tag, (d, side, label0) in zip("LR", body.sides, strict=True)
+    ]
+    if lits[0] is None or lits[1] is None:
+        return []
+    lit_l, lit_r = lits[0], lits[1]
+    labels = sorted(
+        {
+            x
+            for (_d, side, _o), lit in zip(body.sides, (lit_l, lit_r), strict=True)
+            for x in (*range(side.boundary), *range(lit.off, lit.off + len(side.summed)))
+        }
+    )
+
+    def iso(tag: str, s: str, lit: Literal) -> str:
+        order = list(range(len(body.sides["LR".index(tag)][1].nodes)))
+        return (
+            f"(iso E ({s}) (D{tag}.toNet {lit.off}) N{tag} {lit.perm} {order} (by decide +kernel))"
+        )
+
+    return [
+        f"def labsD : List (ℕ × ℕ) := {[(x, 0) for x in labels]}",
+        "",
+        *lit_l.lines,
+        *lit_r.lines,
+        "/-- The theorem on the engine's diagrams, through `iso` and `DEqual_of_labs`. -/",
+        (
+            f"theorem {name}_diagrams : DEqual {{ E with labs := labsD }} ({body.s_l}) DL "
+            f"({body.s_r}) DR :="
+        ),
+        (f"  DEqual_of_labs (o₁ := {lit_l.off}) (o₂ := {lit_r.off}) (fun _ => rfl) DL_chk DR_chk"),
+        f"    (({iso('L', body.s_l, lit_l)}.trans {name}).trans",
+        f"      {iso('R', body.s_r, lit_r)}.symm)",
+        "",
+    ]
 
 
 def net_env(
@@ -2023,7 +2206,8 @@ def net_amp_body(
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
     ]
-    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m), amp
+    sides = ((left, side_l, 1 << 16), (right, side_r, 1 << 17))
+    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m, sides=sides), amp
 
 
 NET_OPTIONS = [
@@ -2161,25 +2345,27 @@ def net_quarter_body(
         "  exact consts",
         "",
     ]
-    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m), amp
+    sides = ((left, side_l, 1 << 16), (right, side_r, 1 << 17))
+    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m, sides=sides), amp
 
 
-def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+def export_net(left: Diagram, right: Diagram, name: str = "main", diagrams: bool = False) -> str:
     """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
     F, B and S nodes on dimensions 2^k and W nodes on dimension 2: each network's value is its
     fragments' path sum over digit variables (NetPSD.eval_eq), whose pin steps reach
     from_diagram's variables (a W node's sum constraint pinned at a path variable), then each
     side's reduction steps, the two final sums matched on the boundary digits (val_agree) and
-    the final comparison; raises :class:`PathSumUnsupported` outside that class or when the sums
-    do not reduce to one canonical form."""
+    the final comparison; with ``diagrams``, then ``name_diagrams``, its ``DEqual`` over the
+    engine's diagrams (:func:`diagram_lines`); raises :class:`PathSumUnsupported` outside that
+    class or when the sums do not reduce to one canonical form."""
     phases: list[tuple[str, int]] = []
     coefs: dict[int, str] = {}
     raws = (from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True))
     if any(isinstance(r, PathSum) and r.amps for r in raws):
-        return _export_amp_net(left, right, name)
+        return _export_amp_net(left, right, name, diagrams)
     pss = [r for r in raws if isinstance(r, PathSum)]
     if len(pss) == 2 and _quartered(*pss):
-        return _export_quarter_net(left, right, name)
+        return _export_quarter_net(left, right, name, diagrams)
     body = net_body(left, right, name, phases, coefs=coefs)
     support = any("finalS_sound" in ln for ln in body.lines)
     ns = "ArchytasZX.PathSumNetProof"
@@ -2203,13 +2389,14 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "",
         *net_env(phases, body.labs, "2 ^ k", body.m, coefs),
         *body.lines,
+        *(diagram_lines(body, name) if diagrams else []),
         f"end {ns}",
         "",
     ]
     return "\n".join(lines)
 
 
-def _export_quarter_net(left: Diagram, right: Diagram, name: str) -> str:
+def _export_quarter_net(left: Diagram, right: Diagram, name: str, diagrams: bool = False) -> str:
     """:func:`export_net` for networks without atoms whose reductions take [Quarter] steps
     (ArchytasZX/PathSumNetAmp.lean)."""
     phases: list[tuple[str, int]] = []
@@ -2237,13 +2424,14 @@ def _export_quarter_net(left: Diagram, right: Diagram, name: str) -> str:
         *amp.lean_def(sc),
         *net_env(phases, body.labs, "2 ^ k", body.m, coefs),
         *body.lines,
+        *(diagram_lines(body, name) if diagrams else []),
         "end ArchytasZX.PathSumNetProof",
         "",
     ]
     return "\n".join(lines)
 
 
-def _export_amp_net(left: Diagram, right: Diagram, name: str) -> str:
+def _export_amp_net(left: Diagram, right: Diagram, name: str, diagrams: bool = False) -> str:
     """:func:`export_net` for networks whose path sums carry amplitude atoms
     (ArchytasZX/PathSumNetAmp.lean)."""
     phases: list[tuple[str, int]] = []
@@ -2274,6 +2462,7 @@ def _export_amp_net(left: Diagram, right: Diagram, name: str) -> str:
         *amp.lean_def(sc),
         *net_env(phases, body.labs, "2 ^ k", body.m, coefs, tabs),
         *body.lines,
+        *(diagram_lines(body, name) if diagrams else []),
         f"end {ns}",
         "",
     ]
@@ -2620,7 +2809,12 @@ def qnet_body(left: Diagram, right: Diagram, name: str, phases: list[tuple[str, 
         "",
     ]
     labs = {x: 1 for side in (side_l, side_r) for x in (*range(side.boundary), *side.summed)}
-    return NetBody(lines, labs, s_l, s_r, p)
+    sides = ((left, side_l, QDIAGRAM_LABEL0), (right, side_r, QDIAGRAM_LABEL0))
+    return NetBody(lines, labs, s_l, s_r, p, sides=sides)
+
+
+QDIAGRAM_LABEL0 = 1 << 24
+"""The first wire label of a qudit diagram literal's network."""
 
 
 QNET_OPTIONS = [
@@ -2631,20 +2825,25 @@ QNET_OPTIONS = [
 """The options of a qudit network proof file."""
 
 
-def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+def export_qudit_net(
+    left: Diagram, right: Diagram, name: str = "main", diagrams: bool = False
+) -> str:
     """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X
     and F nodes on one odd prime dimension p (ArchytasZX/PathSumQuditNet.lean): each network's
     value is its fragments' path sum over Z_p (QNetPS.eval_eq), pin steps set the summed labels
     of one class to one variable, each side's reduction trace is replayed, the Gauss sums take
     their Legendre form and the final comparison gives ``Equal``; raises
     :class:`PathSumUnsupported` outside that class or when the sums do not reduce to one
-    canonical form, :class:`ScalarUnsupported` when the constants' identity has no proof."""
+    canonical form, :class:`ScalarUnsupported` when the constants' identity has no proof; with
+    ``diagrams``, then ``name_diagrams`` over the engine's diagrams (:func:`iso_diagram_lines`)."""
     phases: list[tuple[str, int]] = []
     body = qnet_body(left, right, name, phases)
+    extra = iso_diagram_lines(body, name) if diagrams else []
     p = body.m
     ns = "ArchytasZX.PathSumQuditNetProof"
     lines = [
         "import ArchytasZX.PathSumQuditNet",
+        *(["import ArchytasZX.EqualLabs"] if extra else []),
         "",
         "/-!",
         f"# Qudit network proof `{name}` over Z_{p}",
@@ -2664,6 +2863,7 @@ def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "",
         *net_env(phases, {}, str(p), p),
         *body.lines,
+        *extra,
         f"end {ns}",
         "",
     ]
