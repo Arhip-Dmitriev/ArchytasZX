@@ -2894,8 +2894,13 @@ def sym_check(
     for tr in (tr_net, tr_net_full):
         if tr is tr_net_full and max(_full_terms(dt, pt, n[0]) for n in (n0, n1)) > FULL_TERMS:
             continue
-        e0 = tr(fl, dt, pt, labs, n0[0], n0[1])
-        e1 = tr(fl, dt, pt, labs, n1[0], n1[1])
+        try:
+            e0 = tr(fl, dt, pt, labs, n0[0], n0[1])
+            e1 = tr(fl, dt, pt, labs, n1[0], n1[1])
+        except NetUnsupported:
+            if tr is tr_net_full:
+                raise
+            continue
         if e0 is None or e1 is None:
             continue
         neg = ex_neg(s1)
@@ -3730,6 +3735,25 @@ class _SymExport:
         global _BS_ON
         bs = _BS_ON
         _BS_ON = True
+        try:
+            if self._compact_run(args):
+                return True
+        except NetUnsupported:
+            _BS_ON = bs
+            self.rules = saved
+            self.pt = saved_pt
+            self.cp_rows = {}
+            self.rx = []
+            raise
+        _BS_ON = bs
+        self.rules = saved
+        self.pt = saved_pt
+        self.cp_rows = {}
+        self.rx = []
+        return False
+
+    def _compact_run(self, args: tuple[Any, ...]) -> bool:
+        """The folded, then the plain :func:`sym_check` of :meth:`compact_check`."""
         fl, dtf, ptf, labs, ix, n0, n1, s0, s1 = args
         global _FOLD
         if any(
@@ -3745,14 +3769,7 @@ class _SymExport:
             finally:
                 _FOLD = False
             self.rx = []
-        if sym_check(fl, dtf, ptf, labs, ix, n0, n1, s0, s1, None, None, self.rx):
-            return True
-        _BS_ON = bs
-        self.rules = saved
-        self.pt = saved_pt
-        self.cp_rows = {}
-        self.rx = []
-        return False
+        return bool(sym_check(fl, dtf, ptf, labs, ix, n0, n1, s0, s1, None, None, self.rx))
 
     def check(self) -> bool:
         if not self.mults:

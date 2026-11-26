@@ -23,6 +23,7 @@ import random
 from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -622,3 +623,29 @@ def test_a_split_delta_needs_a_small_remainder() -> None:
     assert got[2] == ((q, (((1,), 1), ((5,), -1))), ((1, (1,)), (((0,), 1),)))
     f2 = (big, (((0, v), 1), ((1,), 1), ((5,), 1)))
     assert S.op_split(r, 0, 2, (S.of_q(1), (), (f2,), ())) is None
+
+
+def test_compact_check_restores_the_node_setting_on_a_refusal() -> None:
+    import types
+
+    import pytest
+
+    from archytaszx.semantics import lean_sym
+    from archytaszx.semantics.lean_net import NetUnsupported
+
+    def refuse(*_args: object) -> bool:
+        raise NetUnsupported("refused")
+
+    fake: Any = types.SimpleNamespace(rules=[1], pt=[2], cp_rows={}, rx=[])
+    fake.compact_rules = lambda: True
+    fake._compact_run = lambda args: lean_sym._SymExport._compact_run(fake, args)
+    args: tuple[Any, ...] = (None,) * 5 + (([], [], None),) * 2 + (None,) * 2
+    saved = (lean_sym.sym_check, lean_sym.fold_steps)
+    lean_sym.sym_check, lean_sym.fold_steps = refuse, lambda *_a: []  # type: ignore[assignment]
+    try:
+        with pytest.raises(NetUnsupported):
+            lean_sym._SymExport.compact_check(fake, args)
+    finally:
+        lean_sym.sym_check, lean_sym.fold_steps = saved
+    assert lean_sym._BS_ON is False
+    assert fake.rules == [1] and fake.pt == [2]
