@@ -3442,7 +3442,9 @@ def _concrete_child(
     left = _at_base(obligation.left_at_k, k, value, obligation.witness, obligation.base_proved)
     right = _at_base(obligation.right_at_k, k, value, obligation.witness, obligation.base_proved)
     rules_in_use = rules if rules is not None else DEFAULT_RULES
-    reached, steps, reason = _rewrite_to(left, right, rules_in_use, max_steps, None)
+    reached, steps, reason = _rewrite_to(
+        left, right, sorted(rules_in_use, key=lambda rule: rule.name), max_steps, None
+    )
     if not reached:
         return None, f"at {obligation.step_symbol}={value}: {reason}"
     return (

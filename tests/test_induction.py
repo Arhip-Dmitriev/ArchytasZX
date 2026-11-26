@@ -1034,3 +1034,22 @@ def test_rewrite_to_checks_the_target_after_the_last_firing() -> None:
     post = apply(pre, SPIDER_FUSION, SPIDER_FUSION.pattern.find_matches(pre)[0]).diagram
     assert _rewrite_to(pre, post, DEFAULT_RULES, 1, None)[0]
     assert _rewrite_to(post, post, DEFAULT_RULES, 0, None)[0]
+
+
+def test_concrete_child_tries_rules_in_name_order() -> None:
+    seen: list[list[str]] = []
+
+    def spy(source, target, rules, max_steps, guard):  # type: ignore[no-untyped-def]
+        seen.append([rule.name for rule in rules])
+        return False, (), "spy"
+
+    pre, post = _build_boxed_fusion_family()
+    obligation = build_obligation(pre, post, witness={"d": 2})
+    zeta = dataclasses.replace(SPIDER_FUSION, name="zeta")
+    original = induction._rewrite_to
+    induction._rewrite_to = spy
+    try:
+        induction._concrete_child(obligation, 1, [zeta, SPIDER_FUSION], 4)
+    finally:
+        induction._rewrite_to = original
+    assert seen == [sorted(seen[0])]
