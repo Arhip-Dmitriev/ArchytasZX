@@ -21,16 +21,18 @@ exported theorem states ``Equal E s N s' N'``: the two scaled networks are the s
 
 Proof pieces:
 
-* ``iso`` -- relabelling, node reordering and spider leg order, decided by ``isoOK``;
+* ``iso`` -- relabelling, node reordering and spider leg order, by ``isoB`` (``isoOKB``
+  decided);
 * a rule step -- ``iso`` into ``C ++ L``, ``rewrite`` with the rule's lemma, ``wire_elim`` per
   bare wire the rule leaves, ``iso`` onto the next diagram's network;
 * ``Equal.symm`` and ``Equal.trans``.
 
 A rule without a lemma in ``ArchytasZX/Rules.lean``, or an isomorphism the exporter cannot
 match, becomes an axiom stating that one step over the same semantics, named ``unproved_*``.
-:class:`NetUnsupported` is raised for a theorem outside the semantics: free multiplicities,
-bang boxes, induction, pending parameters, dangling ports, disagreeing wire dimensions, or a
-scalar, dimension or phase this module cannot write in Lean.
+:class:`NetUnsupported` is raised for a theorem outside the semantics: a chain, indexed, pair
+or copy-scalar bang box, a box multiplicity depending on an induction, shift or lift index,
+pending parameters, dangling ports, disagreeing wire dimensions, or a scalar, dimension or
+phase this module cannot write in Lean.
 """
 
 from __future__ import annotations
@@ -875,7 +877,7 @@ class _Export:
         hyps = [h for h in self.sp_hyp_args.split() if h.startswith("h_")]
         return _join("Fpos", self.sp_args, *hyps)
 
-    def bund_pos(self, vals: Sequence[str]) -> str:
+    def bund_pos(self) -> str:
         """A proof that every bundle base is positive."""
         return f"(fun _ _ _ => Fam.dimv_pos _ _ _ ({self.fpos()} _))"
 
@@ -2654,7 +2656,7 @@ class _Export:
             else:
                 proof = (
                     f"(Equal.of_split_at {fam} {m} {off} {text(m, at_cur[m])} {lst(at_cur)} "
-                    f"(by simp) {xs} {xg} {ok_s} {ok_g} {self.bund_pos(vals(at_cur))} {proof})"
+                    f"(by simp) {xs} {xg} {ok_s} {ok_g} {self.bund_pos()} {proof})"
                 )
         enter(final)
         shown = ", ".join(f"{names[m]} = {text(m, final[m])}" for m in mis)
@@ -2780,7 +2782,7 @@ class _Export:
             ok_g = f"(by decide : Spec.splitOK {spc} {off} {text_g[level]} = true)"
             proof = (
                 f"(Equal.of_split_at {fam} {mi} {off} {plus(j)} {lst(plus(j))} (by simp) "
-                f"{text_s[level]} {text_g[level]} {ok_s} {ok_g} {self.bund_pos(vals(plus(j)))} "
+                f"{text_s[level]} {text_g[level]} {ok_s} {ok_g} {self.bund_pos()} "
                 f"{proof})"
             )
         enter(plus(c), kc)
@@ -3016,7 +3018,7 @@ class _Export:
             f"  | zero => exact Equal.of_zero_at {fam} {mi} {H} {lst('0')} (by simp) {ns} {ng} "
             f"{ok_s} {ok_g} (by decide) ({zc} {hyps_args})\n"
             f"  | succ {kk} ih => exact Equal.of_split_at {fam} {mi} {H} {kk} {lst(kk)} (by simp) "
-            f"{ns} {ng} {ok_s} {ok_g} {self.bund_pos(vals(kk))} "
+            f"{ns} {ng} {ok_s} {ok_g} {self.bund_pos()} "
             f"({sc_} {_join(hyps_args, kk, 'ih')})"
         )
         if not pre:
@@ -3315,7 +3317,7 @@ class _Export:
             f"{rname} {ok_l} {ok_r} (by decide) {z}\n"
             f"  | succ {jv} ih => exact Equal.of_split_at {fam} {mb} {off} {jv} {lst(jv)} "
             f"(by simp) "
-            f"{lname} {rname} {ok_l} {ok_r} {self.bund_pos(vals_j)} "
+            f"{lname} {rname} {ok_l} {ok_r} {self.bund_pos()} "
             f"(Equal.rescale {chain_t} (by norm_num) (by ring))"
         )
         cur = vals[mb]
@@ -4167,17 +4169,6 @@ def _wire_at(d: Diagram, ref: PortRef) -> Wire | None:
     return None
 
 
-def _equiv(n: LNode, m: LNode) -> bool:
-    """Python mirror of the Lean ``nodeEquiv``."""
-    if (n.kind, n.dim, n.ph) != (m.kind, m.dim, m.ph):
-        return False
-    if n.kind in ("Z", "ZW"):
-        return sorted(n.labels()) == sorted(m.labels())
-    if n.kind in ("X", "XW"):
-        return sorted(n.outs) == sorted(m.outs) and sorted(n.ins) == sorted(m.ins)
-    return n.outs == m.outs and n.ins == m.ins
-
-
 def _match_labels(
     current: LNet, ids: Sequence[NodeId | None], b: Labelled
 ) -> list[tuple[int, int]]:
@@ -4317,7 +4308,7 @@ def _phase_sum() -> str:
     return "(by phs)"
 
 
-def _positive(c: _Ctx, dz: int) -> str:
+def _positive() -> str:
     return "(by pos)"
 
 
@@ -4354,7 +4345,7 @@ def _fusion(c: _Ctx) -> _Spec:
         )
         lemma = (
             f"xcFusion {c.env} {_zc(first)} {_zc(second)} {_zc(r)} {r.dim} {w} IFACE "
-            f"(by decide) (by decide) (by decide) rfl rfl rfl {_positive(c, r.dim)} {_chks(8)} "
+            f"(by decide) (by decide) (by decide) rfl rfl rfl {_positive()} {_chks(8)} "
             f"{_CHK} {_coef_hyp(c, r, [first, second], 'xc')}"
         )
         return _Spec(order, [(rid, r)], lemma)
@@ -4368,7 +4359,7 @@ def _fusion(c: _Ctx) -> _Spec:
         lemma = (
             f"fusionX {c.env} {first.ph} {second.ph} {r.ph} {r.dim} {w} {_list(first.outs)} "
             f"{_list(first.ins)} {_list(second.outs)} {_list(second.ins)} {_list(r.outs)} "
-            f"{_list(r.ins)} IFACE {_positive(c, r.dim)} {_chks(9)} {_phase_sum()}"
+            f"{_list(r.ins)} IFACE {_positive()} {_chks(9)} {_phase_sum()}"
         )
     elif na.kind == "Z":
         lemma = (
@@ -4454,7 +4445,7 @@ def _fusion_bundled(c: _Ctx, na: LNode, nb: LNode, rid: NodeId, r: LNode, w: int
         f"{first.ph} {second.ph} "
         f"{r.ph} {r.dim} {w} {_list(f[2])} {_list(f[3])} {_list(f[4])} {_list(f[5])} "
         f"{_list(g[2])} {_list(g[3])} {_list(g[4])} {_list(g[5])} {_list(pr[2])} {_list(pr[4])} "
-        f"IFACE {_chks(4)} {_positive(c, r.dim)} {_chks(10)} {_phase_sum()}"
+        f"IFACE {_chks(4)} {_positive()} {_chks(10)} {_phase_sum()}"
     )
     return _Spec((ids[id(first)], ids[id(second)]), [(rid, r)], _as_r(lemma, [rn], [r]))
 
@@ -4487,7 +4478,7 @@ def _identity(c: _Ctx) -> _Spec:
         lemma = f"identityZ {c.env} {n.ph} {n.dim} {p} {q} {w} {x} IFACE {_CHK} {_phaseless(c, n)}"
     elif n.kind == "X":
         lemma = (
-            f"identityX {c.env} {n.ph} {n.dim} {p} {q} {w} {x} IFACE {_positive(c, n.dim)} "
+            f"identityX {c.env} {n.ph} {n.dim} {p} {q} {w} {x} IFACE {_positive()} "
             f"{_chks(4)} {_phaseless(c, n)}"
         )
     else:
@@ -4512,7 +4503,7 @@ def _s2(builder: _RuleBuilder) -> _RuleBuilder:
         _need(len(r.outs) == len(r.ins) == 1, "S2 shape")
         lemma = (
             f"identityXZ {c.env} {n.ph} {r.ph} {n.dim} {n.outs[0]} {n.ins[0]} {r.ins[0]} "
-            f"{r.outs[0]} IFACE {_positive(c, n.dim)} (by decide) (by decide) {_chks(2)} "
+            f"{r.outs[0]} IFACE {_positive()} (by decide) (by decide) {_chks(2)} "
             f"{_phaseless(c, n)} {_phaseless(c, r)}"
         )
         return _Spec((nodes["p"],), [(rid, r)], lemma)
@@ -4529,7 +4520,7 @@ def _cap(c: _Ctx) -> _Spec:
     _need((st.kind, ef.kind) == (("X", "Z") if m.swapped else ("Z", "X")), "cap colours")
     dz = st.dim
     lemma = (
-        f"{name} {c.env} {st.ph} {ef.ph} {dz} {w} IFACE {_positive(c, dz)} {_CHK} "
+        f"{name} {c.env} {st.ph} {ef.ph} {dz} {w} IFACE {_positive()} {_CHK} "
         f"{_phaseless(c, st)} {_phaseless(c, ef)}"
     )
     return _Spec((m.state_id, m.effect_id), [], lemma, c.rt(dz))
@@ -4551,7 +4542,7 @@ def _color(c: _Ctx) -> _Spec:
         name = "colorEffectX" if m.swapped else "colorEffect"
     extra = f"{_chks(2)} " if m.swapped else ""
     lemma = (
-        f"{name} {c.env} {sp_.ph} {r.ph} {dz} {w} {x} IFACE {_positive(c, dz)} {_chks(2)} "
+        f"{name} {c.env} {sp_.ph} {r.ph} {dz} {w} {x} IFACE {_positive()} {_chks(2)} "
         f"{extra}{_phaseless(c, sp_)} {_phaseless(c, r)}"
     )
     return _Spec((m.spider_id, m.fourier_id), [(rid, r)], lemma)
@@ -4571,7 +4562,7 @@ def _state_copy(c: _Ctx) -> _Spec:
     name = "stateCopySwapped" if m.swapped else "stateCopy"
     lemma = (
         f"{name} {c.env} {st.ph} {sp_.ph} {cph} {dz} {w} {_list(sp_.outs)} IFACE {kt} "
-        f"{_positive(c, dz)} {_chks(3)} {_phaseless(c, st)} {_phaseless(c, sp_)} "
+        f"{_positive()} {_chks(3)} {_phaseless(c, st)} {_phaseless(c, sp_)} "
         f"(by phz) {hk}"
     )
     return _Spec((m.state_id, m.spider_id), rs, lemma, k)
@@ -4607,7 +4598,7 @@ def _fourier4(c: _Ctx) -> _Spec:
     _need(r.outs == (b_,) and r.ins == (a_,), "F chain replacement")
     dz = fs[0].dim
     lemma = (
-        f"fourier4 {c.env} {a_} {b_} {r.ph} {dz} {w1} {w2} {w3} IFACE {_positive(c, dz)} "
+        f"fourier4 {c.env} {a_} {b_} {r.ph} {dz} {w1} {w2} {w3} IFACE {_positive()} "
         f"{_chks(14)} {_phaseless(c, r)}"
     )
     return _Spec(ids, [(rid, r)], lemma, ONE, (w1, w2, w3))
@@ -4631,7 +4622,7 @@ def _bialgebra(c: _Ctx) -> _Spec:
     dz = x.dim
     lemma = (
         f"{name} {c.env} {x.ph} {z.ph} {z1.ph} {z2.ph} {x1.ph} {x2.ph} {dz} {w} {a_} {b_} {cc} "
-        f"{e} {n00} {n01} {n10} {n11} IFACE {_positive(c, dz)} {_chks(5)} "
+        f"{e} {n00} {n01} {n10} {n11} IFACE {_positive()} {_chks(5)} "
         + " ".join(_phaseless(c, n) for n in (x, z, z1, z2, x1, x2))
     )
     return _Spec(
@@ -4666,7 +4657,7 @@ def _hopf(c: _Ctx) -> _Spec:
         raise NetUnsupported(str(exc)) from exc
     hk = f"(show {sc.text(k)} * {sc.text(x)} = 1 from ({body}))"
     kt = _paren(sc.text(k))
-    tail = f"{_positive(c, dz)} {_chks(6)} {hk}"
+    tail = f"{_positive()} {_chks(6)} {hk}"
     if not m.swapped:
         lemma = (
             f"hopf{w} {c.env} {up.ph} {lo.ph} {dz} {u} {v1} {v2} {v3} {_list(up.outs)} "
@@ -4683,8 +4674,8 @@ def _hopf(c: _Ctx) -> _Spec:
     return _Spec(ids, rs, lemma, k, (u, v1, v2, v3))
 
 
-def _dims_mul() -> str:
-    return "(by simp only [E, Δ] <;> first | rfl | norm_num | ring)"
+def _dims_mul(c: _Ctx) -> str:
+    return f"(by simp only [{c.ex.unfold}, Δ] <;> first | rfl | norm_num | ring)"
 
 
 def _w_fusion(c: _Ctx) -> _Spec:
@@ -4696,7 +4687,7 @@ def _w_fusion(c: _Ctx) -> _Spec:
     dz = first.dim
     lemma = (
         f"wFusion {c.env} {dz} {w} {first.ins[0]} {_list(first.outs)} {_list(second.outs)} "
-        f"{_list(r.outs)} IFACE {_chks(6)} {_positive(c, dz)} {_CHK}"
+        f"{_list(r.outs)} IFACE {_chks(6)} {_positive()} {_CHK}"
     )
     return _Spec((m.first_id, m.second_id), [(rid, r)], lemma)
 
@@ -4726,7 +4717,7 @@ def _fed_state(c: _Ctx) -> _Spec:
         k, kt, hk = c.copy_scalar(dz, n)
         lemma = (
             f"wZeroCopy {c.env} {st.ph} {cph} {dz} {w} {_list(tg.outs)} IFACE {kt} "
-            f"{_positive(c, dz)} {_chks(3)} {_phaseless(c, st)} "
+            f"{_positive()} {_chks(3)} {_phaseless(c, st)} "
             f"(by phz) {hk}"
         )
         return _Spec((m.state_id, m.target_id), rs, lemma, k)
@@ -4735,8 +4726,7 @@ def _fed_state(c: _Ctx) -> _Spec:
     name = "triZeroState" if tg.kind == "T" else "triInvZeroState"
     r = LNode("X", (o,), (), dz, st.ph)
     lemma = (
-        f"{name} {c.env} {st.ph} {dz} {w} {o} IFACE {_positive(c, dz)} {_chks(3)} "
-        f"{_phaseless(c, st)}"
+        f"{name} {c.env} {st.ph} {dz} {w} {o} IFACE {_positive()} {_chks(3)} {_phaseless(c, st)}"
     )
     return _Spec((m.state_id, m.target_id), [(m.state_id, r)], lemma)
 
@@ -4749,7 +4739,7 @@ def _tri_effect(c: _Ctx) -> _Spec:
     _need(tr.kind == "T" and tr.outs == (w,) and ef.ins == (w,) and not ef.outs, "shape")
     dz = tr.dim
     lemma = (
-        f"triZeroEffect {c.env} {ef.ph} {r.ph} {dz} {w} {tr.ins[0]} IFACE {_positive(c, dz)} "
+        f"triZeroEffect {c.env} {ef.ph} {r.ph} {dz} {w} {tr.ins[0]} IFACE {_positive()} "
         f"{_chks(3)} {_phaseless(c, ef)} {_phaseless(c, r)}"
     )
     return _Spec((m.triangle_id, m.effect_id), [(rid, r)], lemma, c.rt(dz))
@@ -4766,7 +4756,7 @@ def _w_effect(c: _Ctx) -> _Spec:
         ((_, r),) = rs
         lemma = (
             f"wZeroEffect {c.env} {ef.ph} {dz} {w} {i} {_list(wn.outs)} {_list(r.outs)} IFACE "
-            f"{_positive(c, dz)} {_chks(6)} {_phaseless(c, ef)}"
+            f"{_positive()} {_chks(6)} {_phaseless(c, ef)}"
         )
         return _Spec((m.w_id, m.effect_id), rs, lemma, c.rt(dz))
     (_, tri), (_, rest) = rs
@@ -4774,7 +4764,7 @@ def _w_effect(c: _Ctx) -> _Spec:
     _need(tri.ins == (i,) and rest.ins == (v,), "W into Z effect replacement")
     lemma = (
         f"wZEffect {c.env} {ef.ph} {dz} {w} {i} {v} {_list(wn.outs)} {_list(rest.outs)} IFACE "
-        f"{_positive(c, dz)} {_chks(10)} {_phaseless(c, ef)}"
+        f"{_positive()} {_chks(10)} {_phaseless(c, ef)}"
     )
     return _Spec((m.w_id, m.effect_id), rs, lemma, ONE, None, (v,))
 
@@ -4792,7 +4782,7 @@ def _w_effect_converse(c: _Ctx) -> _Spec:
     (w,) = ef.ins
     lemma = (
         f"LocalEq.symm' (wZEffect {c.env} {ef.ph} {wn.dim} {w} {i} {v} {_list(wn.outs)} "
-        f"{_list(w2.outs)} IFACE {_positive(c, wn.dim)} {_chks(10)} {_phaseless(c, ef)})"
+        f"{_list(w2.outs)} IFACE {_positive()} {_chks(10)} {_phaseless(c, ef)})"
     )
     return _Spec((nodes["t"], nodes["w"]), [(wid, wn), (eid, ef)], lemma, ONE, (v,), (w,))
 
@@ -4825,7 +4815,7 @@ def _conn_states(c: _Ctx) -> _Spec:
     dk = r.dim
     lemma = (
         f"{name} {c.env} {ds} {dt} {dk} {na.ph} {nb.ph} {r.ph} {a_} {b_} {k} IFACE "
-        f"{_positive(c, ds)} {_positive(c, dt)} {_dims_mul()} {_chks(6)} "
+        f"{_positive()} {_positive()} {_dims_mul(c)} {_chks(6)} "
         f"{_phaseless(c, na)} {_phaseless(c, nb)} {_phaseless(c, r)}"
     )
     return _Spec((m.connective_id, ia, ib), [(rid, r)], lemma, ONE, (a_, b_))
@@ -4845,7 +4835,7 @@ def _conn_inverse(c: _Ctx) -> _Spec:
         delta = replace(delta, dim=dk)
         lemma = (
             f"connInverse {c.env} {ds} {dt} {dk} {a_} {b_} {k1} {k2} {delta.outs[0]} "
-            f"{delta.ins[0]} IFACE {_positive(c, dt)} {_dims_mul()} {_chks(6)}"
+            f"{delta.ins[0]} IFACE {_positive()} {_dims_mul(c)} {_chks(6)}"
         )
         return _Spec((m.first_id, m.second_id), [(None, delta)], lemma, ONE, (a_, b_))
     _need(first.kind == "B" and second.kind == "S" and first.outs == second.ins, "shape")
@@ -4860,7 +4850,7 @@ def _conn_inverse(c: _Ctx) -> _Spec:
     dk = c.ex.labs[k]
     lemma = (
         f"connInverseBind {c.env} {ds} {dt} {dk} {k} {a1} {b1} {a2} {b2} {d1.outs[0]} "
-        f"{d1.ins[0]} {d2.outs[0]} {d2.ins[0]} IFACE {_dims_mul()} {_chks(8)}"
+        f"{d1.ins[0]} {d2.outs[0]} {d2.ins[0]} IFACE {_dims_mul(c)} {_chks(8)}"
     )
     return _Spec((m.first_id, m.second_id), [(None, d1), (None, d2)], lemma, ONE, (k,))
 
@@ -4891,7 +4881,7 @@ def _wz(c: _Ctx) -> _Spec:
 
     lemma = (
         f"wzBialgebra {c.env} {z.ph} {q} {dz} {w} {_list(zi)} {_list(wo)} IFACE {lists(rows)} "
-        f"{lists(cols)} {_pairs(pin)} {_positive(c, dz)} {_chks(14)} {_phaseless(c, z)} "
+        f"{lists(cols)} {_pairs(pin)} {_positive()} {_chks(14)} {_phaseless(c, z)} "
         f"{_phaseless(c, zs[0])}"
     )
     return _Spec((m.z_id, m.w_id), rs, lemma, ONE, None, tuple(flat))
@@ -4926,7 +4916,7 @@ def _wz_converse(c: _Ctx) -> _Spec:
 
     lemma = (
         f"LocalEq.symm' (wzBialgebra {c.env} {z.ph} {q} {z.dim} {w} {_list(zi)} {_list(wo)} "
-        f"IFACE {lists(rows)} {lists(cols)} {_pairs(pin)} {_positive(c, z.dim)} {_chks(14)} "
+        f"IFACE {lists(rows)} {lists(cols)} {_pairs(pin)} {_positive()} {_chks(14)} "
         f"{_phaseless(c, z)} {_phaseless(c, zs[0] if zs else z)})"
     )
     return _Spec(
@@ -4990,7 +4980,7 @@ def _unfuse(c: _Ctx) -> _Spec:
         lemma = (
             f"unfuseXB {c.env} {cs(rest)} {cs(ci)} {_list(cb)} {n.ph} {side.ph} {dz} {y} {b} "
             f"{_list(hd)} {_list(tl)} {_list(n.ins)} {_list(mo)} IFACE {_chks(1)} "
-            f"{_positive(c, dz)} {_chks(3)} {_phaseless(c, side)}"
+            f"{_positive()} {_chks(3)} {_phaseless(c, side)}"
         )
     elif h == "XB" and b in _tail(n.ins, n.kind[2]):
         co = n.kind[1]
@@ -5004,7 +4994,7 @@ def _unfuse(c: _Ctx) -> _Spec:
         lemma = (
             f"unfuseXBi {c.env} {cs(co)} {cs(rest)} {_list(cb)} {n.ph} {side.ph} {dz} {y} {b} "
             f"{_list(n.outs)} {_list(hd)} {_list(tl)} {_list(mi)} IFACE {_chks(1)} "
-            f"{_positive(c, dz)} {_chks(3)} {_phaseless(c, side)}"
+            f"{_positive()} {_chks(3)} {_phaseless(c, side)}"
         )
     else:
         raise NetUnsupported(f"unfusion of a {h} node")
@@ -5224,7 +5214,7 @@ def _zc_k2(c: _Ctx) -> _Spec:
     lemma = (
         f"zcK2 {c.env} {px.dim} {px.ph} {j} {w} {w2} {o} {i} {_zc(za)} {_zc(nb)} _ IFACE "
         f"(by decide) (by decide) rfl rfl rfl rfl {_CHK} {_CHK} (by decide) (by decide) "
-        f"(by decide) (by decide) (by decide) (by decide) {_positive(c, px.dim)} "
+        f"(by decide) (by decide) (by decide) (by decide) {_positive()} "
         f"{_kj_proof(c, px.ph, px.dim, j)} {hc}"
     )
     return _Spec((nodes["p"], nodes["z"]), [(zid, nb), (pid, py)], lemma, k)
@@ -5339,7 +5329,7 @@ def _hh(c: _Ctx) -> _Spec:
         ((xid, x),) = xs
         _need(x.outs == (a, b) and not x.ins, "pink dot shape")
         lemma = (
-            f"fourierSq' {c.env} {x.ph} {f1.dim} {a} {b} {w} IFACE {_positive(c, f1.dim)} "
+            f"fourierSq' {c.env} {x.ph} {f1.dim} {a} {b} {w} IFACE {_positive()} "
             f"{_CHK} (by decide) (by decide) {_phaseless(c, x)}"
         )
         return _Spec((id1, id2), [(xid, x)], lemma)
@@ -5350,7 +5340,7 @@ def _hh(c: _Ctx) -> _Spec:
     _need(x.outs[0] == v and z.ins == (a,), "bending spider shape")
     lemma = (
         f"fourierSq {c.env} {x.ph} {z.ph} {f1.dim} {a} {b} {w} {v} IFACE "
-        f"{_positive(c, f1.dim)} {_chks(2)} (by decide) (by decide) (by decide) (by decide) "
+        f"{_positive()} {_chks(2)} (by decide) (by decide) (by decide) (by decide) "
         f"{_chks(2)} {_phaseless(c, x)} {_phaseless(c, z)}"
     )
     return _Spec((id1, id2), [(xid, x), (zid, z)], lemma)
@@ -5374,7 +5364,7 @@ def _ta(c: _Ctx) -> _Spec:
     labels = [x1, x2, y1, y2, u1, u2, v1, v2]
     lemma = (
         f"zxwTA {c.env} {w.dim} {a} {b} {cc} {e} {' '.join(map(str, labels))} {p.ph} {g1.ph} "
-        f"{g2.ph} {h1.ph} {h2.ph} IFACE {_positive(c, w.dim)} (by decide) (by decide) "
+        f"{g2.ph} {h1.ph} {h2.ph} IFACE {_positive()} (by decide) (by decide) "
         f"(by decide) {_chks_all(len(labels))} {_chks(4)} "
         + " ".join(_phaseless(c, n) for n in (p, g1, g2, h1, h2))
     )
@@ -5416,7 +5406,7 @@ def _bsj(c: _Ctx) -> _Spec:
     )
     lemma = (
         f"zxwBsj {c.env} {px.ph} {ef.ph} {w.dim} {j} {wl} {e} {o} {_zc(r)} IFACE "
-        f"{_positive(c, w.dim)} {dec} (by decide) rfl rfl {_chks(3)} (by decide) (by decide) "
+        f"{_positive()} {dec} (by decide) rfl rfl {_chks(3)} (by decide) (by decide) "
         f"(by decide) {_kj_proof(c, px.ph, w.dim, j)} {_phaseless(c, ef)} {hc}"
     )
     return _Spec((nodes["p"], nodes["w"], nodes["e"]), [(rid, r)], lemma, c.rt(w.dim))
@@ -5444,7 +5434,7 @@ def _k1(c: _Ctx) -> _Spec:
     j = int(sp.Integer(dict(m.bindings)["j"]))
     lemma = (
         f"kOne {c.env} {px.ph} {g.ph} {z.ph} {cph} {px.dim} {wl} {i} {j} {_list(os_)} "
-        f"{_list(us)} IFACE {_positive(c, px.dim)} {_chks(10)} "
+        f"{_list(us)} IFACE {_positive()} {_chks(10)} "
         f"{_kj_proof(c, px.ph, px.dim, j)} {_kj_proof(c, cph, px.dim, j)} "
         f"{_phaseless(c, g)} {_phaseless(c, z)}"
     )
@@ -5493,7 +5483,7 @@ def _x_def(c: _Ctx) -> _Spec:
         hb = f"(by intro k _; simp only [{c.ex.unfold}, Φ])"
     w = "W" if x.kind == "XW" else ""
     lemma = (
-        f"xDef{w} {c.env} {x.ph} {z.ph} {x.dim} {po_t} {cs_t} IFACE {_positive(c, x.dim)} "
+        f"xDef{w} {c.env} {x.ph} {z.ph} {x.dim} {po_t} {cs_t} IFACE {_positive()} "
         f"(by decide) (by decide) {_chks(2)} {hb}"
     )
     i_r = [p for p, _ in po] + [zl for _, _, zl in cs] + [v for _, (a, b), _ in cs for v in (a, b)]
@@ -5558,7 +5548,7 @@ def _h1(c: _Ctx) -> _Spec:
         j = int(sp.Integer(dict(m.bindings)["j"])) % d
         j2 = (d - j) % d
         hb = (
-            f"(kjNeg _ {j} {j2} {_positive(c, p.dim)} {_CHK} _ _ {_kj_proof(c, p.ph, p.dim, j)} "
+            f"(kjNeg _ {j} {j2} {_positive()} {_CHK} _ _ {_kj_proof(c, p.ph, p.dim, j)} "
             f"{_kj_proof(c, g.ph, p.dim, j2)})"
         )
     else:
@@ -5572,11 +5562,11 @@ def _h1(c: _Ctx) -> _Spec:
 
     left = (
         f"(LocalEq.symm' (xDef {c.env} {p.ph} {p.ph} {p.dim} {pairs(po)} {chains(cs)} IFACE "
-        f"{_positive(c, p.dim)} (by decide) (by decide) {_chks(2)} (fun _ _ => rfl)))"
+        f"{_positive()} (by decide) (by decide) {_chks(2)} (fun _ _ => rfl)))"
     )
     right = (
         f"(xDefT {c.env} {p.ph} {g.ph} {p.dim} {pairs(pi)} {chains(cs2)} IFACE "
-        f"{_positive(c, p.dim)} (by decide) (by decide) {_chks(2)} {hb})"
+        f"{_positive()} (by decide) (by decide) {_chks(2)} {hb})"
     )
     i_l = [z for z, _ in po] + [z for _, _, z in cs] + [v for _, (a, b), _ in cs for v in (a, b)]
     i_r = [z for z, _, _ in cs2] + [z for _, z in pi] + [v for _, (a, b), _ in cs2 for v in (a, b)]
@@ -5594,7 +5584,7 @@ def _kj_antipode(c: _Ctx, a: int, b: int, d_expr: sp.Expr, j: int) -> str:
     E.dimv dz))`` for ``a`` the phase K_j and ``b`` the phase K_{-j} at a symbolic dimension:
     both unfolded, ``ex_congr_int`` with ``-j``; ``simp`` when both are zero."""
     if a == 0 and b == 0 and j == 0:
-        return "(by intro k _; simp [E, Φ])"
+        return f"(by intro k _; simp [{c.ex.unfold}, Φ])"
     for ph, sign in ((a, 1), (b, -1)):
         _need(ph != 0, "K_j phases written entry by entry")
         entries, rule = c.ex.phase_specs[ph]
@@ -5603,7 +5593,8 @@ def _kj_antipode(c: _Ctx, a: int, b: int, d_expr: sp.Expr, j: int) -> str:
             f"phase is not K_{sign * j}",
         )
     return (
-        "(by\n    intro k hk\n    simp only [E, Φ, Δ] at hk ⊢\n    apply ex_congr_int\n"
+        f"(by\n    intro k hk\n    simp only [{c.ex.unfold}, Φ, Δ] at hk ⊢\n"
+        "    apply ex_congr_int\n"
         "    rcases Nat.eq_zero_or_pos k with h0 | h0\n"
         "    · subst h0; refine ⟨0, ?_⟩; simp\n"
         "    · rw [Nat.mod_eq_of_lt (Nat.sub_lt (lt_of_le_of_lt (Nat.zero_le _) hk) h0)]\n"
@@ -5629,7 +5620,7 @@ def _hh_mult(c: _Ctx) -> _Spec:
     _need(z.ins == (a,) and x.outs == (b,) and list(x.ins) == ws and bool(ws), "multiplier shape")
     lemma = (
         f"fourierMult {c.env} {z.ph} {x.ph} {f1.dim} {a} {b} {w} {_list(ws)} IFACE "
-        f"{_positive(c, f1.dim)} (by decide) (by decide) (by decide) (by decide) {_chks(4)} "
+        f"{_positive()} (by decide) (by decide) (by decide) (by decide) {_chks(4)} "
         f"(by simp) {_CHK} {_phaseless(c, z)} {_phaseless(c, x)} _ "
         f"(by simp only [{c.ex.unfold}, Δ]; norm_num)"
     )
@@ -5698,7 +5689,7 @@ def _qf_mw(c: _Ctx) -> _Spec:
     lemma = (
         f"qfMW {c.env} {w.dim} {i} {u} {v} {xo} {yo} {u2} {pp} {qq} {z.ph} {x.ph} {z1.ph} "
         f"{x1.ph} {z2.ph} {x2.ph} {_zc(box)} {_zc(box2)} {_list(ws)} {_list(ws1)} {_list(ws2)} "
-        f"IFACE {_positive(c, w.dim)} (by decide) (by decide) rfl rfl rfl rfl (by decide) "
+        f"IFACE {_positive()} (by decide) (by decide) rfl rfl rfl rfl (by decide) "
         f"(by decide) (by decide) (by decide) (by decide) {hl} {_chks(3)} rfl rfl {_CHK} "
         f"{hbox} {hc} {hph} _ (by simp only [{unfold}, Δ]; norm_num)"
     )
@@ -5895,8 +5886,8 @@ def _qf_dd(c: _Ctx) -> _Spec:
     )
     lemma = (
         f"qfDD {c.env} {dd} {sn.dim} {sn.ph} {pn.ph} {xn.ph} {zn.ph} {k} {x} {_list(ws)} "
-        f"{_zc(wa)} {_zc(wb)} {ai} {ao} {bi} {bo} IFACE _ {_positive(c, sn.dim)} "
-        f"{_positive(c, sn.ph)} {_chks(15)} ⟨rfl, rfl, rfl, rfl⟩ {_CHK} ⟨rfl, rfl, rfl⟩ "
+        f"{_zc(wa)} {_zc(wb)} {ai} {ao} {bi} {bo} IFACE _ {_positive()} "
+        f"{_positive()} {_chks(15)} ⟨rfl, rfl, rfl, rfl⟩ {_CHK} ⟨rfl, rfl, rfl⟩ "
         f"⟨rfl, rfl, rfl⟩ {_chks(4)} {coef} {coef} "
         "(by intro ph hph; fin_cases hph <;> phz) (by intro l hl; fin_cases hl <;> phz) "
         f"{_CHK} {hs}"
@@ -6028,7 +6019,7 @@ def _qf_bzw(c: _Ctx) -> _Spec:
     lemma = (
         f"qfBZW {c.env} {wm.dim} {wn.dim} {wk.dim} {' '.join(lits)} "
         f"{' '.join(leg.lit for leg in hlegs)} {_zc(g0[1])} {_zc(g1[1])} {_zc(hb)} IFACE _ "
-        f"{_positive(c, wm.dim)} {_positive(c, wn.dim)} {_positive(c, wk.dim)} "
+        f"{_positive()} {_positive()} {_positive()} "
         f"{_chks(11)} {ok} {ok} {ok} (fun _ _ => ⟨rfl, rfl⟩) "
         f"(by simp [zc, {unfold}, Φ, ex_zero]{psi}) "
         f"(by simp only [{unfold}, Δ]; ring)"
@@ -6154,7 +6145,7 @@ def _qf_dzx(c: _Ctx) -> _Spec:
     cs_text = "[" + ", ".join(f"({'true' if ch[0] else 'false'}, {ch[1]})" for ch in cs) + "]"
     lemma = (
         f"qfDZX {c.env} {cn.dim} {rn.dim} {n_val} {cn.ph} {rn.ph} {cs_text} IFACE _ "
-        f"{_positive(c, rn.dim)} (by norm_num) {_CHK} {ok} "
+        f"{_positive()} (by norm_num) {_CHK} {ok} "
         f"(by intro b hb; fin_cases hb <;> rfl) {_chks(8)} (by phz) (by phz) {hs}"
     )
     l_ids = (cid, *(i for ch in cs for i in ch[2]))
@@ -6277,7 +6268,7 @@ def _qf_ta(c: _Ctx) -> _Spec:
     cr = "[" + ", ".join(leg[0] for leg in rleg) + "]"
     lemma = (
         f"qfTA {c.env} {lwn.dim} {lpn.dim} {dk} {lwn.ins[0]} {lpn.ins[0]} {lpn.ph} "
-        f"{vals[0]} {vals[1]} {vals[2]} {_zc(mb0)} {cl} {cr} IFACE _ {_positive(c, lpn.dim)} "
+        f"{vals[0]} {vals[1]} {vals[2]} {_zc(mb0)} {cl} {cr} IFACE _ {_positive()} "
         f"{_CHK} {ta_ok} {ta_ok} {_chks(10)} {_CHK} {_CHK} "
         "(by intro c hc; simp only [List.cons_append, List.nil_append] at hc; "
         "fin_cases hc <;> rfl) (by phz) "
@@ -6628,7 +6619,7 @@ def _d1(c: _Ctx) -> _Spec:
         )
     lemma = (
         f"zxwD1 {c.env} {m.dim} {i} {o} {w} {v} {v2} {w2} {_zc(m)} {_zc(m2)} IFACE "
-        f"{_positive(c, m.dim)} (by decide) (by decide) rfl rfl rfl rfl (by decide) "
+        f"{_positive()} (by decide) (by decide) rfl rfl rfl rfl (by decide) "
         f"{_chks_all(4)} {_chks(2)} {hc}"
     )
     return _Spec((zid, f1[0], f2[0]), [g1, g2, (mid, m2)], lemma, i_l=(w, v), i_r=(v2, w2))
@@ -6698,7 +6689,7 @@ def _qf_d1_lemma(c: _Ctx, m: LNode, m2: LNode, cl: Sequence[Any], cr: Sequence[A
     is_ = [i for i, _, _ in cl]
     return (
         f"qfD1 {c.env} {m.dim} {_zc(m)} {_zc(m2)} {_list(os_)} {_list(is_)} {trip(cl)} "
-        f"{trip(cr)} IFACE {_positive(c, m.dim)} (by decide) (by decide) rfl rfl (by decide) "
+        f"{trip(cr)} IFACE {_positive()} (by decide) (by decide) rfl rfl (by decide) "
         f"rfl (by decide) rfl (by decide) (by decide) (by decide) {_chks(1)} (by decide) "
         f"(by decide) (by decide) {_chks(1)} {_CHK} {_rev_coef_hyp(c, m2, m)}"
     )
@@ -6840,7 +6831,7 @@ def _vw(c: _Ctx) -> _Spec:
         f"{v1['px']} {p} {q} {v2['u']} {v2['pq']} {v2['pz']} {v2['px']} {v3['u']} {v3['pq']} "
         f"{v3['pz']} {v3['px']} {_zc(v1['box'])} {_zc(v2['box'])} {_zc(v3['box'])} "
         f"{_ms_text(v1['ms'])} {_ms_text(v2['ms'])} {_ms_text(v3['ms'])} IFACE "
-        f"{_positive(c, w2.dim)} {_kdec(3)} rfl rfl rfl rfl rfl rfl {_kdec(8)} "
+        f"{_positive()} {_kdec(3)} rfl rfl rfl rfl rfl rfl {_kdec(8)} "
         f"(by intro ph hph; fin_cases hph <;> phz) {hbox} {h0} {same(v2['box'])} "
         f"{same(v3['box'])} {_kdec(4)} _ "
         f"(by simp only [{unfold}, Δ]; norm_num)"
@@ -6886,14 +6877,12 @@ def _zv(c: _Ctx) -> _Spec:
     cases = []
     for k in range(d):
         rhs = ONE if k == 0 else _zc_terms(c, mz, d - 1)[0]
-        nodes_k = [mr] if k == 0 else [mr, mz]
         pairs = [(mr, k)] if k == 0 else [(mr, k), (mz, d - 1)]
         body = _coef_case(c, _zc_terms(c, mr, k)[0], rhs, _pair_rewrites(c, pairs))
         cases.append(
             f"· simp only [show {c.env}.dimv {box.dim} = {d} from rfl, Nat.reduceSub, "
             f"if_true, if_false, OfNat.ofNat_ne_zero, one_ne_zero, zc]; {body}"
         )
-        del nodes_k
     lines = "\n    ".join(cases)
     hr = (
         f"(by\n    intro k hk\n    simp only [{unfold}, Δ] at hk\n    interval_cases k\n"
@@ -7346,7 +7335,7 @@ def _ww(c: _Ctx) -> _Spec:
     )
     env = c.env
     lemma = (
-        f"zxwWW {env} {dz} {z} {u} {_list(xs)} {gs_text} {cs_text} IFACE {_positive(c, dz)} "
+        f"zxwWW {env} {dz} {z} {u} {_list(xs)} {gs_text} {cs_text} IFACE {_positive()} "
         f"{_chks(8)} (by intro g hg; fin_cases hg <;> phz) (by intro g hg; fin_cases hg <;> phz) "
         f"{_chks(1)}"
     )
@@ -7451,7 +7440,7 @@ def _qf_ww(c: _Ctx) -> _Spec:
     )
     (e,) = eff.ins
     lemma = (
-        f"qfWW {c.env} {dz} {z} {e} {eff.ph} {_list(xs)} {cs_text} IFACE {_positive(c, dz)} "
+        f"qfWW {c.env} {dz} {z} {e} {eff.ph} {_list(xs)} {cs_text} IFACE {_positive()} "
         f"{_chks(6)} (by intro g hg; fin_cases hg <;> phz) (by phz) {_chks(1)}"
     )
     back = _ren([(a, x) for a, (x, _, _) in ident.items()])
@@ -7884,7 +7873,7 @@ def _zc_ept(c: _Ctx) -> _Spec:
     _need(ef.kind in _ZC and ef.labels() == (w,), "spider effect shape")
     lemma = (
         f"zcEpt {c.env} {st.ph} {st.dim} {w} {_zc(ef)} IFACE (by decide) rfl (by decide) {_CHK} "
-        f"{_positive(c, st.dim)} (by phz) (by simp only [zc, {c.ex.unfold}, Φ]; "
+        f"{_positive()} (by phz) (by simp only [zc, {c.ex.unfold}, Φ]; "
         "(try simp only [Ψ]); simp [ex_zero])"
     )
     return _Spec((nodes["p"], nodes["z"]), [], lemma, c.rt(st.dim))
@@ -7899,7 +7888,7 @@ def _zc_zer(c: _Ctx) -> _Spec:
     _need(r.outs == (o,) and not r.ins, "pink state shape")
     lemma = (
         f"zcZer {c.env} {r.ph} {r.dim} {o} {_zc(n)} IFACE (by decide) rfl (by decide) (by decide) "
-        f"{_CHK} {_positive(c, r.dim)} (by phz) (by zcz)"
+        f"{_CHK} {_positive()} (by phz) (by zcz)"
     )
     return _Spec((nodes["z"],), [(rid, r)], lemma, Inv(c.rt(r.dim)))
 
@@ -7967,7 +7956,7 @@ def _w_aso(c: _Ctx) -> _Spec:
     dz = first.dim
     lemma = (
         f"wAso {c.env} {dz} {w} {w2} {i} {_list(first.outs)} {_list(second.outs)} "
-        f"{_list(p1.outs)} {_list(p2.outs)} {_list(o3)} IFACE {_chks(6)} {_positive(c, dz)} "
+        f"{_list(p1.outs)} {_list(p2.outs)} {_list(o3)} IFACE {_chks(6)} {_positive()} "
         f"{_chks(7)}"
     )
     return _Spec((nodes["w1"], nodes["w2"]), [outer[0], inner[0]], lemma)
@@ -7977,7 +7966,7 @@ def _kj_proof(c: _Ctx, ph: int, dz: int, j: int) -> str:
     """A proof of ``∀ q < E.dimv dz, ex (E.phase ph q) = om (E.dimv dz) ^ (q * j)`` at a
     concrete dimension: one ``ex_of`` per index; ``simp`` for the zero phase at ``j = 0``."""
     if ph == 0 and j == 0:
-        return "(by intro q _; simp [E, Φ, ex_zero])"
+        return f"(by intro q _; simp [{c.ex.unfold}, Φ, ex_zero])"
     d_expr = c.ex.dim_exprs[dz]
     if not d_expr.is_Integer:
         _need(ph != 0, "K_j phases written entry by entry")
@@ -7987,21 +7976,26 @@ def _kj_proof(c: _Ctx, ph: int, dz: int, j: int) -> str:
             f"phase is not K_{j}",
         )
         return (
-            "(by\n    intro q hq\n    rw [om_eq_ex]\n    simp only [E, Φ, Δ]\n"
+            f"(by\n    intro q hq\n    rw [om_eq_ex]\n    simp only [{c.ex.unfold}, Φ, Δ]\n"
             "    split_ifs with h\n    · subst h; simp\n    · push_cast; ring_nf)"
         )
     _need(d_expr.is_Integer, "K_j phases at a concrete dimension")
     d = int(d_expr)
     entries, rule = c.ex.phase_specs[ph]
     _need(rule is None, "K_j phases written entry by entry")
-    cases = ["· simp [E, Φ, ex_zero]"]
+    cases = [f"· simp [{c.ex.unfold}, Φ, ex_zero]"]
     for q in range(1, d):
         turns = sp.nsimplify(entries.get(q, sp.Integer(0)))
         z = turns - sp.Rational(q * j, d)
         _need(bool(z.is_Integer), f"phase at {q} is not {q * j}/{d} turns")
-        cases.append(f"· exact ex_of {d} {q * j} ({int(z)}) (by norm_num) (by norm_num [E, Φ])")
+        cases.append(
+            f"· exact ex_of {d} {q * j} ({int(z)}) (by norm_num) (by norm_num [{c.ex.unfold}, Φ])"
+        )
     body = "\n    ".join(cases)
-    return f"(by\n    intro q hq\n    simp only [E, Δ] at hq\n    interval_cases q\n    {body})"
+    return (
+        f"(by\n    intro q hq\n    simp only [{c.ex.unfold}, Δ] at hq\n"
+        f"    interval_cases q\n    {body})"
+    )
 
 
 def _k_copy(c: _Ctx) -> _Spec:
@@ -8019,7 +8013,7 @@ def _k_copy(c: _Ctx) -> _Spec:
     k, kt, hk = c.copy_scalar(dz, n)
     lemma = (
         f"kCopy {c.env} {st.ph} {sp_.ph} {cph} {dz} {w} {j} {_list(sp_.outs)} IFACE {kt} "
-        f"{_positive(c, dz)} {_chks(3)} {_kj_proof(c, st.ph, dz, j)} {_phaseless(c, sp_)} "
+        f"{_positive()} {_chks(3)} {_kj_proof(c, st.ph, dz, j)} {_phaseless(c, sp_)} "
         f"{_kj_proof(c, cph, dz, j)} {hk}"
     )
     return _Spec((nodes["p"], nodes["g"]), rs, lemma, k)

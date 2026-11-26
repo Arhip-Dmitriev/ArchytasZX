@@ -817,9 +817,9 @@ def _stage(
 
 
 def _tails(prev: XDiag, nxt: XDiag, B: set[int], cp: dict[int, int]) -> list[Tail] | None:
-    """The tail entries of a step: each leg off ``B`` wired (from a top-level node) or aligned to
-    a leg of ``B``, with the leg of its node in ``nxt`` wired or aligned to the copy of that leg;
-    None when one has none."""
+    """The tail entries of a step, sorted by their leg in ``nxt``: each leg off ``B`` wired or
+    aligned to a leg of ``B``, with the leg of its node in ``nxt`` wired or aligned to the copy of
+    that leg; None when one has none."""
     pairs = [*prev.d.wires, *((a, b) for a, b, _ in prev.aligned)]
     out: list[Tail] = []
     for w in pairs:

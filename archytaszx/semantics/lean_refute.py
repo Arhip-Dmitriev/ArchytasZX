@@ -1117,7 +1117,7 @@ class _Refuter:
         m = self.M // k
         if sp.totient(m) > MAX_CYCLOTOMIC_DEGREE:
             raise NetUnsupported(
-                f"the cyclotomic field of order {self.M} has degree above {MAX_CYCLOTOMIC_DEGREE}"
+                f"the cyclotomic field of order {m} has degree above {MAX_CYCLOTOMIC_DEGREE}"
             )
         g = sp.Poly(sum(c * _Y ** (int(e) // k) for (e,), c in f.terms()), _Y, domain="QQ")
         return k, m, g.rem(sp.Poly(sp.cyclotomic_poly(m, _Y), _Y, domain="QQ"))

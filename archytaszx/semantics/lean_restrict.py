@@ -13,12 +13,15 @@
 
 """Lean exports of restricted theorems.
 
-:func:`corollary` reads the final theorem of an export (``main_diagrams`` when present, else
-the named theorem): its binders and statement, split at the top-level ``:=``. The corollary
-states that theorem at each clause of a restriction: ``n = v`` drops the binder of ``n`` and
-writes ``v`` for it, ``n >= c`` adds the hypothesis ``c ≤ n`` after it, ``n = a*m + c`` binds
-``m`` and writes ``(a * m + c)``, ``d = v`` writes ``v`` for ``d``; a hypothesis binder left
-without free variables is discharged by ``norm_num``. Its proof applies the final theorem.
+:func:`corollary` reads the final theorem of an export (the last declared of
+``main_diagrams_original``, ``main_diagrams`` and the named theorem): its binders and statement,
+split at the top-level ``:=``. The corollary states that theorem at each clause of a
+restriction: ``n = v`` drops the binder of ``n`` and writes ``v`` for it, ``n >= c`` adds the
+hypothesis ``c ≤ n`` after it, ``n = a*m + c`` binds ``m`` and writes ``(a * m + c)``, a shift
+``n = c + a*m`` binds ``m`` (over ``ℤ`` at a rational scale) with the hypotheses of its range and
+excluded values, a side condition adds its hypotheses after ``n``, ``d = v`` writes ``v`` for
+``d``; a hypothesis binder left without free variables is discharged by ``norm_num``. Its proof
+applies the final theorem.
 """
 
 from __future__ import annotations
