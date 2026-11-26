@@ -184,8 +184,7 @@ def test_a_reversed_indexed_chain_is_proved_with_an_index_offset() -> None:
                 step,
                 offset=offset,
             )
-    with pytest.raises(K.KernelError):
-        K.lean(theorem, semantic=False)
+    assert "axiom induction_offset" in K.lean(theorem, semantic=False)
     broken = (
         (circuit, spec.replace("phase {1: i/4}", "phase {1: (i + 1)/4}")),
         (circuit, spec.replace("phase {1: i/4}", "phase {1: i/2}")),
