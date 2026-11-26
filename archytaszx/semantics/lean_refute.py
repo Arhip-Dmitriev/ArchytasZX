@@ -453,6 +453,7 @@ class _Refuter:
         self.arity = n_l != n_r
         if self.arity and (left.bang_boxes or right.bang_boxes):
             raise NetUnsupported("the boundaries differ in size within a family")
+        self.b_diagram = right
         if self.arity:
             base = self.out.next_label
             self.b = self.out.labelled(right, list(range(base, base + n_r)))
@@ -2017,6 +2018,12 @@ class _Refuter:
             f"theorem {name} :\n    {head} := by\n" + "\n".join(body)
         )
         out.decls += [*decls, theorem]
+        self.diagram_negation(name)
+        return out.source(lead=f"  refutation at {self.point_note()}, ζ = om {M}, mod {p}")
+
+    def diagram_negation(self, name: str) -> None:
+        """The refutation ``name`` restated as ``¬ DEqual`` over the engine's diagrams."""
+        out = self.out
         if out.family:
             out.family_diagram_theorem(
                 name,
@@ -2026,10 +2033,10 @@ class _Refuter:
                 self.b,
                 negated=True,
             )
-        if not out.family:
+        else:
             out.diagram_theorem(
                 name,
-                binders,
+                _join(out.binders, out.hyps),
                 _join(out.args, out.hyp_args),
                 self.scalar_text(self.s0),
                 self.a,
@@ -2037,7 +2044,6 @@ class _Refuter:
                 self.b,
                 negated=True,
             )
-        return out.source(lead=f"  refutation at {self.point_note()}, ζ = om {M}, mod {p}")
 
     def dense_keys(self) -> dict[int, list[int]]:
         """The phase vectors whose keys are every index below at least `PT_DENSE_MIN`, each
@@ -2450,7 +2456,34 @@ class _Refuter:
             f"  intro h\n  exact refute_bnd (by decide) {apply}"
         )
         self.out.decls.append(theorem)
+        self.arity_diagrams(name)
         return self.out.source(lead="  refutation: the boundaries differ in size")
+
+    def arity_diagrams(self, name: str) -> None:
+        """``¬ DEqual`` over the engine's diagrams from their boundary dimension lists."""
+        out = self.out
+        assert self.a.source is not None
+        saved, out.nb = out.nb, None
+        try:
+            b = out.labelled(self.b_diagram)
+        finally:
+            out.nb = saved
+        la = out.diagram_literal(self.a.source, self.a.net, self.a.name)
+        lb = out.diagram_literal(self.b_diagram, b.net, b.name)
+        if la is None or lb is None:
+            return
+        binders = _join(out.binders, out.hyps)
+        stmt = (
+            f"DEqual {out.env} {_paren(self.scalar_text(self.s0))} {la[0]} "
+            f"{_paren(self.scalar_text(self.s1))} {lb[0]}"
+        )
+        head = f"∀ {binders}, ¬ {stmt}" if binders else f"¬ {stmt}"
+        intro = f"intro {_join(out.args, out.hyp_args)} h" if binders else "intro h"
+        out.decls.append(
+            "/-- The diagrams' boundary dimension lists differ in length. -/\n"
+            f"theorem {name}_diagrams :\n    {head} := by\n"
+            f"  {intro}\n  exact absurd h.1 (by decide)"
+        )
 
     def zero_args(self) -> str:
         """Arguments instantiating every binder at 1."""

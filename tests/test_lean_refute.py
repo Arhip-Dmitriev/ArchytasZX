@@ -78,6 +78,12 @@ def test_arity_refutation_compares_boundaries() -> None:
     assert "eval_W" not in source
 
 
+def test_an_arity_refutation_is_diagram_level() -> None:
+    source = _source("arity")
+    assert "theorem main_diagrams :\n    ∀ (d : ℕ) (h_d : 0 < d), ¬ DEqual " in source
+    assert K.diagram_level(source)
+
+
 def test_a_point_without_values_falls_back_to_a_sample_point() -> None:
     left, right = (parse_diagram(t) for t in CASES["colour"])
     assert "refutation at d = 2" in export_refutation(left, right, {})
@@ -224,6 +230,13 @@ def test_square_roots_are_gauss_sums() -> None:
 def test_irrational_values_use_balls(name: str) -> None:
     source = _numeric(name)
     assert "ne_zero_of_near" in source and "ball arithmetic" in source
+
+
+@pytest.mark.parametrize("name", list(NUMERIC))
+def test_a_ball_refutation_is_diagram_level(name: str) -> None:
+    source = _numeric(name)
+    assert "theorem main_diagrams :\n    ¬ " in source
+    assert K.diagram_level(source)
 
 
 def test_pi_is_stated_not_quantified() -> None:

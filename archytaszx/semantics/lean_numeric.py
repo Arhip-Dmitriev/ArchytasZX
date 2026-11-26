@@ -783,6 +783,7 @@ class _NumRefuter(_Refuter):
             f"theorem {name} :\n    {head} := by\n" + "\n".join(body)
         )
         out.decls += [*decls, theorem]
+        self.diagram_negation(name)
         return out.source(lead=f"  refutation by ball arithmetic at {self.point_note()}")
 
 
