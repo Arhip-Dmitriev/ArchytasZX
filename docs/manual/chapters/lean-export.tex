@@ -1000,7 +1000,7 @@ The atom factor of \lexlean!Ψ! is present only at indices of \lexcode!tabs!; wi
 (\lexcode!the boundaries differ!).
 \item $m_{\min} \gets \mathrm{lcm}(m_{\min}, \text{both table moduli})$; plan with
 \lexpy!support=True!. If the plan raises \lexpy!_LiftRaises!, take the parity plan
-(\cref{alg:lean-export-parity-plan}) with this $m_{\min}$, whose errors propagate. If the plan
+(\cref{alg:lean-export-parity-plan}) with this $m_{\min}$. If the plan, or that parity plan,
 raises another \lexpy!PathSumUnsupported!, try the zero plan (below); if that is \lexpy!None!,
 re-raise.
 \item Build both sides with label bases $2^{16}$, $2^{17}$ (\lexcode!prefer! on the left only);
@@ -2008,7 +2008,7 @@ Rule & $i$ & Condition and result \\
 \begin{algorithm}[\texttt{c\_choice(r, t)}]\label{alg:lean-export-sym-cchoice}
 A step of \lexlean!elimStepC! and its hint; the first that applies:
 \begin{enumerate}
-\item \lexpy!x_choice(r, t)! when its rule is 5, 6 or 20;
+\item \lexpy!x_choice(r, t)! when its rule is 5 or 20;
 \item \lexpy!_c_pin!: rule 7 at the delta $j$ of modulus $d$ reading a sum $(x, d)$ bound once
 (first sum, then first delta), when rule 7 changes the delta and \lexpy!elim_xpin1! with
 \lexpy!rg_loc(r, sums without x, x, g)! then pins $x$ by the new delta $g$;
@@ -3594,8 +3594,9 @@ identity $x$ moved last (\lexpy!_move_last!).
 \item \emph{drop} (\lexlean!DropOK!, 18 fields, \lexpy!drop_ok!): wire chains agree, node ids are
 unique, $x$ is last, a Z with \lexlean!outs = ins = [dim]!, $\{u, v\}$ its two ports, $w$ is $(u, P)$
 or $(P, u)$ with $P$ a port of another node, $u$ on no other wire, not on the boundary and on no
-link, $v$ no link port. The Lean fields \lexlean!ports!, \lexlean!cph! and \lexlean!pdim! (port dimension
-of $P$ equals $x$'s) have no conjunct in \lexpy!drop_ok!. \lexpy!drop_id! removes $x$ and $w$ and
+link, $v$ no link port, $w$ a wire, no \lexlean!cph! entry, and the port dimension of $P$ equals
+$x$'s (\lexlean!pdim!). The Lean field \lexlean!ports! has no conjunct in \lexpy!drop_ok!: an
+\lexpy!LBox! has no port scope. \lexpy!drop_id! removes $x$ and $w$ and
 renames $v$ to $P$ in wires, boundary and links; Lean step \lexlean!evalL_dropAt!.
 \item \emph{indexed drop} (\lexlean!DropOKX!, \lexlean!DropOK! on \lexlean!L.strip! plus 4 fields,
 \lexpy!drop_x_ok!): \lexpy!drop_ok! on the stripped diagram, the dimension of $P$ equals $x$'s, $x$ in
