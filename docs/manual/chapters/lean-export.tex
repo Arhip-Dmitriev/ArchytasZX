@@ -42,7 +42,16 @@ Each exporter writes one self-contained file: literal data (path sums, networks,
 tables), the side conditions of that data as Boolean checks closed by \lexlean!decide! or
 \lexlean!decide +kernel!, scalar identities closed by \lexlean!linear_combination!, and a final
 theorem whose proof applies a soundness lemma of the library. The Lean kernel then checks the
-file; an exported verdict is Lean-certified only when the file compiles. The exporters never
+file; an exported verdict is Lean-certified only when the file compiles. A Lean-certified
+verdict is about the engine's diagrams only when the export is diagram-level
+(\py!kernel.diagram_level!: its final theorem states \lexlean!DEqual! or an \lexlean!Equal! of
+\lexlean!Diagram! literals' \lexlean!toNet!); otherwise \code!certificate lean! adds the
+encoding-level line. Exports that end without a diagram-level theorem: the path-sum networks
+(\py!lean_pathsum.export_net!, \py!export_qudit_net!, \py!export_mixed_net!), the qudit digit
+networks (\py!lean_qdigits.export_qudit_digits_net!), the restricted chain and pair families
+(\py!lean_chainfam!, \py!lean_pairs!), the refutations that compare boundary sizes or evaluate
+by ball arithmetic, \py!lean_net.export! when no diagram literal is built, and a restricted
+corollary (\py!lean_restrict!) over a bare final theorem. The exporters never
 enumerate a path sum or a tensor contraction to produce an equality; the refutation exporters
 evaluate at one point, which is their purpose.
 

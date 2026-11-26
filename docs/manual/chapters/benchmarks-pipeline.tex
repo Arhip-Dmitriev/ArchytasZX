@@ -1619,7 +1619,9 @@ empty or comment only. \py!diagrams(script)! executes the lines before the first
   class name. \py!certificate_bytes(run)! is the UTF-8 length of \code{certificate show}.
 \item \py!lean_export_stage(run, path)!: \code{certificate lean PATH}; returns
   \code{lean_semantics} (the first \code{lean: } line not starting \code{lean: wrote}, at most
-  200 characters), \code{lean_bytes}, and \code{lean_lines}; a failure or missing file raises.
+  200 characters), \code{lean_bytes}, \code{lean_lines}, and \code{lean_encoding_only}
+  (whether the output holds the encoding-level line of \code{certificate lean}); a failure
+  or missing file raises.
 \item \py!lean_check_stage(path, limit, memory_fraction)!: the Lean runner
   (\cref{sec:bench-lean}); a Lean timeout raises \py!StageTimeout!; a status other than
   \code{accepted} sets \code{status} to \code{oom} or \code{error} and \code{detail}.
