@@ -42,7 +42,7 @@ Every doubled or purified node keeps a map back to the node of $D$ it came from.
 
 \section{Conjugation}\label{sec:mixed-conj}
 
-The \term{conjugate} $\overline D$ of a diagram has as matrix the entrywise complex conjugate of $D$'s. The generators T, Ti, W, B, S, and G have real matrices and are unchanged; the scalar $c$ becomes $\bar c$; a Z spider negates its phases and conjugates its weights; an X spider does the same at the reflected index $-k \bmod d$, because $\overline{F}=F^{\dagger}$ and $F^\dagger=F\circ P$ with $P\ket{k}=\ket{-k\bmod d}$; and F becomes $F^3$.
+The \term{conjugate} $\overline D$ of a diagram has as matrix the entrywise complex conjugate of $D$'s. The generators T, Ti, W, B, S, and G have real matrices and are unchanged; the scalar $c$ becomes $\bar c$; a Z spider negates its phases and conjugates its weights; an X spider does the same at the reflected index $-k \bmod d$, because $\overline{F}=F^{\dagger}$ and $F^\dagger=F\circ P$ with $P\ket{k}=\ket{-k\bmod d}$; a Zp node negates its pair phase $f$; F becomes $F^3$; and every \bbox{} copy scalar $c$ becomes $\bar c$. In \py!double!, the merged box over both sheets has copy scalar $\bar c\,c$.
 
 \begin{signature}
 \py!conj_phase_vector(phase: PhaseVector, *, reflected: bool) -> PhaseVector!\\
