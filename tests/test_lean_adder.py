@@ -13,7 +13,8 @@
 
 """lean_adder: the fca and draper pairs' exports at 0 … 5 are FcaEng / DraperEng engL / engR,
 tampered pairs refused, the fca and draper decisions exported as FcaEng.engFam and
-DraperEng.engFamS, five other units' exports byte-identical with and without the family
+DraperEng.engFamS, the FamDiagram literals checked against FamFca / FamDraper D0 and D1 with a
+tampered literal refused, five other units' exports byte-identical with and without the family
 export."""
 
 from __future__ import annotations
@@ -44,6 +45,9 @@ def test_the_fca_pair_matches_the_lean_networks() -> None:
         source = lean_adder.export_family(left, right, ("n",), "fca")
         assert source is not None
         assert "FcaEng.engFam d hd" in source and source.count("by decide +kernel") == 12
+        assert "theorem famL_eq : famL = FamFca.D0 := rfl" in source
+        assert "theorem famR_eq : famR = FamFca.D1 := rfl" in source
+        assert "exact FamFca.famFca d hd n" in source
 
 
 def test_the_draper_pair_matches_the_lean_networks() -> None:
@@ -53,6 +57,9 @@ def test_the_draper_pair_matches_the_lean_networks() -> None:
         assert source is not None
         assert "DraperEng.engFamS d hd" in source and source.count("by decide +kernel") == 12
         assert "∀ (n : ℕ) (s : ℂ), Equal (DraperEng.engE d n) s" in source
+        assert "theorem famL_eq : famL = FamDraper.D0 := rfl" in source
+        assert "theorem famR_eq : famR = FamDraper.D1 := rfl" in source
+        assert "DEqual (DraperEng.engE d n) 1 (famL.famExpand n) 1 (famR.famExpand n)" in source
 
 
 def test_tampered_pairs_are_refused() -> None:
@@ -162,6 +169,11 @@ def test_lean_checks_the_family_export(tmp_path: object) -> None:
     assert bad != source
     ok, _ = check(bad, f"{tmp_path}/bad.lean")
     assert not ok
+    head, tail = source.split("def famL : FamDiagram := ", 1)
+    tampered = tail.replace("(⟨7, true, 0⟩, ⟨8, false, 0⟩)", "(⟨7, true, 0⟩, ⟨9, false, 0⟩)", 1)
+    assert tampered != tail
+    ok, _ = check(head + "def famL : FamDiagram := " + tampered, f"{tmp_path}/badfam.lean")
+    assert not ok
 
 
 @pytest.mark.slow
@@ -183,4 +195,9 @@ def test_lean_checks_the_draper_export(tmp_path: object) -> None:
     )
     assert bad != source
     ok, _ = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
+    head, tail = source.split("def famL : FamDiagram := ", 1)
+    tampered = tail.replace("(⟨11, true, 0⟩, ⟨12, false, 0⟩)", "(⟨11, true, 0⟩, ⟨13, false, 0⟩)", 1)
+    assert tampered != tail
+    ok, _ = check(head + "def famL : FamDiagram := " + tampered, f"{tmp_path}/badfam.lean")
     assert not ok

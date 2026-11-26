@@ -17,7 +17,9 @@ flat export (networks, dimension and phase tables, listed labels, scalars) with 
 ``engL k`` and ``engR k`` over ``engE d k`` of ArchytasZX/AdderFamFcaEng.lean (``FcaEng``) or
 ArchytasZX/AdderFamDraperEng.lean (``DraperEng``); on a match it writes those exports as
 literals, ``decide`` checks of ``engL k`` and ``engR k`` against them, and the theorem by
-``FcaEng.engFam`` or ``DraperEng.engFamS``, and None otherwise.
+``FcaEng.engFam`` or ``DraperEng.engFamS``, then both boxed sides as ``FamDiagram`` literals
+(fam_literal) checked against ``FamFca.D0`` / ``D1`` or ``FamDraper.D0`` / ``D1`` by ``rfl`` and
+the diagram-level theorem by ``FamFca.famFca`` or ``FamDraper.famDraper``, and None otherwise.
 """
 
 from __future__ import annotations
@@ -293,10 +295,126 @@ def drp_phases(n: int, d: str) -> list[str]:
     return ["fun _ => 0"]
 
 
+def _fam_ix(e: object, base: str) -> tuple[int, str | None]:
+    """The static index and the index function, if any, of the dimension ``e`` as a power of
+    ``base``."""
+    b = sympy.Symbol(base, positive=True) if not base.isdigit() else sympy.Integer(int(base))
+    ex = (
+        sympy.sympify(str(e)).subs(sympy.Symbol(base), b)
+        if not base.isdigit()
+        else sympy.sympify(str(e))
+    )
+    if ex == 1:
+        a = sympy.Integer(0)
+    elif ex == b:
+        a = sympy.Integer(1)
+    else:
+        a = sympy.simplify(sympy.expand_log(sympy.log(ex, b), force=True))
+    if a.is_Integer:
+        return (0, "fun n _ => n") if a == 0 else (int(a) - 1, None)
+    s = str(a).replace("**", " ^ ")
+    return 0, f"fun n j => if {s} = 0 then n else {s} - 1"
+
+
+def _fam_port(r: object) -> str:
+    from archytaszx.diagram.graph import Direction
+
+    out = "true" if r.direction is Direction.OUTPUT else "false"  # type: ignore[attr-defined]
+    return f"⟨{int(r.node_id)}, {out}, {r.index}⟩"  # type: ignore[attr-defined]
+
+
+def fam_literal(dg: Diagram, base: str) -> str:
+    """The boxed diagram ``dg`` as a ``FamDiagram`` term: node boxes, chain links, pair boxes and
+    the phase, dimension and leg indices, dimensions read as powers of ``base``."""
+    pair_nodes = {
+        int(x): b for b in dg.bang_boxes.values() if b.pair_of is not None for x in b.node_scope
+    }
+    nodes: list[str] = []
+    phs: list[str] = []
+    dms: list[str] = []
+    legs: list[str] = []
+    pairs: list[str] = []
+    for x in sorted(dg.nodes):
+        nd = dg.nodes[x]
+        g = nd.generator_type.name
+        outs: list[int] = []
+        ins: list[int] = []
+        for out, ps in ((True, nd.outputs), (False, nd.inputs)):
+            for i, p in enumerate(ps):
+                s, f = _fam_ix(p.dim, base)
+                (outs if out else ins).append(s)
+                if f:
+                    legs.append(f"(⟨{int(x)}, {'true' if out else 'false'}, {i}⟩, {f})")
+        dim, kind = 0, g
+        if g in ("B", "S"):
+            dim, f = _fam_ix(nd.inputs[0].dim if g == "B" else nd.outputs[0].dim, base)
+            if f:
+                dms.append(f"({int(x)}, {f})")
+        elif g == "Zp":
+            pair = nd.phase.pair  # type: ignore[union-attr]
+            sgn = "-1" if str(pair.to_sympy_turns()).startswith("-") else "1"
+            kind = f"ZP 0 0 ({sgn})"
+            dms.append(f"({int(x)}, fun _ c => c)")
+        else:
+            dim, f = _fam_ix(nd.outputs[0].dim if nd.outputs else nd.inputs[0].dim, base)
+            if f:
+                dms.append(f"({int(x)}, {f})")
+            rule = getattr(nd.phase, "rule", None) if nd.phase is not None else None
+            if rule is not None:
+                t = str(rule.to_sympy_turns())
+                phs.append(
+                    f"({int(x)}, " + ("fun _ j => j + 1" if "j" in t else "fun n _ => n + 1") + ")"
+                )
+        lit = (
+            f"⟨{int(x)}, .{kind}, {dim}, 0, [{', '.join(map(str, outs))}], "
+            f"[{', '.join(map(str, ins))}]⟩"
+        )
+        if int(x) in pair_nodes:
+            b = pair_nodes[int(x)]
+            left = _fam_port(next(iter(b.left_ports)))
+            right = _fam_port(next(iter(b.right_ports)))
+            pairs.append(f"⟨{b.id}, {b.pair_of}, {left}, {right}, {lit}⟩")
+        else:
+            nodes.append(lit)
+    partner = {}
+    for w in dg.wires:
+        partner[w.a] = w.b
+        partner[w.b] = w.a
+    links: list[str] = []
+    boxes: list[str] = []
+    drop: set[frozenset[object]] = set()
+    for b in sorted(dg.bang_boxes.values(), key=lambda b: b.id):
+        if b.pair_of is not None:
+            continue
+        boxes.append(
+            f"⟨{b.id}, 0, none, [{', '.join(str(int(x)) for x in sorted(b.node_scope))}], []⟩"
+        )
+        for l1, l2 in b.links:
+            e1, e2 = partner[l1], partner[l2]
+            drop |= {frozenset((l1, e1)), frozenset((l2, e2))}
+            links.append(f"⟨{_fam_port(l1)}, {_fam_port(l2)}, {_fam_port(e1)}, {_fam_port(e2)}⟩")
+    wires = [
+        f"({_fam_port(w.a)}, {_fam_port(w.b)})"
+        for w in sorted(dg.wires, key=lambda w: w.sort_key())
+        if int(w.a.node_id) not in pair_nodes
+        and int(w.b.node_id) not in pair_nodes
+        and frozenset((w.a, w.b)) not in drop
+    ]
+    outs_l = ", ".join(map(_fam_port, dg.boundary_outputs))
+    ins_l = ", ".join(map(_fam_port, dg.boundary_inputs))
+    return (
+        f"{{ base := {{ nodes := [{', '.join(nodes)}], wires := [{', '.join(wires)}], "
+        f"outs := [{outs_l}], ins := [{ins_l}], boxes := [{', '.join(boxes)}] }}, "
+        f"links := [{', '.join(links)}], pairs := [{', '.join(pairs)}], ph := [{', '.join(phs)}], "
+        f"dim := [{', '.join(dms)}], legs := [{', '.join(legs)}] }}"
+    )
+
+
 @dataclass(frozen=True)
 class Family:
     """An adder family: its Lean namespace, export tag, mirrors of ``engL``, ``engR``,
-    ``engLabs`` and the phase table, and whether its scalars are ``1`` (else equal)."""
+    ``engLabs`` and the phase table, whether its scalars are ``1`` (else equal), and the
+    namespace and theorem of its diagram-level family."""
 
     ns: str
     tag: str
@@ -305,11 +423,15 @@ class Family:
     labs: Callable[[int], list[tuple[int, int]]]
     phases: Callable[[int, str], list[str]]
     unit_scalar: bool
+    fam_ns: str
+    fam_thm: str
 
 
 FAMILIES = (
-    Family("FcaEng", "Fca", eng_l, eng_r, eng_labs, eng_phases, True),
-    Family("DraperEng", "Draper", drp_l, drp_r, drp_labs, drp_phases, False),
+    Family("FcaEng", "Fca", eng_l, eng_r, eng_labs, eng_phases, True, "FamFca", "famFca"),
+    Family(
+        "DraperEng", "Draper", drp_l, drp_r, drp_labs, drp_phases, False, "FamDraper", "famDraper"
+    ),
 )
 """The families export_family tries, in order."""
 
@@ -404,12 +526,38 @@ def export_family(
     else:
         stmt = f"∀ ({d} : ℕ), 0 < {d} → ∀ (n : ℕ){binder}, {eq}"
         proof = f"fun {d} hd => {ns}.{thm} {d} hd"
+    deq = f"DEqual ({ns}.engE {d} n) 1 (famL.famExpand n) 1 (famR.famExpand n)"
+    fproof = f"{fam.fam_ns}.{fam.fam_thm} {d} {hd} n"
+    if d.isdigit():
+        fstmt = f"∀ (n : ℕ), {deq}"
+        fbody = [f"  fun n => by rw [famL_eq, famR_eq]; exact {fproof}"]
+    else:
+        fstmt = f"∀ ({d} : ℕ), 0 < {d} → ∀ (n : ℕ), {deq}"
+        fbody = [f"  fun {d} hd n => by rw [famL_eq, famR_eq]; exact {fproof}"]
+    fam_lines = [
+        "/-- The left side as a boxed diagram. -/",
+        f"def famL : FamDiagram := {fam_literal(lhs, d)}",
+        "",
+        "/-- The right side as a boxed diagram. -/",
+        f"def famR : FamDiagram := {fam_literal(rhs, d)}",
+        "",
+        f"theorem famL_eq : famL = {fam.fam_ns}.D0 := rfl",
+        "",
+        f"theorem famR_eq : famR = {fam.fam_ns}.D1 := rfl",
+        "",
+        f"theorem {name}_diagram : {fstmt} :=",
+        *fbody,
+        "",
+    ]
     lines = [
         "/-",
         "  ArchytasZX proof export. Both sides at multiplicity n are the networks",
         f"  {ns}.engL n and {ns}.engR n over {ns}.engE d n (their exports at",
         f"  n = 0 … {CHECKED} below, checked by decide); {ns}.{thm} proves them equal.",
         *note,
+        "  Both boxed sides as FamDiagram literals (famL, famR), checked equal to",
+        f"  {fam.fam_ns}.D0 and {fam.fam_ns}.D1 by rfl; {fam.fam_ns}.{fam.fam_thm} proves their",
+        "  expansions at every n the same tensor.",
         "-/",
         "",
         "import ArchytasZX",
@@ -422,6 +570,7 @@ def export_family(
         f"theorem {name} : {stmt} :=",
         f"  {proof}",
         "",
+        *fam_lines,
         f"end ArchytasZX.Export.{fam.tag}",
         "",
     ]
