@@ -214,6 +214,7 @@ class InductionResult:
             StepDischarge.INDUCTION_REWRITE,
             StepDischarge.SYMBOLIC_CONTRACTION,
             StepDischarge.CHAIN_WINDOW,
+            StepDischarge.TREE_WINDOW,
         )
         if self.discharge in symbolic_tiers:
             return self.obligation.held_symbolic
@@ -574,9 +575,11 @@ def _rewrite_to(
     """
     working = source.copy()
     steps: list[RewriteStep] = []
-    for _firing in range(max_steps):
+    for firing in range(max_steps + 1):
         if compare_structure(working, target).identical and _same_bang_boxes(working, target):
             return True, tuple(steps), "structurally reached the target"
+        if firing == max_steps:
+            break
         candidate: tuple[Rule, Match] | None = None
         for rule in rules:
             matches = rule.pattern.find_matches(working)

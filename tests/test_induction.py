@@ -458,11 +458,11 @@ class TestLadder:
     def test_the_step_budget_terminates_a_non_closing_rewrite(self) -> None:
         pre, post = _build_boxed_fusion_family()
         result = induction.prove_by_induction(
-            pre, post, witness={"d": 2}, ladder=(StepDischarge.UNIFORM_REWRITE,), max_steps=1
+            pre, post, witness={"d": 2}, ladder=(StepDischarge.UNIFORM_REWRITE,), max_steps=0
         )
         outcome = _ladder_uniform_outcome(result)
         assert outcome.settled is False, outcome.reason
-        assert outcome.reason == "step budget 1 exhausted"
+        assert outcome.reason == "step budget 0 exhausted"
 
 
 class TestResultShape:
@@ -1007,3 +1007,30 @@ class TestLemmaTier:
         assert old in _ROWS_SPEC
         decision = self._decide(_ROWS_SPEC.replace(old, new))
         assert decision.verdict is not EqualityVerdict.EQUAL  # type: ignore[attr-defined]
+
+
+def test_tree_window_keeps_held_symbolic() -> None:
+    from archytaszx.semantics.induction import InductionObligation
+
+    empty = Diagram()
+    obligation = InductionObligation(
+        "m", 1, "k", empty, empty, empty, empty, empty, empty, held_symbolic=frozenset({"d"})
+    )
+    result = InductionResult(
+        verdict=Verdict.PROVED_INDUCTION,
+        index="m",
+        base_value=1,
+        reason="",
+        obligation=obligation,
+        tiers=(TierOutcome(StepDischarge.TREE_WINDOW, True, ""),),
+    )
+    assert result.held_symbolic == frozenset({"d"})
+
+
+def test_rewrite_to_checks_the_target_after_the_last_firing() -> None:
+    from archytaszx.semantics.induction import DEFAULT_RULES, _rewrite_to
+
+    pre, _a, _b = build_ghz_with_copy(Dim("d"))
+    post = apply(pre, SPIDER_FUSION, SPIDER_FUSION.pattern.find_matches(pre)[0]).diagram
+    assert _rewrite_to(pre, post, DEFAULT_RULES, 1, None)[0]
+    assert _rewrite_to(post, post, DEFAULT_RULES, 0, None)[0]
