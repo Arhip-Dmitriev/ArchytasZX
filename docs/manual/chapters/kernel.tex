@@ -86,8 +86,8 @@ Constant & Value & Meaning \\
 \caption{Constants of \texttt{archytaszx.semantics.induction}.}\label{tab:kernel-ind-constants}
 \end{table}
 
-The \term{default ladder} \py!DEFAULT_LADDER! is, in order, \texttt{UNIFORM\_REWRITE}, \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, \texttt{TREE\_WINDOW}, and \texttt{ORACLE\_WINDOW}.
-The induction rung of \py!decide_equal! passes its own \term{step ladder} \py!_STEP_LADDER!, the default ladder without \texttt{ORACLE\_WINDOW}, so a decision never rests on a finite window. The verdict a settling tier gives is fixed by the table \py!_VERDICT!: \texttt{UNIFORM\_REWRITE} gives \texttt{PROVED\_UNIFORM}; \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, and \texttt{TREE\_WINDOW} give \texttt{PROVED\_INDUCTION}; \texttt{ORACLE\_WINDOW} gives \texttt{SCHEMA\_CHECKED}, a finite check that is not a proof.
+The \term{default ladder} \py!DEFAULT_LADDER! is, in order, \texttt{UNIFORM\_REWRITE}, \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, \texttt{TREE\_WINDOW}, \texttt{HYPOTHESIS\_REWRITE}, and \texttt{ORACLE\_WINDOW}.
+The induction rung of \py!decide_equal! passes its own \term{step ladder} \py!_STEP_LADDER!, the default ladder without \texttt{ORACLE\_WINDOW}, so a decision never rests on a finite window. The verdict a settling tier gives is fixed by the table \py!_VERDICT!: \texttt{UNIFORM\_REWRITE} gives \texttt{PROVED\_UNIFORM}; \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, \texttt{TREE\_WINDOW}, and \texttt{HYPOTHESIS\_REWRITE} give \texttt{PROVED\_INDUCTION}; \texttt{ORACLE\_WINDOW} gives \texttt{SCHEMA\_CHECKED}, a finite check that is not a proof.
 
 \subsection{Records}
 
@@ -121,7 +121,7 @@ Field & Type & Content \\
 \begin{itemize}
 \item \py!proved! is true when \py!verdict! is \texttt{PROVED\_UNIFORM} or \texttt{PROVED\_INDUCTION};
 \item \py!discharge! is the discharge of the last settled tier, \py!None! when none settled;
-\item \py!held_symbolic! is \py!obligation.held_symbolic! when \py!discharge! is \texttt{UNIFORM\_REWRITE}, \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, or \texttt{TREE\_WINDOW}, and the empty set otherwise.
+\item \py!held_symbolic! is \py!obligation.held_symbolic! when \py!discharge! is \texttt{UNIFORM\_REWRITE}, \texttt{INDUCTION\_REWRITE}, \texttt{SYMBOLIC\_CONTRACTION}, \texttt{CHAIN\_WINDOW}, \texttt{TREE\_WINDOW}, or \texttt{HYPOTHESIS\_REWRITE}, and the empty set otherwise.
 \end{itemize}
 \end{definition}
 
@@ -218,6 +218,7 @@ Discharge & Function & Method \\
 \texttt{SYMBOLIC\_CONTRACTION} & \texttt{discharge\_symbolic\_\allowbreak contraction} & contract both successors symbolically (\cref{sec:kernel-tier-symbolic}) \\
 \texttt{CHAIN\_WINDOW} & \texttt{discharge\_chain\_window} & peel the last chain copy; replace the residual through cut wires (\cref{sec:kernel-chain}) \\
 \texttt{TREE\_WINDOW} & \texttt{discharge\_tree\_window} & peel the leaf level of a tree !-box; graft it on the other side (\cref{sec:kernel-tree}) \\
+\texttt{HYPOTHESIS\_REWRITE} & \texttt{discharge\_hypothesis\_\allowbreak rewrite} & rewrite the left successor with the hypothesis as a rule, tried first (\cref{sec:kernel-tier-hypothesis}) \\
 \texttt{ORACLE\_WINDOW} & \texttt{discharge\_oracle\_window} & compare numerically at $b,\ldots,b+w-1$ (\cref{sec:kernel-tier-oracle}) \\
 \bottomrule
 \end{tabularx}
@@ -286,7 +287,17 @@ A uniform rewrite never instantiates $k$, so its steps rewrite $L$ into $R$ for 
 
 \texttt{discharge\_\allowbreak{}induction\_\allowbreak{}rewrite(\allowbreak{}obligation,\allowbreak{} *,\allowbreak{} rules=None,\allowbreak{} max\_\allowbreak{}steps=64) -> TierOutcome}
 
-Since \py!hypothesis_rule! gives \py!None!, run \texttt{discharge\_\allowbreak{}peeled\_\allowbreak{}hypothesis(\allowbreak{}obligation,\allowbreak{} max\_\allowbreak{}steps=max\_\allowbreak{}steps)}. A settled outcome is returned; otherwise the unsettled outcome \texttt{hypothesis not expressible as a rule: H; peeling did not settle it either: P}, with $H$ from \texttt{\_\allowbreak{}hypothesis\_\allowbreak{}inexpressible\_\allowbreak{}reason} and $P$ the peeling reason. (The branch that rewrites the successors with the hypothesis appended as a last rule, and refuses a derivation that never used it with \texttt{derivation never used the hypothesis}, is unreachable.)
+Run \texttt{discharge\_\allowbreak{}peeled\_\allowbreak{}hypothesis(\allowbreak{}obligation,\allowbreak{} max\_\allowbreak{}steps=max\_\allowbreak{}steps)}. A settled outcome is returned; otherwise the unsettled outcome \texttt{hypothesis not expressible as a rule: H; peeling did not settle it either: P}, with $H$ from \texttt{\_\allowbreak{}hypothesis\_\allowbreak{}inexpressible\_\allowbreak{}reason} and $P$ the peeling reason. The hypothesis as a rule is the separate tier \texttt{HYPOTHESIS\_REWRITE} (\cref{sec:kernel-tier-hypothesis}).
+
+\paragraph{The hypothesis rule.}\label{sec:kernel-tier-hypothesis} \py!hypothesis_rule(obligation)! is \py!None! when $L(k)$ has no node or no box whose multiplicity carries the step symbol $k$, when the interfaces or \py!boundary_layout!s of $L(k)$ and $R(k)$ differ, when $L(k)$'s scalar is zero, or when the ratio $\rho = R(k).\text{scalar}/L(k).\text{scalar}$ has a free symbol. Otherwise it is the rule \code!induction_hypothesis! (not automatic) with pattern \py!HypothesisPattern(L(k), k)! of \texttt{rewrite/match\_hypothesis.py} and scalar $\rho$. Its \py!find_matches(H)!:
+\begin{enumerate}
+\item For each $c\ge 0$ with $M' - m_b(k) = c$ for some box $b$ of $L(k)$ carrying $k$ and some host box multiplicity $M'$, ascending: peel $c$ copies off every owner of $k$ (\py!peel_owners! $c$ times); $k$ stays bound.
+\item Embed $L(k)$ in the peeled host: an injective node map keeping generator, leg dimensions and phase, every wire of $L(k)$ port for port; a boundary port of $L(k)$ lands on a host port wired off the image or on the host boundary, a boxed slot (\py!slot_owners!) on the host boundary.
+\item Each box of $L(k)$ maps onto one host box over the mapped footprint, every field (multiplicity, parent, links, pair, ports, groups) mapped; every host box meeting the image is such an image.
+\end{enumerate}
+\py!apply_hypothesis(match, L, R)! removes the image boxes and nodes, grafts $R(k)$ with its boxes, joins $R$'s $i$-th boundary port to the far end of the $i$-th cut wire or puts it in the host boundary slot $L$'s port held, and multiplies the scalar by $\rho$.
+
+\texttt{discharge\_\allowbreak{}hypothesis\_\allowbreak{}rewrite(\allowbreak{}obligation,\allowbreak{} *,\allowbreak{} rules,\allowbreak{} max\_\allowbreak{}steps)} rewrites the left successor, at each step the first hypothesis match if there is one, else the first match of \code!rules! (default \py!SPIDER_FUSION!) by name, until it is the right successor or that successor with its owners of $k$ peeled, field for field or isomorphic with equal scalars. A derivation without a hypothesis step is refused with \texttt{derivation never used the hypothesis}.
 \end{signature}
 
 \texttt{\_\allowbreak{}hypothesis\_\allowbreak{}inexpressible\_\allowbreak{}reason(\allowbreak{}obligation)} returns \texttt{the hypothesis and successor left sides carry different bang-box ids} when the !-box ids of \texttt{left\_at\_k} and \texttt{left\_at\_successor} differ; else, for the first id (in sorted order) whose multiplicities differ, \texttt{bang box b carries multiplicity M in the hypothesis and M' in the successor; every Pattern here matches structure only and none unifies Mult arithmetic,\allowbreak{} and a match ignoring the multiplicity would rewrite the successor straight onto its own target}; else \texttt{the hypothesis left side already equals the successor left side field for field}.
@@ -791,6 +802,7 @@ $L=R$ from a proved \code!result! (run on $R, L$ when \code!reversed_!) and the 
   \item \texttt{UNIFORM\_REWRITE}: the theorem is \texttt{\_\allowbreak{}uniform(\allowbreak{}first,\allowbreak{} second,\allowbreak{} result,\allowbreak{} tier)}.
   \item \texttt{INDUCTION\_REWRITE}: $B\gets$ \py!_base(...)!; the theorem is \texttt{\_\allowbreak{}peeled(\allowbreak{}first,\allowbreak{} second,\allowbreak{} result,\allowbreak{} tier,\allowbreak{} B,\allowbreak{} rules)}.
   \item \texttt{CHAIN\_WINDOW}, \texttt{TREE\_WINDOW}: $B\gets$ \py!_base(...)!; the theorem is \texttt{\_\allowbreak{}windowed(\allowbreak{}first,\allowbreak{} second,\allowbreak{} result,\allowbreak{} w,\allowbreak{} B,\allowbreak{} rules)} with $w$ \code!"cut"! or \code!"tree"!.
+  \item \texttt{HYPOTHESIS\_REWRITE}: $B\gets$ \py!_base(...)!; the theorem is the first of \texttt{\_\allowbreak{}windowed(\allowbreak{}first,\allowbreak{} second,\allowbreak{} result,\allowbreak{} w,\allowbreak{} B,\allowbreak{} rules,\allowbreak{} contract=x)} over $w\in\{$\code!"cut"!, \code!"region"!$\}$, $x\in\{$\code!False!, \code!True!$\}$ (\py!_hypothesis!).
   \item \texttt{SYMBOLIC\_CONTRACTION}: $B\gets$ \py!_base(...)!; the theorem is \texttt{\_\allowbreak{}contracted(\allowbreak{}first,\allowbreak{} second,\allowbreak{} result,\allowbreak{} B,\allowbreak{} rules)}.
   \item Any other: \texttt{the step case was settled by D,\allowbreak{} which records no rewrite steps}.
   \end{itemize}
