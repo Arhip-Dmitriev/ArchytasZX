@@ -26,6 +26,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from itertools import pairwise
 from types import MappingProxyType
+from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -54,7 +55,13 @@ from archytaszx.diagram.generators import W_NODE, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.engine import RewriteStep, apply
-from archytaszx.rewrite.rule import Match, RewriteDomainError, Rule
+from archytaszx.rewrite.match_hypothesis import (
+    HYPOTHESIS_SIDE_CONDITIONS,
+    HypothesisMatch,
+    HypothesisPattern,
+    apply_hypothesis,
+)
+from archytaszx.rewrite.rule import BuildResult, Match, Quantifiers, RewriteDomainError, Rule
 from archytaszx.rewrite.rules_library import SPIDER_FUSION
 from archytaszx.semantics.certificate import (
     Derivation,
@@ -859,10 +866,111 @@ def _peel_step_index(diagram: Diagram, index: str) -> tuple[Diagram, frozenset[N
     return result.diagram, result.copy_node_ids
 
 
+HYPOTHESIS_RULE_NAME = "induction_hypothesis"
+
+
+def _hypothesis_builder(_diagram: Diagram, _match: Match) -> BuildResult:
+    """Refuses: the hypothesis step runs through :func:`apply_hypothesis`."""
+    raise RewriteDomainError("the induction hypothesis is applied by apply_hypothesis")
+
+
 def hypothesis_rule(obligation: InductionObligation) -> Rule | None:
     """A rule rewriting the hypothesis diagram's left side to its right side, or None when that
     pattern is not matchable."""
-    return None
+    left, right = obligation.left_at_k, obligation.right_at_k
+    if not left.nodes or not any(
+        obligation.step_symbol in box.multiplicity.free_symbols for box in left.bang_boxes.values()
+    ):
+        return None
+    if _interface(left) != _interface(right) or left.scalar.is_zero:
+        return None
+    ratio = right.scalar * left.scalar**-1
+    if ratio.free_symbols:
+        return None
+    layout = boundary_layout(left)
+    if layout is None or layout != boundary_layout(right):
+        return None
+    return Rule(
+        name=HYPOTHESIS_RULE_NAME,
+        pattern=HypothesisPattern(left, obligation.step_symbol),
+        builder=_hypothesis_builder,
+        side_conditions=HYPOTHESIS_SIDE_CONDITIONS,
+        quantifiers=Quantifiers(),
+        scalar_introduced=right.scalar * left.scalar**-1,
+        automatic=False,
+    )
+
+
+def _hypothesis_step(
+    obligation: InductionObligation, match: HypothesisMatch, scalar: Scalar
+) -> tuple[Diagram, RewriteStep]:
+    """The host of ``match`` with the hypothesis applied, and its step."""
+    result = apply_hypothesis(match, obligation.left_at_k, obligation.right_at_k)
+    step = RewriteStep(
+        rule_name=HYPOTHESIS_RULE_NAME,
+        match=match,
+        consumed_node_ids=match.support_node_ids,
+        consumed_wires=(),
+        side_condition_outcomes=match.side_condition_outcomes,
+        dimension_constraints=(),
+        scalar_introduced=scalar,
+        port_mapping=MappingProxyType({}),
+        new_node_ids=tuple(sorted(frozenset(result.nodes) - frozenset(match.host.nodes))),
+    )
+    return result, step
+
+
+def _reached(working: Diagram, targets: Sequence[Diagram]) -> bool:
+    """Whether ``working`` is one of ``targets`` field for field or up to isomorphism."""
+    for target in targets:
+        if compare_structure(working, target).identical and _same_bang_boxes(working, target):
+            return True
+        linked = any(box.links for d in (working, target) for box in d.bang_boxes.values())
+        if working.scalar == target.scalar and isomorphic(
+            working, target, symmetric_legs=not linked
+        ):
+            return True
+    return False
+
+
+def _rewrite_with_hypothesis(
+    obligation: InductionObligation, hypothesis: Rule, rules: Sequence[Rule], max_steps: int
+) -> tuple[bool, tuple[RewriteStep, ...], str]:
+    """Rewrite the left successor with the hypothesis tried first, then ``rules``, until it is
+    the right successor or that successor with its owners of the step index peeled."""
+    targets = [obligation.right_at_successor]
+    try:
+        targets.append(peel_owners(obligation.right_at_successor, obligation.step_symbol).diagram)
+    except BangBoxError:
+        pass
+    working = obligation.left_at_successor
+    steps: list[RewriteStep] = []
+    for firing in range(max_steps + 1):
+        if _reached(working, targets):
+            if not any(step.rule_name == HYPOTHESIS_RULE_NAME for step in steps):
+                return False, tuple(steps), "derivation never used the hypothesis"
+            return True, tuple(steps), "rewrote the left successor onto the right one"
+        if firing == max_steps:
+            break
+        matches = hypothesis.pattern.find_matches(working)
+        if matches:
+            working, step = _hypothesis_step(
+                obligation, cast(HypothesisMatch, matches[0]), hypothesis.scalar_introduced
+            )
+            steps.append(step)
+            continue
+        candidate: tuple[Rule, Match] | None = None
+        for rule in rules:
+            found = rule.pattern.find_matches(working)
+            if found:
+                candidate = (rule, found[0])
+                break
+        if candidate is None:
+            return False, tuple(steps), "no applicable rule"
+        result = apply(working, *candidate)
+        working = result.diagram
+        steps.append(result.step)
+    return False, tuple(steps), f"step budget {max_steps} exhausted"
 
 
 def discharge_uniform_rewrite(
@@ -3279,11 +3387,11 @@ def discharge_induction_rewrite(
 ) -> TierOutcome:
     """Rewrite the successor diagrams into each other with the induction hypothesis available as a
     rule, falling back to :func:`discharge_peeled_hypothesis` when no such rule exists."""
+    peeled = discharge_peeled_hypothesis(obligation, max_steps=max_steps)
+    if peeled.settled:
+        return peeled
     hypothesis = hypothesis_rule(obligation)
     if hypothesis is None:
-        peeled = discharge_peeled_hypothesis(obligation, max_steps=max_steps)
-        if peeled.settled:
-            return peeled
         return TierOutcome(
             StepDischarge.INDUCTION_REWRITE,
             False,
@@ -3292,20 +3400,14 @@ def discharge_induction_rewrite(
             + f"; peeling did not settle it either: {peeled.reason}",
         )
     rules_in_use = rules if rules is not None else DEFAULT_RULES
-    ok, steps, reason = _rewrite_to(
-        obligation.left_at_successor,
-        obligation.right_at_successor,
-        [*sorted(rules_in_use, key=lambda rule: rule.name), hypothesis],
-        max_steps,
-        guard_symbols=None,
-    )
-    if ok and not any(step.rule_name == hypothesis.name for step in steps):
-        return TierOutcome(
-            StepDischarge.INDUCTION_REWRITE,
-            False,
-            "derivation never used the hypothesis",
-            steps=steps,
+    try:
+        ok, steps, reason = _rewrite_with_hypothesis(
+            obligation, hypothesis, sorted(rules_in_use, key=lambda rule: rule.name), max_steps
         )
+    except (RewriteDomainError, BangBoxError, InductionDomainError) as exc:
+        ok, steps, reason = False, (), f"applying the hypothesis raised: {exc}"
+    if not ok:
+        reason = f"{reason}; peeling did not settle it either: {peeled.reason}"
     return TierOutcome(StepDischarge.INDUCTION_REWRITE, ok, reason, steps=steps)
 
 
