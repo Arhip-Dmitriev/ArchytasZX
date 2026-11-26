@@ -26,6 +26,7 @@ import ArchytasZX.SymF2Bridge
 import ArchytasZX.DiagramBridge
 import ArchytasZX.Port
 import ArchytasZX.Assume
+import ArchytasZX.EqualLabs
 import ArchytasZX.Completeness
 import ArchytasZX.Weights
 import ArchytasZX.Diagram

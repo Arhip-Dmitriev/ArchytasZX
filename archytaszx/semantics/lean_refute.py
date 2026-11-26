@@ -35,7 +35,7 @@ import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.phase import INDEX
-from archytaszx.diagram.graph import Diagram
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.semantics.digit_poly import DigitPoly
 from archytaszx.semantics.lean_net import (
     TABLE_CHUNK,
@@ -46,6 +46,7 @@ from archytaszx.semantics.lean_net import (
     _head,
     _incs,
     _join,
+    _klean,
     _outcs,
     _paren,
 )
@@ -275,6 +276,26 @@ def export_interface_refutation(
         args += " " + " ".join("(by norm_num)" for _ in dims) if dims else ""
         quant = f"∀ {binders} {hyps}, " if syms else ""
         lead = ", ".join(f"{s} = {vals[s]}" for s in syms) or "no parameters"
+        theorem = "\n".join(
+            [
+                f"/-- The diagrams' leg dimensions differ at {lead}. -/",
+                f"theorem {name} :",
+                f"    ¬ {quant}({text(ll)}) = ({text(lr)}) := by",
+                f"  intro h; exact absurd (h {args}) (by decide)" if syms else "  decide",
+            ]
+        )
+        if not (left.bang_boxes or right.bang_boxes):
+            try:
+                at = {**dict(point), **{str(s): v for s, v in vals.items()}}
+                refuter = _Refuter(left, right, at, None, interface=True)
+                return refuter.interface_source(
+                    name,
+                    theorem,
+                    "  ArchytasZX interface refutation: the boundary leg dimensions of the two\n"
+                    f"  diagrams, outputs then inputs, differ at {lead}",
+                )
+            except (NetUnsupported, ScalarUnsupported):
+                pass
         return "\n".join(
             [
                 "/-",
@@ -442,6 +463,7 @@ class _Refuter:
         point: Mapping[str, object],
         describe: Callable[[Diagram], str] | None,
         opaque: bool = False,
+        interface: bool = False,
     ) -> None:
         self.out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
         self.out.poly_phases = True
@@ -458,7 +480,7 @@ class _Refuter:
         if self.arity and (left.bang_boxes or right.bang_boxes):
             raise NetUnsupported("the boundaries differ in size within a family")
         self.b_diagram = right
-        if self.arity:
+        if self.arity or interface:
             base = self.out.next_label
             self.b = self.out.labelled(right, list(range(base, base + n_r)))
         else:
@@ -2462,6 +2484,77 @@ class _Refuter:
         self.out.decls.append(theorem)
         self.arity_diagrams(name)
         return self.out.source(lead="  refutation: the boundaries differ in size")
+
+    def interface_source(self, name: str, theorem: str, lead: str) -> str:
+        """``theorem`` then ``name_diagrams``: ``¬ DEqual`` over the engine's diagrams at the point,
+        from their boundary dimension values (``not_DEqual_of_dims``)."""
+        out = self.out
+        if self.a.source is None:
+            raise NetUnsupported("an interface refutation of a boxed diagram")
+        la = self.bare_literal(self.a.source, "DI0")
+        lb = self.bare_literal(self.b_diagram, "DI1")
+        binders = _join(out.binders, out.hyps)
+        stmt = (
+            f"DEqual {out.env} {_paren(self.scalar_text(self.s0))} {la} "
+            f"{_paren(self.scalar_text(self.s1))} {lb}"
+        )
+        head = f"¬ ∀ {binders}, {stmt}" if binders else f"¬ {stmt}"
+        args = self.point_args()
+        apply = f"(h {args})" if args else "h"
+        out.decls.append(theorem)
+        out.decls.append(
+            "/-- The diagrams' boundary dimension values differ at the point. -/\n"
+            f"theorem {name}_diagrams :\n    {head} := by\n"
+            f"  intro h\n  exact not_DEqual_of_dims (by decide +kernel) {apply}"
+        )
+        return out.source(lead=lead)
+
+    def bare_literal(self, d: Diagram, dname: str) -> str:
+        """``d`` as the Lean ``Diagram`` ``dname``: each node's kind, dimension and phase indices
+        those of its network node, each leg's dimension index its dimension's."""
+        out = self.out
+
+        def alloc(dim: object, chain: object) -> int:
+            return out.label(out.dim_for(dim, chain))  # type: ignore[arg-type]
+
+        net, _order, _port = out.translate(d, None, alloc, register=False)
+
+        def port(ref: PortRef) -> str:
+            side = "true" if ref.direction is Direction.OUTPUT else "false"
+            return f"⟨{int(ref.node_id)}, {side}, {ref.index}⟩"
+
+        nodes = []
+        for nid, n in zip(sorted(d.nodes), net.nodes, strict=True):
+            node = d.nodes[nid]
+            outs = [out.raw_index(p.dim) for p in node.outputs]
+            ins = [out.raw_index(p.dim) for p in node.inputs]
+            legs = [*node.outputs, *node.inputs]
+            ndim = n.dim
+            if legs and n.dim == out.dim(legs[0].dim) and n.kind not in ("B", "S"):
+                ndim = out.raw_index(legs[0].dim)
+            nodes.append(f"⟨{int(nid)}, {_klean(n.kind)}, {ndim}, {n.ph}, {outs}, {ins}⟩")
+        wires = [f"({port(w.a)}, {port(w.b)})" for w in sorted(d.wires, key=lambda w: w.sort_key())]
+        out.decls.append(
+            f"/-- {out.describe(d)}, as the engine's diagram. -/\n"
+            f"def {dname} : Diagram :=\n  {{ nodes := [{', '.join(nodes)}],\n"
+            f"    wires := [{', '.join(wires)}],\n"
+            f"    outs := [{', '.join(map(port, d.boundary_outputs))}],\n"
+            f"    ins := [{', '.join(map(port, d.boundary_inputs))}] }}"
+        )
+        return out.dim_ids(dname)
+
+    def point_args(self) -> str:
+        """Arguments instantiating every binder at the point."""
+        params = [
+            (raw, n, ty)
+            for raw, (n, ty) in self.out.sym.params.items()
+            if raw != "k_lean_index" and raw not in self.out.mults
+        ]
+        if any(b for b in self.out.mult_bare):
+            raise NetUnsupported("an interface refutation of a family")
+        args = [self.value_text(raw, ty) for raw, _n, ty in params]
+        args += ["(by norm_num)"] * sum(ty == "ℕ" for _r, _n, ty in params)
+        return " ".join(args)
 
     def arity_diagrams(self, name: str) -> None:
         """``¬ DEqual`` over the engine's diagrams from their boundary dimension lists."""

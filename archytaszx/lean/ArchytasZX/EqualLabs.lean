@@ -48,4 +48,9 @@ theorem DEqual_of_labs {E : Env} {L : List (ℕ × ℕ)} {s₁ s₂ : ℂ} {D₁
     DEqual { E with labs := L } s₁ D₁ s₂ D₂ :=
   (DEqual_iff rfl h₁ h₂).2 ((Equal.labs_iff E L hL).2 h)
 
+/-- Two diagrams whose boundary dimension values differ are not equal. -/
+theorem not_DEqual_of_dims {E : Env} {s₁ s₂ : ℂ} {D₁ D₂ : Diagram}
+    (h : D₁.bdims.map E.dimv ≠ D₂.bdims.map E.dimv) : ¬ DEqual E s₁ D₁ s₂ D₂ :=
+  fun hd => h (congrArg _ hd.1)
+
 end ArchytasZX

@@ -84,6 +84,28 @@ def test_an_arity_refutation_is_diagram_level() -> None:
     assert K.diagram_level(source)
 
 
+def _interface(left: str, right: str) -> str:
+    x, y = parse_diagram(left), parse_diagram(right)
+    return export_refutation(x, y, decide_equal(x, y).counterexample or {})
+
+
+def test_an_interface_refutation_is_diagram_level_at_its_witness() -> None:
+    source = _interface("a = Z(1 -> 1, d)", "a = Z(1 -> 1, d*d)")
+    assert "interface refutation" in source.split("-/")[0]
+    assert "¬ ∀ (d : ℕ) (h_d : 0 < d), DEqual (E d) 1 DI0 1 DI1" in source
+    assert "not_DEqual_of_dims (by decide +kernel) (h 2 (by norm_num))" in source
+    assert K.diagram_level(source) and "h.1" not in source
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_refuses_an_interface_refutation_at_a_non_witness(tmp_path: Path) -> None:
+    source = _interface("a = Z(1 -> 1, d)", "a = Z(1 -> 1, d*d)")
+    tampered = source.replace("(h 2 (by norm_num))", "(h 1 (by norm_num))")
+    assert tampered != source
+    ok, _ = L.check(tampered, str(tmp_path / "interface_tampered.lean"))
+    assert not ok
+
+
 def test_a_point_without_values_falls_back_to_a_sample_point() -> None:
     left, right = (parse_diagram(t) for t in CASES["colour"])
     assert "refutation at d = 2" in export_refutation(left, right, {})
