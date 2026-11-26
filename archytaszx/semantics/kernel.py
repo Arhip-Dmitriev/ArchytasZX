@@ -2930,8 +2930,14 @@ def _lean_restricted(
 def _with_concrete(family: str, left: Diagram, right: Diagram, clauses: Sequence[Clause]) -> str:
     """``family`` followed by the :func:`_concrete_sides` proof of ``left`` and ``right`` with
     every substituting clause applied, in the namespace ``ArchytasZX.Export.Inst``, when that
-    proof is diagram level; ``family`` otherwise."""
-    from archytaszx.semantics.restrict import apply_clause
+    proof is diagram level; ``family`` otherwise, also when a multiplicity value times the
+    sides' node count exceeds :data:`CONCRETE_NODES`."""
+    from archytaszx.semantics.restrict import MULTIPLICITY, apply_clause
+
+    size = len(left.nodes) + len(right.nodes)
+    for c in clauses:
+        if c.substitutes and c.kind == MULTIPLICITY and abs(c.c) * size > CONCRETE_NODES:
+            return family
 
     try:
         for c in clauses:
