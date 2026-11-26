@@ -142,9 +142,7 @@ def _check_sum_structure(expr: sp.Sum) -> None:
             raise ScalarSumError(f"index sum variable {var} must be a nonnegative integer symbol")
         _check_symbol_name(str(var.name), allow_reserved=True)
         if lower != sp.Integer(0):
-            raise ScalarSumError(
-                f"index sum upper bound {upper} is not of the form d - 1 for a dimension d"
-            )
+            raise ScalarSumError(f"index sum lower bound {lower} is not 0")
         try:
             Dim.from_sympy(sp.expand(upper + 1))
         except DimensionError as exc:
@@ -182,7 +180,7 @@ def _check_scalar_domain(expr: sp.Expr) -> None:
         expr.is_Add
         or expr.is_Mul
         or expr.is_Pow
-        or isinstance(expr, (sp.exp, sp.conjugate, ModDelta, ModGcd, ModResidue))
+        or isinstance(expr, (sp.exp, sp.conjugate, ModGcd, ModResidue))
     ):
         for arg in expr.args:
             _check_scalar_domain(arg)
@@ -3184,7 +3182,7 @@ class Scalar:
         """
         subs_dict: dict[sp.Symbol, sp.Expr] = {}
         by_name = {str(s.name): s for s in self._expr.free_symbols}
-        bound = {str(node.limits[0][0].name) for node in self._expr.atoms(sp.Sum)}
+        bound = {str(limit[0].name) for node in self._expr.atoms(sp.Sum) for limit in node.limits}
         for key, value in mapping.items():
             name = key if isinstance(key, str) else self._scalar_symbol_name(key)
             if name in bound:

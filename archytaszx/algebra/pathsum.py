@@ -366,24 +366,11 @@ def _cyclo_sqrt(square: Cyclo, approx: complex) -> Cyclo | None:
 
 
 def _cyclo_inverse(c: Cyclo) -> Cyclo | None:
-    """1 / c in Q(zeta_n): the solution of c x = 1 over the basis zeta_n^0 .. zeta_n^(phi-1)
-    by Gauss-Jordan elimination over the rationals; None when c is zero."""
-    n = c.n
-    cols = [(c * Cyclo(n, {j: Fraction(1)})).reduced(n) for j in range(len(c.reduced(n)))]
-    size = len(cols)
-    rows = [[cols[j][i] for j in range(size)] + [Fraction(1 if i == 0 else 0)] for i in range(size)]
-    for col in range(size):
-        piv = next((r for r in range(col, size) if rows[r][col]), None)
-        if piv is None:
-            return None
-        rows[col], rows[piv] = rows[piv], rows[col]
-        lead = rows[col][col]
-        rows[col] = [v / lead for v in rows[col]]
-        for r in range(size):
-            if r != col and rows[r][col]:
-                f = rows[r][col]
-                rows[r] = [a - f * b for a, b in zip(rows[r], rows[col], strict=True)]
-    return Cyclo(n, {j: rows[j][size] for j in range(size) if rows[j][size]})
+    """:meth:`Cyclo.inverse` of c; None when c is zero."""
+    try:
+        return c.inverse()
+    except PathSumError:
+        return None
 
 
 def constant(expr: Any) -> tuple[Cyclo, int]:
