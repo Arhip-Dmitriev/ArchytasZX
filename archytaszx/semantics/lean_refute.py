@@ -360,14 +360,18 @@ def _carried_names(diagram: Diagram) -> set[str]:
 
 
 def _close_scalar(diagram: Diagram) -> None:
-    """Replaces a closed scalar holding ``exp`` by its form over cosines, simplified, when that
-    form holds no ``exp``."""
+    """Replaces a closed scalar holding ``exp`` by its form over cosines, expanded and then
+    simplified when that holds no ``exp`` or ``cos``, else simplified whole and checked equal."""
     from archytaszx.algebra.scalar import Scalar
 
     e = diagram.scalar.to_sympy()
     if e.free_symbols or not e.has(sp.exp):
         return
     with contextlib.suppress(Exception):
+        c = sp.expand(e.rewrite(sp.cos))
+        if not c.has(sp.exp) and not c.has(sp.cos):
+            diagram.set_scalar(Scalar(sp.simplify(c)))
+            return
         c = sp.simplify(e.rewrite(sp.cos))
         if not c.has(sp.exp) and not c.has(sp.cos) and (c - e).equals(0) is True:
             diagram.set_scalar(Scalar(c))
