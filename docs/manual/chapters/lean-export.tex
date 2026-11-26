@@ -2975,7 +2975,7 @@ constants; an inverse of a nonzero value is \lexpy!inverse!; any other atom is r
 \item \lexpy!dense_expr! follows the same rules on sympy polynomials, powers by \lexpy!power!.
 \item \lexpy!subfield(f)! returns $(k, m, g)$ with $k = \gcd(M, \text{exponents of } f)$,
 $m = M/k$ and $g(y) = \sum c\,y^{e/k} \bmod \Phi_m(y)$, so that $f(\zeta) = g(\zeta^k)$;
-$\varphi(m) > 512$ raises \lexcode!the cyclotomic field of order <M> has degree above 512!.
+$\varphi(m) > 512$ raises \lexcode!the cyclotomic field of order <m> has degree above 512!.
 \lexpy!lift(k, g)! is $g(\zeta^k)$.
 \item \lexpy!reduced(f)! is $f \bmod \Phi_M$, in a big field $\mathrm{lift}(\mathrm{subfield}(f))$.
 \item \lexpy!inverse(f)! is $f^{-1} \bmod \Phi_M$ by \lexpy!sp.invert!, in a big field the inverse of

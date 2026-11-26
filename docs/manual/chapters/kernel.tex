@@ -703,7 +703,7 @@ For each orientation (as in \cref{alg:kernel-chain-window}):
 \begin{enumerate}
 \item The own successor's tree owner must exist (\texttt{no tree box carries the step index}).
 \item Peel the leaf level (\texttt{peel\_\allowbreak{}one(\allowbreak{}own\_\allowbreak{}successor,\allowbreak{} owner)}) and build \texttt{fed\_\allowbreak{}replacement(\allowbreak{}exposed,\allowbreak{} owner,\allowbreak{} own\_\allowbreak{}k,\allowbreak{} other\_\allowbreak{}k)}; a \py!BangBoxError!, \py!InductionDomainError!, or \py!ValidateError! records its text.
-\item The targets are the other successor with its tree owner peeled (when it has one and the peel succeeds), then the other successor. Close the window against each; success returns settled with \texttt{peeled the tree's leaf level; the rest is the hypothesis diagram,\allowbreak{} replaced by the other side's with the leaf level on its leaf run; W} and \py!left_peeled! set to the exposed diagram.
+\item The targets are the other successor with its tree owner peeled (when it has one and the peel succeeds), then the other successor. Close the window against each; success returns settled with \texttt{peeled the tree's leaf level; the rest is the hypothesis diagram,\allowbreak{} replaced by the other side's with the leaf level on its leaf run; W} and the exposed diagram as \py!left_peeled! when the peeled side is the left one, else as \py!right_peeled!.
 \item Otherwise W-fuse the replaced diagram (\py!w_fused!; failure records \code!W fusion: E!) and close the window against each target; success adds \texttt{the leaf copies are a weighted W fused into the W leg feeding them} to the reason.
 \end{enumerate}
 Return unsettled with the joined reasons.

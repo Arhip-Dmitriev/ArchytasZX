@@ -1301,9 +1301,6 @@ other & (outputs, no), (inputs, no) \\
 \bottomrule
 \end{xltabular}
 
-\py!_equiv(n, m)! mirrors the older \lean!nodeEquiv! (exact kinds; Z legs as one multiset, X
-outputs and inputs as multisets, other nodes exact); the translators do not use it.
-
 \begin{algorithm}[\py!_match(a, b, dims_a, dims_b, fix_bnd)!]\label{alg:lean-export-net-match}
 Find a label bijection carrying network $a$ onto $b$ node for node, boundary to boundary (each
 boundary label to itself when \py!fix_bnd!), or \py!None!:
@@ -2488,14 +2485,15 @@ with one bullet per $k<d$. \py!_coef_at(c, k, lhs, rhs, nodes)! is the single ca
 
 \begin{definition}[$K_j$ phases]\label{def:lean-export-net-kj}
 \py!_kj_proof(c, ph, dz, j)! proves \lean!∀ q < E.dimv dz, ex (E.phase ph q) = om (E.dimv dz) ^ (q * j)!,
-the phase $K_j$ with entries $qj/d$ turns. For phase 0 and $j=0$ it is
-\leanx!(by intro q _; simp [E, Φ, ex_zero])!. At a symbolic dimension the phase must be a rule
+the phase $K_j$ with entries $qj/d$ turns; \code!U! is the environment's unfold name
+(\py!c.ex.unfold!). For phase 0 and $j=0$ it is
+\leanx!(by intro q _; simp [U, Φ, ex_zero])!. At a symbolic dimension the phase must be a rule
 equal to $j\cdot\textit{index}/d$ with no entries (\code!phase is not K_!$j$), proved by
-\code!rw [om_eq_ex]!, \leanx!simp only [E, Φ, Δ]!, \code!split_ifs! and \code!ring_nf!. At a
+\code!rw [om_eq_ex]!, \leanx!simp only [U, Φ, Δ]!, \code!split_ifs! and \code!ring_nf!. At a
 concrete $d$ the phase must be written entry by entry and each entry at $q\ge1$ must differ from
 $qj/d$ by an integer $z$ (\code!phase at !$q$\code! is not !$qj$\code!/!$d$\code! turns!); one
-bullet \leanx!exact ex_of d (q*j) (z) (by norm_num) (by norm_num [E, Φ])! per $q$, the bullet for
-$q = 0$ being \leanx!simp [E, Φ, ex_zero]!. \py!_kj_antipode(c, a, b, d, j)! proves at a symbolic
+bullet \leanx!exact ex_of d (q*j) (z) (by norm_num) (by norm_num [U, Φ])! per $q$, the bullet for
+$q = 0$ being \leanx!simp [U, Φ, ex_zero]!. \py!_kj_antipode(c, a, b, d, j)! proves at a symbolic
 dimension that phase $b$ at $k$ equals phase $a$ at $(d-k)\bmod d$ for $a = K_j$, $b = K_{-j}$,
 by \lean!ex_congr_int! with the integer $-j$.
 \end{definition}
@@ -2641,7 +2639,7 @@ for \code!(by phz)!, \code!POS! for \code!(by pos)!, \code!PHS! for \code!(by ph
 \code!KT! and \code!HK! are the scalar text and identity proof of \cref{def:lean-export-net-copy}
 (for \code!hopf...!: $k = 1/d$ and \code!(show k * d = 1 from (...))!); \code!HC! is a coefficient
 hypothesis (\cref{sec:lean-export-net-coef}); \code!KJ(p)! is the $K_j$ proof of the phase of
-node \code!p! (\cref{def:lean-export-net-kj}); \code!DIMS_MUL! is \py!_dims_mul()!.
+node \code!p! (\cref{def:lean-export-net-kj}); \code!DIMS_MUL! is \py!_dims_mul(c)!, \leanx!(by simp only [U, Δ] <;> first | rfl | norm_num | ring)!.
 
 \begin{lstlisting}[style=leannet]
 fusionZ ENV a.ph b.ph r.ph dz w [a.outs] [a.ins] [b.outs] [b.ins] [r.outs] [r.ins] IFACE CHK×4 PHS

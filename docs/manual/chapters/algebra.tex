@@ -460,7 +460,7 @@ Every \py!Scalar! constructor calls \py!sympify! and then:
 \py!+!, \py!-!, unary \py!-!, \py!*!: exact, normalized; a non-\py!Scalar! operand returns \py!NotImplemented!.\\
 \py!__pow__(exponent: int)!: exact integer power; a non-\py!int! or \py!bool! raises \py!ScalarGrammarError!; zero to a negative power raises \py!ScalarDomainError!.\\
 \py!conjugate()!: $\overline{s}$ through \py!sympy.conjugate! ($\omega_d^j\mapsto\omega_d^{-j}$).\\
-\py!substitute(mapping)!: keys are names or bare-symbol scalars; values \py!int!, \py!Rational! or \py!Scalar!; a key naming a bound index raises \py!ScalarSumError!; keys naming no free symbol are ignored; dimension symbols and scalar symbols are substituted alike.\\
+\py!substitute(mapping)!: keys are names or bare-symbol scalars; values \py!int!, \py!Rational! or \py!Scalar!; a key naming a bound index (the variable of any limit of any \py!Sum!) raises \py!ScalarSumError!; keys naming no free symbol are ignored; dimension symbols and scalar symbols are substituted alike.\\
 \py!to_complex()!: \py!complex(expr)!; \py!ScalarDomainError! when symbolic.\\
 \py!__repr__!: \code!Scalar(<expr>)!; when printing raises \py!ValueError! (Python's limit on the digits of an integer converted to text), every rational too long to print is written as the symbol \code!_int_<P>_<Q>!, $P$ and $Q$ the first 32 hex digits of the SHA-256 of the signed big-endian bytes of its numerator and denominator. \py!__str__!: \code!<expr>!.
 \end{signature}
@@ -829,7 +829,7 @@ A \py!Cyclo! is a pair $(n,c)$ of an order $n\ge1$ and a sparse map $c$ from exp
 \py!reduced(m=None) -> tuple[Fraction, ...]!: the coordinates over $\zeta^0,\ldots,\zeta^{\varphi-1}$ of the number (lifted to $\zeta_m$ when given) reduced modulo the cyclotomic polynomial $\Phi_n$, $\varphi=\deg\Phi_n$.\\
 \py!sparse_reduced() -> dict[int, dict[tuple[int, ...], Fraction]]!: the canonical coordinates (\cref{def:algebra-cyclo-basis}).\\
 \py!is_zero!: \py!sparse_reduced()! is empty; computed once per object (slot \code!_zero!). \py!__eq__!: both lifted to the least common order, equal canonical coordinates. \py!__hash__!: \py!hash(n)!.\\
-\py!inverse()!: the inverse by Gauss--Jordan elimination over the basis $\zeta^0,\ldots,\zeta^{\varphi-1}$ (columns $\mathit{self}\cdot\zeta^i$ reduced); zero raises \py!PathSumError("the inverse of zero")!. \py!_cyclo_inverse(c)! computes the same and returns \py!None! for zero.\\
+\py!inverse()!: the inverse by Gauss--Jordan elimination over the basis $\zeta^0,\ldots,\zeta^{\varphi-1}$ (columns $\mathit{self}\cdot\zeta^i$ reduced); zero raises \py!PathSumError("the inverse of zero")!. \py!_cyclo_inverse(c)! is \py!c.inverse()!, \py!None! for zero.\\
 \py!to_complex()!: $\sum_e c_e e^{2\pi ie/n}$ in floating point. \py!__repr__!: \code!Cyclo(<n>, {<e>: Fraction(...), ...})! with exponents ascending.
 \end{signature}
 

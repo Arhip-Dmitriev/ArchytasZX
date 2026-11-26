@@ -535,7 +535,8 @@ param      = name " = " signed-int ;
 role       = name " = " ( "dimension" | "multiplicity" | "exponent" | "phase" | "scalar" ) ;
 node-line  = "n" int SP SP gen SP SP "in: [" port-dims "]" SP SP "out: [" port-dims "]"
              [ SP SP "phase[" expr "]: " ( "0" | "{" p-entries "} turns"
-                                           [ " weight: {" p-entries "}" ] ) ]
+                                           [ " weight: {" p-entries "}" ]
+                                         | "{" name ", " name ": " expr "} turns" ) ]
              [ SP SP "boxes: " mark { " > " mark } ] ;
 port-dims  = [ expr { mark } { ", " expr { mark } } ] ;
 mark       = "!" int ;
@@ -557,7 +558,7 @@ box-line   = IND IND { IND IND } "!" int SP SP "x " expr SP SP
              [ SP SP "parent: !" int " (" ( "missing" | "cycle" ) ")" ] ;
 \end{lstlisting}
 
-\paragraph{Printing rules.} The header counts are exact, the nouns singular for a count of $1$. Every expression is SymPy's \py!sstr! with \code!**! written \code!^!. Parameters are sorted by name. Nodes are sorted by id. A port's marks are the ids of the port-scoped \bboxes{} containing it, ordered by depth and then id; a node's \code!boxes:! chain lists its node-scoped boxes the same way. A phase vector prints \code!0! when it is zero; otherwise its entries sorted by index as \code!i: turns!, then its rule as \code!k: expr! with the first of \code!k!, \code!k1!, \code!k2!, \ldots{} not free in the vector standing for the index, then \code! turns!; a weighted vector adds its weights and weight rule likewise. A wire prints its two ports with the smaller first, ports ordered by node id, then direction (\code!input! before \code!output!), then index; wires are sorted by that pair. Trailing blanks are removed from every line. The pair phase of a \code!Zp! node prints through the same rule as \code!phase[D]: {} turns!, without its expression; the listing reader then refuses the node (\code!a Zp node takes two legs and 'phase{x, y: EXPR}', got ''!), so a listing of a diagram with a \code!Zp! node does not read back.
+\paragraph{Printing rules.} The header counts are exact, the nouns singular for a count of $1$. Every expression is SymPy's \py!sstr! with \code!**! written \code!^!. Parameters are sorted by name. Nodes are sorted by id. A port's marks are the ids of the port-scoped \bboxes{} containing it, ordered by depth and then id; a node's \code!boxes:! chain lists its node-scoped boxes the same way. A phase vector prints \code!0! when it is zero; otherwise its entries sorted by index as \code!i: turns!, then its rule as \code!k: expr! with the first of \code!k!, \code!k1!, \code!k2!, \ldots{} not free in the vector standing for the index, then \code! turns!; a weighted vector adds its weights and weight rule likewise. A wire prints its two ports with the smaller first, ports ordered by node id, then direction (\code!input! before \code!output!), then index; wires are sorted by that pair. Trailing blanks are removed from every line. The pair phase of a \code!Zp! node prints as \code!phase[D]: {x, y: EXPR} turns!, $x$ the first of \code!x!, \code!x1!, \code!x2!, \code!x3! and $y$ the first of \code!y!, \code!y1!, \code!y2!, \code!y3! not free in the expression, standing for \py!INDEX! and \py!INDEX2!; the listing reader reads it back as the same pair phase.
 
 \paragraph{The box forest.} Boxes print depth first, children in ascending id, each line indented two spaces per depth level beyond the base indentation. The roots are the boxes without a parent and the boxes whose parent is missing from the diagram (flag \code!missing!); a parent cycle is cut at its smallest id, which prints as a root with flag \code!cycle!. A port-scoped box lists its ports in port order, a node-scoped box its nodes in id order.
 
@@ -733,7 +734,7 @@ Field & Default & Meaning \\
 \texttt{names} & \texttt{\{\}} & Named diagrams, by name without \texttt{@}. \\
 \texttt{scalable} & \texttt{None} & The scalable form of \azx!translate!. \\
 \texttt{sheet\_steps} & \texttt{[]} & The sheet steps applied to \texttt{scalable}. \\
-\texttt{certificate} & \texttt{None} & The stored certificate (a proof artifact, below). \\
+\texttt{certificate} & \texttt{None} & The stored certificate (a proof artifact, below); \code!prove! and \code!induct! reset it and its witness to \texttt{None}. \\
 \texttt{certificate\_witness} & \texttt{None} & The assignment an induction certificate verifies at. \\
 \texttt{last\_proof} & \texttt{None} & The latest proof outcome, induction result, proof certificate, kernel theorem, refutation, symbolic proof, restricted proof, or finite proof. \\
 \texttt{no\_proof} & \texttt{None} & Why the latest decide or prove built no proof, or \texttt{None}. \\
@@ -898,7 +899,7 @@ rule: NAME
   dimension guards: KIND VALUE, ...
   scalar: S
 \end{lstlisting}
-where an empty list prints \code!none!, a guard without a value prints its kind alone, and the scalar is the rule's introduced scalar, or \code!per match (docs/manual, The Rule Library)! for a template rule whose scalar varies with the match. An unknown rule raises \code!CommandDomainError("no rule 'R'; did you mean 'Q'? (rules lists them)")!. For example, \azx!rules spider_fusion! prints
+where an empty list prints \code!none!, a guard without a value prints its kind alone, and the scalar is the rule's introduced scalar, or \code!per match (docs/manual, The Rule Library)! for a template rule whose scalar varies with the match. \code!rules! and \code!match! also accept a discard rule (\py!MIXED_RULES!). An unknown rule raises \code!CommandDomainError("no rule 'R'; did you mean 'Q'? (rules lists them)")!, the suggestion drawn from both registries. For example, \azx!rules spider_fusion! prints
 \begin{lstlisting}[style=grammar]
 rule: spider_fusion
   quantifiers: leg counts m_a, n_a, m_b, n_b; dimensions d
@@ -1205,12 +1206,14 @@ apply RULE [at INT | at nI, nJ] [with NAME = VALUE, ...] -- rewrite the current 
 check [NAME=VALUE ...] [against TARGET] -- oracle check of start vs current (or current vs
   TARGET) at the sample grid, supplied values overriding
 normalize -- reduce the current diagram to normal form
-decide [against] [TARGET] -- decide equality of start vs current (or current vs TARGET)
+decide [against] [TARGET] [[only] for CLAUSE, ...] -- decide equality of start vs current
+  (or current vs TARGET), restricted to the clauses when given
 saturate -- equality saturation, then extract the cheapest diagram
-prove [exhaustive [algebraic]] [against] [TARGET] -- tactic search for a proof; exhaustive:
-  fair search over every rule, unbounded; algebraic: free values over the algebraic
-  numbers, by iterative deepening
-induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] -- symbolic-n proof by induction
+prove [exhaustive [algebraic]] [against] [TARGET] [[only] for CLAUSE, ...] -- tactic search
+  for a proof, restricted to the clauses when given; exhaustive: fair search over every
+  rule, unbounded; algebraic: free values over the algebraic numbers, by iterative deepening
+induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] [[only] for CLAUSE, ...] -- symbolic-n
+  proof by induction, restricted to the clauses when given
 certificate [emit [derivation|induction|proof] | verify [NAME=VALUE ...] | show | kernel |
   lean [FILE]] -- emit, verify, show, kernel-check or export a certificate to Lean 4
 translate [back | dissolve S | split S FIRST | join S S | enclose nA, nB [x MULT] | kill S |
