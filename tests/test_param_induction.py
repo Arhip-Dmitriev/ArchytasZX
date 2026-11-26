@@ -72,3 +72,10 @@ def test_phase_instance_refuses_copy_index() -> None:
     except kernel.KernelError:
         return
     raise AssertionError("a copy index was taken as a parameter value")
+
+
+def test_opaque_export_of_parametric_induction() -> None:
+    decision = decide_equal(parse_dsl(CHAIN.format(c="3")), parse_dsl(SUM.format(c="3")))
+    assert decision.induction_proof is not None
+    source = kernel.lean(decision.induction_proof, semantic=False)
+    assert "theorem" in source

@@ -2272,6 +2272,14 @@ class _Lean:
             return self.regroup(t)
         if inf.kind == "shift":
             raise KernelError("a shift has no opaque export")
+        if inf.kind in ("phase_instance", "periodic") or (
+            inf.kind.startswith("induction_") and inf.kind != "induction"
+        ):
+            note = {
+                "phase_instance": f"a phase parameter instantiated ({inf.detail})",
+                "periodic": "periodic in its index from checked bases",
+            }.get(inf.kind, f"an {inf.kind} induction")
+            return self.axiom(inf.kind, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind != "induction":
             raise KernelError(f"an {inf.kind} inference has no opaque export")
         return self.induction(t)
