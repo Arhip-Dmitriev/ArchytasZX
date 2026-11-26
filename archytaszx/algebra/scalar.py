@@ -2679,6 +2679,9 @@ def _parity_echelon(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Ex
             others.append(factor)
     if len(rows) < 2 or all(_linear_form(r) is not None for r in rows):
         return term
+    fast = _bit_echelon(rows)
+    if fast is not None:
+        return cast(sp.Expr, sp.Mul(*others, *fast))
 
     def reduced(expr: sp.Expr, values: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
         return _trim_mod(_bit_power_free(expr.xreplace(dict(values))), sp.Integer(2))
@@ -2703,6 +2706,89 @@ def _parity_echelon(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Ex
     deltas = [ModDelta(x + v, 2) for x, v in pivots.items()]
     deltas += [ModDelta(reduced(r, pivots), 2) for r in residual]
     return cast(sp.Expr, sp.Mul(*others, *deltas))
+
+
+_BitPoly = dict[frozenset[sp.Symbol], int]
+
+
+def _bit_poly(expr: sp.Expr) -> _BitPoly | None:
+    """``expr`` as integer coefficients per set of bits, powers read as the bits; None unless an
+    integer polynomial."""
+    gens = sorted(expr.free_symbols, key=lambda s: str(s.name))
+    if not gens:
+        return {frozenset(): int(expr)} if expr.is_Integer and expr else {} if expr == 0 else None
+    if not expr.is_polynomial(*gens):
+        return None
+    poly = sp.Poly(expr, *gens)
+    out: _BitPoly = {}
+    for exps, c in poly.terms():
+        if not c.is_Integer:
+            return None
+        mono = frozenset(g for g, e in zip(gens, exps, strict=True) if e)
+        out[mono] = out.get(mono, 0) + int(c)
+    return {m: c for m, c in out.items() if c}
+
+
+def _bit_expr(p: _BitPoly) -> sp.Expr:
+    return cast(sp.Expr, sp.Add(*(c * sp.Mul(*m) for m, c in p.items())))
+
+
+def _bit_mul(a: _BitPoly, b: _BitPoly) -> _BitPoly:
+    out: _BitPoly = {}
+    for ma, ca in a.items():
+        for mb, cb in b.items():
+            m = ma | mb
+            out[m] = out.get(m, 0) + ca * cb
+    return {m: c for m, c in out.items() if c}
+
+
+def _bit_reduced(p: _BitPoly, values: Mapping[sp.Symbol, _BitPoly]) -> _BitPoly:
+    """`_parity_echelon`'s ``reduced``: simultaneous substitution of ``values``, then
+    :func:`_trim_mod` at 2."""
+    out: _BitPoly = {}
+    for mono, c in p.items():
+        acc: _BitPoly = {frozenset(m for m in mono if m not in values): c}
+        for s in mono:
+            if s in values:
+                acc = _bit_mul(acc, values[s])
+        for m, v in acc.items():
+            out[m] = out.get(m, 0) + v
+    out = {m: c for m, c in out.items() if c}
+    if any(not m for m in out) and len(out) == 1:
+        return out
+    if all(abs(c) < 2 for c in out.values()):
+        return out
+    return {m: k for m, c in out.items() if (k := (abs(c) % 2) * (1 if c > 0 else -1))}
+
+
+def _bit_echelon(rows: list[sp.Expr]) -> list[sp.Expr] | None:
+    """The deltas of `_parity_echelon` over ``rows``, on :func:`_bit_poly` forms; None when a row
+    is not an integer polynomial."""
+    polys = []
+    for row in sorted(rows, key=sp.default_sort_key):
+        p = _bit_poly(sp.expand(row))
+        if p is None:
+            return None
+        polys.append(p)
+    pivots: dict[sp.Symbol, _BitPoly] = {}
+    residual: list[_BitPoly] = []
+    for p in polys:
+        row = _bit_reduced(p, pivots)
+        singles = [
+            next(iter(m))
+            for m, c in row.items()
+            if len(m) == 1 and c == 1 and not any(next(iter(m)) in o for o in row if o != m)
+        ]
+        if not singles:
+            residual.append(row)
+            continue
+        x = max(singles, key=lambda s: str(s.name))
+        value = {m: c for m, c in row.items() if m != frozenset({x})}
+        pivots = {s: _bit_reduced(v, {x: value}) for s, v in pivots.items()}
+        pivots[x] = value
+    deltas = [ModDelta(x + _bit_expr(v), 2) for x, v in pivots.items()]
+    deltas += [ModDelta(_bit_expr(_bit_reduced(r, pivots)), 2) for r in residual]
+    return deltas
 
 
 def _is_delta_power(node: sp.Expr) -> bool:

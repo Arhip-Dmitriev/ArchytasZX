@@ -264,3 +264,32 @@ def test_monomial_ratio_is_the_cancelled_quotient() -> None:
         assert _ratio(a, m) == sp.cancel(a / m)
     assert _ratio(i + d, d) == sp.cancel((i + d) / d)
     assert ModDelta(i + d * k, d**2) is ModDelta(i + d * k, d**2)
+
+
+def test_bit_echelon_matches_sympy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_parity_echelon on bit-polynomial rows gives the same term through _bit_echelon as
+    through the sympy expansion path."""
+    from archytaszx.algebra import scalar
+
+    bits = sp.symbols("_b0:6", integer=True, nonnegative=True)
+    ranges = {b: sp.Integer(2) for b in bits}
+    rng = random.Random(7)
+
+    def row() -> sp.Expr:
+        out = sp.Integer(rng.randint(0, 1))
+        for _ in range(rng.randint(2, 4)):
+            m = sp.Integer(rng.choice([1, 1, -1, 2, 3]))
+            for b in rng.sample(bits, rng.randint(1, 2)):
+                m *= b ** rng.randint(1, 2)
+            out += m
+        return out
+
+    for _ in range(60):
+        rows = [row() for _ in range(rng.randint(2, 4))]
+        rows.append(bits[0] * bits[1] + bits[2])
+        term = sp.Mul(*(ModDelta(r, 2) for r in rows))
+        fast = scalar._parity_echelon(term, ranges)
+        with monkeypatch.context() as m:
+            m.setattr(scalar, "_bit_echelon", lambda _rows: None)
+            slow = scalar._parity_echelon(term, ranges)
+        assert fast == slow
