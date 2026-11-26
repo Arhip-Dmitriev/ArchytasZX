@@ -351,22 +351,36 @@ $D = \sum_i c_i r_i$, or \lexpy!None!, which raises
 \end{algorithm}
 
 \begin{algorithm}[\texttt{\_lift}: cofactors by Buchberger's algorithm]\label{alg:lean-export-lift}
-Polynomials are \lexpy!sp.Poly! over $\Q$ in the generators, ordered by \lexcode!grevlex!.
+Polynomials are dictionaries from exponent tuples to \lexpy!Fraction! coefficients over the
+generators, ordered by \lexcode!grevlex! (\lexpy!_grevlex!).
 \begin{enumerate}
-\item The basis starts as the relations $r_i$, each with the unit cofactor vector $e_i$.
-\item \emph{Reduction} of $(f, c)$ by the basis: while $f\neq 0$, take its leading monomial
-$m$ with coefficient $\lambda$; the first nonzero basis element $(g, c_g)$ whose leading
-monomial divides $m$ gives $t = (\lambda/\mathrm{LC}(g))\, m/\mathrm{LM}(g)$, $f \gets f - tg$,
-$c \gets c - t c_g$; without a divisor, the leading term moves to the remainder.
-\item \emph{Completion.} Pairs $(i,j)$, $j<i$, are popped from the end of a list. A pair whose
-leading monomials are coprime (product criterion) is skipped. Otherwise the S-polynomial with
-its cofactors is reduced; a nonzero remainder joins the basis with pairs against every earlier
-element. The loop stops when no pair is left or after 400 popped pairs.
-\item Reduce the target with zero cofactors; a nonzero remainder returns \lexpy!None!; otherwise
-the result is the negated cofactors (the invariant is $f = D + \sum c_i r_i$).
+\item The basis starts as the nonzero relations $r_i$, each with the unit cofactor vector
+$e_i$ and sugar its total degree, each added by the update of step 4.
+\item \emph{Reduction} of $(f, c)$ by a list of basis elements: while $f\neq 0$, take its
+leading monomial $m$ with coefficient $\lambda$; the first listed element $(g, c_g)$ whose
+leading monomial divides $m$ gives $t = (\lambda/\mathrm{LC}(g))\, m/\mathrm{LM}(g)$,
+$f \gets f - tg$, $c \gets c - t c_g$; without a divisor, the leading term moves to the
+remainder.
+\item \emph{Division first.} Reduce the target with zero cofactors by the relations in order;
+a zero remainder returns the negated cofactors (the invariant is $f = D + \sum c_i r_i$).
+\item \emph{Update} (Gebauer--Möller) on adding $h$: of the new pairs $(h,g)$, $g$ active, a
+pair is dropped when its leading monomials are not coprime and the lcm of another new pair, not
+yet dropped, divides its lcm; then coprime pairs are dropped (product criterion). An old pair
+$(a,b)$ is dropped when $\mathrm{LM}(h)$ divides $\mathrm{lcm}(a,b)$ and differs from both
+$\mathrm{lcm}(a,h)$ and $\mathrm{lcm}(b,h)$ (chain criterion). Active elements whose leading
+monomial $\mathrm{LM}(h)$ divides leave the active list; $h$ joins it.
+\item \emph{Completion.} The pair of least (sugar, \lexcode!grevlex! lcm) is taken (normal
+strategy with sugar; a pair's sugar is
+$\max(s_a + \deg\mathrm{lcm} - \deg\mathrm{LM}(a),\ s_b + \deg\mathrm{lcm} - \deg\mathrm{LM}(b))$).
+Its S-polynomial with cofactors is reduced by the active elements; a nonzero remainder is added
+with the pair's sugar. The loop stops when no pair is left.
+\item Reduce the target with zero cofactors by every basis element in order of addition; a
+nonzero remainder returns \lexpy!None!; otherwise the negated cofactors.
 \end{enumerate}
-The bound of 400 pairs makes the procedure incomplete: an identity implied by the relations
-can fail when the basis is not complete at the bound.
+The loop terminates: each added element's leading monomial is divisible by no active one, so
+the ideal of active leading monomials grows strictly, and ascending chains of monomial ideals
+stop (Dickson). The active list is then a Gröbner basis, so membership is decided exactly.
+When step 3 succeeds, the cofactors are those of division by the relations in order.
 \end{algorithm}
 
 \begin{algorithm}[\texttt{\_gauss\_relation(p, m, atoms, poly)}]\label{alg:lean-export-gauss}
