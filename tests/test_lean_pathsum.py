@@ -243,6 +243,19 @@ def test_a_mixed_network_exports_against_its_qubit_side() -> None:
         _mixed("1")
 
 
+def _mixed_diagrams() -> str:
+    right = parse_dsl("a = Z(1 -> 1, literal 2); scalar 3")
+    return export_mixed_net(parse_dsl(_MIXED), right, "mixed", diagrams=True)
+
+
+def test_a_mixed_network_export_ends_in_dequal_of_the_diagrams() -> None:
+    from archytaszx.semantics import kernel
+
+    source = _mixed_diagrams()
+    assert "theorem mixed_diagrams : DEqual E (1) DL ((3 : ℂ)) DR" in source
+    assert kernel.diagram_level(source) and not kernel.diagram_level(_mixed("3"))
+
+
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
@@ -261,6 +274,15 @@ def test_lean_proves_a_qudit_pair(name: str, tmp_path: object) -> None:
 def test_lean_proves_a_mixed_network_pair(tmp_path: object) -> None:
     ok, output = L.check(_mixed("3"), f"{tmp_path}/mixed.lean")
     assert ok, output
+
+
+@needs_lean
+def test_lean_refuses_a_tampered_mixed_diagram_literal(tmp_path: object) -> None:
+    source = _mixed_diagrams()
+    tampered = source.replace("⟨3, .Z, 6, 0, [6], [6]⟩", "⟨3, .X, 6, 0, [6], [6]⟩", 1)
+    assert tampered != source
+    ok, _ = L.check(tampered, f"{tmp_path}/mixed_tampered.lean")
+    assert not ok
 
 
 @needs_lean

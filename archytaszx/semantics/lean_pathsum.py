@@ -1986,6 +1986,47 @@ def iso_diagram_lines(body: NetBody, name: str) -> list[str]:
     ]
 
 
+def labelled_diagram_lines(
+    body: NetBody, name: str, dims: Sequence[Mapping[int, int]]
+) -> tuple[list[str], dict[int, int]]:
+    """The theorem ``name_diagrams``: ``DEqual`` at ``E`` of the engine's diagrams, each
+    literal's legs of dimension index ``dims[side]`` at their network labels, through each
+    literal's network renamed onto the export's (``iso``) and ``DEqual_iff``; and the labels of
+    the literals' networks with their dimension indices, for ``E``'s table. Empty when either
+    diagram has no literal (see :func:`literal`)."""
+    if len(body.sides) != 2:
+        return [], {}
+    lits = [
+        literal(tag, d, side.nodes, side.summed, dim, label0)
+        for tag, (d, side, label0), dim in zip("LR", body.sides, dims, strict=True)
+    ]
+    if lits[0] is None or lits[1] is None:
+        return [], {}
+    lit_l, lit_r = lits[0], lits[1]
+    labs: dict[int, int] = {}
+    for (_d, side, _o), lit, dim in zip(body.sides, (lit_l, lit_r), dims, strict=True):
+        for j, x in enumerate(side.summed):
+            labs[lit.off + j] = dim[x]
+
+    def iso(tag: str, s: str, lit: Literal) -> str:
+        order = list(range(len(body.sides["LR".index(tag)][1].nodes)))
+        return (
+            f"(iso E ({s}) (D{tag}.toNet {lit.off}) N{tag} {lit.perm} {order} (by decide +kernel))"
+        )
+
+    lines = [
+        *lit_l.lines,
+        *lit_r.lines,
+        "/-- The theorem on the engine's diagrams, through `iso` and `DEqual_iff`. -/",
+        f"theorem {name}_diagrams : DEqual E ({body.s_l}) DL ({body.s_r}) DR :=",
+        f"  (DEqual_iff (o₁ := {lit_l.off}) (o₂ := {lit_r.off}) (L := labs) rfl DL_chk DR_chk).2",
+        f"    (({iso('L', body.s_l, lit_l)}.trans {name}).trans",
+        f"      {iso('R', body.s_r, lit_r)}.symm)",
+        "",
+    ]
+    return lines, labs
+
+
 def net_env(
     phases: Sequence[tuple[str, int]],
     labs: dict[int, int],
@@ -3670,24 +3711,38 @@ def mixed_net_body(
         "  linear_combination key",
         "",
     ]
-    return NetBody(lines, labs, s_l, s_r, m), amp
+    sides = ((left, side_l, MIX_DIAGRAM_LABEL0), (right, side_r, MIX_DIAGRAM_LABEL0 << 1))
+    return NetBody(lines, labs, s_l, s_r, m, sides=sides), amp
 
+
+MIX_DIAGRAM_LABEL0 = 1 << 24
+"""The first wire label of the mixed side's diagram literal's network; the qubit side's is
+twice it."""
 
 MIX_DIMS = "if k = 1 then 2 else k"
 """The dimension of a label's value in a mixed network proof: 2 for one bit, else itself."""
 
 
-def export_mixed_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+def export_mixed_net(
+    left: Diagram, right: Diagram, name: str = "main", diagrams: bool = False
+) -> str:
     """Lean 4 source proving ``Equal E sL NL sR NR`` for a diagram on dimensions 2, 3 and 6 against
     a qubit diagram (ArchytasZX/PathSumMixedNet.lean, see :func:`mixed_net_body`); raises
     :class:`PathSumUnsupported` outside that class or when the sums do not reduce to one
-    canonical form."""
+    canonical form; with ``diagrams``, then ``name_diagrams`` over the engine's diagrams
+    (:func:`labelled_diagram_lines`), their networks' labels added to ``E``'s table."""
     from archytaszx.semantics.pathsum_mixed import is_mixed
 
     if not is_mixed(left):
         raise PathSumUnsupported("the mixed network export takes a mixed left side")
     phases: list[tuple[str, int]] = []
     body, amp = mixed_net_body(left, right, name, phases)
+    extra: list[str] = []
+    if diagrams:
+        side_l, side_r = body.sides[0][1], body.sides[1][1]
+        dims = (side_l.dims, {lab: 1 << k for lab, k in side_r.k_of.items()})
+        extra, more = labelled_diagram_lines(body, name, dims)
+        body.labs.update(more)
     sc = _scalars()
     support = any("afinalS_perm" in ln for ln in body.lines)
     ns = "ArchytasZX.PathSumMixedProof"
@@ -3713,6 +3768,7 @@ def export_mixed_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         *amp.lean_def(sc),
         *net_env(phases, body.labs, MIX_DIMS, body.m),
         *body.lines,
+        *extra,
         f"end {ns}",
         "",
     ]
