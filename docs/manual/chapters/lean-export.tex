@@ -83,7 +83,7 @@ Verdict or theorem class & Exporter & Lean module (imported) & Status \\
 \midrule
 \endhead
 Path-sum \azx!equal!, qubit or qudit, one canonical form &
-\lexpy!export_pair! & \file{ArchytasZX.PathSum} & trace only; tests only \\
+\lexpy!export_pair! & \file{ArchytasZX.PathSum} & trace only; tests only (Lean-checked) \\
 Path-sum \azx!equal!, qubit, no atoms, no [Quarter] &
 \lexpy!export_proof!, \lexpy!export_sums! & \file{ArchytasZX.PathSumChain} & certified (value equality of path sums); tests only \\
 Path-sum \azx!equal!, qubit, amplitude atoms or [Quarter], [Turn], [Average] on a context &
@@ -433,8 +433,11 @@ Name & Value & Meaning \\
 \lexpy!NODE_CHUNK! & 25 & node facts per chunk theorem of a network fact \\
 \lexpy!MIX_FRESH! & $2^{12}$ & offset of a mixed side's X-spider variables past its label base \\
 \lexpy!MIX_ENT! & $2^{13}$ & offset of a mixed side's indicator-entry variables past its label base \\
-left label base & $2^{16}$ & label of the left network's summed wire $w$ is $2^{16}+w$ \\
-right label base & $2^{17}$ & the same for the right network \\
+\lexpy!MIX_SPAN! & $2^{16}$ & labels of a mixed side past its label base \\
+left label base & $2^{16}$ & label of the left network's summed wire $w$ is $2^{16}+w$
+(\lexpy!MIX_LABEL0! for a mixed side) \\
+right label base & $2^{17}$ & the same for the right network
+(\lexpy!MIX_LABEL0!${}+{}$\lexpy!MIX_SPAN! after a mixed side) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1160,8 +1163,12 @@ boundary port of another dimension raises
 order is label $\mathit{label0}+w$ with its ports' dimension, summed; a wire on a boundary port
 raises \lexcode!a wire on a boundary port!, a wire whose ends differ in dimension
 \lexcode!a wire joins two dimensions!, and at least \lexpy!MIX_FRESH! wires
-\lexcode!too many wires for the mixed label offsets!. Fresh X variables start at
-$\mathit{label0}+$\lexpy!MIX_FRESH!, entry variables at $\mathit{label0}+$\lexpy!MIX_ENT!.
+\lexcode!too many wires for the mixed label offsets!, as does a boundary of more than
+$\mathit{label0}$ ports. Fresh X variables start at $\mathit{label0}+$\lexpy!MIX_FRESH!, entry
+variables at $\mathit{label0}+$\lexpy!MIX_ENT!; after the nodes, X variables past
+$\mathit{label0}+$\lexpy!MIX_ENT! raise \lexcode!too many X spiders for the mixed label offsets!
+and entry variables past $\mathit{label0}+$\lexpy!MIX_SPAN! raise
+\lexcode!too many indicator entries for the mixed label offsets!.
 \lexcode!path3! starts as the summed labels of dimension 3 or 6.
 \item \emph{Nodes} in sorted order. A node without ports raises \lexcode!node <id> has no legs!; a
 weighted phase raises \lexcode!node <id> carries weights!. Let $k$ be the dimension of the first
@@ -1928,8 +1935,8 @@ must end without sums in fewer than \lexpy!RG_FUEL! steps. The fuel is the large
 least 1.
 \item Every factor of the pinned terms must have a positive constant modulus $M$. A label $x$ of
 $ranges$ is \emph{split} when some factor has the monomial $c\,x$ with $M \nmid c\,D_x$.
-\item $r$ is the split labels, sorted, with their ranges; $\mathit{cases} = \prod D_x$. Fail when
-$r$ is empty, $\mathit{cases} > \mathit{RG\_CASES}$ or $\mathit{cases}\cdot|e| >
+\item $r$ is the split labels, sorted, with their ranges; $\mathit{cases} = \prod D_x$. An empty
+$r$ gives one case, the whole pinned residual. Fail when $\mathit{cases} > \mathit{RG\_CASES}$ or $\mathit{cases}\cdot|e| >
 \mathit{RG\_WORK}$.
 \item For each case of \lexpy!rsplit(r, pinned)!: prune the terms; an empty case has the
 certificate $(0, ((), (), ()))$; any other needs \lexpy!fz_cert!.
@@ -3467,9 +3474,11 @@ theorems about \emph{linked diagrams} (\file{ArchytasZX/Linked.lean} and its sib
 \module{archytaszx.semantics.lean_regroup} (box-group regroup) and
 \module{archytaszx.semantics.lean_split} (power split). Each export returns the Lean source or
 \lexpy!None! when the step lies outside its form; it catches \lexpy!LinkedUnsupported! itself.
-Except for the pair-box conditions \lexlean!PairFirst! and \lexlean!PairLast!
-(\cref{sec:lean-export-pair}), every Lean side condition is first checked on a Python mirror of
-its Lean definition, field by field, and then in Lean by \lexlean!decide +kernel!. Every file
+Every Lean side condition is first checked on a Python mirror of its Lean definition, field
+by field (for the pair-box conditions \lexlean!PairFirst! and \lexlean!PairLast! of
+\cref{sec:lean-export-pair}, \lexpy!pair_ok! checks \lexlean!multL!, \lexlean!multR! and
+\lexlean!form!: each pair leg a leg of \lexlean!Lb! on a node of $B$ with leg chain
+$[\mathit{mb}]$), and then in Lean by \lexlean!decide +kernel!. Every file
 imports \lexlean!ArchytasZX!, opens namespace \lexlean!ArchytasZX.Export! and
 \lexlean!open ArchytasZX ArchytasZX.LDiagram!.
 
