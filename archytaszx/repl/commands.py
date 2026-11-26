@@ -679,7 +679,7 @@ def _cmd_purify(session: Session, args: str) -> Outcome:
 
 
 def _rule_lines(name: str) -> list[str]:
-    rule = RULES[name]
+    rule = lookup_rule(name)
     guards = ", ".join(
         g.kind.value if g.value is None else f"{g.kind.value} {g.value}"
         for g in rule.dimension_guards
@@ -707,9 +707,12 @@ def _rule_scalar(rule: Rule) -> str:
 
 
 def _rule_name(text: str) -> str:
+    from archytaszx.rewrite.rules_discard import MIXED_RULES
+
     name = text.strip()
-    if name not in RULES:
-        raise CommandDomainError(f"no rule {name!r}{_did_you_mean(name, RULES)} (rules lists them)")
+    if name not in RULES and name not in MIXED_RULES:
+        known = [*RULES, *MIXED_RULES]
+        raise CommandDomainError(f"no rule {name!r}{_did_you_mean(name, known)} (rules lists them)")
     return name
 
 
@@ -730,7 +733,7 @@ def _cmd_match(session: Session, args: str) -> Outcome:
     lines: list[str] = []
     for name in names:
         try:
-            matches = RULES[name].pattern.find_matches(current)
+            matches = lookup_rule(name).pattern.find_matches(current)
         except _ENGINE_ERRORS as exc:
             lines.append(f"{name}: matcher refused ({_one_line(exc)})")
             continue
@@ -1118,6 +1121,7 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
         )
     )
     session.last_proof = outcome
+    session.certificate, session.certificate_witness = None, None
     payload = _Pair("prove", left, right, outcome)
     head = (
         f"prove: {outcome.status.value}{_for_text(outcome.restriction, family_first)}: "
@@ -1223,6 +1227,7 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
         left, right, index=index, witness=witness, restrict=restriction, family_first=family_first
     )
     session.last_proof = result
+    session.certificate, session.certificate_witness = None, None
     session.induct_pair = (left, right)
     session.induct_restriction = None
     rr = result.restriction if isinstance(result.restriction, Restriction) else None
@@ -2170,16 +2175,17 @@ HELP: Mapping[str, str] = MappingProxyType(
         "check": "check [NAME=VALUE ...] [against TARGET] -- oracle check of start vs current "
         "(or current vs TARGET) at the sample grid, supplied values overriding",
         "normalize": "normalize -- reduce the current diagram to normal form",
-        "decide": "decide [against] [TARGET] -- decide equality of start vs current (or "
-        "current vs TARGET)",
+        "decide": "decide [against] [TARGET] [[only] for CLAUSE, ...] -- decide equality of "
+        "start vs current (or current vs TARGET), restricted to the clauses when given",
         "saturate": "saturate -- equality saturation, then extract the cheapest diagram",
         "prove": (
-            "prove [exhaustive [algebraic]] [against] [TARGET] -- tactic search for a proof; "
+            "prove [exhaustive [algebraic]] [against] [TARGET] [[only] for CLAUSE, ...] -- "
+            "tactic search for a proof, restricted to the clauses when given; "
             "exhaustive: fair search over every rule, unbounded; algebraic: free values over "
             "the algebraic numbers, by iterative deepening"
         ),
-        "induct": "induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] -- symbolic-n proof by "
-        "induction",
+        "induct": "induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] [[only] for CLAUSE, "
+        "...] -- symbolic-n proof by induction, restricted to the clauses when given",
         "certificate": "certificate [emit [derivation|induction|proof] | verify [NAME=VALUE "
         "...] | show | kernel | lean [FILE]] -- emit, verify, show, kernel-check or export a "
         "certificate to Lean 4",

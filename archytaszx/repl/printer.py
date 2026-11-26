@@ -58,7 +58,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError
-from archytaszx.algebra.phase import INDEX, Phase, PhaseError, PhaseVector
+from archytaszx.algebra.phase import INDEX, INDEX2, PairPhase, Phase, PhaseError, PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import BangBox, BangBoxError, Mult
 from archytaszx.diagram.compare import compare_structure
@@ -1082,7 +1082,7 @@ def to_dirac_source(diagram: Diagram) -> str | None:
         raise PrinterDomainError(f"cannot emit parser source: {exc}") from exc
 
 
-def _traced(text: str, env: Sequence[int], unicode: bool) -> str:
+def _traced(text: str, env: Sequence[int]) -> str:
     """``text`` inside the partial trace over the environment outputs ``env`` (from 1)."""
     where = ", ".join(str(i + 1) for i in env)
     noun = "output" if len(env) == 1 else "outputs"
@@ -1101,8 +1101,8 @@ def dirac(diagram: Diagram, *, unicode: bool = False, bound: bool = True) -> Dir
         inner = dirac(pure, unicode=unicode, bound=bound)
         instance = inner.instance_text
         if instance is not None:
-            instance = _traced(instance, env, unicode)
-        return DiracRendering(inner.term, None, _traced(inner.text, env, unicode), instance, None)
+            instance = _traced(instance, env)
+        return DiracRendering(inner.term, None, _traced(inner.text, env), instance, None)
     term = dirac_term(diagram)
     name = recognize(diagram)
     formula = render_term(term, unicode=unicode)
@@ -1181,9 +1181,18 @@ def _listing_refs(refs: Sequence[PortRef]) -> str:
 
 
 def _listing_phase(phase: PhaseVector | None) -> str:
-    """``  phase[d]: {1: 1/3} turns``, ``  phase[d]: 0`` for a zero vector, empty for None."""
+    """``  phase[d]: {1: 1/3} turns``, ``  phase[d]: {x, y: EXPR} turns`` for a pair phase,
+    ``  phase[d]: 0`` for a zero vector, empty for None."""
     if phase is None:
         return ""
+    if isinstance(phase, PairPhase):
+        turns = phase.pair.to_sympy_turns()
+        taken = {str(v) for v in turns.free_symbols}
+        x = next(n for n in ("x", "x1", "x2", "x3") if n not in taken)
+        y = next(n for n in ("y", "y1", "y2", "y3") if n not in taken)
+        named = turns.subs({INDEX: sp.Symbol(x), INDEX2: sp.Symbol(y)})
+        body = _listing_expr(sp.sstr(named))
+        return f"  phase[{_listing_expr(phase.dim)}]: {{{x}, {y}: {body}}} turns"
     if phase.is_zero:
         return f"  phase[{_listing_expr(phase.dim)}]: 0"
     parts = [

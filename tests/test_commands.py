@@ -1804,3 +1804,42 @@ class TestProofText:
         assert "Proof by induction on n." in text
         assert "Base case (n = 0)." in text and "Inductive step." in text
         assert text.endswith("QED  (checked by replay)")
+
+
+FUSION = (
+    "load a = Z(1 -> 1, d); b = Z(1 -> 1, d); wire a.out0 -- b.in0; inputs a.in0; outputs b.out0"
+)
+
+
+class TestCleanup:
+    def test_prove_drops_the_emitted_certificate(self) -> None:
+        session = Session()
+        run(session, FUSION)
+        run(session, "apply spider_fusion")
+        assert run(session, "prove").ok
+        assert run(session, "certificate emit").ok
+        assert session.certificate is not None
+        assert run(session, "prove").ok
+        assert session.certificate is None
+
+    def test_induct_drops_the_emitted_certificate(self) -> None:
+        session = Session()
+        run(session, BOXED)
+        assert run(session, "induct d=2").ok
+        assert run(session, "certificate emit").ok
+        assert run(session, "induct d=2").ok
+        assert session.certificate is None
+
+    def test_rules_names_a_discard_rule(self) -> None:
+        out = run(Session(), "rules discard_cx")
+        assert out.ok, out
+
+    def test_help_names_the_for_clauses(self) -> None:
+        for name in ("prove", "induct", "decide"):
+            assert "[[only] for CLAUSE, ...]" in C.HELP[name], name
+
+    def test_a_pair_phase_listing_round_trips(self) -> None:
+        g = parse_diagram("g = Zp(1 -> 1, d) phase{x, y: x*y/d}; inputs g.in0; outputs g.out0")
+        text = render_graph(g)
+        assert "{x, y: x*y/d} turns" in text, text
+        assert render_graph(parse_diagram(text)) == text
