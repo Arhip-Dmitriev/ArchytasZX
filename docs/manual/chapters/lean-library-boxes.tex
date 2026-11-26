@@ -829,14 +829,6 @@ the slot digits of a bundled assignment in key order, with
 \]
 for $\beta$ in range. \lbx!slotDig_lt! bounds one slot digit.
 
-\begin{definition}[Family equality of diagrams]\label{def:boxes-DEqualF}
-For environments $E(\sigma)$ and multiplicities $M(\sigma)$ indexed by an assignment $\sigma$ of the multiplicity symbols,
-\begin{align*}
-&\mathit{DEqualF}(E,M,s_1,D_1,s_2,D_2)\\
-&\qquad\iff\forall\sigma,\ \mathit{DEqual}_{E(\sigma)}\bigl(s_1(\sigma),\mathit{expandK}(M\sigma,D_1),s_2(\sigma),\mathit{expandK}(M\sigma,D_2)\bigr).
-\end{align*}
-\end{definition}
-
 \paragraph{Exporter.} \module{archytaszx.semantics.lean_net} restates a family theorem on the engine's boxed diagrams in \py!family_diagrams!. It emits each side's boxed diagram literal and the two facts \lbx!Dx_net : Dx.toNetB off = Nx! and \lbx!Dx_ok : Dx.FamOK FC off! (\py!boxed_literal!, \cref{sec:boxes-bbridge}), compares the Python mirrors of \lbx!keySig! and \lbx!bndData! (\py!_BoxedMirror!) and emits nothing when they differ, and otherwise emits
 \begin{lstlisting}[style=leanbox]
 theorem name_diagrams :
@@ -873,7 +865,7 @@ When the ends are distinct, a boundary port is located at its slot (\lbx!locate_
 \end{definition}
 
 \begin{definition}[Diagram bridge]\label{def:boxes-bridgeD}
-\lbx!DBridge.legs n! lists the output then input ports of $n$. \lbx!nodeOKD P K b off WB T D n m! holds when $m$ has $n$'s kind, dimension and phase index, as many outputs and inputs, and each leg $k$ of $n$ is \lbx!legOK! at the matching label of $m$, with dimension index $\mathit{ent}(b,T,\text{label})$. \lbx!bridgeD P K b off WB T D N L! is the conjunction:
+\lbx!DNode.legs n! (\file{Elim.lean}) lists the output then input ports of $n$. \lbx!nodeOKD P K b off WB T D n m! holds when $m$ has $n$'s kind, dimension and phase index, as many outputs and inputs, and each leg $k$ of $n$ is \lbx!legOK! at the matching label of $m$, with dimension index $\mathit{ent}(b,T,\text{label})$. \lbx!bridgeD P K b off WB T D N L! is the conjunction:
 \begin{enumerate}
 \item $|D.\mathit{bnd}|\le\mathit{off}$;
 \item the node ids increase (\lbx!incrL!);
@@ -1893,7 +1885,7 @@ Lemma & Statement\\
 \lbx!copyKind_ne! & \lbx!copyKind b! $\Rightarrow b\ne\mathrm B\wedge b\ne\mathrm S$\\
 \lbx!Spec.legsOK_append!, \lbx!Spec.legsOK_cons! & \lbx!legsOK! of a concatenation (equal first lengths) and of a cons\\
 \lbx!Spec.legsOK_split!, \lbx!Spec.legsOK_len! & \lbx!legsOK! against left-padded chains splits into plain head legs and the bundled tail; $|cs|\le|ls|$\\
-\lbx!Spec.plain_of_legsOK!, \lbx!Spec.legs_plain! & legs against empty chains have empty chain and are not bundles\\
+\lbx!Spec.plain_of_legsOK! & legs against empty chains have empty chain\\
 \lbx!Spec.chain_of_legsOK! & a zipped leg has its stated chain\\
 \lbx!Spec.legsOK_not_isB! & legs whose chains avoid $m$ are not bundles\\
 \lbx!Spec.dropM_not_isB! & the legs \lbx!dropM! keeps are not bundles\\
@@ -1981,7 +1973,6 @@ Lemma & Statement\\
 \lbx!all_zip_get! & an \lbx!all! over a zip holds at each common index\\
 \lbx!wire_ends_mem! & both ends of wire $j$ are in \lbx!ends!\\
 \lbx!lookup_of_mem! & with distinct keys, $(l,d)\in L\Rightarrow L.\mathit{lookup}(l)=\mathit{some}\ d$\\
-\lbx!BBridge.find?_congr′! & \lbx!find?! under predicates that agree on the list\\
 \lbx!foldr_pick_mem!, \lbx!foldr_pick_none! & the least-id fold returns a member; it returns \lbx!none! only on the empty list\\
 \midrule
 \multicolumn{2}{@{}l}{\file{ChainEvery.lean}}\\

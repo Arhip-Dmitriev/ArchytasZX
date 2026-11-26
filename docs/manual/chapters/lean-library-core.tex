@@ -165,8 +165,8 @@ imports, then a module docstring \code|/-! ... -/| headed by a Markdown title, t
 direct imports, its line count, its number of top-level theorems and of top-level definitions
 (\lean|def|, \lean|abbrev|, \lean|structure|, \lean|inductive|), and the chapter that specifies it.
 Imports from Mathlib are counted, not named, except in \texttt{Net}, which carries all 43
-Mathlib imports of the foundation. The library has 79{,}797 lines, 3{,}971 top-level theorems and
-1{,}994 top-level definitions. \texttt{Light} has no declarations: it imports 87 modules, none of which imports \texttt{Cyclo} or \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). The modules \texttt{AdderFamEnv}, \texttt{FamDiagram}, \texttt{FamExpandEq}, \texttt{FamFcaExpand}, \texttt{LinkedMerge}, and \texttt{LinkedPair} also avoid \texttt{Cyclo} and \texttt{NumField} and are not imported by \texttt{Light}. \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
+Mathlib imports of the foundation. The library has 79{,}748 lines, 3{,}968 top-level theorems and
+1{,}989 top-level definitions. \texttt{Light} has no declarations: it imports the 96 modules that import neither \texttt{Cyclo} nor \texttt{NumField} directly or indirectly; the benchmark's Lean check tries it in place of the full library (\cref{ch:bench-pipeline}). \Cref{fig:lean-core-spine-a,fig:lean-core-spine} draw the import structure of the modules
 of this chapter.
 
 {\small
@@ -193,10 +193,10 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{Assume} & Bundle & 96 & 4 & 4 & C \\
 \texttt{Ball} & Cyclo, 2 Mathlib & 280 & 36 & 4 & C \\
 \texttt{Bialgebra} & ZXRules & 189 & 4 & 0 & C \\
-\texttt{BoxedBridge} & FamK, DiagramBridge & 631 & 27 & 18 & B \\
+\texttt{BoxedBridge} & FamK, DiagramBridge & 624 & 26 & 18 & B \\
 \texttt{BoxFree} & Induct & 154 & 7 & 0 & B \\
 \texttt{Bridge} & Expand & 133 & 0 & 16 & B \\
-\texttt{Bundle} & WZ & 1876 & 109 & 46 & B \\
+\texttt{Bundle} & WZ & 1872 & 108 & 46 & B \\
 \texttt{ChainBox} & Bridge & 85 & 2 & 7 & B \\
 \texttt{ChainBridge} & ChainForm, ChainLabel, PeriodicChain & 244 & 14 & 14 & B \\
 \texttt{ChainEvery} & ChainLink & 313 & 26 & 9 & B \\
@@ -216,7 +216,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{CopyPin} & Ball, Mixed, FamK & 128 & 6 & 0 & B \\
 \texttt{Cyclo} & Bundle, 1 Mathlib & 451 & 47 & 11 & C \\
 \texttt{Diagram} & Net & 246 & 6 & 20 & C \\
-\texttt{DiagramBridge} & Diagram & 476 & 17 & 14 & B \\
+\texttt{DiagramBridge} & Diagram, Elim & 472 & 17 & 13 & B \\
 \texttt{Digits} & Elim & 196 & 13 & 12 & C \\
 \texttt{Elim} & Bridge, WZ & 331 & 9 & 8 & C \\
 \texttt{Expand} & Diagram & 159 & 0 & 20 & C \\
@@ -226,14 +226,14 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{FamDiagram} & OrderK, PairBox & 172 & 8 & 19 & B \\
 \texttt{FamExpandEq} & FamDiagram & 68 & 7 & 0 & B \\
 \texttt{FamFcaExpand} & FamExpandEq & 135 & 14 & 4 & B \\
-\texttt{FamK} & OrderK & 243 & 12 & 2 & B \\
+\texttt{FamK} & OrderK & 237 & 12 & 1 & B \\
 \texttt{FuseB} & Unfuse & 284 & 14 & 1 & C \\
 \texttt{Gather} & PortBox & 246 & 22 & 1 & C \\
 \texttt{GaussSign} & Cyclo, PathSumQudit & 174 & 8 & 4 & C \\
 \texttt{Hopf} & Bialgebra & 245 & 10 & 0 & C \\
 \texttt{Induct} & NodeBox & 299 & 15 & 5 & B \\
 \texttt{Iso} & Net & 156 & 7 & 5 & C \\
-\texttt{Light} & Net, Iso, Rules, Closed, ZXRules, Bialgebra, Hopf, WRules, WAssoc, WFuse, Connective, WZ, Bundle, Unfuse, FuseB, SymNet, SymChunk, SymHint, SymF2, SymF2Chain, SymF2Bridge, DiagramBridge, Port, Assume, Completeness, Weights, Diagram, Expand, Bridge, ChainBox, Elim, Digits, ExpandFacts, Relabel, PortBox, Gather, Split, NodeBox, Induct, BoxFree, Positional, Tower, NodeVal, NodeBridge, Pin, NetDigits, FamBridge, FamCheck, Order, OrderK, FamK, BoxedBridge, Linked, LinkedPeel, LinkedSlide, LinkedRegroup, LinkedSplit, LinkedForm, LinkedGhost, LinkedSplice, LinkedFirst, LinkedDropX, LinkedRead, Mixed, ChainInduct, ChainLink, ChainEvery, Periodic, PeriodicChain, ChainMixed, ChainLabel, ChainForm, ChainBridge, ChainFam, ChainPair, TreeInduct, PhaseMap, ChainNode, PairBox, PairNet, PairEval, PairFam, AdderFam, PairSum, Sym, SymCanon, SymNorm & 96 & 0 & 0 & B \\
+\texttt{Light} & Net, Iso, Rules, Closed, ZXRules, Bialgebra, Hopf, WRules, WAssoc, WFuse, Connective, WZ, Bundle, Unfuse, FuseB, SymNet, SymChunk, SymHint, SymF2, SymF2Chain, SymF2Bridge, DiagramBridge, Port, Assume, Completeness, Weights, Diagram, Expand, Bridge, ChainBox, Elim, Digits, ExpandFacts, Relabel, PortBox, Gather, Split, NodeBox, Induct, BoxFree, Positional, Tower, NodeVal, NodeBridge, Pin, NetDigits, FamBridge, FamCheck, Order, OrderK, FamK, BoxedBridge, Linked, LinkedPeel, LinkedSlide, LinkedRegroup, LinkedSplit, LinkedForm, LinkedGhost, LinkedSplice, LinkedFirst, LinkedDropX, LinkedRead, Mixed, ChainInduct, ChainLink, ChainEvery, Periodic, PeriodicChain, ChainMixed, ChainLabel, ChainForm, ChainBridge, ChainFam, ChainPair, TreeInduct, PhaseMap, ChainNode, PairBox, PairNet, PairEval, PairFam, AdderFam, PairSum, Sym, SymCanon, SymNorm, AdderFamEnv, FamDiagram, FamDraperExpand, FamDraperSpec, FamExpandEq, FamFcaExpand, FamFcaSpec, LinkedMerge, LinkedPair & 105 & 0 & 0 & B \\
 \texttt{Linked} & Relabel & 515 & 10 & 23 & S \\
 \texttt{LinkedDropX} & LinkedGhost & 302 & 14 & 4 & S \\
 \texttt{LinkedFirst} & LinkedSplice & 656 & 42 & 7 & S \\
@@ -268,7 +268,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{PathSumDigits} & PathSumNet, Positional & 1059 & 47 & 21 & P \\
 \texttt{PathSumMixed} & PathSumQudit, PathSumAmp & 492 & 25 & 9 & P \\
 \texttt{PathSumMixedNet} & PathSumMixed, PathSumNetAmp, PathSumQuditNet, PathSumQuditDigits & 1087 & 56 & 21 & P \\
-\texttt{PathSumNet} & PathSumRules & 676 & 42 & 21 & P \\
+\texttt{PathSumNet} & PathSumRules & 671 & 42 & 20 & P \\
 \texttt{PathSumNetAmp} & PathSumNetW, PathSumAmp & 409 & 19 & 7 & P \\
 \texttt{PathSumNetW} & PathSumW, PathSumChain & 91 & 7 & 3 & P \\
 \texttt{PathSumParity} & PathSumRules & 109 & 2 & 4 & P \\
@@ -276,7 +276,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{PathSumQuditChain} & PathSumChain, PathSumQudit & 103 & 3 & 5 & P \\
 \texttt{PathSumQuditDigits} & PathSumQuditNet & 636 & 28 & 12 & P \\
 \texttt{PathSumQuditNet} & PathSumQudit, PathSumDigits, GaussSign, PathSumQuditChain & 462 & 29 & 14 & P \\
-\texttt{PathSumRules} & PathSumSem & 2198 & 91 & 63 & P \\
+\texttt{PathSumRules} & PathSumSem & 2167 & 90 & 61 & P \\
 \texttt{PathSumSem} & PathSum, Ball & 2173 & 139 & 101 & P \\
 \texttt{PathSumSupport} & PathSumAmp & 58 & 2 & 1 & P \\
 \texttt{PathSumW} & PathSumDigits & 224 & 9 & 3 & P \\
@@ -305,7 +305,7 @@ Module & Imports & Lines & Thm. & Def. & Ch. \\
 \texttt{SymFourier} & SymHint, PathSumSem & 851 & 39 & 33 & S \\
 \texttt{SymHint} & SymChunk & 795 & 30 & 28 & S \\
 \texttt{SymNet} & SymCanon & 1581 & 72 & 54 & S \\
-\texttt{SymNorm} & Sym, Bundle & 926 & 39 & 24 & S \\
+\texttt{SymNorm} & Sym, Bundle & 925 & 39 & 24 & S \\
 \texttt{SymRange} & SymFourier & 1210 & 46 & 41 & S \\
 \texttt{Tower} & Positional & 161 & 11 & 1 & C \\
 \texttt{TreeInduct} & ChainInduct & 330 & 13 & 7 & B \\

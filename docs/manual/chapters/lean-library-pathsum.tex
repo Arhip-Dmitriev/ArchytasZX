@@ -513,8 +513,7 @@ $c'$ the masks of $c$, i.e.\ $\prod_{c\in C}(1+c)$ normalized after each factor,
 skipped;
 \textnormal{\texttt{gatherPoly C}} is its monomial form over \textnormal{\texttt{vlist (\allowbreak{}C.\allowbreak{}flatMap id)}}.
 \textnormal{\texttt{fz\_\allowbreak{}gather}}: $\textnormal{\texttt{fz \ensuremath{\tau} (\allowbreak{}gatherPoly C)}} = 1\iff\forall q\in C,\ \textnormal{\texttt{fz \ensuremath{\tau} q}} = 0$.
-\textnormal{\texttt{gatherOK s}} holds when \textnormal{\texttt{s.\allowbreak{}path = []}} (its docstring also mentions a constraint to
-gather; the code tests only the path).
+\textnormal{\texttt{gatherOK s}} holds when \textnormal{\texttt{s.\allowbreak{}path = []}}.
 \[
 \textnormal{\texttt{gatherS s}} = \{s \text{ with cons} := [\textnormal{\texttt{normF (\allowbreak{}[] :: gatherPoly s.\allowbreak{}cons)}}]\},
 \]
@@ -669,12 +668,10 @@ $fs\mathbin{+\!\!+}(\text{path}\text{ after }ds)$ has no repeats; $|fs| = |ds|$;
 constraint or row; no monomial of $S$ contains a digit; no fresh variable is in the phase, a
 constraint or row, or a digit polynomial ($\textnormal{\texttt{fvars bs}}$); and
 $\textnormal{\texttt{normP M}}(\text{the phase terms containing a digit}) = \textnormal{\texttt{normP M (\allowbreak{}dyTerms M (\allowbreak{}2\^{}\{|ds|\}) S ds 1)}}$.
-\textnormal{\texttt{dyadicOK M ds S fs s}} is \textnormal{\texttt{dyRest}} with $bs$ from \textnormal{\texttt{dyBits |ds| S}} (false when
-\textnormal{\texttt{none}}); \textnormal{\texttt{dyadicBOK M ds S fs bs s := bitsOK |ds| S bs \&\& dyRest M ds S fs bs s}}.
+\textnormal{\texttt{dyadicBOK M ds S fs bs s := bitsOK |ds| S bs \&\& dyRest M ds S fs bs s}}.
 \end{definition}
 
-\noindent Both transformers \textnormal{\texttt{dyadicS}} (digits from \textnormal{\texttt{dyBits}}) and \textnormal{\texttt{dyadicBS}}
-(given digits) produce
+\noindent The transformer \textnormal{\texttt{dyadicBS}} (given digits) produces
 \[
 \{fs\mathbin{+\!\!+}(\text{path after } ds),\ (\text{phase terms free of } ds)\mathbin{+\!\!+}\textnormal{\texttt{dyNew M fs bs}},\ \text{cons},\ \text{rows}\}.
 \]
@@ -791,7 +788,6 @@ and \textnormal{\texttt{run M [] s = s}}, \textnormal{\texttt{run M (\allowbreak
 \textnormal{\texttt{hhNl}} & \textnormal{\texttt{hhNlOK M}} / \textnormal{\texttt{hhNlS M}} & $2$ & [HHnl]\\
 \textnormal{\texttt{pin B}} & \textnormal{\texttt{pinOK B}} / \textnormal{\texttt{pinS M B}} & $1$ & [Pin]\\
 \textnormal{\texttt{norm}} & \textnormal{\texttt{true}} / \textnormal{\texttt{normS M}} & $1$ & normalization\\
-\textnormal{\texttt{dyadic ds S fs}} & \textnormal{\texttt{dyadicOK M ds S fs}} / \textnormal{\texttt{dyadicS M ds S fs}} & $1$ & [Dyadic]\\
 \textnormal{\texttt{pdrop}} & \textnormal{\texttt{true}} / \textnormal{\texttt{pdropS}} & $1$ & phase terms off the support\\
 \textnormal{\texttt{dyadicB ds S fs bs}} & \textnormal{\texttt{dyadicBOK M ds S fs bs}} / \textnormal{\texttt{dyadicBS M ds fs bs}} & $1$ & [Dyadic], given digits\\
 \textnormal{\texttt{bsub v}} & \textnormal{\texttt{canonOK v}} / \textnormal{\texttt{bsubS M v}} & $1$ & boundary substitution\\
@@ -1275,7 +1271,6 @@ $J = \textnormal{\texttt{joinAll fs}}$.
 For a phase modulus $M$ and phase table entries $t_0 = M\varphi_0$, $t_1 = M\varphi_1$:
 \begin{align*}
 \textnormal{\texttt{zFrag M t0 t1 l0 ls}} &= \langle[\,],\ [([\,],t_0), ([l_0], t_1+(M-t_0))],\ [[[l_0],[l]] : l\in ls],\ 1\rangle,\\
-\textnormal{\texttt{zFragAt M t0 t1 l0 ls}} &= \text{the same term (used with } ls \text{ the full leg list containing } l_0),\\
 \textnormal{\texttt{fFrag M o i}} &= \langle[\,],\ [([o,i], M/2)],\ [\,],\ 1/\sqrt2\rangle,\\
 \textnormal{\texttt{xFrag M t0 t1 y ls}} &= \langle[y],\ [([\,],t_0),([y],t_1+(M-t_0))]\mathbin{+\!\!+}[([y,l],M/2): l\in ls],\\
  &\qquad [\,],\ (1/\sqrt2)^{|ls|}\rangle .
@@ -1290,7 +1285,7 @@ $\varphi_0 = t_0/M$, $\varphi_1 = t_1/M$.
 \begin{itemize}
 \item \textnormal{\texttt{z\_\allowbreak{}frag}}: for a Z node with legs \textnormal{\texttt{outs ++ ins = l0 :: ls}},
   $\textnormal{\texttt{val E \ensuremath{\sigma} n}} = \textnormal{\texttt{fval M (\allowbreak{}zFrag M t0 t1 l0 ls) (\allowbreak{}bits \ensuremath{\sigma})}}$; \textnormal{\texttt{z\_\allowbreak{}frag\_\allowbreak{}at}}: the same with
-  \textnormal{\texttt{zFragAt M t0 t1 l0 (\allowbreak{}outs ++ ins)}} for any leg $l_0$ (\textnormal{\texttt{tZ\_\allowbreak{}congr}}, \textnormal{\texttt{tZ\_\allowbreak{}bits}}).
+  \textnormal{\texttt{zFrag M t0 t1 l0 (\allowbreak{}outs ++ ins)}} for any leg $l_0$ (\textnormal{\texttt{tZ\_\allowbreak{}congr}}, \textnormal{\texttt{tZ\_\allowbreak{}bits}}).
 \item \textnormal{\texttt{f\_\allowbreak{}frag}}: for an F node with \textnormal{\texttt{outs = [o]}}, \textnormal{\texttt{ins = [i]}} and $2\mid M$,
   $\textnormal{\texttt{val E \ensuremath{\sigma} n}} = \textnormal{\texttt{fval M (\allowbreak{}fFrag M o i) (\allowbreak{}bits \ensuremath{\sigma})}}$ (\textnormal{\texttt{fou2}}:
   $\textnormal{\texttt{fou 2 j k}} = (-1)^{jk}/\sqrt2$).
