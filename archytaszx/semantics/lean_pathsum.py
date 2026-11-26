@@ -2676,6 +2676,13 @@ MIX_FRESH = 1 << 12
 MIX_ENT = 1 << 13
 """The offset of indicator entry variables past a mixed side's first label."""
 
+MIX_LABEL0 = 1 << 16
+"""The mixed side's first label."""
+
+MIX_SPAN = 1 << 16
+"""The labels of a mixed side past its first label; the qubit side's first label is the mixed
+side's plus MIX_SPAN."""
+
 
 @dataclass
 class _MixSide:
@@ -2761,7 +2768,7 @@ def _mixed_net_side(
         label[wire.a] = label[wire.b] = lab
         dims[lab] = _dim(d, wire.a)
         summed.append(lab)
-    if len(summed) >= MIX_FRESH:
+    if len(summed) >= MIX_FRESH or len(bnd) > label0:
         raise PathSumUnsupported("too many wires for the mixed label offsets")
     hw = f"ms{tag}OK"
     q2 = f"E {m} A ms{tag} {hw} es{tag} own{tag} qlabs{tag} dig{tag} own{tag}OK"
@@ -2954,6 +2961,10 @@ def _mixed_net_side(
             f"node_q2 {q2} _ _ [] (fun σ' hσ' => fvalA_of {m} A _ _ _ (by decide) "
             f"(atoms_nil A {m} _ _ ({inner}))) ql{tag} {vs} {DK} {DK} {DK} σ hσ _"
         )
+    if fresh > label0 + MIX_ENT:
+        raise PathSumUnsupported("too many X spiders for the mixed label offsets")
+    if ent > label0 + MIX_SPAN:
+        raise PathSumUnsupported("too many indicator entries for the mixed label offsets")
     return _MixSide(
         nodes,
         frags3,
@@ -3377,7 +3388,7 @@ def mixed_net_body(
     if not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("the right side of the mixed export is not a qubit path sum")
     m = math.lcm(8, _mixed_modulus(left), _table_modulus(right))
-    side_l = _mixed_net_side(left, "L", 1 << 16, m, phases)
+    side_l = _mixed_net_side(left, "L", MIX_LABEL0, m, phases)
     z3 = _z3_lines("L", side_l, m)
     amp = Coefs(m)
     if amp.index(Cyclo.rational(0)) != 0:
@@ -3386,7 +3397,7 @@ def mixed_net_body(
     if raw_r.boundary != bnd:
         raise PathSumUnsupported("the right side's boundary digits are not its port labels")
     raw_l, run_l = _mix_qubit(side_l, z3, amp, bnd)
-    side_r, _ = _net_side(right, m, phases, 1 << 17, {}, amp, {})
+    side_r, _ = _net_side(right, m, phases, MIX_LABEL0 + MIX_SPAN, {}, amp, {})
     if side_r.boundary != side_l.boundary or any(
         side_r.dig[i] != [i] for i in range(side_r.boundary)
     ):

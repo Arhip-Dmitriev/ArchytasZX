@@ -25,6 +25,7 @@ from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
 from archytaszx.semantics.lean_pathsum import (
     export_net,
+    export_pair,
     export_proof,
     export_qudit_net,
     export_qudit_proof,
@@ -202,6 +203,23 @@ def test_a_qubit_proof_sets_its_lean_options() -> None:
     assert "set_option maxHeartbeats 0" in lines
 
 
+def _trace(name: str) -> str:
+    if name == "wire":
+        wire = parse_dsl("a = Z(1 -> 1, literal 2)")
+        return export_pair(wire, wire, name)
+    left, right = PAIRS[name]
+    return export_pair(parse_dsl(left), parse_dsl(right), name)
+
+
+def test_a_trace_export_names_both_sides() -> None:
+    for name in ("wire", "gauss"):
+        source = _trace(name)
+        assert f"namespace ArchytasZX.PathSumCert.{name}" in source and "sorry" not in source
+    left, _ = PAIRS["gauss"]
+    with pytest.raises(PathSumUnsupported):
+        export_pair(parse_dsl(left), parse_dsl(f"a = Z(1 -> 1, {_D})"))
+
+
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
@@ -214,6 +232,13 @@ needs_lean = pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean proj
 def test_lean_proves_a_qudit_pair(name: str, tmp_path: object) -> None:
     ok, output = L.check(_export(name), f"{tmp_path}/{name}.lean")
     assert ok, output
+
+
+@needs_lean
+def test_lean_checks_trace_exports(tmp_path: object) -> None:
+    for name in ("wire", "gauss"):
+        ok, output = L.check(_trace(name), f"{tmp_path}/trace_{name}.lean")
+        assert ok, output
 
 
 @needs_lean

@@ -73,3 +73,19 @@ def test_mixed_entries_match_contraction(p1: str, p2: str) -> None:
             got = entry_enumerated(sum_, values, 30)
             assert got is not None
             assert abs(got.to_complex() - complex(want[idx])) < 1e-9
+
+
+def test_mixed_label_ranges_past_their_offsets_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from archytaszx.algebra.pathsum import PathSumUnsupported
+    from archytaszx.semantics import lean_pathsum as P
+
+    dg = _diagram("3: 1/2", "5: 1/2")
+    side = P._mixed_net_side(dg, "L", P.MIX_LABEL0, 24, [])
+    assert len(side.ents) == 4
+    monkeypatch.setattr(P, "MIX_ENT", P.MIX_FRESH + 1)
+    with pytest.raises(PathSumUnsupported, match="X spiders"):
+        P._mixed_net_side(dg, "L", P.MIX_LABEL0, 24, [])
+    monkeypatch.setattr(P, "MIX_ENT", 1 << 13)
+    monkeypatch.setattr(P, "MIX_SPAN", P.MIX_ENT + 3)
+    with pytest.raises(PathSumUnsupported, match="indicator entries"):
+        P._mixed_net_side(dg, "L", P.MIX_LABEL0, 24, [])
