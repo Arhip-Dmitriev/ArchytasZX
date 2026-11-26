@@ -23,12 +23,16 @@ with coefficients from a polynomial division; Lean's ``ring`` checks the result.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.scalar import ModDelta, ModGcd
+
+_Mono = tuple[int, ...]
+_Pol = dict[_Mono, Fraction]
 
 
 class ScalarUnsupported(Exception):
@@ -575,68 +579,134 @@ class Scalars:
 
 def _lift(target: sp.Expr, rels: list[sp.Expr], gens: list[sp.Symbol]) -> list[sp.Expr] | None:
     """Cofactors ``c`` with ``target = Σ c_i rels_i``, or None if ``target`` is not in the
-    ideal; Buchberger's algorithm with every basis element's cofactors tracked."""
-    order = "grevlex"
-
-    def P(e: sp.Expr) -> sp.Poly:
-        return sp.Poly(e, *gens, domain="QQ")
-
+    ideal; division by ``rels`` in order, else Buchberger's algorithm over grevlex with the
+    Gebauer–Möller pair criteria, the sugar selection strategy and every basis element's
+    cofactors tracked."""
     n = len(rels)
-    zero = P(0)
-    basis: list[tuple[sp.Poly, list[sp.Poly]]] = []
-    for i, r in enumerate(rels):
-        cof = [zero] * n
-        cof[i] = P(1)
-        basis.append((P(r), cof))
+    polys: list[_Pol] = []
+    cofs: list[list[_Pol]] = []
+    leads: list[_Mono] = []
+    sugar: list[int] = []
+    active: list[int] = []
+    pairs: list[tuple[int, tuple[int, _Mono], int, int, _Mono]] = []
 
-    def lead(p: sp.Poly) -> tuple[tuple[int, ...], sp.Expr]:
-        return p.LM(order=order).exponents, p.LC(order=order)
+    def poly(e: sp.Expr) -> _Pol:
+        return {
+            m: Fraction(int(c.p), int(c.q))
+            for m, c in sp.Poly(e, *gens, domain="QQ").terms()
+            if c != 0
+        }
 
-    def divides(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
-        return all(x <= y for x, y in zip(a, b, strict=True))
-
-    def mono(exps: tuple[int, ...], c: sp.Expr) -> sp.Poly:
-        return sp.Poly.from_dict({exps: c}, *gens, domain="QQ")
-
-    def reduce(f: sp.Poly, cof: list[sp.Poly]) -> tuple[sp.Poly, list[sp.Poly]]:
-        rem = zero
-        while not f.is_zero:
-            m, c = lead(f)
-            for g, gc in basis:
-                if g.is_zero:
-                    continue
-                gm, gcoef = lead(g)
-                if divides(gm, m):
-                    t = mono(tuple(x - y for x, y in zip(m, gm, strict=True)), c / gcoef)
-                    f = f - t * g
-                    cof = [ci - t * gi for ci, gi in zip(cof, gc, strict=True)]
+    def reduce(f: _Pol, cof: list[_Pol], using: Sequence[int]) -> _Pol:
+        rem: _Pol = {}
+        while f:
+            m = max(f, key=_grevlex)
+            c = f[m]
+            for k in using:
+                gm = leads[k]
+                if _divides(gm, m):
+                    t = tuple(x - y for x, y in zip(m, gm, strict=True))
+                    q = c / polys[k][gm]
+                    _axpy(f, q, t, polys[k])
+                    for ci, gi in zip(cof, cofs[k], strict=True):
+                        _axpy(ci, q, t, gi)
                     break
             else:
-                term = mono(m, c)
-                rem = rem + term
-                f = f - term
-        return rem, cof
+                rem[m] = c
+                del f[m]
+        return rem
 
-    pairs = [(i, j) for i in range(len(basis)) for j in range(i)]
-    steps = 0
-    while pairs and steps < 400:
-        steps += 1
-        i, j = pairs.pop()
-        (f, fc), (g, gc) = basis[i], basis[j]
-        fm, fcoef = lead(f)
-        gm, gcoef = lead(g)
-        lcm = tuple(max(x, y) for x, y in zip(fm, gm, strict=True))
-        if all(x + y == z for x, y, z in zip(fm, gm, lcm, strict=True)):
-            continue
-        tf = mono(tuple(z - x for z, x in zip(lcm, fm, strict=True)), 1 / fcoef)
-        tg = mono(tuple(z - y for z, y in zip(lcm, gm, strict=True)), 1 / gcoef)
-        spoly = tf * f - tg * g
-        scof = [tf * a - tg * b for a, b in zip(fc, gc, strict=True)]
-        r, rc = reduce(spoly, scof)
-        if not r.is_zero:
-            basis.append((r, rc))
-            pairs += [(len(basis) - 1, k) for k in range(len(basis) - 1)]
-    rem, cof = reduce(P(target), [zero] * n)
-    if not rem.is_zero:
+    def add(f: _Pol, cof: list[_Pol], s: int) -> None:
+        h = len(polys)
+        hm = max(f, key=_grevlex)
+        polys.append(f)
+        cofs.append(cof)
+        leads.append(hm)
+        sugar.append(s)
+        fresh = [(g, _lcm(hm, leads[g])) for g in active]
+        kept: list[tuple[int, _Mono]] = []
+        while fresh:
+            g, l1 = fresh.pop(0)
+            if _coprime(hm, leads[g]) or not any(_divides(l2, l1) for _, l2 in fresh + kept):
+                kept.append((g, l1))
+        pairs[:] = [
+            p
+            for p in pairs
+            if not (
+                _divides(hm, p[4])
+                and _lcm(leads[p[2]], hm) != p[4]
+                and _lcm(leads[p[3]], hm) != p[4]
+            )
+        ]
+        for g, l1 in kept:
+            if not _coprime(hm, leads[g]):
+                d = sum(l1)
+                ps = max(s + d - sum(hm), sugar[g] + d - sum(leads[g]))
+                pairs.append((ps, _grevlex(l1), h, g, l1))
+        active[:] = [g for g in active if not _divides(hm, leads[g])] + [h]
+
+    for i, r in enumerate(rels):
+        f = poly(r)
+        if f:
+            cof: list[_Pol] = [{} for _ in range(n)]
+            cof[i] = {(0,) * len(gens): Fraction(1)}
+            add(f, cof, max(sum(m) for m in f))
+    out: list[_Pol] = [{} for _ in range(n)]
+    if not reduce(poly(target), out, range(len(polys))):
+        return _cofactors(out, gens)
+    while pairs:
+        best = min(range(len(pairs)), key=lambda k: pairs[k][:2])
+        ps, _, i, j, lc = pairs.pop(best)
+        ti = tuple(z - x for z, x in zip(lc, leads[i], strict=True))
+        tj = tuple(z - x for z, x in zip(lc, leads[j], strict=True))
+        ci = -1 / polys[i][leads[i]]
+        cj = 1 / polys[j][leads[j]]
+        spoly: _Pol = {}
+        _axpy(spoly, ci, ti, polys[i])
+        _axpy(spoly, cj, tj, polys[j])
+        scof: list[_Pol] = [{} for _ in range(n)]
+        for k in range(n):
+            _axpy(scof[k], ci, ti, cofs[i][k])
+            _axpy(scof[k], cj, tj, cofs[j][k])
+        r = reduce(spoly, scof, active)
+        if r:
+            add(r, scof, ps)
+    out = [{} for _ in range(n)]
+    if reduce(poly(target), out, range(len(polys))):
         return None
-    return [(-c).as_expr() for c in cof]
+    return _cofactors(out, gens)
+
+
+def _cofactors(cof: list[_Pol], gens: list[sp.Symbol]) -> list[sp.Expr]:
+    """The negated cofactor polynomials as sympy expressions."""
+    return [
+        (-sp.Poly.from_dict(c, *gens, domain="QQ")).as_expr() if c else sp.Integer(0) for c in cof
+    ]
+
+
+def _grevlex(m: _Mono) -> tuple[int, _Mono]:
+    """The sort key of ``m`` in the graded reverse lexicographic order."""
+    return sum(m), tuple(-x for x in reversed(m))
+
+
+def _divides(a: _Mono, b: _Mono) -> bool:
+    return all(x <= y for x, y in zip(a, b, strict=True))
+
+
+def _lcm(a: _Mono, b: _Mono) -> _Mono:
+    return tuple(max(x, y) for x, y in zip(a, b, strict=True))
+
+
+def _coprime(a: _Mono, b: _Mono) -> bool:
+    return all(x == 0 or y == 0 for x, y in zip(a, b, strict=True))
+
+
+def _axpy(f: _Pol, c: Fraction, m: _Mono, g: _Pol) -> None:
+    """``f -= c · x^m · g`` in place."""
+    for gm, gc in g.items():
+        t = tuple(x + y for x, y in zip(m, gm, strict=True))
+        v = f.get(t, Fraction(0)) - c * gc
+        if v:
+            f[t] = v
+        else:
+            f.pop(t, None)
