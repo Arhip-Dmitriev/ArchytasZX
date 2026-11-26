@@ -3136,7 +3136,11 @@ $(1\,048\,601, 386\,772)$. \lexpy!res(v)! (mirror of \lexlean!tmN!) is
 $\sum c\,w^{e \bmod M} \bmod p$ over the terms of an exact value (atom parts ignored).
 \lexpy!node_res(n, σ)! is \lexpy!res(node(n, σ))!, memoized per
 $(p, w, \text{kind}, \text{dimension index}, \text{phase index}, \text{output values},
-\text{input values})$; \lexpy!share_node_res(other)! adopts another refuter's memo when both have
+\text{input values})$; for an \lexcode!X! or \lexcode!Bun! node it is \lexpy!tensor_res!, which
+takes a \lexcode!Bun! as the product mod $p$ of its copies' residues and an \lexcode!X! spider
+from \lexpy!tx!, both \lexpy!tx! and its residue kept per $(M, \text{phase index}, d, c)$ with
+$c = (q\sum os + q(d-1)\sum is) \bmod M$, $q = M/d$ (each term $(ks, e + kc)$);
+\lexpy!share_node_res(other)! adopts another refuter's memo when both have
 equal \lexpy!M!, \lexpy!ptab!, \lexpy!tabs!, \lexpy!polys!, \lexpy!sparse!, \lexpy!ctab!, \lexpy!qtab!,
 \lexpy!dimv_tab! and \lexpy!ks!.
 
