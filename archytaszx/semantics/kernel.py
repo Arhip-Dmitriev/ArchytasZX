@@ -2787,17 +2787,17 @@ def diagram_level(source: str) -> bool:
     return re.search(r"\bDEqual\w*\b", stmt) is not None
 
 
-def _semantic_pair(x: Diagram, y: Diagram) -> str | None:
+def _semantic_pair(x: Diagram, y: Diagram, diagrams: bool = False) -> str | None:
     """Lean source whose theorem ``main`` proves ``x`` and ``y`` equal over their networks: the
-    normaliser of symbolic sums, else the qubit or odd-prime path-sum network proof; None when
-    none applies."""
+    normaliser of symbolic sums, else the qubit or odd-prime path-sum network proof, with
+    ``diagrams`` ending in ``main_diagrams`` over the diagrams; None when none applies."""
     from archytaszx.algebra.pathsum import PathSumError
     from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net
 
     builders: tuple[Callable[[], str], ...] = (
         lambda: lean_sym.export_symbolic(x, y, "main"),
-        lambda: export_net(x, y),
-        lambda: export_qudit_net(x, y),
+        lambda: export_net(x, y, diagrams=diagrams),
+        lambda: export_qudit_net(x, y, diagrams=diagrams),
     )
     for build in builders:
         try:
@@ -2949,7 +2949,7 @@ def _concrete_export(theorem: Theorem, text: str) -> str | None:
         return None
     if _wide_rule(lhs) or _wide_rule(rhs) or _stuck_path_sums(lhs, rhs):
         return None
-    source = _semantic_pair(lhs, rhs)
+    source = _semantic_pair(lhs, rhs, diagrams=True)
     if source is None:
         return None
     return header(source, f"restricted to {text}: the instantiated pair over its networks")
