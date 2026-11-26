@@ -2935,8 +2935,10 @@ instance :func:`_with_concrete` appends to a family export."""
 def _with_concrete(family: str, left: Diagram, right: Diagram, clauses: Sequence[Clause]) -> str:
     """``family`` followed by the :func:`_concrete_sides` proof of ``left`` and ``right`` with
     every substituting clause applied, in the namespace ``ArchytasZX.Export.Inst``, when that
-    proof is diagram level; ``family`` otherwise, also when a multiplicity value times the
-    sides' node count exceeds :data:`INSTANCE_NODES`."""
+    proof is diagram level, else of their doubles when a side holds a discard; ``family``
+    otherwise, also when a multiplicity value times the sides' node count exceeds
+    :data:`INSTANCE_NODES`."""
+    from archytaszx.diagram.mixed import discards, double
     from archytaszx.semantics.restrict import MULTIPLICITY, apply_clause
 
     size = len(left.nodes) + len(right.nodes)
@@ -2953,6 +2955,8 @@ def _with_concrete(family: str, left: Diagram, right: Diagram, clauses: Sequence
         return family
     text = ", ".join(c.text() for c in clauses)
     concrete = _concrete_sides(left, right, text)
+    if (concrete is None or not diagram_level(concrete)) and (discards(left) or discards(right)):
+        concrete = _concrete_sides(double(left), double(right), text, DOUBLED_NOTE)
     if concrete is None or not diagram_level(concrete):
         return family
     body, _, _ = _nest(concrete, "Inst")
@@ -2981,8 +2985,15 @@ def _concrete_export(theorem: Theorem, text: str) -> str | None:
     return _concrete_sides(lhs, rhs, text)
 
 
-def _concrete_sides(lhs: Diagram, rhs: Diagram, text: str) -> str | None:
-    """:func:`_concrete_export` on the instantiated sides ``lhs`` and ``rhs``."""
+DOUBLED_NOTE = "over the doubled (CPM) diagrams"
+"""The header note of an instance proved over the doubles of its sides."""
+
+
+def _concrete_sides(
+    lhs: Diagram, rhs: Diagram, text: str, over: str = "over its networks"
+) -> str | None:
+    """:func:`_concrete_export` on the instantiated sides ``lhs`` and ``rhs``, ``over`` in the
+    header note."""
     from archytaszx.semantics.lean_restrict import header
 
     if free_mult_symbols(lhs) | free_mult_symbols(rhs) or lhs.bang_boxes or rhs.bang_boxes:
@@ -2994,7 +3005,7 @@ def _concrete_sides(lhs: Diagram, rhs: Diagram, text: str) -> str | None:
     source = _semantic_pair(lhs, rhs, diagrams=True)
     if source is None:
         return None
-    return header(source, f"restricted to {text}: the instantiated pair over its networks")
+    return header(source, f"restricted to {text}: the instantiated pair {over}")
 
 
 def _stuck_path_sums(x: Diagram, y: Diagram) -> bool:
