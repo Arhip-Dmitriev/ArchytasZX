@@ -1638,6 +1638,8 @@ def restricted_symbolic(
             source = corollary(source, proof.restriction.clauses, "main", _var)
         except RestrictUnsupported as exc:
             raise KernelError(f"no corollary: {exc}") from exc
+        if not diagram_level(source):
+            source = _with_concrete(source, proof.left, proof.right, proof.restriction.clauses)
         return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses)
     floors = _floors_used(proof.restriction, proof.floors_used)
     shifted = _symbolic_shift(proof, describe)
@@ -2912,14 +2914,38 @@ def _lean_restricted(
                 return concrete
         source = header(source, f"restricted to {text}: the family theorem, then {_RESTRICTED}")
         try:
-            return corollary(source, theorem.domain, name, _var)
+            source = corollary(source, theorem.domain, name, _var)
         except RestrictUnsupported as exc:
             raise KernelError(f"no corollary: {exc}") from exc
+        if semantic and not diagram_level(source) and theorem.origin is not None:
+            source = _with_concrete(source, *theorem.origin, theorem.domain)
+        return source
     restriction = Restriction(theorem.domain)
     shifted = _lean_shift(plain, theorem, name, describe) if semantic else None
     if shifted is not None:
         return header(shifted, _pair_note(restriction) + f"; {_lifted_note(restriction)}")
     return header(source, _pair_note(restriction) + _unlinked(restriction))
+
+
+def _with_concrete(family: str, left: Diagram, right: Diagram, clauses: Sequence[Clause]) -> str:
+    """``family`` followed by the :func:`_concrete_sides` proof of ``left`` and ``right`` with
+    every substituting clause applied, in the namespace ``ArchytasZX.Export.Inst``, when that
+    proof is diagram level; ``family`` otherwise."""
+    from archytaszx.semantics.restrict import apply_clause
+
+    try:
+        for c in clauses:
+            if c.substitutes:
+                left = apply_clause(left, c, everywhere=c.c < 0)
+                right = apply_clause(right, c, everywhere=c.c < 0)
+    except _INDUCTION_ERRORS:
+        return family
+    text = ", ".join(c.text() for c in clauses)
+    concrete = _concrete_sides(left, right, text)
+    if concrete is None or not diagram_level(concrete):
+        return family
+    body, _, _ = _nest(concrete, "Inst")
+    return f"{family.rstrip()}\n\n{body}\n"
 
 
 _OPAQUE_AXIOM = re.compile(r"^axiom ", re.MULTILINE)
@@ -2935,14 +2961,19 @@ def _concrete_export(theorem: Theorem, text: str) -> str | None:
     """The network proof of a restricted theorem's :func:`instantiated` sides when they have
     no free multiplicity and no bang box and at most :data:`CONCRETE_NODES` nodes, with the
     restriction in its header; else None."""
-    from archytaszx.semantics.lean_restrict import header
-
     lhs, rhs = theorem.lhs, theorem.rhs
     if theorem.variables or lhs.bang_boxes or rhs.bang_boxes:
         try:
             lhs, rhs = instantiated(theorem)
         except _INDUCTION_ERRORS:
             return None
+    return _concrete_sides(lhs, rhs, text)
+
+
+def _concrete_sides(lhs: Diagram, rhs: Diagram, text: str) -> str | None:
+    """:func:`_concrete_export` on the instantiated sides ``lhs`` and ``rhs``."""
+    from archytaszx.semantics.lean_restrict import header
+
     if free_mult_symbols(lhs) | free_mult_symbols(rhs) or lhs.bang_boxes or rhs.bang_boxes:
         return None
     if len(lhs.nodes) + len(rhs.nodes) > CONCRETE_NODES:
