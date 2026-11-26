@@ -517,6 +517,20 @@ def test_a_sum_free_residual_gets_a_cycle_certificate() -> None:
     assert S.fz_cert(_residual()[:1]) is None
 
 
+def _pinned_out() -> list[S.STm]:
+    """``Σ_{x5 < 3} [x5 = -1 mod 3] [x5 = -2 mod 3]``: zero, the pin of x5 failing the second
+    delta, with no label to split."""
+    three = (3, ())
+    dels = ((three, _lin(1, (5, 1))), (three, _lin(2, (5, 1))))
+    return [(S.of_q(1), ((5, three),), dels, ())]
+
+
+def test_rg_cert_accepts_a_residual_with_no_label_to_split() -> None:
+    got = S.rg_cert(_pinned_out(), {})
+    assert got is not None
+    assert got[1] == () and got[2] == ((0, S._NO_CERT),)
+
+
 def test_a_rational_table_is_matched_by_ptok() -> None:
     from types import SimpleNamespace
 
@@ -554,6 +568,23 @@ def test_lean_decides_a_cycle_certificate(tmp_path: Path) -> None:
         ]
     )
     passed, message = L.check(source, str(tmp_path / "fz.lean"))
+    assert passed, message
+
+
+@needs_lean
+def test_lean_decides_a_range_certificate_with_no_split(tmp_path: Path) -> None:
+    got = S.rg_cert(_pinned_out(), {})
+    assert got is not None
+    source = "\n".join(
+        [
+            "import ArchytasZX.SymRange",
+            "open ArchytasZX.Sym",
+            f"def R : List STm := {S._lean_ex(_pinned_out())}",
+            f"def C : RgCert := {S._lean_rg(got)}",
+            "theorem rg : rgOK C R = true := by decide +kernel",
+        ]
+    )
+    passed, message = L.check(source, str(tmp_path / "rg.lean"))
     assert passed, message
 
 

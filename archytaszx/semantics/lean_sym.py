@@ -1172,7 +1172,8 @@ def lab_ranges(
 
 def rg_cert(e: Sequence[STm], ranges: Mapping[int, int]) -> RgCert | None:
     """``rgOK``'s certificate for a residual: pins to sum-free terms, the labels some character
-    reads with a period beyond their range split over ``ranges``, each case's normal form empty
+    reads with a period beyond their range (possibly none) split over ``ranges``, each case's
+    normal form empty
     or certified by :func:`fz_cert` after :func:`_prune`; None otherwise."""
     if not e:
         return None
@@ -1193,7 +1194,7 @@ def rg_cert(e: Sequence[STm], ranges: Mapping[int, int]) -> RgCert | None:
                     split.add(mon[0])
     r = tuple((x, ranges[x]) for x in sorted(split))
     cases = math.prod(d for _x, d in r)
-    if not r or cases > RG_CASES or cases * len(pinned) > RG_WORK:
+    if cases > RG_CASES or cases * len(pinned) > RG_WORK:
         return None
     certs = []
     for case in rsplit(r, pinned):
