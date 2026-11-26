@@ -332,6 +332,8 @@ def linked(
         nodes.append(LNode(iid, "Z", k, _Tables.index(tables.phases, repr(None)), (k,), (k,)))
         side[side.index(bp)] = (iid, bp[1], 0)
         wires.append((bp, (iid, not bp[1], 0)))
+    if any(len(b.nodes) != 1 for b in held.values()):
+        raise LinkedUnsupported("a held identity box of other than one node")
     if ghost is not None:
         ports = {_port(r) for b in d.bang_boxes.values() for pq in b.links for r in pq}
         for j, bp in enumerate([*bouts, *bins]):
@@ -340,8 +342,6 @@ def linked(
                 g = (held[bp].nodes[0], True, j + 1) if bp in held else (ghost, True, j)
                 side[pos] = g
                 wires.append((bp, g))
-    if any(len(b.nodes) != 1 for b in held.values()):
-        raise LinkedUnsupported("a held identity box of more than one node")
     boxes, links, used = [], [], set[int]()
     for bid, b in sorted(d.bang_boxes.items()):
         plain = (
